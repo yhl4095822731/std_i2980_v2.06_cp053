@@ -1,0 +1,873 @@
+(*
+@h    ! WARNING !
+@h    The Kemro K2 system (including software) only meets category B according to EN 954-1,
+@h    thus it is not intended for usage in safety-relevant control applications in the field 
+@h    of personal safety (e.g. emergency stop).
+@h    To implement potentially necessary safety-relevant control tasks, always use additional 
+@h    external safety devices that are intended for the particular purpose, and meet the necessary 
+@h    functional safety.
+@h    For further information see EN 954-1 (EN ISO 13849-1) and/or the K2-x00 user manual, chapter 
+@h    "CE conformity, directives and standards". 
+
+This algo block starts the automatic mold height adjustment by calling the 
+system.FBManualButton with the correct parameters corresponding to a pressed Panel Button.
+*)
+
+IMPORT_OVER_LISTFILE
+ SET_ALARM
+, nSetup
+, cCompMold
+, cCompMoldHeight
+, tevStartedStopped
+, tsMoveData
+, tnOperationMode
+, tsDeviceId
+, FBManualButtonKeep
+, tsAlarm
+, FBCheckReady
+, FBCheckPosReached
+, tevStartedStoppedData
+
+END_IMPORT
+
+ALGORITHM_BLOCK ABManualButton #DUMMY_EDIT_BLOCK
+
+SYSTEM_VAR
+ sv_MoveMoldHeightAuto : tsMoveData;
+ sv_bAutoMoldHeightAdjustActive : BOOL (* is TRUE when auto mold height adjust is acitve *);
+ sv_bLedAutoAdjust_ledAttr : BYTE (* LED Attribute *);
+ sv_bHMILedAutoAdjust : BOOL;
+ sv_bHMILedAutoAdjust_ledAttr : BYTE (* LED Attribute *);
+ sv_bLedAutoAdjust : BOOL;
+ sv_bInitStart : BOOL;
+ sv_OperationMode : tnOperationMode;
+ sv_bInitDone : BOOL;
+ sv_DeviceId : tsDeviceId;
+ sv_bMoldHeightAutoAdjHMI : BOOL (* hmi can start/stop automh adjust with this SV *);
+ sv_bDeviceReady : BOOL;
+END_VAR
+
+SYSTEM_OBJECT
+ PU_Task_7 : TASK;
+ EV_Task_7 : TASK;
+ erSetupModeRequiredForAdjust : ALARM;
+ evStartedStopped : tevStartedStopped;
+END_OBJECT
+
+VAR_EXTERNAL
+ g_b2Platen : BOOL;
+END_VAR
+
+VAR
+ fbManualButton : FBManualButtonKeep;
+ mpbMoldReady : REFTO BOOL;
+ mpbMoldHeightReady : REFTO BOOL;
+ mpbNutsOpen : REFTO BOOL;
+ mAlarmNutsNotOpen : tsAlarm;
+END_VAR
+
+(*
+This algo starts the mold height automatic adjustment by calling the 
+system.FBManualButton with the correct parameters when the di_ButtonIn is 
+pressed. (post update).
+*)
+
+ALGORITHM aStartStop
+
+
+VAR_INPUT
+ bStart : BOOL;
+END_VAR
+#BEGIN_EDIT_BLOCK
+(**************************************** WARNING ********************************************
+ *** The KEBA Kemro K2 System including software is not intended for safety control tasks! ***
+ ***                       For further information see Comment tab!                        ***
+ *********************************************************************************************)
+
+IF (bStart AND (sv_OperationMode <> nSetup)) THEN
+   //ignore button if operation mode is not setup
+   SET_ALARM(Name := erSetupModeRequiredForAdjust,
+            SubID1 := sv_DeviceId.CompId);
+   sv_bMoldHeightAutoAdjHMI := FALSE;
+   RETURN;
+END_IF;
+
+IF bStart AND g_b2Platen THEN
+   //ignore button if lock nuts are not open
+   IF NOT mpbNutsOpen^ THEN
+      SET_ALARM(Name := mAlarmNutsNotOpen.AlarmId);
+      sv_bMoldHeightAutoAdjHMI := FALSE;
+      RETURN;
+   END_IF;
+END_IF;
+   
+IF (bStart AND sv_bDeviceReady) THEN
+   IF (mpbMoldReady <> EMPTY AND NOT mpbMoldReady^) OR (mpbMoldHeightReady <> EMPTY AND NOT mpbMoldHeightReady^) THEN
+      // auto adjust should be started and mold movement or mold adjust movement acitve 
+      // -> ignore manual button
+      RETURN;
+   END_IF;
+END_IF;
+
+(*@ MoldHeightAdjustN.ABManualButton.pButtonStart.Call the fbManualButton using the sv_MoveMoldHeightAuto parameters *)
+IF (bStart AND sv_bDeviceReady) OR ((NOT bStart) AND (NOT sv_bDeviceReady)) THEN
+   fbManualButton(bButton := TRUE, MoveId := sv_MoveMoldHeightAuto.MoveId, MoveDir := sv_MoveMoldHeightAuto.MoveDir);
+END_IF;
+
+
+
+
+;#END_EDIT_BLOCK END_ALGORITHM
+
+(*
+This algo starts the mold height automatic adjustment by calling the 
+system.FBManualButton with the correct parameters when the di_ButtonIn is 
+pressed. (post update).
+*)
+
+ALGORITHM aButtonStart
+
+
+VAR_INPUT
+ bButtonStart : BOOL;
+END_VAR
+#BEGIN_EDIT_BLOCK
+(**************************************** WARNING ********************************************
+ *** The KEBA Kemro K2 System including software is not intended for safety control tasks! ***
+ ***                       For further information see Comment tab!                        ***
+ *********************************************************************************************)
+
+IF bButtonStart THEN
+    sv_bMoldHeightAutoAdjHMI := NOT sv_bMoldHeightAutoAdjHMI;
+END_IF;
+
+
+;#END_EDIT_BLOCK END_ALGORITHM
+
+(*
+This algo starts the mold height automatic adjustment by calling the 
+system.FBManualButton with the correct parameters when the di_ButtonIn is 
+pressed. (post update).
+*)
+
+POSTUPDATE_ALGORITHM pHMIStart ON PU_Task_7 WITH sv_bMoldHeightAutoAdjHMI
+
+#BEGIN_EDIT_BLOCK
+(**************************************** WARNING ********************************************
+ *** The KEBA Kemro K2 System including software is not intended for safety control tasks! ***
+ ***                       For further information see Comment tab!                        ***
+ *********************************************************************************************)
+
+IF (sv_bMoldHeightAutoAdjHMI AND sv_bDeviceReady) THEN
+    aStartStop(TRUE);
+ELSIF ((NOT sv_bMoldHeightAutoAdjHMI) AND (NOT sv_bDeviceReady)) THEN
+    aStartStop(FALSE);
+END_IF;
+
+
+
+;#END_EDIT_BLOCK END_ALGORITHM
+
+POSTUPDATE_ALGORITHM pLedControl ON PU_Task_7 WITH sv_bAutoMoldHeightAdjustActive,sv_bInitStart
+
+
+VAR
+ bInitDone : BOOL;
+ mbLedAutoAdjustExists : BOOL := FALSE;
+END_VAR
+#BEGIN_EDIT_BLOCK
+(**************************************** WARNING ********************************************
+ *** The KEBA Kemro K2 System including software is not intended for safety control tasks! ***
+ ***                       For further information see Comment tab!                        ***
+ *********************************************************************************************)
+
+IF NOT bInitDone THEN
+    sv_bHMILedAutoAdjust_ledAttr := 16#3;
+    IF IS_LINKED(sv_bLedAutoAdjust) AND IS_LINKED(sv_bLedAutoAdjust_ledAttr) THEN
+        sv_bLedAutoAdjust_ledAttr := sv_bHMILedAutoAdjust_ledAttr;
+        mbLedAutoAdjustExists := TRUE;
+    ELSE
+        mbLedAutoAdjustExists := FALSE;
+    END_IF;
+    
+    bInitDone := TRUE;
+END_IF;
+
+sv_bHMILedAutoAdjust := sv_bAutoMoldHeightAdjustActive;
+IF mbLedAutoAdjustExists THEN
+    sv_bLedAutoAdjust := sv_bHMILedAutoAdjust;
+END_IF;
+
+
+;#END_EDIT_BLOCK END_ALGORITHM
+
+POSTUPDATE_ALGORITHM pInitDone ON PU_Task_7(10) WITH sv_bInitDone
+
+
+VAR
+ fbCheckReady : FBCheckReady;
+ DeviceId : tsDeviceId;
+ fbCheckPosReached : FBCheckPosReached;
+END_VAR
+#BEGIN_EDIT_BLOCK
+(**************************************** WARNING ********************************************
+ *** The KEBA Kemro K2 System including software is not intended for safety control tasks! ***
+ ***                       For further information see Comment tab!                        ***
+ *********************************************************************************************)
+
+//get reference to ready flag of mold function unit
+DeviceId.CompId := cCompMold;
+DeviceId.IndexId := sv_DeviceId.IndexId;
+fbCheckReady(DeviceId := DeviceId);
+mpbMoldReady := fbCheckReady.pbReady;
+
+//get reference to ready flag of mold adjust function unit
+DeviceId.CompId := cCompMoldHeight;
+DeviceId.IndexId := sv_DeviceId.IndexId;
+fbCheckReady(DeviceId := DeviceId);
+mpbMoldHeightReady := fbCheckReady.pbReady;
+
+//get reference to mold nut open movement and save according alarm
+IF g_b2Platen THEN
+   DeviceId.CompId := cCompMoldNuts;
+   DeviceId.IndexId := sv_DeviceId.IndexId;
+   fbCheckPosReached(DeviceId := DeviceId,
+                     MoveDir := cMoveOpen,
+                     MoveId := cMoveOpen);
+   
+   mpbNutsOpen := fbCheckPosReached.pbPosReached;
+   mAlarmNutsNotOpen := fbCheckPosReached.Alarm;
+END_IF;
+
+
+;#END_EDIT_BLOCK END_ALGORITHM
+
+(*
+Manage list and count of currently started movments
+in sv_StartedMovements when receiving evStartedStopped events
+*)
+
+EVENT_ALGORITHM evaStartedStopped ON EV_Task_7 WITH evStartedStopped
+
+
+VAR_INPUT
+ evStartedStoppedData : tevStartedStoppedData;
+END_VAR
+#BEGIN_EDIT_BLOCK
+(**************************************** WARNING ********************************************
+ *** The KEBA Kemro K2 System including software is not intended for safety control tasks! ***
+ ***                       For further information see Comment tab!                        ***
+ *********************************************************************************************)
+
+IF evStartedStoppedData.MoveId = cMoldHeightAutomatic AND evStartedStoppedData.DeviceId = sv_DeviceId THEN
+   IF evStartedStoppedData.State = nStopped OR evStartedStoppedData.State = nStartNotAllowed THEN
+      //reset flag when movement in state nStopped OR nStartNotAllowed
+      //we can not use a POSTUPDATE on sv_bDeviceReady and check for TRUE because the movement might be locked
+      // -> sv_bDeviceReady never goes FALSE -> no POSTUPDATE is executed
+      //also we can not use evMovementState because this one is not set by mold height adjust admin
+      sv_bMoldHeightAutoAdjHMI := FALSE;
+   END_IF;
+END_IF; 
+
+
+
+
+
+;#END_EDIT_BLOCK END_ALGORITHM
+
+
+
+END_ALGORITHM_BLOCK
+
+
+
+#END_OF_IEC_PART
+
+@Puma @IecEditor 6 114 @Pou 25 
+@@@BEG_Comment@@@
+@h    ! WARNING !
+@h    The Kemro K2 system (including software) only meets category B according to EN 954-1,
+@h    thus it is not intended for usage in safety-relevant control applications in the field 
+@h    of personal safety (e.g. emergency stop).
+@h    To implement potentially necessary safety-relevant control tasks, always use additional 
+@h    external safety devices that are intended for the particular purpose, and meet the necessary 
+@h    functional safety.
+@h    For further information see EN 954-1 (EN ISO 13849-1) and/or the K2-x00 user manual, chapter 
+@h    "CE conformity, directives and standards". 
+
+This algo block starts the automatic mold height adjustment by calling the 
+system.FBManualButton with the correct parameters corresponding to a pressed Panel Button.
+@@@END_Comment@@@
+
+@BEG_Contents 
+
+@BEG_Func 
+@RT(17)FuncTreeContainer 
+1 
+@Var @RT(9)SET_ALARM @RT(0) @T @T @DERIVED 0 @F @RT(23)KEBA_STANDARD_PROCEDURE @F 
+@T 
+@BEG_Attrib 
+0 @RT(0) @RT(0) 
+@END_Attrib 
+1 1 @F @F @F @F 
+
+@END_Func 
+
+@BEG_Const 
+@RT(18)ConstTreeContainer 
+3 
+@Var @RT(6)nSetup @RT(0) @T @T @DERIVED 0 @F @RT(15)tnOperationMode @F 
+@T 
+@BEG_Attrib 
+0 @RT(1)0 @RT(36)Setup mode only for service engineer 
+@END_Attrib 
+1 1 @F @F @F @F 
+
+@Var @RT(9)cCompMold @RT(0) @T @F @DT @RT(4)DINT @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+0 @RT(3)101 @RT(14)Component Mold 
+@END_Attrib 
+1 1 @F @F @F @F 
+
+@Var @RT(15)cCompMoldHeight @RT(0) @T @F @DT @RT(4)DINT @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+0 @RT(3)124 @RT(21)Component Mold Height 
+@END_Attrib 
+1 1 @F @F @F @F 
+
+@END_Const 
+
+@BEG_Export 
+
+@BEG_Kind 
+@ALGORITHM_BLOCK @RT(14)ABManualButton @STRUCTURED_TEXT 
+@RT(0) @RT(0) @RT(0) 
+@END_Kind 
+
+@BEG_Dcl 
+@RT(16)DclTreeContainer 
+22 
+@Var @RT(9)PU_Task_7 @RT(0) @T @F @DT @RT(4)TASK @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 7 @F @F @F @F 
+
+@Var @RT(9)EV_Task_7 @RT(0) @T @F @DT @RT(4)TASK @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 7 @F @F @F @F 
+
+@Var @RT(28)erSetupModeRequiredForAdjust @RT(0) @T @F @DT @RT(5)ALARM @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 7 @F @F @F @F 
+
+@Var @RT(16)evStartedStopped @RT(0) @T @T @DERIVED 0 @T @T @DT @RT(17)tevStartedStopped @RT(0) @T @T @UNKNOWN 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 7 @F @F @F @F 
+
+@Var @RT(21)sv_MoveMoldHeightAuto @RT(0) @T @T @DERIVED 0 @T @T @DT @RT(10)tsMoveData @RT(0) @T @T @UNKNOWN 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 8 @F @F @F @F 
+
+@Var @RT(30)sv_bAutoMoldHeightAdjustActive @RT(0) @T @F @DT @RT(4)BOOL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(46)is TRUE when auto mold height adjust is acitve @RT(0) 
+@END_Attrib 
+1 8 @F @F @F @F 
+
+@Var @RT(25)sv_bLedAutoAdjust_ledAttr @RT(0) @T @F @DT @RT(4)BYTE @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(13)LED Attribute @RT(0) 
+@END_Attrib 
+1 8 @F @F @F @F 
+
+@Var @RT(20)sv_bHMILedAutoAdjust @RT(0) @T @F @DT @RT(4)BOOL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 8 @F @F @F @F 
+
+@Var @RT(28)sv_bHMILedAutoAdjust_ledAttr @RT(0) @T @F @DT @RT(4)BYTE @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(13)LED Attribute @RT(0) 
+@END_Attrib 
+1 8 @F @F @F @F 
+
+@Var @RT(17)sv_bLedAutoAdjust @RT(0) @T @F @DT @RT(4)BOOL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 8 @F @F @F @F 
+
+@Var @RT(13)sv_bInitStart @RT(0) @T @F @DT @RT(4)BOOL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 8 @F @F @F @F 
+
+@Var @RT(16)sv_OperationMode @RT(0) @T @T @DERIVED 0 @T @T @DT @RT(15)tnOperationMode @RT(0) @T @T @UNKNOWN 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 8 @F @F @F @F 
+
+@Var @RT(12)sv_bInitDone @RT(0) @T @F @DT @RT(4)BOOL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 8 @F @F @F @F 
+
+@Var @RT(11)sv_DeviceId @RT(0) @T @T @DERIVED 0 @T @T @DT @RT(10)tsDeviceId @RT(0) @T @T @UNKNOWN 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 8 @F @F @F @F 
+
+@Var @RT(24)sv_bMoldHeightAutoAdjHMI @RT(0) @T @F @DT @RT(4)BOOL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(45)hmi can start/stop automh adjust with this SV @RT(0) 
+@END_Attrib 
+1 8 @F @F @F @F 
+
+@Var @RT(15)sv_bDeviceReady @RT(0) @T @F @DT @RT(4)BOOL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 8 @F @F @F @F 
+
+@Var @RT(14)fbManualButton @RT(0) @T @T @DERIVED 0 @T @T @DT @RT(18)FBManualButtonKeep @RT(0) @T @T @UNKNOWN 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(12)mpbMoldReady @RT(0) @T @T @REFTO 0 @T @DT @RT(4)BOOL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(18)mpbMoldHeightReady @RT(0) @T @T @REFTO 0 @T @DT @RT(4)BOOL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(10)g_b2Platen @RT(0) @T @F @DT @RT(4)BOOL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 6 @F @F @F @F 
+
+@Var @RT(11)mpbNutsOpen @RT(0) @T @T @REFTO 0 @T @DT @RT(4)BOOL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(17)mAlarmNutsNotOpen @RT(0) @T @T @DERIVED 0 @F @RT(7)tsAlarm @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@END_Dcl 
+
+@END_Export 
+
+@BEG_Body 
+
+6 
+
+@BEG_Export 
+
+@BEG_Algo 
+@ALGORITHM @RT(10)aStartStop @STRUCTURED_TEXT 
+@RT(0) @RT(0) @RT(0) @F @F 
+@END_Algo 
+
+@BEG_Dcl 
+@RT(16)DclTreeContainer 
+1 
+@Var @RT(6)bStart @RT(0) @T @F @DT @RT(4)BOOL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 1 @F @F @F @F 
+
+@END_Dcl 
+
+@END_Export 
+
+@BEG_Export 
+
+@BEG_Algo 
+@ALGORITHM @RT(12)aButtonStart @STRUCTURED_TEXT 
+@RT(0) @RT(0) @RT(0) @F @F 
+@END_Algo 
+
+@BEG_Dcl 
+@RT(16)DclTreeContainer 
+1 
+@Var @RT(12)bButtonStart @RT(0) @T @F @DT @RT(4)BOOL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 1 @F @F @F @F 
+
+@END_Dcl 
+
+@END_Export 
+
+@BEG_Export 
+
+@BEG_Algo 
+@POSTUPDATE_ALGORITHM @RT(9)pHMIStart @STRUCTURED_TEXT 
+@RT(0) @RT(24)sv_bMoldHeightAutoAdjHMI @RT(9)PU_Task_7 @F @F 
+@END_Algo 
+
+@BEG_Dcl 
+@RT(16)DclTreeContainer 
+0 
+@END_Dcl 
+
+@END_Export 
+
+@BEG_Export 
+
+@BEG_Algo 
+@POSTUPDATE_ALGORITHM @RT(11)pLedControl @STRUCTURED_TEXT 
+@RT(0) @RT(44)sv_bAutoMoldHeightAdjustActive,sv_bInitStart @RT(9)PU_Task_7 @F @F 
+@END_Algo 
+
+@BEG_Dcl 
+@RT(16)DclTreeContainer 
+2 
+@Var @RT(9)bInitDone @RT(0) @T @F @DT @RT(4)BOOL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(21)mbLedAutoAdjustExists @RT(0) @T @F @DT @RT(4)BOOL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(5)FALSE @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@END_Dcl 
+
+@END_Export 
+
+@BEG_Export 
+
+@BEG_Algo 
+@POSTUPDATE_ALGORITHM @RT(9)pInitDone @STRUCTURED_TEXT 
+@RT(0) @RT(12)sv_bInitDone @RT(13)PU_Task_7(10) @F @F 
+@END_Algo 
+
+@BEG_Dcl 
+@RT(16)DclTreeContainer 
+3 
+@Var @RT(12)fbCheckReady @RT(0) @T @T @DERIVED 0 @T @T @DT @RT(12)FBCheckReady @RT(0) @T @T @UNKNOWN 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(8)DeviceId @RT(0) @T @T @DERIVED 0 @T @T @DT @RT(10)tsDeviceId @RT(0) @T @T @UNKNOWN 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(17)fbCheckPosReached @RT(0) @T @T @DERIVED 0 @F @RT(17)FBCheckPosReached @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@END_Dcl 
+
+@END_Export 
+
+@BEG_Export 
+
+@BEG_Algo 
+@EVENT_ALGORITHM @RT(17)evaStartedStopped @STRUCTURED_TEXT 
+@RT(0) @RT(16)evStartedStopped @RT(9)EV_Task_7 @F @F 
+@END_Algo 
+
+@BEG_Dcl 
+@RT(16)DclTreeContainer 
+1 
+@Var @RT(20)evStartedStoppedData @RT(0) @T @T @DERIVED 0 @T @T @DT @RT(21)tevStartedStoppedData @RT(0) @T @T @UNKNOWN 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 1 @F @F @F @F 
+
+@END_Dcl 
+
+@END_Export 
+
+@BEG_Body 
+@TL(37)
+(**************************************** WARNING ********************************************
+ *** The KEBA Kemro K2 System including software is not intended for safety control tasks! ***
+ ***                       For further information see Comment tab!                        ***
+ *********************************************************************************************)
+
+IF (bStart AND (sv_OperationMode <> nSetup)) THEN
+   //ignore button if operation mode is not setup
+   SET_ALARM(Name := erSetupModeRequiredForAdjust,
+            SubID1 := sv_DeviceId.CompId);
+   sv_bMoldHeightAutoAdjHMI := FALSE;
+   RETURN;
+END_IF;
+
+IF bStart AND g_b2Platen THEN
+   //ignore button if lock nuts are not open
+   IF NOT mpbNutsOpen^ THEN
+      SET_ALARM(Name := mAlarmNutsNotOpen.AlarmId);
+      sv_bMoldHeightAutoAdjHMI := FALSE;
+      RETURN;
+   END_IF;
+END_IF;
+   
+IF (bStart AND sv_bDeviceReady) THEN
+   IF (mpbMoldReady <> EMPTY AND NOT mpbMoldReady^) OR (mpbMoldHeightReady <> EMPTY AND NOT mpbMoldHeightReady^) THEN
+      // auto adjust should be started and mold movement or mold adjust movement acitve 
+      // -> ignore manual button
+      RETURN;
+   END_IF;
+END_IF;
+
+(*@ MoldHeightAdjustN.ABManualButton.pButtonStart.Call the fbManualButton using the sv_MoveMoldHeightAuto parameters *)
+IF (bStart AND sv_bDeviceReady) OR ((NOT bStart) AND (NOT sv_bDeviceReady)) THEN
+   fbManualButton(bButton := TRUE, MoveId := sv_MoveMoldHeightAuto.MoveId, MoveDir := sv_MoveMoldHeightAuto.MoveDir);
+END_IF;
+
+
+
+@END_Body 
+
+@@@BEG_Comment@@@ 
+@TL(3)
+This algo starts the mold height automatic adjustment by calling the 
+system.FBManualButton with the correct parameters when the di_ButtonIn is 
+pressed. (post update).
+@@@END_Comment@@@ 
+
+@BEG_Body 
+@TL(9)
+(**************************************** WARNING ********************************************
+ *** The KEBA Kemro K2 System including software is not intended for safety control tasks! ***
+ ***                       For further information see Comment tab!                        ***
+ *********************************************************************************************)
+
+IF bButtonStart THEN
+    sv_bMoldHeightAutoAdjHMI := NOT sv_bMoldHeightAutoAdjHMI;
+END_IF;
+
+@END_Body 
+
+@@@BEG_Comment@@@ 
+@TL(3)
+This algo starts the mold height automatic adjustment by calling the 
+system.FBManualButton with the correct parameters when the di_ButtonIn is 
+pressed. (post update).
+@@@END_Comment@@@ 
+
+@BEG_Body 
+@TL(12)
+(**************************************** WARNING ********************************************
+ *** The KEBA Kemro K2 System including software is not intended for safety control tasks! ***
+ ***                       For further information see Comment tab!                        ***
+ *********************************************************************************************)
+
+IF (sv_bMoldHeightAutoAdjHMI AND sv_bDeviceReady) THEN
+    aStartStop(TRUE);
+ELSIF ((NOT sv_bMoldHeightAutoAdjHMI) AND (NOT sv_bDeviceReady)) THEN
+    aStartStop(FALSE);
+END_IF;
+
+
+@END_Body 
+
+@@@BEG_Comment@@@ 
+@TL(3)
+This algo starts the mold height automatic adjustment by calling the 
+system.FBManualButton with the correct parameters when the di_ButtonIn is 
+pressed. (post update).
+@@@END_Comment@@@ 
+
+@BEG_Body 
+@TL(22)
+(**************************************** WARNING ********************************************
+ *** The KEBA Kemro K2 System including software is not intended for safety control tasks! ***
+ ***                       For further information see Comment tab!                        ***
+ *********************************************************************************************)
+
+IF NOT bInitDone THEN
+    sv_bHMILedAutoAdjust_ledAttr := 16#3;
+    IF IS_LINKED(sv_bLedAutoAdjust) AND IS_LINKED(sv_bLedAutoAdjust_ledAttr) THEN
+        sv_bLedAutoAdjust_ledAttr := sv_bHMILedAutoAdjust_ledAttr;
+        mbLedAutoAdjustExists := TRUE;
+    ELSE
+        mbLedAutoAdjustExists := FALSE;
+    END_IF;
+    
+    bInitDone := TRUE;
+END_IF;
+
+sv_bHMILedAutoAdjust := sv_bAutoMoldHeightAdjustActive;
+IF mbLedAutoAdjustExists THEN
+    sv_bLedAutoAdjust := sv_bHMILedAutoAdjust;
+END_IF;
+
+@END_Body 
+
+@@@BEG_Comment@@@ 
+@TL(0)
+
+@@@END_Comment@@@ 
+
+@BEG_Body 
+@TL(29)
+(**************************************** WARNING ********************************************
+ *** The KEBA Kemro K2 System including software is not intended for safety control tasks! ***
+ ***                       For further information see Comment tab!                        ***
+ *********************************************************************************************)
+
+//get reference to ready flag of mold function unit
+DeviceId.CompId := cCompMold;
+DeviceId.IndexId := sv_DeviceId.IndexId;
+fbCheckReady(DeviceId := DeviceId);
+mpbMoldReady := fbCheckReady.pbReady;
+
+//get reference to ready flag of mold adjust function unit
+DeviceId.CompId := cCompMoldHeight;
+DeviceId.IndexId := sv_DeviceId.IndexId;
+fbCheckReady(DeviceId := DeviceId);
+mpbMoldHeightReady := fbCheckReady.pbReady;
+
+//get reference to mold nut open movement and save according alarm
+IF g_b2Platen THEN
+   DeviceId.CompId := cCompMoldNuts;
+   DeviceId.IndexId := sv_DeviceId.IndexId;
+   fbCheckPosReached(DeviceId := DeviceId,
+                     MoveDir := cMoveOpen,
+                     MoveId := cMoveOpen);
+   
+   mpbNutsOpen := fbCheckPosReached.pbPosReached;
+   mAlarmNutsNotOpen := fbCheckPosReached.Alarm;
+END_IF;
+
+@END_Body 
+
+@@@BEG_Comment@@@ 
+@TL(0)
+
+@@@END_Comment@@@ 
+
+@BEG_Body 
+@TL(18)
+(**************************************** WARNING ********************************************
+ *** The KEBA Kemro K2 System including software is not intended for safety control tasks! ***
+ ***                       For further information see Comment tab!                        ***
+ *********************************************************************************************)
+
+IF evStartedStoppedData.MoveId = cMoldHeightAutomatic AND evStartedStoppedData.DeviceId = sv_DeviceId THEN
+   IF evStartedStoppedData.State = nStopped OR evStartedStoppedData.State = nStartNotAllowed THEN
+      //reset flag when movement in state nStopped OR nStartNotAllowed
+      //we can not use a POSTUPDATE on sv_bDeviceReady and check for TRUE because the movement might be locked
+      // -> sv_bDeviceReady never goes FALSE -> no POSTUPDATE is executed
+      //also we can not use evMovementState because this one is not set by mold height adjust admin
+      sv_bMoldHeightAutoAdjHMI := FALSE;
+   END_IF;
+END_IF; 
+
+
+
+
+@END_Body 
+
+@@@BEG_Comment@@@ 
+@TL(2)
+Manage list and count of currently started movments
+in sv_StartedMovements when receiving evStartedStopped events
+@@@END_Comment@@@ 
+@END_Body 
+
+@END_Contents 

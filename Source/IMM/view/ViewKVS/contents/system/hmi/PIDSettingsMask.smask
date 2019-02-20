@@ -1,0 +1,203 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<base:Mask xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xmlns:base="http://www.keba.at/viewedit.model.base" widgetId="kvs.mask" name="PIDSettingsMask">
+  <resolution width="684" height="476"/>
+  <position x="1" y="1"/>
+  <attributeValues key="Title" value="Control settings"/>
+  <attributeValues key="Icon" value="system/hmi/images/maskicons/iconPIDSet.gif"/>
+  <attributeValues key="DisplayLevel" value="12"/>
+  <widgetInstances xsi:type="base:ContainerWidgetInstance" widgetId="kvs.panel" name="panelMain" layoutConstraint="CENTER">
+    <resolution width="684" height="476"/>
+    <position/>
+    <border name="TitledBorder" id="kv.border.TitledBorder"/>
+    <widgetInstances xsi:type="base:ContainerWidgetInstance" widgetId="kvs.panel" name="panelLeft" layoutConstraint="LEFT">
+      <resolution width="333" height="466"/>
+      <position x="6" y="5"/>
+      <attributeValues key="PreferredSize" value="348, 490"/>
+      <widgetInstances xsi:type="base:CompositeWidgetInstance" widgetId="0b697383-ddc5-4d70-9b2f-10b1c8b62991" name="pidpanelInject" layoutConstraint="null">
+        <resolution width="333" height="155"/>
+        <position/>
+        <attributeValues key="PreferredSize" value="271, 155"/>
+        <attributeValues key="Title" value="Inject"/>
+        <attributeValues key="ParamName" value="Injection1.sv_InjectControlParams"/>
+      </widgetInstances>
+      <widgetInstances xsi:type="base:CompositeWidgetInstance" widgetId="0b697383-ddc5-4d70-9b2f-10b1c8b62991" name="pidpanelInjectPressure" layoutConstraint="null">
+        <resolution width="333" height="155"/>
+        <position y="155"/>
+        <attributeValues key="PreferredSize" value="271, 155"/>
+        <attributeValues key="Title" value="Inject pressure limit"/>
+        <attributeValues key="ParamName" value="Injection1.sv_PressureLimitControlParams"/>
+        <dynamicAttributes key="Create">
+          <value function="hasInjectOrSysPressSensor_AND_hasNoSpeedPump : UserFunctions" equal="true" unequal="false"/>
+        </dynamicAttributes>
+      </widgetInstances>
+      <widgetInstances xsi:type="base:CompositeWidgetInstance" widgetId="0b697383-ddc5-4d70-9b2f-10b1c8b62991" name="pidpanelHold" layoutConstraint="null">
+        <resolution width="333" height="155"/>
+        <position y="310"/>
+        <attributeValues key="PreferredSize" value="271, 155"/>
+        <attributeValues key="Title" value="Hold"/>
+        <attributeValues key="ParamName" value="Injection1.sv_HoldingControlParams"/>
+        <dynamicAttributes key="Create">
+          <value function="hasInjectOrSysPressSensor_AND_hasNoSpeedPump : UserFunctions" equal="true" unequal="false"/>
+        </dynamicAttributes>
+      </widgetInstances>
+      <layout layoutID="kvs.layout.VerticalFlowLayout" name="VerticalFlowLayout">
+        <attributeValues key="Hgap" value="0"/>
+        <attributeValues key="OuterGaps" value="false"/>
+        <attributeValues key="Alignment" value="TOP"/>
+        <attributeValues key="Vgap" value="0"/>
+      </layout>
+    </widgetInstances>
+    <widgetInstances xsi:type="base:ContainerWidgetInstance" widgetId="kvs.panel" name="panelRight" layoutConstraint="RIGHT">
+      <resolution width="333" height="466"/>
+      <position x="345" y="5"/>
+      <widgetInstances xsi:type="base:CompositeWidgetInstance" widgetId="0b697383-ddc5-4d70-9b2f-10b1c8b62991" name="pidpanelPLVelocityInject" layoutConstraint="null">
+        <resolution width="333" height="155"/>
+        <position/>
+        <attributeValues key="PreferredSize" value="271,155"/>
+        <attributeValues key="Title" value="Pressure limit controller"/>
+        <attributeValues key="ParamName" value="Injection1.sv_PressureLimitVelocityParams"/>
+        <dynamicAttributes key="Create">
+          <value function="hasOption_AND_NOT_hasOption : UserFunctions" equal="true" unequal="false">
+            <parameter key="1" value="devicename;PlastFunctionUtils.createDeviceName(&quot;Injection1&quot;)"/>
+            <parameter key="2" value="machineoptionid;system.hmi.MachineEquipment.ELECTRIC"/>
+            <parameter key="3" value="machineoptionid;system.hmi.MachineEquipment.SUB_OPTION_INJECTION_DRIVE_EXT_PRESS_CTRL"/>
+          </value>
+        </dynamicAttributes>
+      </widgetInstances>
+      <widgetInstances xsi:type="base:CompositeWidgetInstance" widgetId="0b697383-ddc5-4d70-9b2f-10b1c8b62991" name="pidpanelBackpressure" layoutConstraint="null">
+        <resolution width="333" height="155"/>
+        <position y="155"/>
+        <attributeValues key="PreferredSize" value="271,155"/>
+        <attributeValues key="Title" value="Backpressure"/>
+        <attributeValues key="ParamName" value="Injection1.sv_BackPressureControlParams"/>
+        <dynamicAttributes key="Create">
+          <value function="hasOption : UserFunctions" equal="false" unequal="true">
+            <parameter key="1" value="devicename;PlastFunctionUtils.createDeviceName(&quot;Injection1&quot;)"/>
+            <parameter key="2" value="machineoptionid;system.hmi.MachineEquipment.SUB_OPTION_INJECTION_DRIVE_EXT_PRESS_CTRL"/>
+          </value>
+        </dynamicAttributes>
+      </widgetInstances>
+      <widgetInstances xsi:type="base:CompositeWidgetInstance" widgetId="0b697383-ddc5-4d70-9b2f-10b1c8b62991" name="pidpanelPlasticize" layoutConstraint="null">
+        <resolution width="333" height="155"/>
+        <position y="310"/>
+        <attributeValues key="PreferredSize" value="271,155"/>
+        <attributeValues key="Title" value="Plasticize"/>
+        <attributeValues key="ParamName" value="Injection1.sv_PlastControlParams"/>
+        <dynamicAttributes key="Create">
+          <value function="doesVariableExist : UserFunctions" equal="false" unequal="true">
+            <parameter key="1" value="variableasstring; PlastFunctionUtils.createVariableString(&quot;Injection1.sv_ServoPlast.iID&quot;)"/>
+          </value>
+        </dynamicAttributes>
+      </widgetInstances>
+      <widgetInstances xsi:type="base:ContainerWidgetInstance" widgetId="keplast.kvs.borderpanelsmall" name="brdPanelExtPressCtrl" layoutConstraint="null">
+        <resolution width="333" height="124"/>
+        <position x="333"/>
+        <attributeValues key="Title" value="Drive pressure controller"/>
+        <dynamicAttributes key="Create">
+          <value function="hasOption : UserFunctions" equal="true" unequal="false">
+            <parameter key="1" value="devicename;PlastFunctionUtils.createDeviceName(&quot;Injection1&quot;)"/>
+            <parameter key="2" value="machineoptionid;system.hmi.MachineEquipment.SUB_OPTION_INJECTION_DRIVE_EXT_PRESS_CTRL"/>
+          </value>
+        </dynamicAttributes>
+        <widgetInstances xsi:type="base:ContainerWidgetInstance" widgetId="kvs.panel" name="panelExtPressCtrlHeader" layoutConstraint="null">
+          <resolution width="327" height="29"/>
+          <position x="3" y="33"/>
+          <widgetInstances xsi:type="base:ContainerWidgetInstance" widgetId="kvs.panel" name="cFlexGap1" layoutConstraint="null">
+            <resolution width="10" height="10"/>
+            <position x="3" y="9"/>
+            <layout layoutID="kvs.layout.PercentLayout" name="PercentLayout"/>
+          </widgetInstances>
+          <widgetInstances widgetId="kvs.label" name="labelExtPressCtrlSet1" layoutConstraint="null">
+            <resolution width="58" height="29"/>
+            <position x="126"/>
+            <attributeValues key="Text" value="Set1"/>
+            <attributeValues key="PreferredSize" value="58, 29"/>
+          </widgetInstances>
+          <widgetInstances xsi:type="base:ContainerWidgetInstance" widgetId="kvs.panel" name="cGap1" layoutConstraint="null">
+            <resolution width="38" height="10"/>
+            <position x="187" y="9"/>
+            <attributeValues key="PreferredSize" value="38, 10"/>
+            <layout layoutID="kvs.layout.PercentLayout" name="PercentLayout"/>
+          </widgetInstances>
+          <widgetInstances widgetId="kvs.label" name="labelExtPressCtrlSet2" layoutConstraint="null">
+            <resolution width="58" height="29"/>
+            <position x="228"/>
+            <attributeValues key="Text" value="Set2"/>
+            <attributeValues key="PreferredSize" value="58, 29"/>
+          </widgetInstances>
+          <widgetInstances xsi:type="base:ContainerWidgetInstance" widgetId="kvs.panel" name="cGap2" layoutConstraint="null">
+            <resolution width="38" height="10"/>
+            <position x="289" y="9"/>
+            <attributeValues key="PreferredSize" value="38, 10"/>
+            <layout layoutID="kvs.layout.PercentLayout" name="PercentLayout"/>
+          </widgetInstances>
+          <layout layoutID="keplast.kvs.layout.beanlayout" name="BeanLayout"/>
+        </widgetInstances>
+        <widgetInstances widgetId="keplast.kvs.twonumfieldtext" name="fieldsExtPressCtrlP" layoutConstraint="null">
+          <resolution width="327" height="29"/>
+          <position x="3" y="62"/>
+          <attributeValues key="VariableLeft" value="Injection1.sv_TuningParamHMI.iKp"/>
+          <attributeValues key="VariableRight" value="Injection1.sv_TuningParam2HMI.iKp"/>
+          <attributeValues key="UnitVisibleLeft" value="false"/>
+        </widgetInstances>
+        <widgetInstances widgetId="keplast.kvs.twonumfieldtext" name="fieldsExtPressCtrlI" layoutConstraint="null">
+          <resolution width="327" height="29"/>
+          <position x="3" y="91"/>
+          <attributeValues key="UnitVisibleLeft" value="false"/>
+          <attributeValues key="VariableLeft" value="Injection1.sv_TuningParamHMI.iKi"/>
+          <attributeValues key="VariableRight" value="Injection1.sv_TuningParam2HMI.iKi"/>
+        </widgetInstances>
+        <layout layoutID="kvs.layout.GridLayout" name="GridLayout">
+          <attributeValues key="Rows" value="3"/>
+          <attributeValues key="Columns" value="1"/>
+        </layout>
+      </widgetInstances>
+      <widgetInstances xsi:type="base:ContainerWidgetInstance" widgetId="keplast.kvs.borderpanelsmall" name="brdpanelPosBalance" layoutConstraint="null">
+        <resolution width="333" height="66"/>
+        <position x="333" y="124"/>
+        <attributeValues key="Title" value="Position balance controller"/>
+        <dynamicAttributes key="Create">
+          <value function="hasOption : UserFunctions" equal="true" unequal="false">
+            <parameter key="1" value="devicename;PlastFunctionUtils.createDeviceName(&quot;Injection1&quot;)"/>
+            <parameter key="2" value="machineoptionid;system.hmi.MachineEquipment.SUB_OPTION_INJECTION_DRIVE_POS_BALANCE"/>
+          </value>
+        </dynamicAttributes>
+        <widgetInstances widgetId="keplast.kvs.numfieldtext" name="numfieldPosBalanceP" layoutConstraint="null">
+          <resolution width="327" height="29"/>
+          <position x="3" y="33"/>
+          <attributeValues key="Variable" value="Injection1.sv_BalanceControllerParam.rP"/>
+        </widgetInstances>
+        <layout layoutID="kvs.layout.GridLayout" name="GridLayout">
+          <attributeValues key="Columns" value="1"/>
+          <attributeValues key="Rows" value="1"/>
+        </layout>
+      </widgetInstances>
+      <widgetInstances xsi:type="base:ContainerWidgetInstance" widgetId="keplast.kvs.borderpanelsmall" name="brdpanelHoldSetValFilter" layoutConstraint="null">
+        <resolution width="333" height="66"/>
+        <position x="333" y="190"/>
+        <attributeValues key="Title" value="Hold set value filter"/>
+        <dynamicAttributes key="Create">
+          <value function="doesDeviceExist : UserFunctions" equal="true" unequal="false">
+            <parameter key="1" value="devicename; PlastFunctionUtils.createDeviceName(&quot;ValveServoInj1&quot;)"/>
+          </value>
+        </dynamicAttributes>
+        <widgetInstances widgetId="keplast.kvs.numfieldtext" name="numfieldHoldSetValFilterTime" layoutConstraint="null">
+          <resolution width="327" height="29"/>
+          <position x="3" y="33"/>
+          <attributeValues key="Variable" value="Injection1.sv_HoldingDeadTimeParams.dPT2T1"/>
+        </widgetInstances>
+        <layout layoutID="kvs.layout.GridLayout" name="GridLayout">
+          <attributeValues key="Columns" value="1"/>
+          <attributeValues key="Rows" value="1"/>
+        </layout>
+      </widgetInstances>
+      <layout layoutID="kvs.layout.VerticalFlowLayout" name="VerticalFlowLayout">
+        <attributeValues key="Vgap" value="0"/>
+        <attributeValues key="Hgap" value="0"/>
+        <attributeValues key="OuterGaps" value="false"/>
+      </layout>
+    </widgetInstances>
+    <layout layoutID="keplast.kvs.layout.horizontalsplitlayout" name="HorizontalSplitLayout"/>
+  </widgetInstances>
+  <layout layoutID="kvs.layout.BorderLayout" name="BorderLayout"/>
+</base:Mask>

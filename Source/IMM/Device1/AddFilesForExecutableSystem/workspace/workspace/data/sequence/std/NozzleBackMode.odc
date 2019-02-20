@@ -1,0 +1,45 @@
+// =============================================================================
+// Nozzle back mode
+// available modes:
+// no, after plast, before mold open, after injection
+// =============================================================================
+
+KePlast_ODC_Option
+FileFormatVersion = 1.0
+
+SelectorVar = Nozzle<index>.sv_NozzleBwdMode
+
+{Sequ}
+   // movement to insert
+   Nozzle<index>.Bwd
+{Sequ_End}
+
+// insert conditions
+
+// off -> no insertion of movement
+
+// after plast
+{Insert}
+   SelectorValue  = 1
+   Insert         = After Injection.Plast
+   InsertPriority = 10
+{Insert_End}
+
+// before mold open
+{Insert}
+   SelectorValue  = 2
+   Insert         = Before Mold.BeginOpeningSequence
+   InsertPriority = 10
+{Insert_End}
+
+// after inject
+// movement must be inserted before plast, otherwise it delays start of cooling time
+{Insert}
+   SelectorValue  = 3
+   Insert         = Before Injection.Plast
+   InsertPriority = 10
+{Insert_End}
+
+// signed: 26.05.2009 14:05:17
+Username = fal
+Checksum = 0xada0c27cab0fbc82745bd71713320c63

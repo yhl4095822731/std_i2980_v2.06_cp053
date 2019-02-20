@@ -1,0 +1,24 @@
+# KePlast specific attributes
+
+*.iarc diff=iarc merge=iarc
+*.jar -diff
+
+#To hide UFF code in diffs, you can set diff=uff on the files below
+#It should not be set on *.at as on this files some information is only present
+#in the UFF code and not in the top code
+*.at merge=uff
+*.fu merge=uff
+*.pu merge=uff
+*.sc merge=uff
+*.sm merge=uff
+*.sv merge=uff
+*.tu merge=uff
+*.kmprj -merge
+
+project.viewedit filter=gitclean
+settings.properties filter=gitclean
+
+#Experimental cleaning of HMIBaseWidgets.jar
+#Disabled because it causes too many problems, the file keeps changing
+#instead of changing only once when the project is moved around
+#HMIBaseWidgets.jar filter=gitclean

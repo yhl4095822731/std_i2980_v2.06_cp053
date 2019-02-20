@@ -1,0 +1,136 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<base:Mask xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xmlns:base="http://www.keba.at/viewedit.model.base" widgetId="kvs.mask" name="NozzleParameterMask1">
+  <resolution width="714" height="476"/>
+  <position x="1" y="1"/>
+  <attributeValues key="Title" value="Nozzle parameters"/>
+  <attributeValues key="Icon" value="Nozzle1/hmi/images/iconNozzleParam.gif"/>
+  <attributeValues key="Background" value="BG_Desktop:30,30,30"/>
+  <widgetInstances xsi:type="base:ContainerWidgetInstance" widgetId="kvs.panel" name="panelContentNorth" layoutConstraint="NORTH">
+    <resolution width="714" height="365"/>
+    <position/>
+    <widgetInstances xsi:type="base:ContainerWidgetInstance" widgetId="keplast.kvs.borderpanelsmall" name="panelParameters" layoutConstraint="NORTH">
+      <resolution width="714" height="233"/>
+      <position/>
+      <attributeValues key="Background" value="BG_Panel:220,220,220"/>
+      <attributeValues key="Title" value="Nozzle parameter settings"/>
+      <attributeValues key="PreferredSize" value="10, 233"/>
+      <widgetInstances xsi:type="base:ContainerWidgetInstance" widgetId="kvs.panel" name="panelParamsRight" layoutConstraint="RIGHT">
+        <resolution width="347" height="58"/>
+        <position x="361" y="33"/>
+        <widgetInstances widgetId="keplast.kvs.checkboxtext" name="chkboxUseChrgHold" layoutConstraint="null">
+          <resolution width="347" height="29"/>
+          <position/>
+          <attributeValues key="Variable" value="Nozzle1.sv_bFwdDuringPlast"/>
+          <dynamicAttributes key="Create">
+            <value function="isDeviceElectric : UserFunctions" equal="false" unequal="true">
+              <parameter key="1" value="devicename; PlastFunctionUtils.createDeviceName(&quot;Nozzle1&quot;)"/>
+            </value>
+          </dynamicAttributes>
+        </widgetInstances>
+        <widgetInstances widgetId="keplast.kvs.checkboxtext" name="chkboxNozzleHoldDurInject" layoutConstraint="null">
+          <resolution width="347" height="29"/>
+          <position y="29"/>
+          <attributeValues key="Variable" value="Nozzle1.sv_bFwdDuringInject"/>
+          <dynamicAttributes key="Create">
+            <value function="isDeviceElectric : UserFunctions" equal="false" unequal="true">
+              <parameter key="1" value="devicename; PlastFunctionUtils.createDeviceName(&quot;Nozzle1&quot;)"/>
+            </value>
+          </dynamicAttributes>
+        </widgetInstances>
+        <layout layoutID="kvs.layout.GridLayout" name="GridLayout">
+          <attributeValues key="Rows" value="0"/>
+          <attributeValues key="Columns" value="1"/>
+        </layout>
+      </widgetInstances>
+      <widgetInstances xsi:type="base:ContainerWidgetInstance" widgetId="kvs.panel" name="panelParamsLeft" layoutConstraint="LEFT">
+        <resolution width="347" height="116"/>
+        <position x="6" y="33"/>
+        <widgetInstances widgetId="keplast.kvs.actsetnumfieldtext" name="numfieldNozzleFwdMaxTime" layoutConstraint="null">
+          <resolution width="347" height="29"/>
+          <position/>
+          <attributeValues key="Variable" value="Nozzle1.sv_NozzleFwdTimesSet.dMaxMoveTime"/>
+          <attributeValues key="VariableActual" value="Nozzle1.sv_NozzleFwdTimesAct.dActMoveTime"/>
+        </widgetInstances>
+        <widgetInstances widgetId="keplast.kvs.actsetnumfieldtext" name="numfieldNozzleBwdMaxTime" layoutConstraint="null">
+          <resolution width="347" height="29"/>
+          <position y="29"/>
+          <attributeValues key="Variable" value="Nozzle1.sv_NozzleBwdTimesSet.dMaxMoveTime"/>
+          <attributeValues key="VariableActual" value="Nozzle1.sv_NozzleBwdTimesAct.dActMoveTime"/>
+        </widgetInstances>
+        <widgetInstances widgetId="keplast.kvs.klabeltip" name="labelDummy" layoutConstraint="null">
+          <resolution width="347" height="29"/>
+          <position y="58"/>
+          <attributeValues key="Visible" value="false"/>
+        </widgetInstances>
+        <widgetInstances widgetId="keplast.kvs.actsetnumfieldtext" name="numfieldAutoPurge" layoutConstraint="null">
+          <resolution width="347" height="29"/>
+          <position y="87"/>
+          <attributeValues key="Variable" value="Injection1.sv_PurgeSettings.dMaxPurgeTime"/>
+          <attributeValues key="VariableActual" value="Injection1.sv_ActPurgeTimes.dActPurgeTime"/>
+        </widgetInstances>
+        <layout layoutID="kvs.layout.GridLayout" name="GridLayout">
+          <attributeValues key="Rows" value="0"/>
+          <attributeValues key="Columns" value="1"/>
+        </layout>
+      </widgetInstances>
+      <widgetInstances widgetId="keplast.kvs.separator" name="separator1" layoutConstraint="SEPARATOR">
+        <resolution width="2" height="196"/>
+        <position x="356" y="33"/>
+        <attributeValues key="Foreground" value="gray_mid:153,153,153"/>
+      </widgetInstances>
+      <layout layoutID="keplast.kvs.layout.horizontalsplitlayout" name="HorizontalSplitLayout"/>
+    </widgetInstances>
+    <widgetInstances xsi:type="base:ContainerWidgetInstance" widgetId="keplast.kvs.borderpanelsmall" name="panelNozzleAdjust" layoutConstraint="SOUTH">
+      <resolution width="714" height="124"/>
+      <position y="241"/>
+      <attributeValues key="Title" value="Nozzle adjust settings"/>
+      <dynamicAttributes key="Create">
+        <value function="hasOption : UserFunctions" equal="true" unequal="false">
+          <parameter key="1" value="devicename; PlastFunctionUtils.createDeviceName(&quot;Nozzle1&quot;)"/>
+          <parameter key="2" value="machineoptionid; system.hmi.MachineEquipment.SUB_OPTION_NOZZLE_TRANSDUCER"/>
+        </value>
+      </dynamicAttributes>
+      <widgetInstances xsi:type="base:ContainerWidgetInstance" widgetId="kvs.panel" name="panelNozzleAdjLeft" layoutConstraint="LEFT">
+        <resolution width="347" height="87"/>
+        <position x="6" y="33"/>
+        <widgetInstances widgetId="keplast.kvs.actsetnumfieldtext" name="numfieldNozzleAdjMonTime" layoutConstraint="null">
+          <resolution width="347" height="29"/>
+          <position/>
+          <attributeValues key="Variable" value="Nozzle1.sv_dMaxNozzleAdjustTime"/>
+          <attributeValues key="VariableActual" value="Nozzle1.sv_dActNozzleAdjustTime"/>
+        </widgetInstances>
+        <widgetInstances widgetId="keplast.kvs.numfieldtext" name="numfieldNozzleAdjDetectTime" layoutConstraint="null">
+          <resolution width="347" height="29"/>
+          <position y="29"/>
+          <attributeValues key="Variable" value="Nozzle1.sv_dSetStandstillDetectionTime"/>
+          <dynamicAttributes key="Create">
+            <value function="hasOption_OR_doesVariableExist : UserFunctions" equal="false" unequal="true">
+              <parameter key="1" value="devicename; PlastFunctionUtils.createDeviceName(&quot;Nozzle1&quot;)"/>
+              <parameter key="2" value="machineoptionid; system.hmi.MachineEquipment.ELECTRIC"/>
+              <parameter key="3" value="variableasstring; PlastFunctionUtils.createVariableString(&quot;Nozzle1.di_LimitSwitchFwd&quot;)"/>
+            </value>
+          </dynamicAttributes>
+        </widgetInstances>
+        <widgetInstances widgetId="keplast.kvs.startbuttonmarktext" name="markNozzleAdjustActive" layoutConstraint="null">
+          <resolution width="347" height="29"/>
+          <position y="58"/>
+          <attributeValues key="Variable" value="Nozzle1.sv_bNozzleAdjHMI"/>
+          <attributeValues key="VariableButton" value="Nozzle1.sv_bNozzleAdjHMI"/>
+        </widgetInstances>
+        <layout layoutID="kvs.layout.GridLayout" name="GridLayout">
+          <attributeValues key="Rows" value="0"/>
+          <attributeValues key="Columns" value="1"/>
+        </layout>
+      </widgetInstances>
+      <widgetInstances widgetId="keplast.kvs.separator" name="separator2" layoutConstraint="SEPARATOR">
+        <resolution width="2" height="87"/>
+        <position x="356" y="33"/>
+      </widgetInstances>
+      <layout layoutID="keplast.kvs.layout.horizontalsplitlayout" name="HorizontalSplitLayout"/>
+    </widgetInstances>
+    <layout layoutID="kvs.layout.BorderLayout" name="BorderLayout">
+      <attributeValues key="Vgap" value="4"/>
+    </layout>
+  </widgetInstances>
+  <layout layoutID="kvs.layout.BorderLayout" name="BorderLayout"/>
+</base:Mask>

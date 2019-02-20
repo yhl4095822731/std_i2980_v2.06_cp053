@@ -1,0 +1,159 @@
+(*
+Initializes the option ID variable for MoldHeight
+*)
+
+IMPORT_OVER_LISTFILE
+ IS_LINKED
+, cSubOptionMoldHeightImpSensor
+, tOptionId
+
+END_IMPORT
+
+ALGORITHM_BLOCK ABInitOptions #DUMMY_EDIT_BLOCK
+
+SYSTEM_VAR
+ sv_Options : tOptionId;
+ di_ImpulseInput : BOOL;
+END_VAR
+
+SYSTEM_OBJECT
+ TaskMid : TASK;
+END_OBJECT
+
+PROCESS_ALGORITHM paInitOptions ON TaskMid AUTOSTART
+
+#BEGIN_EDIT_BLOCK
+(**************************************** WARNING ********************************************
+ *** The KEBA Kemro K2 System including software is not intended for safety control tasks! ***
+ ***                       For further information see Comment tab!                        ***
+ *********************************************************************************************)
+ 
+(* checking if MoldHeight impulse input Endpoint is configured in IO-Config *)
+IF IS_LINKED(di_ImpulseInput) THEN
+    sv_Options := sv_Options OR cSubOptionMoldHeightImpSensor;
+END_IF;
+
+STOP_PROCESS_ALGORITHM();
+
+
+;#END_EDIT_BLOCK END_ALGORITHM
+
+
+
+END_ALGORITHM_BLOCK
+
+
+
+#END_OF_IEC_PART
+
+@Puma @IecEditor 6 103 @Pou 25 
+@@@BEG_Comment@@@
+Initializes the option ID variable for MoldHeight
+@@@END_Comment@@@
+
+@BEG_Contents 
+
+@BEG_Func 
+@RT(17)FuncTreeContainer 
+1 
+@Var @RT(9)IS_LINKED @RT(0) @T @T @DERIVED 0 @F @RT(22)KEBA_STANDARD_FUNCTION @F 
+@T 
+@BEG_Attrib 
+0 @RT(0) @RT(0) 
+@END_Attrib 
+1 1 @F @F @F @F 
+
+@END_Func 
+
+@BEG_Const 
+@RT(18)ConstTreeContainer 
+1 
+@Var @RT(29)cSubOptionMoldHeightImpSensor @RT(0) @T @F @DT @RT(5)DWORD @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+0 @RT(6)16#100 @RT(28)MoldHeight has impulse input 
+@END_Attrib 
+1 1 @F @F @F @F 
+
+@END_Const 
+
+@BEG_Export 
+
+@BEG_Kind 
+@ALGORITHM_BLOCK @RT(13)ABInitOptions @STRUCTURED_TEXT 
+@RT(0) @RT(0) @RT(0) 
+@END_Kind 
+
+@BEG_Dcl 
+@RT(16)DclTreeContainer 
+3 
+@Var @RT(10)sv_Options @RT(0) @T @T @DERIVED 0 @T @T @DT @RT(9)tOptionId @RT(0) @T @T @UNKNOWN 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 8 @F @F @F @F 
+
+@Var @RT(15)di_ImpulseInput @RT(0) @T @F @DT @RT(4)BOOL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 8 @F @F @F @F 
+
+@Var @RT(7)TaskMid @RT(0) @T @F @DT @RT(4)TASK @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 7 @F @F @F @F 
+
+@END_Dcl 
+
+@END_Export 
+
+@BEG_Body 
+
+1 
+
+@BEG_Export 
+
+@BEG_Algo 
+@PROCESS_ALGORITHM @RT(13)paInitOptions @STRUCTURED_TEXT 
+@RT(0) @RT(0) @RT(7)TaskMid @T @F 
+@END_Algo 
+
+@BEG_Dcl 
+@RT(16)DclTreeContainer 
+0 
+@END_Dcl 
+
+@END_Export 
+
+@BEG_Body 
+@TL(12)
+(**************************************** WARNING ********************************************
+ *** The KEBA Kemro K2 System including software is not intended for safety control tasks! ***
+ ***                       For further information see Comment tab!                        ***
+ *********************************************************************************************)
+ 
+(* checking if MoldHeight impulse input Endpoint is configured in IO-Config *)
+IF IS_LINKED(di_ImpulseInput) THEN
+    sv_Options := sv_Options OR cSubOptionMoldHeightImpSensor;
+END_IF;
+
+STOP_PROCESS_ALGORITHM();
+
+@END_Body 
+
+@@@BEG_Comment@@@ 
+@TL(0)
+
+@@@END_Comment@@@ 
+@END_Body 
+
+@END_Contents 

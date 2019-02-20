@@ -1,0 +1,359 @@
+(*
+@h    ! WARNING !
+@h    The Kemro K2 system (including software) only meets category B according to EN 954-1,
+@h    thus it is not intended for usage in safety-relevant control applications in the field 
+@h    of personal safety (e.g. emergency stop).
+@h    To implement potentially necessary safety-relevant control tasks, always use additional 
+@h    external safety devices that are intended for the particular purpose, and meet the necessary 
+@h    functional safety.
+@h    For further information see EN 954-1 (EN ISO 13849-1) and/or the K2-x00 user manual, chapter 
+@h    "CE conformity, directives and standards".
+
+
+*)
+
+IMPORT_OVER_LISTFILE
+ tnSVDataTypes
+, tsSV
+, KSYS_Status
+
+END_IMPORT
+
+FUNCTION FGetSysVarFromName : tnSVDataTypes #DUMMY_EDIT_BLOCK
+
+VAR_INPUT
+ Name : STRING(255);
+END_VAR
+
+VAR_IN_OUT
+ SysVar : tsSV;
+END_VAR
+
+VAR
+ SysVarTemp : tsSV;
+ sysStatus : KSYS_Status;
+END_VAR
+#BEGIN_EDIT_BLOCK
+(**************************************** WARNING ********************************************
+ *** The KEBA Kemro K2 System including software is not intended for safety control tasks! ***
+ ***                       For further information see Comment tab!                        ***
+ *********************************************************************************************)
+
+FGetSysVarFromName := nDT_NONE;
+
+SysVarTemp.prREALSV := GET_SYNC_REFTO(Name, t#0s, sysStatus);
+IF sysStatus = KSYS_Status_OK THEN
+   SysVar := SysVarTemp;
+   FGetSysVarFromName := nDT_REAL;
+   RETURN;
+END_IF;
+
+SysVarTemp.pbBOOLSV := GET_SYNC_REFTO(Name, t#0s, sysStatus);
+IF sysStatus = KSYS_Status_OK THEN
+   SysVar := SysVarTemp;
+   FGetSysVarFromName := nDT_BOOL;
+   RETURN;
+END_IF;
+
+SysVarTemp.pdTIMESV := GET_SYNC_REFTO(Name, t#0s, sysStatus);
+IF sysStatus = KSYS_Status_OK THEN
+   SysVar := SysVarTemp;
+   FGetSysVarFromName := nDT_TIME;
+   RETURN;
+END_IF;
+
+SysVarTemp.piBYTESV := GET_SYNC_REFTO(Name, t#0s, sysStatus);
+IF sysStatus = KSYS_Status_OK THEN
+   SysVar := SysVarTemp;
+   FGetSysVarFromName := nDT_BYTE;
+   RETURN;
+END_IF;
+
+SysVarTemp.piWORDSV := GET_SYNC_REFTO(Name, t#0s, sysStatus);
+IF sysStatus = KSYS_Status_OK THEN
+   SysVar := SysVarTemp;
+   FGetSysVarFromName := nDT_WORD;
+   RETURN;
+END_IF;
+
+SysVarTemp.piDWORDSV := GET_SYNC_REFTO(Name, t#0s, sysStatus);
+IF sysStatus = KSYS_Status_OK THEN
+   SysVar := SysVarTemp;
+   FGetSysVarFromName := nDT_DWORD;
+   RETURN;
+END_IF;
+
+SysVarTemp.piLWORDSV := GET_SYNC_REFTO(Name, t#0s, sysStatus);
+IF sysStatus = KSYS_Status_OK THEN
+   SysVar := SysVarTemp;
+   FGetSysVarFromName := nDT_LWORD;
+   RETURN;
+END_IF;
+
+SysVarTemp.piINTSV := GET_SYNC_REFTO(Name, t#0s, sysStatus);
+IF sysStatus = KSYS_Status_OK THEN
+   SysVar := SysVarTemp;
+   FGetSysVarFromName := nDT_INT;
+   RETURN;
+END_IF;
+
+SysVarTemp.piUINTSV := GET_SYNC_REFTO(Name, t#0s, sysStatus);
+IF sysStatus = KSYS_Status_OK THEN
+   SysVar := SysVarTemp;
+   FGetSysVarFromName := nDT_UINT;
+   RETURN;
+END_IF;
+
+SysVarTemp.piDINTSV := GET_SYNC_REFTO(Name, t#0s, sysStatus);
+IF sysStatus = KSYS_Status_OK THEN
+   SysVar := SysVarTemp;
+   FGetSysVarFromName := nDT_DINT;
+   RETURN;
+END_IF;
+
+SysVarTemp.piUDINTSV := GET_SYNC_REFTO(Name, t#0s, sysStatus);
+IF sysStatus = KSYS_Status_OK THEN
+   SysVar := SysVarTemp;
+   FGetSysVarFromName := nDT_UDINT;
+   RETURN;
+END_IF;
+
+SysVarTemp.piSINTSV := GET_SYNC_REFTO(Name, t#0s, sysStatus);
+IF sysStatus = KSYS_Status_OK THEN
+   SysVar := SysVarTemp;
+   FGetSysVarFromName := nDT_SINT;
+   RETURN;
+END_IF;
+
+SysVarTemp.piUSINTSV := GET_SYNC_REFTO(Name, t#0s, sysStatus);
+IF sysStatus = KSYS_Status_OK THEN
+   SysVar := SysVarTemp;
+   FGetSysVarFromName := nDT_USINT;
+   RETURN;
+END_IF;
+
+SysVarTemp.piLINTSV := GET_SYNC_REFTO(Name, t#0s, sysStatus);
+IF sysStatus = KSYS_Status_OK THEN
+   SysVar := SysVarTemp;
+   FGetSysVarFromName := nDT_LINT;
+   RETURN;
+END_IF;
+
+SysVarTemp.piULINTSV := GET_SYNC_REFTO(Name, t#0s, sysStatus);
+IF sysStatus = KSYS_Status_OK THEN
+   SysVar := SysVarTemp;
+   FGetSysVarFromName := nDT_ULINT;
+   RETURN;
+END_IF;
+
+SysVarTemp.prLREALSV := GET_SYNC_REFTO(Name, t#0s, sysStatus);
+IF sysStatus = KSYS_Status_OK THEN
+   SysVar := SysVarTemp;
+   FGetSysVarFromName := nDT_LREAL;
+   RETURN;
+END_IF;
+
+
+;#END_EDIT_BLOCK END_FUNCTION
+
+
+
+#END_OF_IEC_PART
+
+@Puma @IecEditor 6 150 @Pou 25 
+@@@BEG_Comment@@@
+@h    ! WARNING !
+@h    The Kemro K2 system (including software) only meets category B according to EN 954-1,
+@h    thus it is not intended for usage in safety-relevant control applications in the field 
+@h    of personal safety (e.g. emergency stop).
+@h    To implement potentially necessary safety-relevant control tasks, always use additional 
+@h    external safety devices that are intended for the particular purpose, and meet the necessary 
+@h    functional safety.
+@h    For further information see EN 954-1 (EN ISO 13849-1) and/or the K2-x00 user manual, chapter 
+@h    "CE conformity, directives and standards".
+
+
+@@@END_Comment@@@
+
+@BEG_Contents 
+
+@BEG_Func 
+@RT(17)FuncTreeContainer 
+0 
+@END_Func 
+
+@BEG_Const 
+@RT(18)ConstTreeContainer 
+0 
+@END_Const 
+
+@BEG_Export 
+
+@BEG_Kind 
+@FUNCTION @RT(18)FGetSysVarFromName @STRUCTURED_TEXT 
+@RT(13)tnSVDataTypes @RT(0) @RT(0) 
+@END_Kind 
+
+@BEG_Dcl 
+@RT(16)DclTreeContainer 
+4 
+@Var @RT(4)Name @RT(0) @T @F @DT @RT(11)STRING(255) @RT(0) @T @T @STRING 0 @F @RT(3)255 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 1 @F @F @F @F 
+
+@Var @RT(6)SysVar @RT(0) @T @T @DERIVED 0 @T @T @DT @RT(4)tsSV @RT(0) @T @T @UNKNOWN 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 2 @F @F @F @F 
+
+@Var @RT(10)SysVarTemp @RT(0) @T @T @DERIVED 0 @T @T @DT @RT(4)tsSV @RT(0) @T @T @UNKNOWN 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(9)sysStatus @RT(0) @T @T @DERIVED 0 @T @T @DT @RT(11)KSYS_Status @RT(0) @T @T @UNKNOWN 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@END_Dcl 
+
+@END_Export 
+
+@BEG_Body 
+@TL(119)
+(**************************************** WARNING ********************************************
+ *** The KEBA Kemro K2 System including software is not intended for safety control tasks! ***
+ ***                       For further information see Comment tab!                        ***
+ *********************************************************************************************)
+
+FGetSysVarFromName := nDT_NONE;
+
+SysVarTemp.prREALSV := GET_SYNC_REFTO(Name, t#0s, sysStatus);
+IF sysStatus = KSYS_Status_OK THEN
+   SysVar := SysVarTemp;
+   FGetSysVarFromName := nDT_REAL;
+   RETURN;
+END_IF;
+
+SysVarTemp.pbBOOLSV := GET_SYNC_REFTO(Name, t#0s, sysStatus);
+IF sysStatus = KSYS_Status_OK THEN
+   SysVar := SysVarTemp;
+   FGetSysVarFromName := nDT_BOOL;
+   RETURN;
+END_IF;
+
+SysVarTemp.pdTIMESV := GET_SYNC_REFTO(Name, t#0s, sysStatus);
+IF sysStatus = KSYS_Status_OK THEN
+   SysVar := SysVarTemp;
+   FGetSysVarFromName := nDT_TIME;
+   RETURN;
+END_IF;
+
+SysVarTemp.piBYTESV := GET_SYNC_REFTO(Name, t#0s, sysStatus);
+IF sysStatus = KSYS_Status_OK THEN
+   SysVar := SysVarTemp;
+   FGetSysVarFromName := nDT_BYTE;
+   RETURN;
+END_IF;
+
+SysVarTemp.piWORDSV := GET_SYNC_REFTO(Name, t#0s, sysStatus);
+IF sysStatus = KSYS_Status_OK THEN
+   SysVar := SysVarTemp;
+   FGetSysVarFromName := nDT_WORD;
+   RETURN;
+END_IF;
+
+SysVarTemp.piDWORDSV := GET_SYNC_REFTO(Name, t#0s, sysStatus);
+IF sysStatus = KSYS_Status_OK THEN
+   SysVar := SysVarTemp;
+   FGetSysVarFromName := nDT_DWORD;
+   RETURN;
+END_IF;
+
+SysVarTemp.piLWORDSV := GET_SYNC_REFTO(Name, t#0s, sysStatus);
+IF sysStatus = KSYS_Status_OK THEN
+   SysVar := SysVarTemp;
+   FGetSysVarFromName := nDT_LWORD;
+   RETURN;
+END_IF;
+
+SysVarTemp.piINTSV := GET_SYNC_REFTO(Name, t#0s, sysStatus);
+IF sysStatus = KSYS_Status_OK THEN
+   SysVar := SysVarTemp;
+   FGetSysVarFromName := nDT_INT;
+   RETURN;
+END_IF;
+
+SysVarTemp.piUINTSV := GET_SYNC_REFTO(Name, t#0s, sysStatus);
+IF sysStatus = KSYS_Status_OK THEN
+   SysVar := SysVarTemp;
+   FGetSysVarFromName := nDT_UINT;
+   RETURN;
+END_IF;
+
+SysVarTemp.piDINTSV := GET_SYNC_REFTO(Name, t#0s, sysStatus);
+IF sysStatus = KSYS_Status_OK THEN
+   SysVar := SysVarTemp;
+   FGetSysVarFromName := nDT_DINT;
+   RETURN;
+END_IF;
+
+SysVarTemp.piUDINTSV := GET_SYNC_REFTO(Name, t#0s, sysStatus);
+IF sysStatus = KSYS_Status_OK THEN
+   SysVar := SysVarTemp;
+   FGetSysVarFromName := nDT_UDINT;
+   RETURN;
+END_IF;
+
+SysVarTemp.piSINTSV := GET_SYNC_REFTO(Name, t#0s, sysStatus);
+IF sysStatus = KSYS_Status_OK THEN
+   SysVar := SysVarTemp;
+   FGetSysVarFromName := nDT_SINT;
+   RETURN;
+END_IF;
+
+SysVarTemp.piUSINTSV := GET_SYNC_REFTO(Name, t#0s, sysStatus);
+IF sysStatus = KSYS_Status_OK THEN
+   SysVar := SysVarTemp;
+   FGetSysVarFromName := nDT_USINT;
+   RETURN;
+END_IF;
+
+SysVarTemp.piLINTSV := GET_SYNC_REFTO(Name, t#0s, sysStatus);
+IF sysStatus = KSYS_Status_OK THEN
+   SysVar := SysVarTemp;
+   FGetSysVarFromName := nDT_LINT;
+   RETURN;
+END_IF;
+
+SysVarTemp.piULINTSV := GET_SYNC_REFTO(Name, t#0s, sysStatus);
+IF sysStatus = KSYS_Status_OK THEN
+   SysVar := SysVarTemp;
+   FGetSysVarFromName := nDT_ULINT;
+   RETURN;
+END_IF;
+
+SysVarTemp.prLREALSV := GET_SYNC_REFTO(Name, t#0s, sysStatus);
+IF sysStatus = KSYS_Status_OK THEN
+   SysVar := SysVarTemp;
+   FGetSysVarFromName := nDT_LREAL;
+   RETURN;
+END_IF;
+
+@END_Body 
+
+@END_Contents 

@@ -1,0 +1,131 @@
+FUNCTION_BLOCK FBNoiseAI #DUMMY_EDIT_BLOCK
+
+VAR_IN_OUT
+ Value : REAL;
+END_VAR
+
+VAR_INPUT
+ Range : REAL;
+END_VAR
+
+SYSTEM_VAR
+ sv_bNoiseAI : BOOL (* noise simulation for analog inputs *);
+ sv_rNoiseAmp : REAL (* amplitude of noise in % of AI range *);
+END_VAR
+
+VAR
+ rT : REAL;
+ t : INT;
+END_VAR
+#BEGIN_EDIT_BLOCK
+IF (sv_bNoiseAI) THEN
+    Value := Value + sv_rNoiseAmp / 100.0 * Range * SIN(rT);
+    rT := rT + 2.0 * 3.14 / 10.0;
+    t := t + 1; 
+    IF (t = 10)  THEN
+        t := 0; 
+        rT := 0.0; 
+    END_IF;
+END_IF;
+
+
+;#END_EDIT_BLOCK END_FUNCTION_BLOCK
+
+
+
+#END_OF_IEC_PART
+
+@Puma @IecEditor 6 131 @Pou 25 
+@@@BEG_Comment@@@
+
+@@@END_Comment@@@
+
+@BEG_Contents 
+
+@BEG_Func 
+@RT(17)FuncTreeContainer 
+0 
+@END_Func 
+
+@BEG_Const 
+@RT(18)ConstTreeContainer 
+0 
+@END_Const 
+
+@BEG_Export 
+
+@BEG_Kind 
+@FUNCTION_BLOCK @RT(9)FBNoiseAI @STRUCTURED_TEXT 
+@RT(0) @RT(0) @RT(0) 
+@END_Kind 
+
+@BEG_Dcl 
+@RT(16)DclTreeContainer 
+6 
+@Var @RT(5)Value @RT(0) @T @F @DT @RT(4)REAL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 2 @F @F @F @F 
+
+@Var @RT(5)Range @RT(0) @T @F @DT @RT(4)REAL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 1 @F @F @F @F 
+
+@Var @RT(11)sv_bNoiseAI @RT(0) @T @F @DT @RT(4)BOOL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(34)noise simulation for analog inputs @RT(0) 
+@END_Attrib 
+1 8 @F @F @F @F 
+
+@Var @RT(12)sv_rNoiseAmp @RT(0) @T @F @DT @RT(4)REAL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(35)amplitude of noise in % of AI range @RT(0) 
+@END_Attrib 
+1 8 @F @F @F @F 
+
+@Var @RT(2)rT @RT(0) @T @F @DT @RT(4)REAL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(1)t @RT(0) @T @F @DT @RT(3)INT @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@END_Dcl 
+
+@END_Export 
+
+@BEG_Body 
+@TL(10)
+IF (sv_bNoiseAI) THEN
+    Value := Value + sv_rNoiseAmp / 100.0 * Range * SIN(rT);
+    rT := rT + 2.0 * 3.14 / 10.0;
+    t := t + 1; 
+    IF (t = 10)  THEN
+        t := 0; 
+        rT := 0.0; 
+    END_IF;
+END_IF;
+
+@END_Body 
+
+@END_Contents 

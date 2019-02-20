@@ -1,0 +1,345 @@
+(*
+@h    ! WARNING !
+@h    The Kemro K2 system (including software) only meets category B according to EN 954-1,
+@h    thus it is not intended for usage in safety-relevant control applications in the field 
+@h    of personal safety (e.g. emergency stop).
+@h    To implement potentially necessary safety-relevant control tasks, always use additional 
+@h    external safety devices that are intended for the particular purpose, and meet the necessary 
+@h    functional safety.
+@h    For further information see EN 954-1 (EN ISO 13849-1) and/or the K2-x00 user manual, chapter 
+@h    "CE conformity, directives and standards".
+
+This AB includes the following functions:
+
++ reorder inject profile after number of inject profile stages changed
++ reorder plast profile after number of plast profile stages changed
++ copy screw volume to start position of first inject profile point after mold data loading
+*)
+
+IMPORT_OVER_LISTFILE
+ KAPPL_VisProfilePlast
+, KAPPL_VisProfile
+, tnDataState
+, FBChangeNoOfProfileSteps
+, FBChangeNoOfProfileStepsPlast
+
+END_IMPORT
+
+ALGORITHM_BLOCK ABChangeProfile #DUMMY_EDIT_BLOCK
+
+SYSTEM_VAR
+ sv_bUseStartPosProfiles : BOOL;
+ sv_PlastProfVis : KAPPL_VisProfilePlast;
+ sv_bInitStart : BOOL;
+ sv_InjectProfVis : KAPPL_VisProfile;
+ sv_DataState : tnDataState;
+ sv_rScrewVolume : REAL;
+END_VAR
+
+SYSTEM_OBJECT
+ PU_Task_7 : TASK;
+END_OBJECT
+
+POSTUPDATE_ALGORITHM pChangeInjectProfile ON PU_Task_7 WITH sv_InjectProfVis, sv_bInitStart
+
+
+VAR
+ fbChangeNoOfProfileSteps : FBChangeNoOfProfileSteps;
+END_VAR
+#BEGIN_EDIT_BLOCK
+fbChangeNoOfProfileSteps(ProfileVis := sv_InjectProfVis.Profile, 
+                         bUseStartPosProfiles := sv_bUseStartPosProfiles, 
+                         bOpenEndProfile := sv_InjectProfVis.bOpenEndProfile, 
+                         bDataStateIsReady := (sv_DataState = nReady));
+    
+
+
+;#END_EDIT_BLOCK END_ALGORITHM
+
+POSTUPDATE_ALGORITHM pChangePlastProfile ON PU_Task_7 WITH sv_PlastProfVis,sv_bInitStart
+
+
+VAR
+ fbChangeNoOfProfileStepsPlast : FBChangeNoOfProfileStepsPlast;
+END_VAR
+#BEGIN_EDIT_BLOCK
+fbChangeNoOfProfileStepsPlast(ProfileVis := sv_PlastProfVis.Profile, 
+                              bUseStartPosProfiles := sv_bUseStartPosProfiles, 
+                              bOpenEndProfile := sv_PlastProfVis.bOpenEndProfile, 
+                              bDataStateIsReady := (sv_DataState = nReady));
+    
+
+
+;#END_EDIT_BLOCK END_ALGORITHM
+
+POSTUPDATE_ALGORITHM pNewMoldData ON PU_Task_7 WITH sv_DataState
+
+
+VAR
+ bLoadingInProgress : BOOL;
+END_VAR
+#BEGIN_EDIT_BLOCK
+(**************************************** WARNING ********************************************
+ *** The KEBA Kemro K2 System including software is not intended for safety control tasks! ***
+ ***                       For further information see Comment tab!                        ***
+ *********************************************************************************************)
+
+IF sv_DataState = nReadMoldData THEN
+   //loading of mold data in progress
+   bLoadingInProgress := TRUE;
+   RETURN;
+END_IF;
+
+IF sv_DataState = nReady AND bLoadingInProgress THEN
+   
+   //copy screw volume to first profile point of inject profile 
+   //(this profile point is not visible on hmi)
+   sv_InjectProfVis.Profile.Points[1].rStartPos := sv_rScrewVolume;
+   
+   bLoadingInProgress := FALSE;
+     
+END_IF;
+
+
+;#END_EDIT_BLOCK END_ALGORITHM
+
+
+
+END_ALGORITHM_BLOCK
+
+
+
+#END_OF_IEC_PART
+
+@Puma @IecEditor 6 103 @Pou 25 
+@@@BEG_Comment@@@
+@h    ! WARNING !
+@h    The Kemro K2 system (including software) only meets category B according to EN 954-1,
+@h    thus it is not intended for usage in safety-relevant control applications in the field 
+@h    of personal safety (e.g. emergency stop).
+@h    To implement potentially necessary safety-relevant control tasks, always use additional 
+@h    external safety devices that are intended for the particular purpose, and meet the necessary 
+@h    functional safety.
+@h    For further information see EN 954-1 (EN ISO 13849-1) and/or the K2-x00 user manual, chapter 
+@h    "CE conformity, directives and standards".
+
+This AB includes the following functions:
+
++ reorder inject profile after number of inject profile stages changed
++ reorder plast profile after number of plast profile stages changed
++ copy screw volume to start position of first inject profile point after mold data loading
+@@@END_Comment@@@
+
+@BEG_Contents 
+
+@BEG_Func 
+@RT(17)FuncTreeContainer 
+0 
+@END_Func 
+
+@BEG_Const 
+@RT(18)ConstTreeContainer 
+0 
+@END_Const 
+
+@BEG_Export 
+
+@BEG_Kind 
+@ALGORITHM_BLOCK @RT(15)ABChangeProfile @STRUCTURED_TEXT 
+@RT(0) @RT(0) @RT(0) 
+@END_Kind 
+
+@BEG_Dcl 
+@RT(16)DclTreeContainer 
+7 
+@Var @RT(9)PU_Task_7 @RT(0) @T @T @RENAMED 0 @T @T @DT @RT(4)TASK @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 7 @F @F @F @F 
+
+@Var @RT(23)sv_bUseStartPosProfiles @RT(0) @T @F @DT @RT(4)BOOL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 8 @F @F @F @F 
+
+@Var @RT(15)sv_PlastProfVis @RT(0) @T @T @DERIVED 0 @T @T @DT @RT(21)KAPPL_VisProfilePlast @RT(0) @T @T @UNKNOWN 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 8 @F @F @F @F 
+
+@Var @RT(13)sv_bInitStart @RT(0) @T @F @DT @RT(4)BOOL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 8 @F @F @F @F 
+
+@Var @RT(16)sv_InjectProfVis @RT(0) @T @T @DERIVED 0 @F @RT(16)KAPPL_VisProfile @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 8 @F @F @F @F 
+
+@Var @RT(12)sv_DataState @RT(0) @T @T @DERIVED 0 @T @T @DT @RT(11)tnDataState @RT(0) @T @T @UNKNOWN 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 8 @F @F @F @F 
+
+@Var @RT(15)sv_rScrewVolume @RT(0) @T @F @DT @RT(4)REAL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 8 @F @F @F @F 
+
+@END_Dcl 
+
+@END_Export 
+
+@BEG_Body 
+
+3 
+
+@BEG_Export 
+
+@BEG_Algo 
+@POSTUPDATE_ALGORITHM @RT(20)pChangeInjectProfile @STRUCTURED_TEXT 
+@RT(0) @RT(31)sv_InjectProfVis, sv_bInitStart @RT(9)PU_Task_7 @F @F 
+@END_Algo 
+
+@BEG_Dcl 
+@RT(16)DclTreeContainer 
+1 
+@Var @RT(24)fbChangeNoOfProfileSteps @RT(0) @T @T @DERIVED 0 @T @T @DT @RT(24)FBChangeNoOfProfileSteps @RT(0) @T @T @UNKNOWN 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@END_Dcl 
+
+@END_Export 
+
+@BEG_Export 
+
+@BEG_Algo 
+@POSTUPDATE_ALGORITHM @RT(19)pChangePlastProfile @STRUCTURED_TEXT 
+@RT(0) @RT(29)sv_PlastProfVis,sv_bInitStart @RT(9)PU_Task_7 @F @F 
+@END_Algo 
+
+@BEG_Dcl 
+@RT(16)DclTreeContainer 
+1 
+@Var @RT(29)fbChangeNoOfProfileStepsPlast @RT(0) @T @T @DERIVED 0 @T @T @DT @RT(29)FBChangeNoOfProfileStepsPlast @RT(0) @T @T @UNKNOWN 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@END_Dcl 
+
+@END_Export 
+
+@BEG_Export 
+
+@BEG_Algo 
+@POSTUPDATE_ALGORITHM @RT(12)pNewMoldData @STRUCTURED_TEXT 
+@RT(0) @RT(12)sv_DataState @RT(9)PU_Task_7 @F @F 
+@END_Algo 
+
+@BEG_Dcl 
+@RT(16)DclTreeContainer 
+1 
+@Var @RT(18)bLoadingInProgress @RT(0) @T @F @DT @RT(4)BOOL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@END_Dcl 
+
+@END_Export 
+
+@BEG_Body 
+@TL(6)
+fbChangeNoOfProfileSteps(ProfileVis := sv_InjectProfVis.Profile, 
+                         bUseStartPosProfiles := sv_bUseStartPosProfiles, 
+                         bOpenEndProfile := sv_InjectProfVis.bOpenEndProfile, 
+                         bDataStateIsReady := (sv_DataState = nReady));
+    
+
+@END_Body 
+
+@@@BEG_Comment@@@ 
+@TL(0)
+
+@@@END_Comment@@@ 
+
+@BEG_Body 
+@TL(6)
+fbChangeNoOfProfileStepsPlast(ProfileVis := sv_PlastProfVis.Profile, 
+                              bUseStartPosProfiles := sv_bUseStartPosProfiles, 
+                              bOpenEndProfile := sv_PlastProfVis.bOpenEndProfile, 
+                              bDataStateIsReady := (sv_DataState = nReady));
+    
+
+@END_Body 
+
+@@@BEG_Comment@@@ 
+@TL(0)
+
+@@@END_Comment@@@ 
+
+@BEG_Body 
+@TL(21)
+(**************************************** WARNING ********************************************
+ *** The KEBA Kemro K2 System including software is not intended for safety control tasks! ***
+ ***                       For further information see Comment tab!                        ***
+ *********************************************************************************************)
+
+IF sv_DataState = nReadMoldData THEN
+   //loading of mold data in progress
+   bLoadingInProgress := TRUE;
+   RETURN;
+END_IF;
+
+IF sv_DataState = nReady AND bLoadingInProgress THEN
+   
+   //copy screw volume to first profile point of inject profile 
+   //(this profile point is not visible on hmi)
+   sv_InjectProfVis.Profile.Points[1].rStartPos := sv_rScrewVolume;
+   
+   bLoadingInProgress := FALSE;
+     
+END_IF;
+
+@END_Body 
+
+@@@BEG_Comment@@@ 
+@TL(0)
+
+@@@END_Comment@@@ 
+@END_Body 
+
+@END_Contents 

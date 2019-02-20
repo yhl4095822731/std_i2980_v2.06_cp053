@@ -1,0 +1,328 @@
+(*
+@h    ! WARNING !
+@h    The Kemro K2 system (including software) only meets category B according to EN 954-1,
+@h    thus it is not intended for usage in safety-relevant control applications in the field 
+@h    of personal safety (e.g. emergency stop).
+@h    To implement potentially necessary safety-relevant control tasks, always use additional 
+@h    external safety devices that are intended for the particular purpose, and meet the necessary 
+@h    functional safety.
+@h    For further information see EN 954-1 (EN ISO 13849-1) and/or the K2-x00 user manual, chapter 
+@h    "CE conformity, directives and standards".
+
+Algorithm block for setting hydraulic specific valves to link different pumps.
+*)
+
+IMPORT_OVER_LISTFILE
+ tyPumpData
+
+END_IMPORT
+
+ALGORITHM_BLOCK ABPumpCombination #DUMMY_EDIT_BLOCK
+
+SYSTEM_VAR
+ do_LinkP1P2 : BOOL (* DO for linking Pump1 and Pump2 *);
+ sv_PumpData : tyPumpData;
+END_VAR
+
+SYSTEM_OBJECT
+ TaskInject : TASK;
+ TaskMid : TASK;
+END_OBJECT
+
+PROCESS_ALGORITHM paInit ON TaskMid AUTOSTART
+
+#BEGIN_EDIT_BLOCK
+(**************************************** WARNING ********************************************
+ *** The KEBA Kemro K2 System including software is not intended for safety control tasks! ***
+ ***                       For further information see Comment tab!                        ***
+ *********************************************************************************************)
+
+IF IS_LINKED(do_LinkP1P2) THEN
+   START_PROCESS_ALGORITHM(paLinkPump1Pump2);
+END_IF;
+
+STOP_PROCESS_ALGORITHM();
+
+
+
+;#END_EDIT_BLOCK END_ALGORITHM
+
+PROCESS_ALGORITHM paLinkPump1Pump2 ON TaskInject
+
+
+VAR
+ bSetDO : BOOL;
+END_VAR
+
+(* IecGraph-Code *)
+
+(* init step *)
+INITIAL_STEP S_Init:
+END_STEP
+
+
+(* steps *)
+STEP S_Idle:
+Action5 (N);
+END_STEP
+
+ACTION Action5: #BEGIN_EDIT_BLOCK
+//set DO if a device actually outputs to both pumps
+bSetDO := (sv_PumpData[1].PumpState = nPumpStateBusy) AND 
+          (sv_PumpData[2].PumpState = nPumpStateBusy) AND
+          (sv_PumpData[1].ActiveDevice = sv_PumpData[2].ActiveDevice);
+
+;#END_EDIT_BLOCK END_ACTION (*Action5*)
+STEP S_Set_DO:
+ASetDO (P);
+END_STEP
+
+ACTION ASetDO: #BEGIN_EDIT_BLOCK
+do_LinkP1P2 := TRUE;
+
+;#END_EDIT_BLOCK END_ACTION (*ASetDO*)
+STEP S_Reset_DO:
+AResetDO (P);
+END_STEP
+
+ACTION AResetDO: #BEGIN_EDIT_BLOCK
+do_LinkP1P2 := FALSE;
+
+;#END_EDIT_BLOCK END_ACTION (*AResetDO*)
+
+(* transitions *)
+TRANSITION Trans1 (* Trans1 *) FROM S_Init TO S_Idle :=  #BEGIN_EDIT_BLOCK
+TRUE
+;#END_EDIT_BLOCK
+END_TRANSITION
+
+GO_ON_TRANSITION TSetDO (* Trans2 *) FROM S_Idle TO S_Set_DO :=  #BEGIN_EDIT_BLOCK
+bSetDO
+;#END_EDIT_BLOCK
+END_TRANSITION
+
+GO_ON_TRANSITION TResetDO (* Trans3 *) FROM S_Set_DO TO S_Reset_DO :=  #BEGIN_EDIT_BLOCK
+sv_PumpData[1].PumpState = nPumpStateFree OR 
+sv_PumpData[2].PumpState = nPumpStateFree
+;#END_EDIT_BLOCK
+END_TRANSITION
+
+GO_ON_TRANSITION TIdle (* Trans4 *) FROM S_Reset_DO TO S_Idle :=  #BEGIN_EDIT_BLOCK
+TRUE
+;#END_EDIT_BLOCK
+END_TRANSITION
+
+(* end IecGraph-Code *)
+(* sfc-code *)
+(* end sfc-code *)
+
+
+END_ALGORITHM
+
+
+
+END_ALGORITHM_BLOCK
+
+
+
+#END_OF_IEC_PART
+
+@Puma @IecEditor 6 148 @Pou 25 
+@@@BEG_Comment@@@
+@h    ! WARNING !
+@h    The Kemro K2 system (including software) only meets category B according to EN 954-1,
+@h    thus it is not intended for usage in safety-relevant control applications in the field 
+@h    of personal safety (e.g. emergency stop).
+@h    To implement potentially necessary safety-relevant control tasks, always use additional 
+@h    external safety devices that are intended for the particular purpose, and meet the necessary 
+@h    functional safety.
+@h    For further information see EN 954-1 (EN ISO 13849-1) and/or the K2-x00 user manual, chapter 
+@h    "CE conformity, directives and standards".
+
+Algorithm block for setting hydraulic specific valves to link different pumps.
+@@@END_Comment@@@
+
+@BEG_Contents 
+
+@BEG_Func 
+@RT(17)FuncTreeContainer 
+0 
+@END_Func 
+
+@BEG_Const 
+@RT(18)ConstTreeContainer 
+0 
+@END_Const 
+
+@BEG_Export 
+
+@BEG_Kind 
+@ALGORITHM_BLOCK @RT(17)ABPumpCombination @STRUCTURED_TEXT 
+@RT(0) @RT(0) @RT(0) 
+@END_Kind 
+
+@BEG_Dcl 
+@RT(16)DclTreeContainer 
+4 
+@Var @RT(10)TaskInject @RT(0) @T @T @RENAMED 0 @T @T @DT @RT(4)TASK @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 7 @F @F @F @F 
+
+@Var @RT(7)TaskMid @RT(0) @T @T @RENAMED 0 @T @T @DT @RT(4)TASK @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 7 @F @F @F @F 
+
+@Var @RT(11)do_LinkP1P2 @RT(0) @T @F @DT @RT(4)BOOL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(30)DO for linking Pump1 and Pump2 @RT(0) 
+@END_Attrib 
+1 8 @F @F @F @F 
+
+@Var @RT(11)sv_PumpData @RT(0) @T @T @DERIVED 0 @F @RT(10)tyPumpData @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 8 @F @F @F @F 
+
+@END_Dcl 
+
+@END_Export 
+
+@BEG_Body 
+
+2 
+
+@BEG_Export 
+
+@BEG_Algo 
+@PROCESS_ALGORITHM @RT(6)paInit @STRUCTURED_TEXT 
+@RT(0) @RT(0) @RT(7)TaskMid @T @F 
+@END_Algo 
+
+@BEG_Dcl 
+@RT(16)DclTreeContainer 
+0 
+@END_Dcl 
+
+@END_Export 
+
+@BEG_Export 
+
+@BEG_Algo 
+@PROCESS_ALGORITHM @RT(16)paLinkPump1Pump2 @SEQUENTIAL_FLOW_CHART 
+@RT(0) @RT(0) @RT(10)TaskInject @F @F 
+@END_Algo 
+
+@BEG_Dcl 
+@RT(16)DclTreeContainer 
+1 
+@Var @RT(6)bSetDO @RT(0) @T @T @RENAMED 0 @T @T @DT @RT(4)BOOL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@END_Dcl 
+
+@END_Export 
+
+@BEG_Body 
+@TL(12)
+(**************************************** WARNING ********************************************
+ *** The KEBA Kemro K2 System including software is not intended for safety control tasks! ***
+ ***                       For further information see Comment tab!                        ***
+ *********************************************************************************************)
+
+IF IS_LINKED(do_LinkP1P2) THEN
+   START_PROCESS_ALGORITHM(paLinkPump1Pump2);
+END_IF;
+
+STOP_PROCESS_ALGORITHM();
+
+
+@END_Body 
+
+@@@BEG_Comment@@@ 
+@TL(0)
+
+@@@END_Comment@@@ 
+
+@BEG_SfcBody 
+6 5 5 
+
+@BEG_SfcData 2 
+@StepSeq @RT(4)sseq @F 3 
+@Step @RT(6)S_Init @F @T @F @F @RT(0) @F 
+@AcbCont @RT(7)unnamed @F 0 
+
+@Trans @RT(6)Trans1 @F @T @F @F @T @T @TL(2)
+TRUE
+
+@RT(6)Trans1 @F 
+@Loop @RT(4)loop @F 2 
+@StepSeq @RT(3)seq @F 5 
+@Step @RT(6)S_Idle @F @F @F @F @RT(0) @F 
+@AcbCont @RT(7)unnamed @F 1 
+@Acb @RT(7)Action5 @F @T @RT(1)N @RT(0) @F @F @T @TL(5)
+//set DO if a device actually outputs to both pumps
+bSetDO := (sv_PumpData[1].PumpState = nPumpStateBusy) AND 
+          (sv_PumpData[2].PumpState = nPumpStateBusy) AND
+          (sv_PumpData[1].ActiveDevice = sv_PumpData[2].ActiveDevice);
+
+@F 
+
+@Trans @RT(6)TSetDO @F @T @F @F @T @F @TL(2)
+bSetDO
+
+@RT(6)Trans2 @F 
+@Step @RT(8)S_Set_DO @F @F @F @F @RT(0) @F 
+@AcbCont @RT(7)unnamed @F 1 
+@Acb @RT(6)ASetDO @F @T @RT(1)P @RT(0) @F @F @T @TL(2)
+do_LinkP1P2 := TRUE;
+
+@F 
+
+@Trans @RT(8)TResetDO @F @T @F @F @T @F @TL(3)
+sv_PumpData[1].PumpState = nPumpStateFree OR 
+sv_PumpData[2].PumpState = nPumpStateFree
+
+@RT(6)Trans3 @F 
+@Step @RT(10)S_Reset_DO @F @F @F @F @RT(0) @F 
+@AcbCont @RT(7)unnamed @F 1 
+@Acb @RT(8)AResetDO @F @T @RT(1)P @RT(0) @F @F @T @TL(2)
+do_LinkP1P2 := FALSE;
+
+@F 
+
+
+@Trans @RT(5)TIdle @F @T @T @T @T @F @TL(2)
+TRUE
+
+@RT(6)Trans4 @F 
+
+@END_SfcData 
+@SaActions 0 
+@SaTrans 0 
+@SaExits 0 
+@END_SfcBody 
+
+@@@BEG_Comment@@@ 
+@TL(0)
+
+@@@END_Comment@@@ 
+@END_Body 
+
+@END_Contents 

@@ -1,0 +1,220 @@
+IMPORT_OVER_LISTFILE
+ KAPPL_VisProfile
+, tnDataState
+, FBChangeNoOfProfileSteps
+
+END_IMPORT
+
+ALGORITHM_BLOCK ABChangeProfile #DUMMY_EDIT_BLOCK
+
+SYSTEM_VAR
+ sv_NozzleBwdProfVis : KAPPL_VisProfile;
+ sv_bUseStartPosProfiles : BOOL;
+ sv_bInitStart : BOOL;
+ sv_NozzleFwdProfVis : KAPPL_VisProfile;
+ sv_DataState : tnDataState;
+END_VAR
+
+SYSTEM_OBJECT
+ PU_Task_7 : TASK;
+END_OBJECT
+
+POSTUPDATE_ALGORITHM pChangeBwdProfile ON PU_Task_7 WITH sv_NozzleBwdProfVis, sv_bInitStart
+
+
+VAR
+ fbChangeNoOfProfileStepsBwd : FBChangeNoOfProfileSteps;
+END_VAR
+#BEGIN_EDIT_BLOCK
+fbChangeNoOfProfileStepsBwd(ProfileVis := sv_NozzleBwdProfVis.Profile, 
+                            bUseStartPosProfiles := sv_bUseStartPosProfiles, 
+                            bOpenEndProfile := sv_NozzleBwdProfVis.bOpenEndProfile,
+                            bDataStateIsReady := (sv_DataState = nReady));
+
+
+
+;#END_EDIT_BLOCK END_ALGORITHM
+
+POSTUPDATE_ALGORITHM pChangeFwdProfile ON PU_Task_7 WITH sv_NozzleFwdProfVis, sv_bInitStart
+
+
+VAR
+ fbChangeNoOfProfileStepsFwd : FBChangeNoOfProfileSteps;
+END_VAR
+#BEGIN_EDIT_BLOCK
+fbChangeNoOfProfileStepsFwd(ProfileVis := sv_NozzleFwdProfVis.Profile, 
+                            bUseStartPosProfiles := sv_bUseStartPosProfiles, 
+                            bOpenEndProfile := sv_NozzleFwdProfVis.bOpenEndProfile,
+                            bDataStateIsReady := (sv_DataState = nReady));
+
+
+
+;#END_EDIT_BLOCK END_ALGORITHM
+
+
+
+END_ALGORITHM_BLOCK
+
+
+
+#END_OF_IEC_PART
+
+@Puma @IecEditor 6 103 @Pou 25 
+@@@BEG_Comment@@@
+
+@@@END_Comment@@@
+
+@BEG_Contents 
+
+@BEG_Func 
+@RT(17)FuncTreeContainer 
+0 
+@END_Func 
+
+@BEG_Const 
+@RT(18)ConstTreeContainer 
+0 
+@END_Const 
+
+@BEG_Export 
+
+@BEG_Kind 
+@ALGORITHM_BLOCK @RT(15)ABChangeProfile @STRUCTURED_TEXT 
+@RT(0) @RT(0) @RT(0) 
+@END_Kind 
+
+@BEG_Dcl 
+@RT(16)DclTreeContainer 
+6 
+@Var @RT(9)PU_Task_7 @RT(0) @T @T @RENAMED 0 @T @T @DT @RT(4)TASK @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 7 @F @F @F @F 
+
+@Var @RT(19)sv_NozzleBwdProfVis @RT(0) @T @T @DERIVED 0 @T @T @DT @RT(16)KAPPL_VisProfile @RT(0) @T @T @UNKNOWN 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 8 @F @F @F @F 
+
+@Var @RT(23)sv_bUseStartPosProfiles @RT(0) @T @F @DT @RT(4)BOOL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 8 @F @F @F @F 
+
+@Var @RT(13)sv_bInitStart @RT(0) @T @F @DT @RT(4)BOOL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 8 @F @F @F @F 
+
+@Var @RT(19)sv_NozzleFwdProfVis @RT(0) @T @T @RENAMED 0 @T @T @DT @RT(16)KAPPL_VisProfile @RT(0) @T @T @UNKNOWN 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 8 @F @F @F @F 
+
+@Var @RT(12)sv_DataState @RT(0) @T @T @DERIVED 0 @T @T @DT @RT(11)tnDataState @RT(0) @T @T @UNKNOWN 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 8 @F @F @F @F 
+
+@END_Dcl 
+
+@END_Export 
+
+@BEG_Body 
+
+2 
+
+@BEG_Export 
+
+@BEG_Algo 
+@POSTUPDATE_ALGORITHM @RT(17)pChangeBwdProfile @STRUCTURED_TEXT 
+@RT(0) @RT(34)sv_NozzleBwdProfVis, sv_bInitStart @RT(9)PU_Task_7 @F @F 
+@END_Algo 
+
+@BEG_Dcl 
+@RT(16)DclTreeContainer 
+1 
+@Var @RT(27)fbChangeNoOfProfileStepsBwd @RT(0) @T @T @DERIVED 0 @T @T @DT @RT(24)FBChangeNoOfProfileSteps @RT(0) @T @T @UNKNOWN 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@END_Dcl 
+
+@END_Export 
+
+@BEG_Export 
+
+@BEG_Algo 
+@POSTUPDATE_ALGORITHM @RT(17)pChangeFwdProfile @STRUCTURED_TEXT 
+@RT(0) @RT(34)sv_NozzleFwdProfVis, sv_bInitStart @RT(9)PU_Task_7 @F @F 
+@END_Algo 
+
+@BEG_Dcl 
+@RT(16)DclTreeContainer 
+1 
+@Var @RT(27)fbChangeNoOfProfileStepsFwd @RT(0) @T @T @DERIVED 0 @T @T @DT @RT(24)FBChangeNoOfProfileSteps @RT(0) @T @T @UNKNOWN 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@END_Dcl 
+
+@END_Export 
+
+@BEG_Body 
+@TL(6)
+fbChangeNoOfProfileStepsBwd(ProfileVis := sv_NozzleBwdProfVis.Profile, 
+                            bUseStartPosProfiles := sv_bUseStartPosProfiles, 
+                            bOpenEndProfile := sv_NozzleBwdProfVis.bOpenEndProfile,
+                            bDataStateIsReady := (sv_DataState = nReady));
+
+
+@END_Body 
+
+@@@BEG_Comment@@@ 
+@TL(0)
+
+@@@END_Comment@@@ 
+
+@BEG_Body 
+@TL(6)
+fbChangeNoOfProfileStepsFwd(ProfileVis := sv_NozzleFwdProfVis.Profile, 
+                            bUseStartPosProfiles := sv_bUseStartPosProfiles, 
+                            bOpenEndProfile := sv_NozzleFwdProfVis.bOpenEndProfile,
+                            bDataStateIsReady := (sv_DataState = nReady));
+
+
+@END_Body 
+
+@@@BEG_Comment@@@ 
+@TL(0)
+
+@@@END_Comment@@@ 
+@END_Body 
+
+@END_Contents 

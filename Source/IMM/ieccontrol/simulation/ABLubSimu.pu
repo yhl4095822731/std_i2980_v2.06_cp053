@@ -1,0 +1,497 @@
+IMPORT_OVER_LISTFILE
+ FBEPUnForceDI
+, FBEPForceDI
+, TON
+, F_TRIG
+, KSYS_Status
+
+END_IMPORT
+
+ALGORITHM_BLOCK ABLubSimu #DUMMY_EDIT_BLOCK
+
+SYSTEM_VAR
+ sv_bSimulate : BOOL;
+ sv_ForceLubPreAchieved : BOOL;
+ sv_bInitStart : BOOL;
+END_VAR
+
+SYSTEM_OBJECT
+ TaskSim : TASK;
+END_OBJECT
+
+VAR
+ mpbDILubPreAchieved : REFTO BOOL;
+ fbEPUnForceDI : FBEPUnForceDI;
+ mbDILubPreAchievedLinked : BOOL;
+ mpbDOLub : REFTO BOOL;
+ mbDOLubLinked : BOOL;
+ fbEPForceDI : FBEPForceDI;
+ BoolTrue : BOOL := TRUE;
+ BoolFalse : BOOL := FALSE;
+END_VAR
+
+PROCESS_ALGORITHM paSimulate ON TaskSim
+
+
+VAR
+ Timer : TON;
+ FTriger : F_TRIG;
+END_VAR
+
+(* IecGraph-Code *)
+
+(* init step *)
+INITIAL_STEP INIT:
+END_STEP
+
+
+(* steps *)
+STEP SIM:
+aSimulate (N);
+END_STEP
+
+STEP STOP:
+aStopSimu (P);
+END_STEP
+
+
+(* transitions *)
+TRANSITION SimRequired (* Trans11 *) FROM INIT TO SIM :=  #BEGIN_EDIT_BLOCK
+sv_bSimulate
+;#END_EDIT_BLOCK
+END_TRANSITION
+
+TRANSITION StpSimRequired (* Trans13 *) FROM SIM TO STOP :=  #BEGIN_EDIT_BLOCK
+NOT sv_bSimulate 
+;#END_EDIT_BLOCK
+END_TRANSITION
+
+TRANSITION Return (* Trans16 *) FROM STOP TO SIM :=  #BEGIN_EDIT_BLOCK
+TRUE
+;#END_EDIT_BLOCK
+END_TRANSITION
+
+(* end IecGraph-Code *)
+(* sfc-code *)
+
+(* stand alone actions *)
+ACTION aSimulate: #BEGIN_EDIT_BLOCK
+IF mbDOLubLinked AND mpbDOLub^ THEN
+   Timer(IN := TRUE,
+         PT := t#5s);
+END_IF;
+IF Timer.Q THEN
+   Timer(IN := FALSE);
+   fbEPForceDI(sSysVar := 'Lubrication1.di_LubPressureAchieved', Value := BoolTrue);
+   sv_ForceLubPreAchieved := mpbDILubPreAchieved^;
+END_IF;
+FTriger(CLK := mpbDOLub^);
+IF FTriger.Q THEN
+   fbEPForceDI(sSysVar := 'Lubrication1.di_LubPressureAchieved', Value := BoolFalse);
+   sv_ForceLubPreAchieved := mpbDILubPreAchieved^;
+END_IF;
+
+;#END_EDIT_BLOCK END_ACTION (*aSimulate*)
+ACTION aStopSimu: #BEGIN_EDIT_BLOCK
+fbEPUnForceDI(sSysVar := 'Lubrication1.di_LubPressureAchieved');
+sv_ForceLubPreAchieved := mpbDILubPreAchieved^;
+STOP_PROCESS_ALGORITHM();
+
+;#END_EDIT_BLOCK END_ACTION (*aStopSimu*)
+(* end sfc-code *)
+
+
+END_ALGORITHM
+
+POSTUPDATE_ALGORITHM pStart ON TaskSim WITH sv_bSimulate,sv_bInitStart
+
+#BEGIN_EDIT_BLOCK
+IF sv_bSimulate AND mbDILubPreAchievedLinked AND mbDOLubLinked THEN
+   START_PROCESS_ALGORITHM(paSimulate);
+END_IF;
+
+
+;#END_EDIT_BLOCK END_ALGORITHM
+
+POSTUPDATE_ALGORITHM pManuallyLubPreAchForce ON TaskSim WITH sv_ForceLubPreAchieved,sv_bSimulate
+
+#BEGIN_EDIT_BLOCK
+IF mbDILubPreAchievedLinked THEN
+   IF sv_bSimulate THEN
+      IF sv_ForceLubPreAchieved THEN
+         fbEPForceDI(sSysVar := 'Lubrication1.di_LubPressureAchieved', Value := BoolTrue);
+      ELSE
+         fbEPForceDI(sSysVar := 'Lubrication1.di_LubPressureAchieved', Value := BoolFalse);
+      END_IF;
+   END_IF;
+END_IF;
+
+
+;#END_EDIT_BLOCK END_ALGORITHM
+
+PROCESS_ALGORITHM paInit ON TaskSim AUTOSTART
+
+
+VAR
+ Status : KSYS_Status;
+END_VAR
+#BEGIN_EDIT_BLOCK
+mpbDILubPreAchieved:= GET_SYNC_REFTO('Lubrication1.di_LubPressureAchieved', T#0s, Status);
+IF Status = KSYS_Status_OK THEN
+   mbDILubPreAchievedLinked := TRUE;
+   sv_ForceLubPreAchieved := mpbDILubPreAchieved^;
+END_IF;
+
+mpbDOLub := GET_SYNC_REFTO('Lubrication1.do_Lubrication', T#0s, Status);
+IF Status = KSYS_Status_OK THEN
+   mbDOLubLinked := TRUE;
+END_IF;
+
+STOP_PROCESS_ALGORITHM();
+
+
+
+;#END_EDIT_BLOCK END_ALGORITHM
+
+
+
+END_ALGORITHM_BLOCK
+
+
+
+#END_OF_IEC_PART
+
+@Puma @IecEditor 6 68 @Pou 25 
+@@@BEG_Comment@@@
+
+@@@END_Comment@@@
+
+@BEG_Contents 
+
+@BEG_Func 
+@RT(17)FuncTreeContainer 
+0 
+@END_Func 
+
+@BEG_Const 
+@RT(18)ConstTreeContainer 
+0 
+@END_Const 
+
+@BEG_Export 
+
+@BEG_Kind 
+@ALGORITHM_BLOCK @RT(9)ABLubSimu @STRUCTURED_TEXT 
+@RT(0) @RT(0) @RT(0) 
+@END_Kind 
+
+@BEG_Dcl 
+@RT(16)DclTreeContainer 
+12 
+@Var @RT(12)sv_bSimulate @RT(0) @T @F @DT @RT(4)BOOL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 8 @F @F @F @F 
+
+@Var @RT(7)TaskSim @RT(0) @T @T @RENAMED 0 @T @T @DT @RT(4)TASK @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 7 @F @F @F @F 
+
+@Var @RT(22)sv_ForceLubPreAchieved @RT(0) @T @F @DT @RT(4)BOOL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 8 @F @F @F @F 
+
+@Var @RT(19)mpbDILubPreAchieved @RT(0) @T @T @REFTO 0 @T @DT @RT(4)BOOL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(13)fbEPUnForceDI @RT(0) @T @T @DERIVED 0 @T @T @DT @RT(13)FBEPUnForceDI @RT(0) @T @T @UNKNOWN 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(24)mbDILubPreAchievedLinked @RT(0) @T @F @DT @RT(4)BOOL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(8)mpbDOLub @RT(0) @T @T @REFTO 0 @T @DT @RT(4)BOOL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(13)mbDOLubLinked @RT(0) @T @F @DT @RT(4)BOOL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(11)fbEPForceDI @RT(0) @T @T @DERIVED 0 @T @T @DT @RT(11)FBEPForceDI @RT(0) @T @T @UNKNOWN 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(13)sv_bInitStart @RT(0) @T @F @DT @RT(4)BOOL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 8 @F @F @F @F 
+
+@Var @RT(8)BoolTrue @RT(0) @T @F @DT @RT(4)BOOL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(4)TRUE @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(9)BoolFalse @RT(0) @T @F @DT @RT(4)BOOL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(5)FALSE @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@END_Dcl 
+
+@END_Export 
+
+@BEG_Body 
+
+4 
+
+@BEG_Export 
+
+@BEG_Algo 
+@PROCESS_ALGORITHM @RT(10)paSimulate @SEQUENTIAL_FLOW_CHART 
+@RT(0) @RT(0) @RT(7)TaskSim @F @F 
+@END_Algo 
+
+@BEG_Dcl 
+@RT(16)DclTreeContainer 
+2 
+@Var @RT(5)Timer @RT(0) @T @T @DERIVED 0 @T @T @DT @RT(3)TON @RT(0) @T @T @UNKNOWN 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(7)FTriger @RT(0) @T @T @DERIVED 0 @T @T @DT @RT(6)F_TRIG @RT(0) @T @T @UNKNOWN 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@END_Dcl 
+
+@END_Export 
+
+@BEG_Export 
+
+@BEG_Algo 
+@POSTUPDATE_ALGORITHM @RT(6)pStart @STRUCTURED_TEXT 
+@RT(0) @RT(26)sv_bSimulate,sv_bInitStart @RT(7)TaskSim @F @F 
+@END_Algo 
+
+@BEG_Dcl 
+@RT(16)DclTreeContainer 
+0 
+@END_Dcl 
+
+@END_Export 
+
+@BEG_Export 
+
+@BEG_Algo 
+@POSTUPDATE_ALGORITHM @RT(23)pManuallyLubPreAchForce @STRUCTURED_TEXT 
+@RT(0) @RT(35)sv_ForceLubPreAchieved,sv_bSimulate @RT(7)TaskSim @F @F 
+@END_Algo 
+
+@BEG_Dcl 
+@RT(16)DclTreeContainer 
+0 
+@END_Dcl 
+
+@END_Export 
+
+@BEG_Export 
+
+@BEG_Algo 
+@PROCESS_ALGORITHM @RT(6)paInit @STRUCTURED_TEXT 
+@RT(0) @RT(0) @RT(7)TaskSim @T @F 
+@END_Algo 
+
+@BEG_Dcl 
+@RT(16)DclTreeContainer 
+1 
+@Var @RT(6)Status @RT(0) @T @T @DERIVED 0 @T @T @DT @RT(11)KSYS_Status @RT(0) @T @T @UNKNOWN 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@END_Dcl 
+
+@END_Export 
+
+@BEG_SfcBody 
+14 12 17 
+
+@BEG_SfcData 2 
+@StepSeq @RT(4)sseq @F 3 
+@Step @RT(4)INIT @F @T @F @F @RT(0) @F 
+@AcbCont @RT(7)unnamed @F 0 
+
+@Trans @RT(11)SimRequired @F @T @F @F @T @T @TL(2)
+sv_bSimulate
+
+@RT(7)Trans11 @F 
+@Loop @RT(4)loop @F 2 
+@StepSeq @RT(3)seq @F 3 
+@Step @RT(3)SIM @F @F @F @F @RT(0) @F 
+@AcbCont @RT(7)unnamed @F 1 
+@Acb @RT(9)aSimulate @F @F @RT(1)N @RT(0) @F @F @T @F 
+
+@Trans @RT(14)StpSimRequired @F @T @F @F @T @T @TL(2)
+NOT sv_bSimulate 
+
+@RT(7)Trans13 @F 
+@Step @RT(4)STOP @F @F @F @F @RT(0) @F 
+@AcbCont @RT(7)unnamed @F 1 
+@Acb @RT(9)aStopSimu @F @F @RT(1)P @RT(0) @F @F @T @F 
+
+
+@Trans @RT(6)Return @F @T @T @T @T @T @TL(2)
+TRUE
+
+@RT(7)Trans16 @F 
+
+@END_SfcData 
+@SaActions 2 
+@SaText @RT(9)aSimulate 1 @TL(15)
+IF mbDOLubLinked AND mpbDOLub^ THEN
+   Timer(IN := TRUE,
+         PT := t#5s);
+END_IF;
+IF Timer.Q THEN
+   Timer(IN := FALSE);
+   fbEPForceDI(sSysVar := 'Lubrication1.di_LubPressureAchieved', Value := BoolTrue);
+   sv_ForceLubPreAchieved := mpbDILubPreAchieved^;
+END_IF;
+FTriger(CLK := mpbDOLub^);
+IF FTriger.Q THEN
+   fbEPForceDI(sSysVar := 'Lubrication1.di_LubPressureAchieved', Value := BoolFalse);
+   sv_ForceLubPreAchieved := mpbDILubPreAchieved^;
+END_IF;
+
+
+@SaText @RT(9)aStopSimu 1 @TL(4)
+fbEPUnForceDI(sSysVar := 'Lubrication1.di_LubPressureAchieved');
+sv_ForceLubPreAchieved := mpbDILubPreAchieved^;
+STOP_PROCESS_ALGORITHM();
+
+
+@SaTrans 0 
+@SaExits 0 
+@END_SfcBody 
+
+@@@BEG_Comment@@@ 
+@TL(0)
+
+@@@END_Comment@@@ 
+
+@BEG_Body 
+@TL(4)
+IF sv_bSimulate AND mbDILubPreAchievedLinked AND mbDOLubLinked THEN
+   START_PROCESS_ALGORITHM(paSimulate);
+END_IF;
+
+@END_Body 
+
+@@@BEG_Comment@@@ 
+@TL(0)
+
+@@@END_Comment@@@ 
+
+@BEG_Body 
+@TL(10)
+IF mbDILubPreAchievedLinked THEN
+   IF sv_bSimulate THEN
+      IF sv_ForceLubPreAchieved THEN
+         fbEPForceDI(sSysVar := 'Lubrication1.di_LubPressureAchieved', Value := BoolTrue);
+      ELSE
+         fbEPForceDI(sSysVar := 'Lubrication1.di_LubPressureAchieved', Value := BoolFalse);
+      END_IF;
+   END_IF;
+END_IF;
+
+@END_Body 
+
+@@@BEG_Comment@@@ 
+@TL(0)
+
+@@@END_Comment@@@ 
+
+@BEG_Body 
+@TL(14)
+mpbDILubPreAchieved:= GET_SYNC_REFTO('Lubrication1.di_LubPressureAchieved', T#0s, Status);
+IF Status = KSYS_Status_OK THEN
+   mbDILubPreAchievedLinked := TRUE;
+   sv_ForceLubPreAchieved := mpbDILubPreAchieved^;
+END_IF;
+
+mpbDOLub := GET_SYNC_REFTO('Lubrication1.do_Lubrication', T#0s, Status);
+IF Status = KSYS_Status_OK THEN
+   mbDOLubLinked := TRUE;
+END_IF;
+
+STOP_PROCESS_ALGORITHM();
+
+
+@END_Body 
+
+@@@BEG_Comment@@@ 
+@TL(0)
+
+@@@END_Comment@@@ 
+@END_Body 
+
+@END_Contents 

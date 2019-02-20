@@ -1,0 +1,354 @@
+(*
+@h    ! WARNING !
+@h    The Kemro K2 system (including software) only meets category B according to EN 954-1,
+@h    thus it is not intended for usage in safety-relevant control applications in the field 
+@h    of personal safety (e.g. emergency stop).
+@h    To implement potentially necessary safety-relevant control tasks, always use additional 
+@h    external safety devices that are intended for the particular purpose, and meet the necessary 
+@h    functional safety.
+@h    For further information see EN 954-1 (EN ISO 13849-1) and/or the K2-x00 user manual, chapter 
+@h    "CE conformity, directives and standards".
+
+The task of this AB is to check if retain variables are written cyclically.
+In this case a system-alarm will be set. 
+*)
+
+IMPORT_OVER_LISTFILE
+ KCAT_GetHandle
+, STOP_PROCESS_ALGORITHM
+, SET_ALARM
+, tnDataState
+, KCAT_HandleData
+, KCAT_Status
+
+END_IMPORT
+
+ALGORITHM_BLOCK ABRetainVariables #DUMMY_EDIT_BLOCK
+
+SYSTEM_VAR
+ sv_DataState : tnDataState (* State of machine / mold data read *);
+END_VAR
+
+SYSTEM_OBJECT
+ TaskSlow : TASK;
+ erRetainVarSupervision : ALARM;
+END_OBJECT
+
+PROCESS_ALGORITHM paRun ON TaskSlow AUTOSTART
+
+
+VAR
+ bInit : BOOL;
+ handleData : KCAT_HandleData;
+ iValue : UDINT;
+ iValueOld : UDINT;
+ iDif : UDINT;
+ s : KCAT_Status;
+ iCntNotNull : INT;
+ bAlarm : BOOL;
+ iCntNull : INT;
+END_VAR
+
+VAR CONSTANT
+ iCyclesAllowed : INT := 30;
+END_VAR
+#BEGIN_EDIT_BLOCK
+ (**************************************** WARNING ********************************************
+ *** The KEBA Kemro K2 System including software is not intended for safety control tasks! ***
+ ***                       For further information see Comment tab!                        ***
+ *********************************************************************************************)
+
+
+IF (NOT bInit) THEN
+    bInit := TRUE;
+    handleData := KCAT_GetHandle("SOM.numRetainValuesWritten");
+    IF (handleData.Status <> KCAT_Status_OK) THEN
+        // not supported by firmware
+        STOP_PROCESS_ALGORITHM(); 
+        RETURN;
+    END_IF;
+    
+    s := KCAT_GetValue(handleData.Handle, iValueOld);
+END_IF;
+
+s := KCAT_GetValue(handleData.Handle, iValue);
+iDif := iValue - iValueOld; 
+iValueOld := iValue; 
+
+IF ((iDif > 0) AND (sv_DataState = nReady)) THEN
+   iCntNotNull := MIN(iCyclesAllowed, iCntNotNull + 1);
+   iCntNull := 0; 
+ELSE 
+   iCntNotNull := 0;
+   iCntNull := MIN(iCyclesAllowed, iCntNull + 1); 
+END_IF;
+
+IF (iCntNotNull = iCyclesAllowed) THEN
+    IF (NOT bAlarm) THEN
+       SET_ALARM(erRetainVarSupervision);
+    END_IF;
+    bAlarm := TRUE; 
+END_IF;
+
+IF (iCntNull = iCyclesAllowed) THEN
+    IF (bAlarm) THEN
+       RESET_ALARM(erRetainVarSupervision);    
+    END_IF;
+    bAlarm := FALSE; 
+END_IF;
+
+
+
+
+;#END_EDIT_BLOCK END_ALGORITHM
+
+
+
+END_ALGORITHM_BLOCK
+
+
+
+#END_OF_IEC_PART
+
+@Puma @IecEditor 6 159 @Pou 25 
+@@@BEG_Comment@@@
+@h    ! WARNING !
+@h    The Kemro K2 system (including software) only meets category B according to EN 954-1,
+@h    thus it is not intended for usage in safety-relevant control applications in the field 
+@h    of personal safety (e.g. emergency stop).
+@h    To implement potentially necessary safety-relevant control tasks, always use additional 
+@h    external safety devices that are intended for the particular purpose, and meet the necessary 
+@h    functional safety.
+@h    For further information see EN 954-1 (EN ISO 13849-1) and/or the K2-x00 user manual, chapter 
+@h    "CE conformity, directives and standards".
+
+The task of this AB is to check if retain variables are written cyclically.
+In this case a system-alarm will be set. 
+@@@END_Comment@@@
+
+@BEG_Contents 
+
+@BEG_Func 
+@RT(17)FuncTreeContainer 
+3 
+@Var @RT(14)KCAT_GetHandle @RT(0) @T @T @DERIVED 0 @F @RT(22)KEBA_STANDARD_FUNCTION @F 
+@T 
+@BEG_Attrib 
+0 @RT(0) @RT(0) 
+@END_Attrib 
+1 1 @F @F @F @F 
+
+@Var @RT(22)STOP_PROCESS_ALGORITHM @RT(0) @T @T @DERIVED 0 @F @RT(23)KEBA_STANDARD_PROCEDURE @F 
+@T 
+@BEG_Attrib 
+0 @RT(0) @RT(0) 
+@END_Attrib 
+1 1 @F @F @F @F 
+
+@Var @RT(9)SET_ALARM @RT(0) @T @T @DERIVED 0 @F @RT(23)KEBA_STANDARD_PROCEDURE @F 
+@T 
+@BEG_Attrib 
+0 @RT(0) @RT(0) 
+@END_Attrib 
+1 1 @F @F @F @F 
+
+@END_Func 
+
+@BEG_Const 
+@RT(18)ConstTreeContainer 
+0 
+@END_Const 
+
+@BEG_Export 
+
+@BEG_Kind 
+@ALGORITHM_BLOCK @RT(17)ABRetainVariables @STRUCTURED_TEXT 
+@RT(0) @RT(0) @RT(0) 
+@END_Kind 
+
+@BEG_Dcl 
+@RT(16)DclTreeContainer 
+3 
+@Var @RT(8)TaskSlow @RT(0) @T @T @RENAMED 0 @T @T @DT @RT(4)TASK @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 7 @F @F @F @F 
+
+@Var @RT(22)erRetainVarSupervision @RT(0) @T @F @DT @RT(5)ALARM @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 7 @F @F @F @F 
+
+@Var @RT(12)sv_DataState @RT(0) @T @T @DERIVED 0 @T @T @DT @RT(11)tnDataState @RT(0) @T @T @UNKNOWN 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(33)State of machine / mold data read @RT(0) 
+@END_Attrib 
+1 8 @F @F @F @F 
+
+@END_Dcl 
+
+@END_Export 
+
+@BEG_Body 
+
+1 
+
+@BEG_Export 
+
+@BEG_Algo 
+@PROCESS_ALGORITHM @RT(5)paRun @STRUCTURED_TEXT 
+@RT(0) @RT(0) @RT(8)TaskSlow @T @F 
+@END_Algo 
+
+@BEG_Dcl 
+@RT(16)DclTreeContainer 
+10 
+@Var @RT(5)bInit @RT(0) @T @F @DT @RT(4)BOOL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(10)handleData @RT(0) @T @T @DERIVED 0 @T @T @DT @RT(15)KCAT_HandleData @RT(0) @T @T @UNKNOWN 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(6)iValue @RT(0) @T @F @DT @RT(5)UDINT @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(9)iValueOld @RT(0) @T @F @DT @RT(5)UDINT @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(4)iDif @RT(0) @T @F @DT @RT(5)UDINT @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(1)s @RT(0) @T @T @DERIVED 0 @T @T @DT @RT(11)KCAT_Status @RT(0) @T @T @UNKNOWN 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(11)iCntNotNull @RT(0) @T @F @DT @RT(3)INT @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(6)bAlarm @RT(0) @T @F @DT @RT(4)BOOL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(8)iCntNull @RT(0) @T @F @DT @RT(3)INT @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(14)iCyclesAllowed @RT(0) @T @F @DT @RT(3)INT @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(2)30 @RT(0) @RT(0) 
+@END_Attrib 
+1 15 @F @F @F @F 
+
+@END_Dcl 
+
+@END_Export 
+
+@BEG_Body 
+@TL(46)
+ (**************************************** WARNING ********************************************
+ *** The KEBA Kemro K2 System including software is not intended for safety control tasks! ***
+ ***                       For further information see Comment tab!                        ***
+ *********************************************************************************************)
+
+
+IF (NOT bInit) THEN
+    bInit := TRUE;
+    handleData := KCAT_GetHandle("SOM.numRetainValuesWritten");
+    IF (handleData.Status <> KCAT_Status_OK) THEN
+        // not supported by firmware
+        STOP_PROCESS_ALGORITHM(); 
+        RETURN;
+    END_IF;
+    
+    s := KCAT_GetValue(handleData.Handle, iValueOld);
+END_IF;
+
+s := KCAT_GetValue(handleData.Handle, iValue);
+iDif := iValue - iValueOld; 
+iValueOld := iValue; 
+
+IF ((iDif > 0) AND (sv_DataState = nReady)) THEN
+   iCntNotNull := MIN(iCyclesAllowed, iCntNotNull + 1);
+   iCntNull := 0; 
+ELSE 
+   iCntNotNull := 0;
+   iCntNull := MIN(iCyclesAllowed, iCntNull + 1); 
+END_IF;
+
+IF (iCntNotNull = iCyclesAllowed) THEN
+    IF (NOT bAlarm) THEN
+       SET_ALARM(erRetainVarSupervision);
+    END_IF;
+    bAlarm := TRUE; 
+END_IF;
+
+IF (iCntNull = iCyclesAllowed) THEN
+    IF (bAlarm) THEN
+       RESET_ALARM(erRetainVarSupervision);    
+    END_IF;
+    bAlarm := FALSE; 
+END_IF;
+
+
+
+@END_Body 
+
+@@@BEG_Comment@@@ 
+@TL(0)
+
+@@@END_Comment@@@ 
+@END_Body 
+
+@END_Contents 

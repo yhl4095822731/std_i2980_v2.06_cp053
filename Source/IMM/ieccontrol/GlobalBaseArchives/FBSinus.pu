@@ -1,0 +1,235 @@
+(*
+@h    ! WARNING !
+@h    The Kemro K2 system (including software) only meets category B according to EN 954-1,
+@h    thus it is not intended for usage in safety-relevant control applications in the field 
+@h    of personal safety (e.g. emergency stop).
+@h    To implement potentially necessary safety-relevant control tasks, always use additional 
+@h    external safety devices that are intended for the particular purpose, and meet the necessary 
+@h    functional safety.
+@h    For further information see EN 954-1 (EN ISO 13849-1) and/or the K2-x00 user manual, chapter 
+@h    "CE conformity, directives and standards".
+
+FB for generating a sinus signal
+*)
+
+IMPORT_OVER_LISTFILE
+ GET_TASK_INTERVAL
+, cApplPlasticsPI
+
+END_IMPORT
+
+FUNCTION_BLOCK FBSinus #DUMMY_EDIT_BLOCK
+
+VAR_INPUT
+ rAmplitude : REAL (* amplitude *);
+ rFrequency : REAL (* frequency (in Hz) *);
+END_VAR
+
+VAR_OUTPUT
+ rOut : REAL (* generated sinus value *);
+END_VAR
+
+VAR
+ rStepWidth : REAL := 0.628319;
+ rX : REAL;
+ dTaskCycleTime : TIME (* cycle time in ms *);
+ bInitDone : BOOL;
+ rTaskCycleTime : REAL;
+END_VAR
+#BEGIN_EDIT_BLOCK
+(**************************************** WARNING ********************************************
+ *** The KEBA Kemro K2 System including software is not intended for safety control tasks! ***
+ ***                       For further information see Comment tab!                        ***
+ *********************************************************************************************)
+
+IF NOT bInitDone THEN
+   dTaskCycleTime := GET_TASK_INTERVAL(); 
+   rTaskCycleTime := LINT_TO_REAL(TIME_TO_LINT(dTaskCycleTime)) / 1000000.0;   //task cycle time in sec
+   bInitDone := TRUE;
+END_IF;
+
+rStepWidth := 2.0 * cApplPlasticsPI * rFrequency * rTaskCycleTime;
+
+
+rOut := rAmplitude * SIN(rX);
+rX := rX + rStepWidth;
+IF rX > (2.0 * cApplPlasticsPI) THEN
+    rX := rX - (2.0 * cApplPlasticsPI);
+END_IF;
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+;#END_EDIT_BLOCK END_FUNCTION_BLOCK
+
+
+
+#END_OF_IEC_PART
+
+@Puma @IecEditor 6 113 @Pou 25 
+@@@BEG_Comment@@@
+@h    ! WARNING !
+@h    The Kemro K2 system (including software) only meets category B according to EN 954-1,
+@h    thus it is not intended for usage in safety-relevant control applications in the field 
+@h    of personal safety (e.g. emergency stop).
+@h    To implement potentially necessary safety-relevant control tasks, always use additional 
+@h    external safety devices that are intended for the particular purpose, and meet the necessary 
+@h    functional safety.
+@h    For further information see EN 954-1 (EN ISO 13849-1) and/or the K2-x00 user manual, chapter 
+@h    "CE conformity, directives and standards".
+
+FB for generating a sinus signal
+@@@END_Comment@@@
+
+@BEG_Contents 
+
+@BEG_Func 
+@RT(17)FuncTreeContainer 
+1 
+@Var @RT(17)GET_TASK_INTERVAL @RT(0) @T @T @DERIVED 0 @F @RT(22)KEBA_STANDARD_FUNCTION @F 
+@T 
+@BEG_Attrib 
+0 @RT(0) @RT(0) 
+@END_Attrib 
+1 1 @F @F @F @F 
+
+@END_Func 
+
+@BEG_Const 
+@RT(18)ConstTreeContainer 
+1 
+@Var @RT(15)cApplPlasticsPI @RT(0) @T @F @DT @RT(4)REAL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+0 @RT(10)3.14159265 @RT(13)pi=3.14159265 
+@END_Attrib 
+1 1 @F @F @F @F 
+
+@END_Const 
+
+@BEG_Export 
+
+@BEG_Kind 
+@FUNCTION_BLOCK @RT(7)FBSinus @STRUCTURED_TEXT 
+@RT(0) @RT(0) @RT(0) 
+@END_Kind 
+
+@BEG_Dcl 
+@RT(16)DclTreeContainer 
+8 
+@Var @RT(10)rAmplitude @RT(0) @T @F @DT @RT(4)REAL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(9)amplitude @RT(0) 
+@END_Attrib 
+1 1 @F @F @F @F 
+
+@Var @RT(10)rFrequency @RT(0) @T @F @DT @RT(4)REAL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(17)frequency (in Hz) @RT(0) 
+@END_Attrib 
+1 1 @F @F @F @F 
+
+@Var @RT(4)rOut @RT(0) @T @F @DT @RT(4)REAL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(21)generated sinus value @RT(0) 
+@END_Attrib 
+1 3 @F @F @F @F 
+
+@Var @RT(10)rStepWidth @RT(0) @T @F @DT @RT(4)REAL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(8)0.628319 @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(2)rX @RT(0) @T @F @DT @RT(4)REAL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(14)dTaskCycleTime @RT(0) @T @F @DT @RT(4)TIME @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(16)cycle time in ms @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(9)bInitDone @RT(0) @T @F @DT @RT(4)BOOL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(14)rTaskCycleTime @RT(0) @T @F @DT @RT(4)REAL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@END_Dcl 
+
+@END_Export 
+
+@BEG_Body 
+@TL(32)
+(**************************************** WARNING ********************************************
+ *** The KEBA Kemro K2 System including software is not intended for safety control tasks! ***
+ ***                       For further information see Comment tab!                        ***
+ *********************************************************************************************)
+
+IF NOT bInitDone THEN
+   dTaskCycleTime := GET_TASK_INTERVAL(); 
+   rTaskCycleTime := LINT_TO_REAL(TIME_TO_LINT(dTaskCycleTime)) / 1000000.0;   //task cycle time in sec
+   bInitDone := TRUE;
+END_IF;
+
+rStepWidth := 2.0 * cApplPlasticsPI * rFrequency * rTaskCycleTime;
+
+
+rOut := rAmplitude * SIN(rX);
+rX := rX + rStepWidth;
+IF rX > (2.0 * cApplPlasticsPI) THEN
+    rX := rX - (2.0 * cApplPlasticsPI);
+END_IF;
+
+
+
+
+
+
+
+
+
+
+
+
+
+@END_Body 
+
+@END_Contents 

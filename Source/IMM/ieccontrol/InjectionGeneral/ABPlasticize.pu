@@ -1,0 +1,2353 @@
+(*
+@h    ! WARNING !
+@h    The Kemro K2 system (including software) only meets category B according to EN 954-1,
+@h    thus it is not intended for usage in safety-relevant control applications in the field 
+@h    of personal safety (e.g. emergency stop).
+@h    To implement potentially necessary safety-relevant control tasks, always use additional 
+@h    external safety devices that are intended for the particular purpose, and meet the necessary 
+@h    functional safety.
+@h    For further information see EN 954-1 (EN ISO 13849-1) and/or the K2-x00 user manual, chapter 
+@h    "CE conformity, directives and standards".
+
+This AB provides all functions to realize the plasticizing movement.
+It includes the following funcionalities:
+- profile calculation for pressure, RPM and backpressure profile
+  (including error detection of the profiles) 
+- automatic reparam of all necessary blocks after changes in the profiles
+  Attention: reparam will be done after the movement is stopped and not during the movement is active
+- profile output for pressure, RPM and backpressure
+- timeout detection (including automatic stop after timeout)
+
+@FunctionID: S_KPIEC_PRINJ_04
+@FunctionID: S_KPIEC_ALAMOVE_02
+@FunctionID: S_KPIEC_ALAMOVE_03
+
+
+*)
+
+IMPORT_OVER_LISTFILE
+ SET_ALARM
+, GET_MY_FU_NAME
+, KSWO_AddVariable
+, RESET_ALARM
+, cApplPlasticsNoError
+, tsDeviceId
+, KAPPL_VisProfilePlast
+, KAPPL_ProfileData
+, tMoveIdent
+, KAPPL_Plastics_Plasticizing
+, KSWO_Status
+, tsControlParameters
+, KAPPL_LintabData
+, KAPPL_IMM_Type
+, R_TRIG
+, KAPPL_Plastics_ProfileOutput
+, TON
+, TOF
+, KAPPL_Plastics_ProfileCalc
+
+END_IMPORT
+
+ALGORITHM_BLOCK ABPlasticize #DUMMY_EDIT_BLOCK
+
+SYSTEM_VAR
+ sv_bUseStartPosProfiles : BOOL;
+ sv_DeviceId : tsDeviceId;
+ sv_rMaxPressureEndHold : REAL;
+ sv_bProfileEditorActive : BOOL (* "profile dirty" flag (will be set / reset by HMI) *);
+END_VAR
+
+SYSTEM_OBJECT
+ TaskSlow : TASK;
+ TaskInject : TASK;
+ PU_Task_7 : TASK;
+ erProfileSequence : ALARM;
+ erMoveTimeout : ALARM;
+ erPresProfDamaged : ALARM;
+ erBackPresProfDamaged : ALARM;
+ erVelProfDamaged : ALARM;
+ erInvalidProfileReference : ALARM;
+ erPlasticizingOutput : ALARM;
+ erPressureOutput : ALARM;
+END_OBJECT
+
+VAR
+ mpPlastProfile : REFTO KAPPL_VisProfilePlast;
+ mbMovementActive : BOOL;
+ BackPressureProfile : KAPPL_ProfileData;
+ PressureProfile : KAPPL_ProfileData;
+ RotationProfile : KAPPL_ProfileData;
+ mbReParam : BOOL;
+ mMoveId : tMoveIdent;
+ mbProfileError : BOOL (* error during profile calc detected *);
+ mbReferenceValid : BOOL (* info if reference is valid *);
+ fbPlast : KAPPL_Plastics_Plasticizing;
+ mbInitPlastProfile : BOOL := FALSE;
+ mrBackPressureSet : REAL;
+ mrRpmSet : REAL;
+ mrRpmAct : REAL;
+ mrUBackPressureControl : REAL;
+ mrUPlastControl : REAL;
+ mrInitOutputBackPressure : REAL;
+END_VAR
+
+VAR CONSTANT
+ cMinPressureEndHold : REAL := 50.0;
+END_VAR
+
+(*
+This algorithm copies the input values to local variables and starts
+the process algorithm for initialization of the profile.
+*)
+
+ALGORITHM aInit
+
+
+VAR_INPUT
+ pPlastProfile : REFTO KAPPL_VisProfilePlast (* pointer to systemvariable that contains the plast profile *);
+ MoveId : tMoveIdent (* moveId of plast movement *);
+END_VAR
+
+VAR
+ bInitDone : BOOL;
+ swoState : KSWO_Status;
+ fuName : STRING(255);
+ variableName : STRING(255);
+END_VAR
+#BEGIN_EDIT_BLOCK
+(**************************************** WARNING ********************************************
+ *** The KEBA Kemro K2 System including software is not intended for safety control tasks! ***
+ ***                       For further information see Comment tab!                        ***
+ *********************************************************************************************)
+
+IF NOT bInitDone THEN
+    //copy reference of vis variable
+    mpPlastProfile := pPlastProfile;
+    mMoveId := MoveId;
+    
+    IF CHECK_REF(mpPlastProfile^) THEN
+        mbReferenceValid := TRUE;
+        //start paInit only if reference is valid
+        START_PROCESS_ALGORITHM(paInit);
+    ELSE
+        SET_ALARM(Name := erInvalidProfileReference,
+                    SubID1 := sv_DeviceId.CompId,
+                    SubID2 := sv_DeviceId.IndexId,
+                    SubID3 := mMoveId);
+    END_IF;
+    
+    fuName := GET_MY_FU_NAME();
+    variableName := CONCAT(fuName,'.Plasticize.SetBackPressure bar');
+    swoState := KSWO_AddVariable( Task := TaskInject,
+                                  Name := variableName,
+                                  Variable := mrBackPressureSet);
+    variableName := CONCAT(fuName,'.Plasticize.ActScrewRPM rpm');
+    swoState := KSWO_AddVariable( Task := TaskInject,
+                                  Name := variableName,
+                                  Variable := mrRpmAct);  
+    variableName := CONCAT(fuName,'.Plasticize.SetScrewRPM rpm');
+    swoState := KSWO_AddVariable( Task := TaskInject,
+                                  Name := variableName,
+                                  Variable := mrRpmSet);
+    variableName := CONCAT(fuName,'.Plasticize.ControlVariableBackPressure bar');
+    swoState := KSWO_AddVariable( Task := TaskInject,
+                                  Name := variableName,
+                                  Variable := mrUBackPressureControl);
+    variableName := CONCAT(fuName,'.Plasticize.ControlVariablePlast l/min');
+    swoState := KSWO_AddVariable( Task := TaskInject,
+                                  Name := variableName,
+                                  Variable := mrUPlastControl);
+    variableName := CONCAT(fuName,'.Plasticize.PlastActive');
+    swoState := KSWO_AddVariable( Task := TaskInject,
+                                  Name := variableName,
+                                  Variable := mbMovementActive);
+    
+   
+    bInitDone := TRUE;
+END_IF;
+
+
+
+
+;#END_EDIT_BLOCK END_ALGORITHM
+
+(*
+Following functions are realized in this algorithm:
+
+1) reparam of the profileoutput - blocks
+2) profile output for pressure, backpressure (PID - Control possible) and RPM (PID - Control possible)
+   Attention: If an error was detected during profile calculation the algorithm
+   will not be executed!
+3) Calculation of the active profile stage
+4) Timeout detection if dMaxMoveTime is bigger than 0s.
+   dMaxMoveTime = 0 means no timeout detection active
+   If a timeout is detected an alarm will be set and the profileoutput will be stopped automatically
+
+*)
+
+ALGORITHM aRun
+
+
+VAR_INPUT
+ bStart : BOOL (* start profileoutput *);
+ bStop : BOOL (* stop profileoutput *);
+ rActScrewPosition : REAL (* actual screw position *);
+ rStartOutputPressure : REAL (* start output pressure *);
+ rStartOutputBackPressure : REAL (* start output backpressure *);
+ rStartOutputVelocity : REAL (* start output velocity *);
+ PlastControlParams : tsControlParameters (* PID - parameters for plast *);
+ BackPressureControlParams : tsControlParameters (* PID - parameters for backpressure *);
+ ScrewRevVelLintab : KAPPL_LintabData (* lintab between revolution and velocity *);
+ dMaxMoveTime : TIME (* maximum move time *);
+ rActBackPressure : REAL (* actual  backpressure *);
+ rMaxBackPressure : REAL (* max. system backpressure *);
+ rActRpm : REAL (* actual  rpm *);
+ rMaxRpm : REAL (* max.  rpm *);
+ ProfileDeadTime : TIME;
+ rMaxBackSpeed : REAL;
+ IMM_Type : KAPPL_IMM_Type;
+ dDelayTimeOn : TIME (* Delay Time between preoutput and  constoutput *);
+ dDelayTimeOff : TIME (* Delay Time between pump stop and bActive FALSE *);
+ bBackPressPIDIntStop : BOOL (* External intergator stop of back pressure PID *);
+ rBackPressureFilterFrequency : REAL;
+ bUsePServoValve : BOOL;
+END_VAR
+
+VAR_OUTPUT
+ rPressureOutput : REAL (* calculated pressure output *);
+ rBackPressureOutput : REAL (* calculated backpressure output *);
+ rVelocityOutput : REAL (* calculated velocity output *);
+ rBackPressureSet : REAL (* set value for backpressure (from the entered profile) *);
+ rRpmSet : REAL (* set value for rpm (from the entered profile) *);
+ rMaxOutputRpm : REAL (* maximum rpm output *);
+ bActive : BOOL (* profile movement is active *);
+ iActiveStage : DINT (* active profilestage *);
+ bPreOutputReached : BOOL (* preoutput ready *);
+ dActMoveTime : TIME (* actual move time *);
+ bTimeOut : BOOL (* timeout detected *);
+ bError : BOOL (* error detected *);
+ iErrorInfo : DINT (* additional error info *);
+ rPlastStartPosition : REAL (* position at starting plasticizing *);
+END_VAR
+
+VAR_TEMP
+ i : UDINT;
+END_VAR
+
+VAR
+ fbREdge_Start : R_TRIG;
+ fbProfilePlastPressure : KAPPL_Plastics_ProfileOutput;
+ fbTimer : TON;
+ fbREdge_Timeout : R_TRIG;
+ bAlarmSet : BOOL;
+ fbREdgePresError : R_TRIG;
+ bActiveInt : BOOL;
+ fbTOFActive : TOF;
+ fbREdgePlastError : R_TRIG;
+ rStartOutputPress : REAL;
+ rPreOutputPress : REAL;
+ rStartOutputBackPress : REAL;
+END_VAR
+#BEGIN_EDIT_BLOCK
+(**************************************** WARNING ********************************************
+ *** The KEBA Kemro K2 System including software is not intended for safety control tasks! ***
+ ***                       For further information see Comment tab!                        ***
+ *********************************************************************************************)
+
+bError := FALSE;
+iErrorInfo := cApplPlasticsNoError;
+
+//do not execute if profile reference is not valid
+IF NOT mbReferenceValid THEN
+    
+    //set alarm because algorithm can be called without calling aInit before
+    IF NOT bAlarmSet THEN
+        SET_ALARM(Name := erInvalidProfileReference,
+                SubID1 := sv_DeviceId.CompId,
+                SubID2 := sv_DeviceId.IndexId,
+                SubID3 := mMoveId);
+        
+        bAlarmSet := TRUE;
+    END_IF;
+        
+    bError := TRUE;
+    RETURN;
+END_IF;
+
+//do not execute if profile error was detected
+IF mbProfileError THEN
+    bError := TRUE;
+    RETURN;
+END_IF;
+ 
+//init part
+IF mbReParam THEN    
+    // init plasticizing block
+    fbPlast(ProfileRevolution := RotationProfile,
+            ProfilePressure := BackPressureProfile,
+            RampTypePre := mpPlastProfile^.RampTypeBackPress,
+            RampTypeRev := mpPlastProfile^.RampTypeVel,
+            PreOutputRampP := mpPlastProfile^.rPreOutputBackPressRamp,
+            PreOutputRampRev := mpPlastProfile^.rPreOutputVelRamp,
+            //PreOutputValueP := mpPlastProfile^.rPreOutputBackPress,
+            PreOutputValueRev := mpPlastProfile^.rPreOutputVel,
+            MinOutputVelocity := mpPlastProfile^.rMinOutputVel,
+            Lintab_revolution_velocity := ScrewRevVelLintab,
+            UseBackPressure := TRUE,
+            ProfileDeadTime := ProfileDeadTime,
+            dDelayTime := dDelayTimeOn,
+            IMM_Type := IMM_Type,
+            rBackPressureFilterFrequency := rBackPressureFilterFrequency,
+            P_Revolution := PlastControlParams.rP,
+            TN_Revolution := PlastControlParams.dTN,
+            TV_Revolution := PlastControlParams.dTV,
+            KS_Revolution := PlastControlParams.rKS,
+            PIDActivationDelay_Revolution := PlastControlParams.dActivationDelay,
+            UsePlastPID := PlastControlParams.bUsePIDControl,
+            P_Pressure := BackPressureControlParams.rP,
+            TN_Pressure := BackPressureControlParams.dTN,
+            TV_Pressure := BackPressureControlParams.dTV,
+            UseBackPressurePID := BackPressureControlParams.bUsePIDControl,
+            ReParam := TRUE,
+            bUsePServoValve := bUsePServoValve);
+    
+   IF mpPlastProfile^.rEndOutputPressure > 0.0 THEN  // rdl: use hold torque
+      rStartOutputPress  := mpPlastProfile^.Profile.Points[1].rPressure;
+      rPreOutputPress := rStartOutputPress;
+   ELSE
+      rStartOutputPress := rStartOutputPressure;
+      rPreOutputPress := mpPlastProfile^.rPreOutputPress;
+   END_IF;
+
+    fbProfilePlastPressure(Reset := FALSE,
+            ProfilData := PressureProfile,
+            PreRamp := mpPlastProfile^.rPreOutputPressRamp,
+            PreOutputValue := rPreOutputPress,
+            StartOutputValue := rStartOutputPress,
+            MinOutput := mpPlastProfile^.rMinOutputPress,               
+            DelayTime := dDelayTimeOn,                           
+            ReParam := TRUE,                                     
+            RampType := mpPlastProfile^.RampTypePress);
+    
+    IF fbPlast.Error THEN
+        SET_ALARM(Name := erPlasticizingOutput,
+                  SubID1 := sv_DeviceId.CompId,
+                  SubID2 := sv_DeviceId.IndexId,
+                  SubID3 := fbPlast.ErrorInfo);
+    END_IF;
+    
+    IF fbProfilePlastPressure.Error THEN
+        SET_ALARM(Name := erPressureOutput,
+                  SubID1 := sv_DeviceId.CompId,
+                  SubID2 := sv_DeviceId.IndexId,
+                  SubID3 := mMoveId,
+                  SubID4 := fbProfilePlastPressure.ErrorInfo);
+    END_IF;
+    
+    //set error info
+    IF fbPlast.Error THEN
+        iErrorInfo := fbPlast.ErrorInfo;
+    ELSIF fbProfilePlastPressure.Error THEN
+        iErrorInfo := fbProfilePlastPressure.ErrorInfo;
+    END_IF;
+    
+    IF fbPlast.Error OR fbProfilePlastPressure.Error THEN
+        //don´t do movement if one of the outputblocks has an error
+        bError := TRUE;
+        RETURN;
+    END_IF;
+            
+    mbReParam := FALSE;
+END_IF;
+
+fbREdge_Start(CLK := bStart);
+IF fbREdge_Start.Q THEN
+    IF rActBackPressure > rStartOutputBackPressure  THEN
+       rStartOutputBackPress := rActBackPressure;
+    ELSE
+       rStartOutputBackPress := rStartOutputBackPressure;
+    END_IF;
+    fbPlast(P_Revolution := PlastControlParams.rP,
+            RampTypePre := mpPlastProfile^.RampTypeBackPress,
+            RampTypeRev := mpPlastProfile^.RampTypeVel,
+            TN_Revolution := PlastControlParams.dTN,
+            TV_Revolution := PlastControlParams.dTV,
+            KS_Revolution := PlastControlParams.rKS,
+            PIDActivationDelay_Revolution := PlastControlParams.dActivationDelay,
+            P_Pressure := BackPressureControlParams.rP,
+            TN_Pressure := BackPressureControlParams.dTN,
+            TV_Pressure := BackPressureControlParams.dTV,
+            UsePlastPID := PlastControlParams.bUsePIDControl,
+            UseBackPressurePID := BackPressureControlParams.bUsePIDControl,
+            Lintab_revolution_velocity := ScrewRevVelLintab,
+            MaxSystemRevolution := rMaxRpm,
+            MaxSystemBackPressure := rMaxBackPressure, 
+            MaxSystemBackSpeed := rMaxBackSpeed,
+            ProfileDeadTime := ProfileDeadTime,
+            IMM_Type := IMM_Type,
+            dDelayTime := dDelayTimeOn,
+            bBackPressPIDIntStop := bBackPressPIDIntStop,
+            ReParam := TRUE,
+            StartOutputBackPressure := rStartOutputBackPress,
+            PreOutputValueP := rStartOutputBackPress);
+    
+    //reset timer for timeout detection
+    fbTimer(IN := FALSE);
+    bTimeOut := FALSE;
+    dActMoveTime := t#0s;
+    fbREdgePresError(CLK := FALSE);
+    fbREdgePlastError(CLK := FALSE);
+
+    //steg: sample actual position at starting plasticizing
+    rPlastStartPosition := rActScrewPosition;
+
+   IF mpPlastProfile^.rEndOutputPressure > 0.0 THEN  // rdl: use hold torque
+      rStartOutputPress  := mpPlastProfile^.Profile.Points[1].rPressure;
+      rPreOutputPress := rStartOutputPress;
+   ELSE
+      rStartOutputPress := rStartOutputPressure;
+      rPreOutputPress := mpPlastProfile^.rPreOutputPress;
+   END_IF;
+   
+END_IF;
+
+
+//cyclic part
+fbPlast(Start := bStart,
+        Stop := bStop OR bTimeOut,
+        Position := rActScrewPosition,
+        BackPressure := rActBackPressure,
+        Revolution := rActRpm,
+        StartOutputVelocity := rStartOutputVelocity,
+        StartOutputBackPressure := rStartOutputBackPress,            
+        PreOutputValueP := rStartOutputBackPress,        
+        UseBackPressure := TRUE,
+        ReParam := FALSE,
+        dDelayTime := dDelayTimeOn,
+        bBackPressPIDIntStop := bBackPressPIDIntStop,
+        MaxRpm => rMaxOutputRpm);
+        
+fbProfilePlastPressure(Start := bStart,
+        Reset := FALSE,
+        Stop := (bStop AND NOT (mpPlastProfile^.rEndOutputPressure > 0.0)) OR bTimeOut,  // rdl: use hold torque
+        StartOutputValue := rStartOutputPress,
+        InputValue := rActScrewPosition,
+        DelayTime := dDelayTimeOn,                       
+        ReParam := FALSE,                             
+        RampType := mpPlastProfile^.RampTypeBackPress);        
+        
+//copy output values
+rBackPressureOutput := fbPlast.OutputBackPressure;
+rPressureOutput :=  fbProfilePlastPressure.Output;
+rVelocityOutput := fbPlast.OutputVelocity;
+rBackPressureSet := fbPlast.OutputSetBackpressure;
+rRpmSet := fbPlast.OutputSetRpm;
+bPreOutputReached := fbPlast.PreOutputReady AND fbProfilePlastPressure.PreOutputReady;
+
+//copy values to SWO-Server
+mrBackPressureSet := rBackPressureSet;
+mrRpmSet := rRpmSet;
+mrRpmAct := rActRpm;
+mrUBackPressureControl := rBackPressureOutput;
+mrUPlastControl := rVelocityOutput;
+
+//check error and set error info
+IF fbPlast.Error THEN
+    bError := TRUE;
+    iErrorInfo := fbPlast.ErrorInfo;
+ELSIF fbProfilePlastPressure.Error THEN
+    bError := TRUE;
+    iErrorInfo := fbProfilePlastPressure.ErrorInfo;
+END_IF;
+
+//set alarm if error during pressure output occurs
+fbREdgePresError(CLK := fbProfilePlastPressure.Error);
+IF fbREdgePresError.Q THEN
+    SET_ALARM(Name := erPressureOutput,
+              SubID1 := sv_DeviceId.CompId,
+              SubID2 := sv_DeviceId.IndexId,
+              SubID3 := mMoveId,
+              SubID4 := fbProfilePlastPressure.ErrorInfo);
+END_IF;
+
+//set alarm if error during plast output occurs
+fbREdgePlastError(CLK := fbPlast.Error);
+IF fbREdgePlastError.Q THEN
+    SET_ALARM(Name := erPlasticizingOutput,
+              SubID1 := sv_DeviceId.CompId,
+              SubID2 := sv_DeviceId.IndexId,
+              SubID3 := fbPlast.ErrorInfo);
+END_IF;
+
+//calculate active profile stage
+FOR i := 1 TO mpPlastProfile^.Profile.iNoOfPoints DO        
+    IF rActScrewPosition < mpPlastProfile^.Profile.Points[i+1].rStartPos THEN
+        iActiveStage := UDINT_TO_DINT(i);
+        EXIT;
+    END_IF;
+END_FOR;
+
+IF (fbProfilePlastPressure.Ready AND mpPlastProfile^.rEndOutputPressure > 0.0) THEN
+   rPressureOutput := mpPlastProfile^.rEndOutputPressure; // rdl: use hold torque
+END_IF;
+
+IF (fbPlast.Ready  AND (fbProfilePlastPressure.Ready OR mpPlastProfile^.rEndOutputPressure > 0.0)) OR bError THEN
+    bActiveInt := FALSE;
+    iActiveStage := 0;
+    IF NOT fbProfilePlastPressure.Ready THEN
+       //reset profile output block
+       fbProfilePlastPressure(Reset := TRUE);
+    END_IF;
+ELSE
+    bActiveInt := TRUE;
+END_IF;
+mbMovementActive := bActiveInt;
+
+
+//Timeout detection
+IF bActiveInt THEN
+    fbTimer(IN := TRUE,
+            PT := dMaxMoveTime);
+    dActMoveTime := fbTimer.ET;
+    //dMaxMoveTime = 0 means timeout detection is deactivated!!
+    IF dMaxMoveTime > t#0.0s THEN
+        bTimeOut := fbTimer.Q;
+    END_IF; 
+END_IF;
+
+//set timeout alarm
+fbREdge_Timeout(CLK := bTimeOut);
+IF fbREdge_Timeout.Q THEN
+    SET_ALARM(Name := erMoveTimeout,
+              SubID1 := sv_DeviceId.CompId,
+              SubID2 := sv_DeviceId.IndexId,
+              SubID3 := mMoveId);    
+END_IF;
+
+// set output bActive
+fbTOFActive(bActiveInt, dDelayTimeOff);
+bActive := fbTOFActive.Q;
+
+
+
+;#END_EDIT_BLOCK END_ALGORITHM
+
+(*
+This algorithm reacts on changes of the profile.
+If the profile changes the process algorithm for initialization will be started.
+*)
+
+POSTUPDATE_ALGORITHM pPlastProfileChanged ON PU_Task_7 WITH mpPlastProfile^
+
+#BEGIN_EDIT_BLOCK
+(**************************************** WARNING ********************************************
+ *** The KEBA Kemro K2 System including software is not intended for safety control tasks! ***
+ ***                       For further information see Comment tab!                        ***
+ *********************************************************************************************)
+
+START_PROCESS_ALGORITHM(paInit);
+
+
+;#END_EDIT_BLOCK END_ALGORITHM
+
+(*
+This algorithm does the initialization for the profile movement.
+This means profile calculation of pressure backpressure and RPM profile.
+If an error is detected during profile calculation an error will be set.
+*)
+
+PROCESS_ALGORITHM paInit ON TaskSlow
+
+
+VAR_TEMP
+ i : UDINT;
+END_VAR
+
+VAR
+ iNoOfPoints : UDINT;
+ fbProfileCalc : KAPPL_Plastics_ProfileCalc;
+ DummyLintab : KAPPL_LintabData;
+END_VAR
+#BEGIN_EDIT_BLOCK
+(**************************************** WARNING ********************************************
+ *** The KEBA Kemro K2 System including software is not intended for safety control tasks! ***
+ ***                       For further information see Comment tab!                        ***
+ *********************************************************************************************)
+
+IF (NOT mbMovementActive) AND (NOT sv_bProfileEditorActive) THEN
+    
+    mbProfileError := FALSE;
+    
+    //increase number of points if necessary
+    IF sv_bUseStartPosProfiles THEN
+        iNoOfPoints := mpPlastProfile^.Profile.iNoOfPoints;
+    ELSE
+        iNoOfPoints := mpPlastProfile^.Profile.iNoOfPoints + 1; 
+    END_IF;
+    
+   //use rEndOutputPressure value if less than last profile step
+   //ohterwise use last profil step
+   IF mpPlastProfile^.Profile.Points[iNoOfPoints-1].rPressure > mpPlastProfile^.rEndOutputPressure THEN
+      mpPlastProfile^.Profile.Points[iNoOfPoints].rPressure := mpPlastProfile^.rEndOutputPressure;
+   ELSE
+      mpPlastProfile^.Profile.Points[iNoOfPoints].rPressure := mpPlastProfile^.Profile.Points[iNoOfPoints-1].rPressure;       
+   END_IF;
+   
+    mpPlastProfile^.Profile.Points[iNoOfPoints].rRotation     := 0.0;
+
+    //BackPressure - profile
+   //use rEndOutputBackPressure value if less than last profile step
+   //ohterwise use last profil step
+   IF mpPlastProfile^.Profile.Points[iNoOfPoints-1].rBackPressure > mpPlastProfile^.rEndOutputBackPressure  THEN
+      mpPlastProfile^.Profile.Points[iNoOfPoints].rBackPressure := mpPlastProfile^.rEndOutputBackPressure;
+   ELSE
+      mpPlastProfile^.Profile.Points[iNoOfPoints].rBackPressure := mpPlastProfile^.Profile.Points[iNoOfPoints-1].rBackPressure; 
+   END_IF;
+    fbProfileCalc.RawProfilePoint.uNoOfPoints := iNoOfPoints;        
+    FOR i := 1 TO iNoOfPoints DO
+        fbProfileCalc.RawProfilePoint.RawProfilePoints[i].XValue := mpPlastProfile^.Profile.Points[i].rStartPos;
+        fbProfileCalc.RawProfilePoint.RawProfilePoints[i].YValue := mpPlastProfile^.Profile.Points[i].rBackPressure;
+        fbProfileCalc.RawProfilePoint.RawProfilePoints[i].Ramp   := mpPlastProfile^.Profile.Points[i].rBackPressureRamp / 100.0 *
+                                                                    mpPlastProfile^.rMaxRampBackPress;
+    END_FOR;
+    
+    // use stop deceleration for last point
+    IF mpPlastProfile^.rStopRampPress > 0.0 THEN
+      mpPlastProfile^.Profile.Points[iNoOfPoints].rPressRamp := mpPlastProfile^.rStopRampPress;
+    ELSE
+      mpPlastProfile^.Profile.Points[iNoOfPoints].rPressRamp := 100.0;
+    END_IF;
+    IF mpPlastProfile^.rStopRampVel > 0.0 THEN
+      mpPlastProfile^.Profile.Points[iNoOfPoints].rRotationRamp := mpPlastProfile^.rStopRampVel;
+    ELSE
+      mpPlastProfile^.Profile.Points[iNoOfPoints].rRotationRamp := 100.0;
+    END_IF; 
+    
+    // limit profile output also with last ramp
+    fbProfileCalc.LimitEveryPointToLastRamp := mpPlastProfile^.bLimitEveryPointToLastRamp;
+
+    
+    fbProfileCalc(MaxAcceleration := mpPlastProfile^.rMaxRampBackPress,
+                  MaxDeceleration := mpPlastProfile^.rMaxRampBackPress,
+                  RampType := mpPlastProfile^.RampTypeBackPress);
+    IF fbProfileCalc.Error THEN // profile not possible
+        IF (fbProfileCalc.ErrorOnPoint = -1) THEN
+            SET_ALARM(Name   := erProfileSequence,
+                      SubID1 := sv_DeviceId.CompId,
+                      SubID2 := sv_DeviceId.IndexId,
+                      SubID3 := mMoveId);
+        ELSE
+            SET_ALARM(Name   := erBackPresProfDamaged,
+                      SubID1 := sv_DeviceId.CompId,
+                      SubID2 := sv_DeviceId.IndexId,
+                      SubID3 := mMoveId,
+                      SubID4 := fbProfileCalc.ErrorOnPoint,
+                      Param1 := fbProfileCalc.MaximumPossibleValue);
+        END_IF;
+        mbProfileError := TRUE;
+        
+    ELSE // copy data to yx - generator values
+        IF mpPlastProfile^.Profile.Points[1].rBackPressureRamp > 0.0 THEN
+            BackPressureProfile.Acceleration := mpPlastProfile^.rMaxRampBackPress * mpPlastProfile^.Profile.Points[1].rBackPressureRamp / 100.0;
+        ELSE
+            BackPressureProfile.Acceleration := mpPlastProfile^.rMaxRampBackPress;
+        END_IF;
+        BackPressureProfile.StopAcceleration  := mpPlastProfile^.rMaxRampBackPress * mpPlastProfile^.Profile.Points[iNoOfPoints].rBackPressureRamp / 100.0;
+        BackPressureProfile.InterAcceleration := BackPressureProfile.StopAcceleration;
+        BackPressureProfile.ProfilePoints     := fbProfileCalc.CalcedProfile;
+     
+        // calced profile for vis
+        IF CHECK_REF(mpPlastProfile^.pCalculatedProfile^) THEN
+           IF mpPlastProfile^.pCalculatedProfile^.PressureProfile.CalculatedProfile <> fbProfileCalc.CalcedProfile THEN
+              mpPlastProfile^.pCalculatedProfile^.PressureProfile.CalculatedProfile := fbProfileCalc.CalcedProfile;
+              mpPlastProfile^.pCalculatedProfile^.PressureProfile.iProfileChangedCounter := mpPlastProfile^.pCalculatedProfile^.PressureProfile.iProfileChangedCounter + 1;             
+           END_IF;
+        END_IF;
+                
+        // rdl: set end pressure hold to first back pressure -> better plasticizing
+        IF BackPressureProfile.ProfilePoints.Point[1].rY > cMinPressureEndHold THEN
+           sv_rMaxPressureEndHold := BackPressureProfile.ProfilePoints.Point[1].rY;
+        ELSE
+           sv_rMaxPressureEndHold := cMinPressureEndHold;
+        END_IF;
+
+        RESET_ALARM(Name   := erProfileSequence,
+                    SubID1 := sv_DeviceId.CompId,
+                    SubID2 := sv_DeviceId.IndexId,
+                    SubID3 := mMoveId);
+        
+        RESET_ALARM(Name   := erBackPresProfDamaged,
+                    SubID1 := sv_DeviceId.CompId,
+                    SubID2 := sv_DeviceId.IndexId,
+                    SubID3 := mMoveId,
+                    SubID4 := ANY);       
+    END_IF;
+    
+    //pressure profile     
+    FOR i := 1 TO iNoOfPoints DO
+       fbProfileCalc.RawProfilePoint.RawProfilePoints[i].XValue := mpPlastProfile^.Profile.Points[i].rStartPos;
+       fbProfileCalc.RawProfilePoint.RawProfilePoints[i].YValue := mpPlastProfile^.Profile.Points[i].rPressure;
+       fbProfileCalc.RawProfilePoint.RawProfilePoints[i].Ramp   := mpPlastProfile^.Profile.Points[i].rPressRamp / 100.0 *
+                                                                   mpPlastProfile^.rMaxRampPress;
+    END_FOR;
+
+    fbProfileCalc(MaxAcceleration := mpPlastProfile^.rMaxRampPress,
+                  MaxDeceleration := mpPlastProfile^.rMaxRampPress,
+                  RampType := mpPlastProfile^.RampTypePress);
+    IF fbProfileCalc.Error THEN // profile not possible       
+       IF (fbProfileCalc.ErrorOnPoint = -1) THEN
+           SET_ALARM(Name   := erProfileSequence,
+                     SubID1 := sv_DeviceId.CompId,
+                     SubID2 := sv_DeviceId.IndexId,
+                     SubID3 := mMoveId);
+       ELSE
+           SET_ALARM(Name   := erPresProfDamaged,
+                     SubID1 := sv_DeviceId.CompId,
+                     SubID2 := sv_DeviceId.IndexId,
+                     SubID3 := mMoveId,
+                     SubID4 := fbProfileCalc.ErrorOnPoint,
+                     Param1 := fbProfileCalc.MaximumPossibleValue);
+       END_IF;
+       mbProfileError := TRUE; 
+       
+    ELSE // copy data to yx - generator values
+        IF mpPlastProfile^.Profile.Points[1].rPressRamp > 0.0 THEN
+            PressureProfile.Acceleration := mpPlastProfile^.rMaxRampPress * mpPlastProfile^.Profile.Points[1].rPressRamp / 100.0;
+        ELSE
+            PressureProfile.Acceleration := mpPlastProfile^.rMaxRampPress;
+        END_IF;
+        PressureProfile.StopAcceleration := mpPlastProfile^.rMaxRampPress * mpPlastProfile^.Profile.Points[iNoOfPoints].rPressRamp / 100.0;
+        PressureProfile.ProfilePoints    := fbProfileCalc.CalcedProfile;
+        
+        RESET_ALARM(Name   := erProfileSequence,
+                    SubID1 := sv_DeviceId.CompId,
+                    SubID2 := sv_DeviceId.IndexId,
+                    SubID3 := mMoveId);
+        
+        RESET_ALARM(Name   := erPresProfDamaged,
+                    SubID1 := sv_DeviceId.CompId,
+                    SubID2 := sv_DeviceId.IndexId,
+                    SubID3 := mMoveId,
+                    SubID4 := ANY);
+    END_IF;
+    
+    // RPM - Profile
+    FOR i := 1 TO iNoOfPoints DO
+       fbProfileCalc.RawProfilePoint.RawProfilePoints[i].XValue := mpPlastProfile^.Profile.Points[i].rStartPos;
+       fbProfileCalc.RawProfilePoint.RawProfilePoints[i].YValue := mpPlastProfile^.Profile.Points[i].rRotation;
+       fbProfileCalc.RawProfilePoint.RawProfilePoints[i].Ramp   := mpPlastProfile^.Profile.Points[i].rRotationRamp / 100.0 *
+                                                                   mpPlastProfile^.rMaxRampVel;
+    END_FOR;
+
+    fbProfileCalc(MaxAcceleration := mpPlastProfile^.rMaxRampVel,
+                  MaxDeceleration := mpPlastProfile^.rMaxRampVel,
+                  RampType := mpPlastProfile^.RampTypeVel);
+    IF fbProfileCalc.Error THEN // profile not possible
+       IF (fbProfileCalc.ErrorOnPoint = -1) THEN
+           SET_ALARM(Name := erProfileSequence,
+                 SubID1 := sv_DeviceId.CompId,
+                 SubID2 := sv_DeviceId.IndexId,
+                 SubID3 := mMoveId);
+       ELSE
+           SET_ALARM(Name := erVelProfDamaged,
+                     SubID1 := sv_DeviceId.CompId,
+                     SubID2 := sv_DeviceId.IndexId,
+                     SubID3 := mMoveId,
+                     SubID4 := fbProfileCalc.ErrorOnPoint,
+                     Param1 := fbProfileCalc.MaximumPossibleValue);
+       END_IF;
+       mbProfileError := TRUE;
+       
+    ELSE // copy data to yx - generator values
+        //RotationProfile.Acceleration := mpPlastProfile^.rMaxRampVel;
+        IF mpPlastProfile^.Profile.Points[1].rRotationRamp > 0.0 THEN
+            RotationProfile.Acceleration := mpPlastProfile^.rMaxRampVel * mpPlastProfile^.Profile.Points[1].rRotationRamp / 100.0;
+        ELSE
+            RotationProfile.Acceleration := mpPlastProfile^.rMaxRampVel;
+        END_IF;
+        RotationProfile.StopAcceleration := mpPlastProfile^.rMaxRampVel * mpPlastProfile^.Profile.Points[iNoOfPoints].rRotationRamp / 100.0;
+        RotationProfile.ProfilePoints := fbProfileCalc.CalcedProfile;
+       
+        // calced profile for vis
+        IF CHECK_REF(mpPlastProfile^.pCalculatedProfile^) THEN
+           IF mpPlastProfile^.pCalculatedProfile^.VelocityProfile.CalculatedProfile <> fbProfileCalc.CalcedProfile THEN
+              mpPlastProfile^.pCalculatedProfile^.VelocityProfile.CalculatedProfile := fbProfileCalc.CalcedProfile;
+              mpPlastProfile^.pCalculatedProfile^.VelocityProfile.iProfileChangedCounter := mpPlastProfile^.pCalculatedProfile^.VelocityProfile.iProfileChangedCounter + 1;
+           END_IF;            
+        END_IF;
+       
+        RESET_ALARM(Name := erProfileSequence,
+                    SubID1 := sv_DeviceId.CompId,
+                    SubID2 := sv_DeviceId.IndexId,
+                    SubID3 := mMoveId);
+        
+        RESET_ALARM(Name := erVelProfDamaged,
+                    SubID1 := sv_DeviceId.CompId,
+                    SubID2 := sv_DeviceId.IndexId,
+                    SubID3 := mMoveId,
+                    SubID4 := ANY);
+    END_IF;        
+    
+    IF NOT mbInitPlastProfile THEN
+       DummyLintab.LintabPoints.uNoOfPoints := 2;
+       DummyLintab.LintabPoints.Point[1].rX := 0.0;
+       DummyLintab.LintabPoints.Point[1].rY := 0.0;
+       DummyLintab.LintabPoints.Point[2].rX := 1.0;
+       DummyLintab.LintabPoints.Point[2].rY := 1.0;
+       fbPlast(ProfileRevolution := RotationProfile,
+               ProfilePressure := BackPressureProfile,
+               PreOutputRampP := mpPlastProfile^.rPreOutputBackPressRamp,
+               PreOutputRampRev := mpPlastProfile^.rPreOutputVelRamp,
+               PreOutputValueP := mpPlastProfile^.rPreOutputBackPress,
+               PreOutputValueRev := mpPlastProfile^.rPreOutputVel,
+               MinOutputVelocity := mpPlastProfile^.rMinOutputVel,
+               Lintab_revolution_velocity := DummyLintab,
+               UseBackPressure := TRUE,
+               //ProfileDeadTime := ProfileDeadTime,
+               MeasureTask := TaskInject,
+               ReParam := TRUE);    
+    END_IF;
+          
+    // start with first point
+    mrInitOutputBackPressure := mpPlastProfile^.Profile.Points[1].rBackPressure;
+      
+    mbInitPlastProfile := TRUE;   
+    mbReParam := TRUE;
+    STOP_PROCESS_ALGORITHM();
+END_IF;
+
+
+;#END_EDIT_BLOCK END_ALGORITHM
+
+
+
+END_ALGORITHM_BLOCK
+
+
+
+#END_OF_IEC_PART
+
+@Puma @IecEditor 6 150 @Pou 25 
+@@@BEG_Comment@@@
+@h    ! WARNING !
+@h    The Kemro K2 system (including software) only meets category B according to EN 954-1,
+@h    thus it is not intended for usage in safety-relevant control applications in the field 
+@h    of personal safety (e.g. emergency stop).
+@h    To implement potentially necessary safety-relevant control tasks, always use additional 
+@h    external safety devices that are intended for the particular purpose, and meet the necessary 
+@h    functional safety.
+@h    For further information see EN 954-1 (EN ISO 13849-1) and/or the K2-x00 user manual, chapter 
+@h    "CE conformity, directives and standards".
+
+This AB provides all functions to realize the plasticizing movement.
+It includes the following funcionalities:
+- profile calculation for pressure, RPM and backpressure profile
+  (including error detection of the profiles) 
+- automatic reparam of all necessary blocks after changes in the profiles
+  Attention: reparam will be done after the movement is stopped and not during the movement is active
+- profile output for pressure, RPM and backpressure
+- timeout detection (including automatic stop after timeout)
+
+@FunctionID: S_KPIEC_PRINJ_04
+@FunctionID: S_KPIEC_ALAMOVE_02
+@FunctionID: S_KPIEC_ALAMOVE_03
+
+
+@@@END_Comment@@@
+
+@BEG_Contents 
+
+@BEG_Func 
+@RT(17)FuncTreeContainer 
+4 
+@Var @RT(9)SET_ALARM @RT(0) @T @T @DERIVED 0 @F @RT(23)KEBA_STANDARD_PROCEDURE @F 
+@T 
+@BEG_Attrib 
+0 @RT(0) @RT(0) 
+@END_Attrib 
+1 1 @F @F @F @F 
+
+@Var @RT(14)GET_MY_FU_NAME @RT(0) @T @T @DERIVED 0 @F @RT(22)KEBA_STANDARD_FUNCTION @F 
+@T 
+@BEG_Attrib 
+0 @RT(0) @RT(0) 
+@END_Attrib 
+1 1 @F @F @F @F 
+
+@Var @RT(16)KSWO_AddVariable @RT(0) @T @T @DERIVED 0 @F @RT(22)KEBA_STANDARD_FUNCTION @F 
+@T 
+@BEG_Attrib 
+0 @RT(0) @RT(0) 
+@END_Attrib 
+1 1 @F @F @F @F 
+
+@Var @RT(11)RESET_ALARM @RT(0) @T @T @DERIVED 0 @F @RT(23)KEBA_STANDARD_PROCEDURE @F 
+@T 
+@BEG_Attrib 
+0 @RT(0) @RT(0) 
+@END_Attrib 
+1 1 @F @F @F @F 
+
+@END_Func 
+
+@BEG_Const 
+@RT(18)ConstTreeContainer 
+1 
+@Var @RT(20)cApplPlasticsNoError @RT(0) @T @F @DT @RT(4)DINT @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+0 @RT(1)0 @RT(8)No Error 
+@END_Attrib 
+1 1 @F @F @F @F 
+
+@END_Const 
+
+@BEG_Export 
+
+@BEG_Kind 
+@ALGORITHM_BLOCK @RT(12)ABPlasticize @STRUCTURED_TEXT 
+@RT(0) @RT(0) @RT(0) 
+@END_Kind 
+
+@BEG_Dcl 
+@RT(16)DclTreeContainer 
+33 
+@Var @RT(23)sv_bUseStartPosProfiles @RT(0) @T @F @DT @RT(4)BOOL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 8 @F @F @F @F 
+
+@Var @RT(11)sv_DeviceId @RT(0) @T @T @DERIVED 0 @T @T @DT @RT(10)tsDeviceId @RT(0) @T @T @UNKNOWN 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 8 @F @F @F @F 
+
+@Var @RT(22)sv_rMaxPressureEndHold @RT(0) @T @F @DT @RT(4)REAL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 8 @F @F @F @F 
+
+@Var @RT(8)TaskSlow @RT(0) @T @F @DT @RT(4)TASK @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 7 @F @F @F @F 
+
+@Var @RT(10)TaskInject @RT(0) @T @F @DT @RT(4)TASK @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 7 @F @F @F @F 
+
+@Var @RT(9)PU_Task_7 @RT(0) @T @F @DT @RT(4)TASK @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 7 @F @F @F @F 
+
+@Var @RT(17)erProfileSequence @RT(0) @T @F @DT @RT(5)ALARM @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 7 @F @F @F @F 
+
+@Var @RT(13)erMoveTimeout @RT(0) @T @F @DT @RT(5)ALARM @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 7 @F @F @F @F 
+
+@Var @RT(17)erPresProfDamaged @RT(0) @T @F @DT @RT(5)ALARM @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 7 @F @F @F @F 
+
+@Var @RT(21)erBackPresProfDamaged @RT(0) @T @F @DT @RT(5)ALARM @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 7 @F @F @F @F 
+
+@Var @RT(16)erVelProfDamaged @RT(0) @T @F @DT @RT(5)ALARM @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 7 @F @F @F @F 
+
+@Var @RT(25)erInvalidProfileReference @RT(0) @T @F @DT @RT(5)ALARM @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 7 @F @F @F @F 
+
+@Var @RT(20)erPlasticizingOutput @RT(0) @T @F @DT @RT(5)ALARM @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 7 @F @F @F @F 
+
+@Var @RT(16)erPressureOutput @RT(0) @T @F @DT @RT(5)ALARM @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 7 @F @F @F @F 
+
+@Var @RT(14)mpPlastProfile @RT(0) @T @T @REFTO 0 @F @DERIVED 0 @F @RT(21)KAPPL_VisProfilePlast @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(16)mbMovementActive @RT(0) @T @F @DT @RT(4)BOOL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(19)BackPressureProfile @RT(0) @T @T @DERIVED 0 @T @T @DT @RT(17)KAPPL_ProfileData @RT(0) @T @T @UNKNOWN 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(15)PressureProfile @RT(0) @T @T @DERIVED 0 @T @T @DT @RT(17)KAPPL_ProfileData @RT(0) @T @T @UNKNOWN 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(15)RotationProfile @RT(0) @T @T @DERIVED 0 @T @T @DT @RT(17)KAPPL_ProfileData @RT(0) @T @T @UNKNOWN 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(9)mbReParam @RT(0) @T @F @DT @RT(4)BOOL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(7)mMoveId @RT(0) @T @T @DERIVED 0 @T @T @DT @RT(10)tMoveIdent @RT(0) @T @T @UNKNOWN 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(14)mbProfileError @RT(0) @T @F @DT @RT(4)BOOL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(34)error during profile calc detected @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(16)mbReferenceValid @RT(0) @T @F @DT @RT(4)BOOL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(26)info if reference is valid @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(7)fbPlast @RT(0) @T @T @DERIVED 0 @T @T @DT @RT(27)KAPPL_Plastics_Plasticizing @RT(0) @T @T @UNKNOWN 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(18)mbInitPlastProfile @RT(0) @T @F @DT @RT(4)BOOL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(5)FALSE @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(17)mrBackPressureSet @RT(0) @T @F @DT @RT(4)REAL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(8)mrRpmSet @RT(0) @T @F @DT @RT(4)REAL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(8)mrRpmAct @RT(0) @T @F @DT @RT(4)REAL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(22)mrUBackPressureControl @RT(0) @T @F @DT @RT(4)REAL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(15)mrUPlastControl @RT(0) @T @F @DT @RT(4)REAL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(24)mrInitOutputBackPressure @RT(0) @T @F @DT @RT(4)REAL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(19)cMinPressureEndHold @RT(0) @T @F @DT @RT(4)REAL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(4)50.0 @RT(0) @RT(0) 
+@END_Attrib 
+1 15 @F @F @F @F 
+
+@Var @RT(23)sv_bProfileEditorActive @RT(0) @T @F @DT @RT(4)BOOL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(49)"profile dirty" flag (will be set / reset by HMI) @RT(0) 
+@END_Attrib 
+1 8 @F @F @F @F 
+
+@END_Dcl 
+
+@END_Export 
+
+@BEG_Body 
+
+4 
+
+@BEG_Export 
+
+@BEG_Algo 
+@ALGORITHM @RT(5)aInit @STRUCTURED_TEXT 
+@RT(0) @RT(0) @RT(0) @F @F 
+@END_Algo 
+
+@BEG_Dcl 
+@RT(16)DclTreeContainer 
+6 
+@Var @RT(13)pPlastProfile @RT(0) @T @T @REFTO 0 @F @DERIVED 0 @T @T @DT @RT(21)KAPPL_VisProfilePlast @RT(0) @T @T @UNKNOWN 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(57)pointer to systemvariable that contains the plast profile @RT(0) 
+@END_Attrib 
+1 1 @F @F @F @F 
+
+@Var @RT(6)MoveId @RT(0) @T @T @DERIVED 0 @T @T @DT @RT(10)tMoveIdent @RT(0) @T @T @UNKNOWN 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(24)moveId of plast movement @RT(0) 
+@END_Attrib 
+1 1 @F @F @F @F 
+
+@Var @RT(9)bInitDone @RT(0) @T @F @DT @RT(4)BOOL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(8)swoState @RT(0) @T @T @DERIVED 0 @T @T @DT @RT(11)KSWO_Status @RT(0) @T @T @UNKNOWN 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(6)fuName @RT(0) @T @F @DT @RT(11)STRING(255) @RT(0) @T @T @STRING 0 @F @RT(3)255 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(12)variableName @RT(0) @T @F @DT @RT(11)STRING(255) @RT(0) @T @T @STRING 0 @F @RT(3)255 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@END_Dcl 
+
+@END_Export 
+
+@BEG_Export 
+
+@BEG_Algo 
+@ALGORITHM @RT(4)aRun @STRUCTURED_TEXT 
+@RT(0) @RT(0) @RT(0) @F @F 
+@END_Algo 
+
+@BEG_Dcl 
+@RT(16)DclTreeContainer 
+49 
+@Var @RT(6)bStart @RT(0) @T @F @DT @RT(4)BOOL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(19)start profileoutput @RT(0) 
+@END_Attrib 
+1 1 @F @F @F @F 
+
+@Var @RT(5)bStop @RT(0) @T @F @DT @RT(4)BOOL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(18)stop profileoutput @RT(0) 
+@END_Attrib 
+1 1 @F @F @F @F 
+
+@Var @RT(17)rActScrewPosition @RT(0) @T @F @DT @RT(4)REAL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(21)actual screw position @RT(0) 
+@END_Attrib 
+1 1 @F @F @F @F 
+
+@Var @RT(20)rStartOutputPressure @RT(0) @T @F @DT @RT(4)REAL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(21)start output pressure @RT(0) 
+@END_Attrib 
+1 1 @F @F @F @F 
+
+@Var @RT(24)rStartOutputBackPressure @RT(0) @T @F @DT @RT(4)REAL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(25)start output backpressure @RT(0) 
+@END_Attrib 
+1 1 @F @F @F @F 
+
+@Var @RT(20)rStartOutputVelocity @RT(0) @T @F @DT @RT(4)REAL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(21)start output velocity @RT(0) 
+@END_Attrib 
+1 1 @F @F @F @F 
+
+@Var @RT(18)PlastControlParams @RT(0) @T @T @DERIVED 0 @T @T @DT @RT(19)tsControlParameters @RT(0) @T @T @UNKNOWN 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(26)PID - parameters for plast @RT(0) 
+@END_Attrib 
+1 1 @F @F @F @F 
+
+@Var @RT(25)BackPressureControlParams @RT(0) @T @T @DERIVED 0 @T @T @DT @RT(19)tsControlParameters @RT(0) @T @T @UNKNOWN 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(33)PID - parameters for backpressure @RT(0) 
+@END_Attrib 
+1 1 @F @F @F @F 
+
+@Var @RT(17)ScrewRevVelLintab @RT(0) @T @T @DERIVED 0 @T @T @DT @RT(16)KAPPL_LintabData @RT(0) @T @T @UNKNOWN 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(38)lintab between revolution and velocity @RT(0) 
+@END_Attrib 
+1 1 @F @F @F @F 
+
+@Var @RT(12)dMaxMoveTime @RT(0) @T @F @DT @RT(4)TIME @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(17)maximum move time @RT(0) 
+@END_Attrib 
+1 1 @F @F @F @F 
+
+@Var @RT(16)rActBackPressure @RT(0) @T @F @DT @RT(4)REAL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(20)actual  backpressure @RT(0) 
+@END_Attrib 
+1 1 @F @F @F @F 
+
+@Var @RT(16)rMaxBackPressure @RT(0) @T @F @DT @RT(4)REAL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(24)max. system backpressure @RT(0) 
+@END_Attrib 
+1 1 @F @F @F @F 
+
+@Var @RT(7)rActRpm @RT(0) @T @F @DT @RT(4)REAL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(11)actual  rpm @RT(0) 
+@END_Attrib 
+1 1 @F @F @F @F 
+
+@Var @RT(7)rMaxRpm @RT(0) @T @F @DT @RT(4)REAL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(9)max.  rpm @RT(0) 
+@END_Attrib 
+1 1 @F @F @F @F 
+
+@Var @RT(15)ProfileDeadTime @RT(0) @T @F @DT @RT(4)TIME @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 1 @F @F @F @F 
+
+@Var @RT(13)rMaxBackSpeed @RT(0) @T @F @DT @RT(4)REAL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 1 @F @F @F @F 
+
+@Var @RT(8)IMM_Type @RT(0) @T @T @DERIVED 0 @T @T @DT @RT(14)KAPPL_IMM_Type @RT(0) @T @T @UNKNOWN 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 1 @F @F @F @F 
+
+@Var @RT(12)dDelayTimeOn @RT(0) @T @F @DT @RT(4)TIME @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(45)Delay Time between preoutput and  constoutput @RT(0) 
+@END_Attrib 
+1 1 @F @F @F @F 
+
+@Var @RT(13)dDelayTimeOff @RT(0) @T @F @DT @RT(4)TIME @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(46)Delay Time between pump stop and bActive FALSE @RT(0) 
+@END_Attrib 
+1 1 @F @F @F @F 
+
+@Var @RT(20)bBackPressPIDIntStop @RT(0) @T @F @DT @RT(4)BOOL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(45)External intergator stop of back pressure PID @RT(0) 
+@END_Attrib 
+1 1 @F @F @F @F 
+
+@Var @RT(28)rBackPressureFilterFrequency @RT(0) @T @F @DT @RT(4)REAL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 1 @F @F @F @F 
+
+@Var @RT(15)bUsePServoValve @RT(0) @T @F @DT @RT(4)BOOL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 1 @F @F @F @F 
+
+@Var @RT(15)rPressureOutput @RT(0) @T @F @DT @RT(4)REAL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(26)calculated pressure output @RT(0) 
+@END_Attrib 
+1 3 @F @F @F @F 
+
+@Var @RT(19)rBackPressureOutput @RT(0) @T @F @DT @RT(4)REAL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(30)calculated backpressure output @RT(0) 
+@END_Attrib 
+1 3 @F @F @F @F 
+
+@Var @RT(15)rVelocityOutput @RT(0) @T @F @DT @RT(4)REAL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(26)calculated velocity output @RT(0) 
+@END_Attrib 
+1 3 @F @F @F @F 
+
+@Var @RT(16)rBackPressureSet @RT(0) @T @F @DT @RT(4)REAL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(53)set value for backpressure (from the entered profile) @RT(0) 
+@END_Attrib 
+1 3 @F @F @F @F 
+
+@Var @RT(7)rRpmSet @RT(0) @T @F @DT @RT(4)REAL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(44)set value for rpm (from the entered profile) @RT(0) 
+@END_Attrib 
+1 3 @F @F @F @F 
+
+@Var @RT(13)rMaxOutputRpm @RT(0) @T @F @DT @RT(4)REAL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(18)maximum rpm output @RT(0) 
+@END_Attrib 
+1 3 @F @F @F @F 
+
+@Var @RT(7)bActive @RT(0) @T @F @DT @RT(4)BOOL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(26)profile movement is active @RT(0) 
+@END_Attrib 
+1 3 @F @F @F @F 
+
+@Var @RT(12)iActiveStage @RT(0) @T @F @DT @RT(4)DINT @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(19)active profilestage @RT(0) 
+@END_Attrib 
+1 3 @F @F @F @F 
+
+@Var @RT(17)bPreOutputReached @RT(0) @T @F @DT @RT(4)BOOL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(15)preoutput ready @RT(0) 
+@END_Attrib 
+1 3 @F @F @F @F 
+
+@Var @RT(12)dActMoveTime @RT(0) @T @F @DT @RT(4)TIME @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(16)actual move time @RT(0) 
+@END_Attrib 
+1 3 @F @F @F @F 
+
+@Var @RT(8)bTimeOut @RT(0) @T @F @DT @RT(4)BOOL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(16)timeout detected @RT(0) 
+@END_Attrib 
+1 3 @F @F @F @F 
+
+@Var @RT(6)bError @RT(0) @T @F @DT @RT(4)BOOL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(14)error detected @RT(0) 
+@END_Attrib 
+1 3 @F @F @F @F 
+
+@Var @RT(10)iErrorInfo @RT(0) @T @F @DT @RT(4)DINT @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(21)additional error info @RT(0) 
+@END_Attrib 
+1 3 @F @F @F @F 
+
+@Var @RT(19)rPlastStartPosition @RT(0) @T @F @DT @RT(4)REAL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(33)position at starting plasticizing @RT(0) 
+@END_Attrib 
+1 3 @F @F @F @F 
+
+@Var @RT(1)i @RT(0) @T @F @DT @RT(5)UDINT @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 4 @F @F @F @F 
+
+@Var @RT(13)fbREdge_Start @RT(0) @T @T @DERIVED 0 @T @T @DT @RT(6)R_TRIG @RT(0) @T @T @UNKNOWN 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(22)fbProfilePlastPressure @RT(0) @T @T @DERIVED 0 @T @T @DT @RT(28)KAPPL_Plastics_ProfileOutput @RT(0) @T @T @UNKNOWN 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(7)fbTimer @RT(0) @T @T @DERIVED 0 @T @T @DT @RT(3)TON @RT(0) @T @T @UNKNOWN 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(15)fbREdge_Timeout @RT(0) @T @T @DERIVED 0 @T @T @DT @RT(6)R_TRIG @RT(0) @T @T @UNKNOWN 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(9)bAlarmSet @RT(0) @T @F @DT @RT(4)BOOL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(16)fbREdgePresError @RT(0) @T @T @DERIVED 0 @T @T @DT @RT(6)R_TRIG @RT(0) @T @T @UNKNOWN 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(10)bActiveInt @RT(0) @T @F @DT @RT(4)BOOL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(11)fbTOFActive @RT(0) @T @T @DERIVED 0 @T @T @DT @RT(3)TOF @RT(0) @T @T @UNKNOWN 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(17)fbREdgePlastError @RT(0) @T @T @DERIVED 0 @T @T @DT @RT(6)R_TRIG @RT(0) @T @T @UNKNOWN 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(17)rStartOutputPress @RT(0) @T @F @DT @RT(4)REAL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(15)rPreOutputPress @RT(0) @T @F @DT @RT(4)REAL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(21)rStartOutputBackPress @RT(0) @T @F @DT @RT(4)REAL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@END_Dcl 
+
+@END_Export 
+
+@BEG_Export 
+
+@BEG_Algo 
+@POSTUPDATE_ALGORITHM @RT(20)pPlastProfileChanged @STRUCTURED_TEXT 
+@RT(0) @RT(15)mpPlastProfile^ @RT(9)PU_Task_7 @F @F 
+@END_Algo 
+
+@BEG_Dcl 
+@RT(16)DclTreeContainer 
+0 
+@END_Dcl 
+
+@END_Export 
+
+@BEG_Export 
+
+@BEG_Algo 
+@PROCESS_ALGORITHM @RT(6)paInit @STRUCTURED_TEXT 
+@RT(0) @RT(0) @RT(8)TaskSlow @F @F 
+@END_Algo 
+
+@BEG_Dcl 
+@RT(16)DclTreeContainer 
+4 
+@Var @RT(1)i @RT(0) @T @F @DT @RT(5)UDINT @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 4 @F @F @F @F 
+
+@Var @RT(11)iNoOfPoints @RT(0) @T @F @DT @RT(5)UDINT @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(13)fbProfileCalc @RT(0) @T @T @DERIVED 0 @T @T @DT @RT(26)KAPPL_Plastics_ProfileCalc @RT(0) @T @T @UNKNOWN 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(11)DummyLintab @RT(0) @T @T @DERIVED 0 @T @T @DT @RT(16)KAPPL_LintabData @RT(0) @T @T @UNKNOWN 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@END_Dcl 
+
+@END_Export 
+
+@BEG_Body 
+@TL(53)
+(**************************************** WARNING ********************************************
+ *** The KEBA Kemro K2 System including software is not intended for safety control tasks! ***
+ ***                       For further information see Comment tab!                        ***
+ *********************************************************************************************)
+
+IF NOT bInitDone THEN
+    //copy reference of vis variable
+    mpPlastProfile := pPlastProfile;
+    mMoveId := MoveId;
+    
+    IF CHECK_REF(mpPlastProfile^) THEN
+        mbReferenceValid := TRUE;
+        //start paInit only if reference is valid
+        START_PROCESS_ALGORITHM(paInit);
+    ELSE
+        SET_ALARM(Name := erInvalidProfileReference,
+                    SubID1 := sv_DeviceId.CompId,
+                    SubID2 := sv_DeviceId.IndexId,
+                    SubID3 := mMoveId);
+    END_IF;
+    
+    fuName := GET_MY_FU_NAME();
+    variableName := CONCAT(fuName,'.Plasticize.SetBackPressure bar');
+    swoState := KSWO_AddVariable( Task := TaskInject,
+                                  Name := variableName,
+                                  Variable := mrBackPressureSet);
+    variableName := CONCAT(fuName,'.Plasticize.ActScrewRPM rpm');
+    swoState := KSWO_AddVariable( Task := TaskInject,
+                                  Name := variableName,
+                                  Variable := mrRpmAct);  
+    variableName := CONCAT(fuName,'.Plasticize.SetScrewRPM rpm');
+    swoState := KSWO_AddVariable( Task := TaskInject,
+                                  Name := variableName,
+                                  Variable := mrRpmSet);
+    variableName := CONCAT(fuName,'.Plasticize.ControlVariableBackPressure bar');
+    swoState := KSWO_AddVariable( Task := TaskInject,
+                                  Name := variableName,
+                                  Variable := mrUBackPressureControl);
+    variableName := CONCAT(fuName,'.Plasticize.ControlVariablePlast l/min');
+    swoState := KSWO_AddVariable( Task := TaskInject,
+                                  Name := variableName,
+                                  Variable := mrUPlastControl);
+    variableName := CONCAT(fuName,'.Plasticize.PlastActive');
+    swoState := KSWO_AddVariable( Task := TaskInject,
+                                  Name := variableName,
+                                  Variable := mbMovementActive);
+    
+   
+    bInitDone := TRUE;
+END_IF;
+
+
+
+@END_Body 
+
+@@@BEG_Comment@@@ 
+@TL(2)
+This algorithm copies the input values to local variables and starts
+the process algorithm for initialization of the profile.
+@@@END_Comment@@@ 
+
+@BEG_Body 
+@TL(280)
+(**************************************** WARNING ********************************************
+ *** The KEBA Kemro K2 System including software is not intended for safety control tasks! ***
+ ***                       For further information see Comment tab!                        ***
+ *********************************************************************************************)
+
+bError := FALSE;
+iErrorInfo := cApplPlasticsNoError;
+
+//do not execute if profile reference is not valid
+IF NOT mbReferenceValid THEN
+    
+    //set alarm because algorithm can be called without calling aInit before
+    IF NOT bAlarmSet THEN
+        SET_ALARM(Name := erInvalidProfileReference,
+                SubID1 := sv_DeviceId.CompId,
+                SubID2 := sv_DeviceId.IndexId,
+                SubID3 := mMoveId);
+        
+        bAlarmSet := TRUE;
+    END_IF;
+        
+    bError := TRUE;
+    RETURN;
+END_IF;
+
+//do not execute if profile error was detected
+IF mbProfileError THEN
+    bError := TRUE;
+    RETURN;
+END_IF;
+ 
+//init part
+IF mbReParam THEN    
+    // init plasticizing block
+    fbPlast(ProfileRevolution := RotationProfile,
+            ProfilePressure := BackPressureProfile,
+            RampTypePre := mpPlastProfile^.RampTypeBackPress,
+            RampTypeRev := mpPlastProfile^.RampTypeVel,
+            PreOutputRampP := mpPlastProfile^.rPreOutputBackPressRamp,
+            PreOutputRampRev := mpPlastProfile^.rPreOutputVelRamp,
+            //PreOutputValueP := mpPlastProfile^.rPreOutputBackPress,
+            PreOutputValueRev := mpPlastProfile^.rPreOutputVel,
+            MinOutputVelocity := mpPlastProfile^.rMinOutputVel,
+            Lintab_revolution_velocity := ScrewRevVelLintab,
+            UseBackPressure := TRUE,
+            ProfileDeadTime := ProfileDeadTime,
+            dDelayTime := dDelayTimeOn,
+            IMM_Type := IMM_Type,
+            rBackPressureFilterFrequency := rBackPressureFilterFrequency,
+            P_Revolution := PlastControlParams.rP,
+            TN_Revolution := PlastControlParams.dTN,
+            TV_Revolution := PlastControlParams.dTV,
+            KS_Revolution := PlastControlParams.rKS,
+            PIDActivationDelay_Revolution := PlastControlParams.dActivationDelay,
+            UsePlastPID := PlastControlParams.bUsePIDControl,
+            P_Pressure := BackPressureControlParams.rP,
+            TN_Pressure := BackPressureControlParams.dTN,
+            TV_Pressure := BackPressureControlParams.dTV,
+            UseBackPressurePID := BackPressureControlParams.bUsePIDControl,
+            ReParam := TRUE,
+            bUsePServoValve := bUsePServoValve);
+    
+   IF mpPlastProfile^.rEndOutputPressure > 0.0 THEN  // rdl: use hold torque
+      rStartOutputPress  := mpPlastProfile^.Profile.Points[1].rPressure;
+      rPreOutputPress := rStartOutputPress;
+   ELSE
+      rStartOutputPress := rStartOutputPressure;
+      rPreOutputPress := mpPlastProfile^.rPreOutputPress;
+   END_IF;
+
+    fbProfilePlastPressure(Reset := FALSE,
+            ProfilData := PressureProfile,
+            PreRamp := mpPlastProfile^.rPreOutputPressRamp,
+            PreOutputValue := rPreOutputPress,
+            StartOutputValue := rStartOutputPress,
+            MinOutput := mpPlastProfile^.rMinOutputPress,               
+            DelayTime := dDelayTimeOn,                           
+            ReParam := TRUE,                                     
+            RampType := mpPlastProfile^.RampTypePress);
+    
+    IF fbPlast.Error THEN
+        SET_ALARM(Name := erPlasticizingOutput,
+                  SubID1 := sv_DeviceId.CompId,
+                  SubID2 := sv_DeviceId.IndexId,
+                  SubID3 := fbPlast.ErrorInfo);
+    END_IF;
+    
+    IF fbProfilePlastPressure.Error THEN
+        SET_ALARM(Name := erPressureOutput,
+                  SubID1 := sv_DeviceId.CompId,
+                  SubID2 := sv_DeviceId.IndexId,
+                  SubID3 := mMoveId,
+                  SubID4 := fbProfilePlastPressure.ErrorInfo);
+    END_IF;
+    
+    //set error info
+    IF fbPlast.Error THEN
+        iErrorInfo := fbPlast.ErrorInfo;
+    ELSIF fbProfilePlastPressure.Error THEN
+        iErrorInfo := fbProfilePlastPressure.ErrorInfo;
+    END_IF;
+    
+    IF fbPlast.Error OR fbProfilePlastPressure.Error THEN
+        //don´t do movement if one of the outputblocks has an error
+        bError := TRUE;
+        RETURN;
+    END_IF;
+            
+    mbReParam := FALSE;
+END_IF;
+
+fbREdge_Start(CLK := bStart);
+IF fbREdge_Start.Q THEN
+    IF rActBackPressure > rStartOutputBackPressure  THEN
+       rStartOutputBackPress := rActBackPressure;
+    ELSE
+       rStartOutputBackPress := rStartOutputBackPressure;
+    END_IF;
+    fbPlast(P_Revolution := PlastControlParams.rP,
+            RampTypePre := mpPlastProfile^.RampTypeBackPress,
+            RampTypeRev := mpPlastProfile^.RampTypeVel,
+            TN_Revolution := PlastControlParams.dTN,
+            TV_Revolution := PlastControlParams.dTV,
+            KS_Revolution := PlastControlParams.rKS,
+            PIDActivationDelay_Revolution := PlastControlParams.dActivationDelay,
+            P_Pressure := BackPressureControlParams.rP,
+            TN_Pressure := BackPressureControlParams.dTN,
+            TV_Pressure := BackPressureControlParams.dTV,
+            UsePlastPID := PlastControlParams.bUsePIDControl,
+            UseBackPressurePID := BackPressureControlParams.bUsePIDControl,
+            Lintab_revolution_velocity := ScrewRevVelLintab,
+            MaxSystemRevolution := rMaxRpm,
+            MaxSystemBackPressure := rMaxBackPressure, 
+            MaxSystemBackSpeed := rMaxBackSpeed,
+            ProfileDeadTime := ProfileDeadTime,
+            IMM_Type := IMM_Type,
+            dDelayTime := dDelayTimeOn,
+            bBackPressPIDIntStop := bBackPressPIDIntStop,
+            ReParam := TRUE,
+            StartOutputBackPressure := rStartOutputBackPress,
+            PreOutputValueP := rStartOutputBackPress);
+    
+    //reset timer for timeout detection
+    fbTimer(IN := FALSE);
+    bTimeOut := FALSE;
+    dActMoveTime := t#0s;
+    fbREdgePresError(CLK := FALSE);
+    fbREdgePlastError(CLK := FALSE);
+
+    //steg: sample actual position at starting plasticizing
+    rPlastStartPosition := rActScrewPosition;
+
+   IF mpPlastProfile^.rEndOutputPressure > 0.0 THEN  // rdl: use hold torque
+      rStartOutputPress  := mpPlastProfile^.Profile.Points[1].rPressure;
+      rPreOutputPress := rStartOutputPress;
+   ELSE
+      rStartOutputPress := rStartOutputPressure;
+      rPreOutputPress := mpPlastProfile^.rPreOutputPress;
+   END_IF;
+   
+END_IF;
+
+
+//cyclic part
+fbPlast(Start := bStart,
+        Stop := bStop OR bTimeOut,
+        Position := rActScrewPosition,
+        BackPressure := rActBackPressure,
+        Revolution := rActRpm,
+        StartOutputVelocity := rStartOutputVelocity,
+        StartOutputBackPressure := rStartOutputBackPress,            
+        PreOutputValueP := rStartOutputBackPress,        
+        UseBackPressure := TRUE,
+        ReParam := FALSE,
+        dDelayTime := dDelayTimeOn,
+        bBackPressPIDIntStop := bBackPressPIDIntStop,
+        MaxRpm => rMaxOutputRpm);
+        
+fbProfilePlastPressure(Start := bStart,
+        Reset := FALSE,
+        Stop := (bStop AND NOT (mpPlastProfile^.rEndOutputPressure > 0.0)) OR bTimeOut,  // rdl: use hold torque
+        StartOutputValue := rStartOutputPress,
+        InputValue := rActScrewPosition,
+        DelayTime := dDelayTimeOn,                       
+        ReParam := FALSE,                             
+        RampType := mpPlastProfile^.RampTypeBackPress);        
+        
+//copy output values
+rBackPressureOutput := fbPlast.OutputBackPressure;
+rPressureOutput :=  fbProfilePlastPressure.Output;
+rVelocityOutput := fbPlast.OutputVelocity;
+rBackPressureSet := fbPlast.OutputSetBackpressure;
+rRpmSet := fbPlast.OutputSetRpm;
+bPreOutputReached := fbPlast.PreOutputReady AND fbProfilePlastPressure.PreOutputReady;
+
+//copy values to SWO-Server
+mrBackPressureSet := rBackPressureSet;
+mrRpmSet := rRpmSet;
+mrRpmAct := rActRpm;
+mrUBackPressureControl := rBackPressureOutput;
+mrUPlastControl := rVelocityOutput;
+
+//check error and set error info
+IF fbPlast.Error THEN
+    bError := TRUE;
+    iErrorInfo := fbPlast.ErrorInfo;
+ELSIF fbProfilePlastPressure.Error THEN
+    bError := TRUE;
+    iErrorInfo := fbProfilePlastPressure.ErrorInfo;
+END_IF;
+
+//set alarm if error during pressure output occurs
+fbREdgePresError(CLK := fbProfilePlastPressure.Error);
+IF fbREdgePresError.Q THEN
+    SET_ALARM(Name := erPressureOutput,
+              SubID1 := sv_DeviceId.CompId,
+              SubID2 := sv_DeviceId.IndexId,
+              SubID3 := mMoveId,
+              SubID4 := fbProfilePlastPressure.ErrorInfo);
+END_IF;
+
+//set alarm if error during plast output occurs
+fbREdgePlastError(CLK := fbPlast.Error);
+IF fbREdgePlastError.Q THEN
+    SET_ALARM(Name := erPlasticizingOutput,
+              SubID1 := sv_DeviceId.CompId,
+              SubID2 := sv_DeviceId.IndexId,
+              SubID3 := fbPlast.ErrorInfo);
+END_IF;
+
+//calculate active profile stage
+FOR i := 1 TO mpPlastProfile^.Profile.iNoOfPoints DO        
+    IF rActScrewPosition < mpPlastProfile^.Profile.Points[i+1].rStartPos THEN
+        iActiveStage := UDINT_TO_DINT(i);
+        EXIT;
+    END_IF;
+END_FOR;
+
+IF (fbProfilePlastPressure.Ready AND mpPlastProfile^.rEndOutputPressure > 0.0) THEN
+   rPressureOutput := mpPlastProfile^.rEndOutputPressure; // rdl: use hold torque
+END_IF;
+
+IF (fbPlast.Ready  AND (fbProfilePlastPressure.Ready OR mpPlastProfile^.rEndOutputPressure > 0.0)) OR bError THEN
+    bActiveInt := FALSE;
+    iActiveStage := 0;
+    IF NOT fbProfilePlastPressure.Ready THEN
+       //reset profile output block
+       fbProfilePlastPressure(Reset := TRUE);
+    END_IF;
+ELSE
+    bActiveInt := TRUE;
+END_IF;
+mbMovementActive := bActiveInt;
+
+
+//Timeout detection
+IF bActiveInt THEN
+    fbTimer(IN := TRUE,
+            PT := dMaxMoveTime);
+    dActMoveTime := fbTimer.ET;
+    //dMaxMoveTime = 0 means timeout detection is deactivated!!
+    IF dMaxMoveTime > t#0.0s THEN
+        bTimeOut := fbTimer.Q;
+    END_IF; 
+END_IF;
+
+//set timeout alarm
+fbREdge_Timeout(CLK := bTimeOut);
+IF fbREdge_Timeout.Q THEN
+    SET_ALARM(Name := erMoveTimeout,
+              SubID1 := sv_DeviceId.CompId,
+              SubID2 := sv_DeviceId.IndexId,
+              SubID3 := mMoveId);    
+END_IF;
+
+// set output bActive
+fbTOFActive(bActiveInt, dDelayTimeOff);
+bActive := fbTOFActive.Q;
+
+
+@END_Body 
+
+@@@BEG_Comment@@@ 
+@TL(11)
+Following functions are realized in this algorithm:
+
+1) reparam of the profileoutput - blocks
+2) profile output for pressure, backpressure (PID - Control possible) and RPM (PID - Control possible)
+   Attention: If an error was detected during profile calculation the algorithm
+   will not be executed!
+3) Calculation of the active profile stage
+4) Timeout detection if dMaxMoveTime is bigger than 0s.
+   dMaxMoveTime = 0 means no timeout detection active
+   If a timeout is detected an alarm will be set and the profileoutput will be stopped automatically
+
+@@@END_Comment@@@ 
+
+@BEG_Body 
+@TL(7)
+(**************************************** WARNING ********************************************
+ *** The KEBA Kemro K2 System including software is not intended for safety control tasks! ***
+ ***                       For further information see Comment tab!                        ***
+ *********************************************************************************************)
+
+START_PROCESS_ALGORITHM(paInit);
+
+@END_Body 
+
+@@@BEG_Comment@@@ 
+@TL(2)
+This algorithm reacts on changes of the profile.
+If the profile changes the process algorithm for initialization will be started.
+@@@END_Comment@@@ 
+
+@BEG_Body 
+@TL(247)
+(**************************************** WARNING ********************************************
+ *** The KEBA Kemro K2 System including software is not intended for safety control tasks! ***
+ ***                       For further information see Comment tab!                        ***
+ *********************************************************************************************)
+
+IF (NOT mbMovementActive) AND (NOT sv_bProfileEditorActive) THEN
+    
+    mbProfileError := FALSE;
+    
+    //increase number of points if necessary
+    IF sv_bUseStartPosProfiles THEN
+        iNoOfPoints := mpPlastProfile^.Profile.iNoOfPoints;
+    ELSE
+        iNoOfPoints := mpPlastProfile^.Profile.iNoOfPoints + 1; 
+    END_IF;
+    
+   //use rEndOutputPressure value if less than last profile step
+   //ohterwise use last profil step
+   IF mpPlastProfile^.Profile.Points[iNoOfPoints-1].rPressure > mpPlastProfile^.rEndOutputPressure THEN
+      mpPlastProfile^.Profile.Points[iNoOfPoints].rPressure := mpPlastProfile^.rEndOutputPressure;
+   ELSE
+      mpPlastProfile^.Profile.Points[iNoOfPoints].rPressure := mpPlastProfile^.Profile.Points[iNoOfPoints-1].rPressure;       
+   END_IF;
+   
+    mpPlastProfile^.Profile.Points[iNoOfPoints].rRotation     := 0.0;
+
+    //BackPressure - profile
+   //use rEndOutputBackPressure value if less than last profile step
+   //ohterwise use last profil step
+   IF mpPlastProfile^.Profile.Points[iNoOfPoints-1].rBackPressure > mpPlastProfile^.rEndOutputBackPressure  THEN
+      mpPlastProfile^.Profile.Points[iNoOfPoints].rBackPressure := mpPlastProfile^.rEndOutputBackPressure;
+   ELSE
+      mpPlastProfile^.Profile.Points[iNoOfPoints].rBackPressure := mpPlastProfile^.Profile.Points[iNoOfPoints-1].rBackPressure; 
+   END_IF;
+    fbProfileCalc.RawProfilePoint.uNoOfPoints := iNoOfPoints;        
+    FOR i := 1 TO iNoOfPoints DO
+        fbProfileCalc.RawProfilePoint.RawProfilePoints[i].XValue := mpPlastProfile^.Profile.Points[i].rStartPos;
+        fbProfileCalc.RawProfilePoint.RawProfilePoints[i].YValue := mpPlastProfile^.Profile.Points[i].rBackPressure;
+        fbProfileCalc.RawProfilePoint.RawProfilePoints[i].Ramp   := mpPlastProfile^.Profile.Points[i].rBackPressureRamp / 100.0 *
+                                                                    mpPlastProfile^.rMaxRampBackPress;
+    END_FOR;
+    
+    // use stop deceleration for last point
+    IF mpPlastProfile^.rStopRampPress > 0.0 THEN
+      mpPlastProfile^.Profile.Points[iNoOfPoints].rPressRamp := mpPlastProfile^.rStopRampPress;
+    ELSE
+      mpPlastProfile^.Profile.Points[iNoOfPoints].rPressRamp := 100.0;
+    END_IF;
+    IF mpPlastProfile^.rStopRampVel > 0.0 THEN
+      mpPlastProfile^.Profile.Points[iNoOfPoints].rRotationRamp := mpPlastProfile^.rStopRampVel;
+    ELSE
+      mpPlastProfile^.Profile.Points[iNoOfPoints].rRotationRamp := 100.0;
+    END_IF; 
+    
+    // limit profile output also with last ramp
+    fbProfileCalc.LimitEveryPointToLastRamp := mpPlastProfile^.bLimitEveryPointToLastRamp;
+
+    
+    fbProfileCalc(MaxAcceleration := mpPlastProfile^.rMaxRampBackPress,
+                  MaxDeceleration := mpPlastProfile^.rMaxRampBackPress,
+                  RampType := mpPlastProfile^.RampTypeBackPress);
+    IF fbProfileCalc.Error THEN // profile not possible
+        IF (fbProfileCalc.ErrorOnPoint = -1) THEN
+            SET_ALARM(Name   := erProfileSequence,
+                      SubID1 := sv_DeviceId.CompId,
+                      SubID2 := sv_DeviceId.IndexId,
+                      SubID3 := mMoveId);
+        ELSE
+            SET_ALARM(Name   := erBackPresProfDamaged,
+                      SubID1 := sv_DeviceId.CompId,
+                      SubID2 := sv_DeviceId.IndexId,
+                      SubID3 := mMoveId,
+                      SubID4 := fbProfileCalc.ErrorOnPoint,
+                      Param1 := fbProfileCalc.MaximumPossibleValue);
+        END_IF;
+        mbProfileError := TRUE;
+        
+    ELSE // copy data to yx - generator values
+        IF mpPlastProfile^.Profile.Points[1].rBackPressureRamp > 0.0 THEN
+            BackPressureProfile.Acceleration := mpPlastProfile^.rMaxRampBackPress * mpPlastProfile^.Profile.Points[1].rBackPressureRamp / 100.0;
+        ELSE
+            BackPressureProfile.Acceleration := mpPlastProfile^.rMaxRampBackPress;
+        END_IF;
+        BackPressureProfile.StopAcceleration  := mpPlastProfile^.rMaxRampBackPress * mpPlastProfile^.Profile.Points[iNoOfPoints].rBackPressureRamp / 100.0;
+        BackPressureProfile.InterAcceleration := BackPressureProfile.StopAcceleration;
+        BackPressureProfile.ProfilePoints     := fbProfileCalc.CalcedProfile;
+     
+        // calced profile for vis
+        IF CHECK_REF(mpPlastProfile^.pCalculatedProfile^) THEN
+           IF mpPlastProfile^.pCalculatedProfile^.PressureProfile.CalculatedProfile <> fbProfileCalc.CalcedProfile THEN
+              mpPlastProfile^.pCalculatedProfile^.PressureProfile.CalculatedProfile := fbProfileCalc.CalcedProfile;
+              mpPlastProfile^.pCalculatedProfile^.PressureProfile.iProfileChangedCounter := mpPlastProfile^.pCalculatedProfile^.PressureProfile.iProfileChangedCounter + 1;             
+           END_IF;
+        END_IF;
+                
+        // rdl: set end pressure hold to first back pressure -> better plasticizing
+        IF BackPressureProfile.ProfilePoints.Point[1].rY > cMinPressureEndHold THEN
+           sv_rMaxPressureEndHold := BackPressureProfile.ProfilePoints.Point[1].rY;
+        ELSE
+           sv_rMaxPressureEndHold := cMinPressureEndHold;
+        END_IF;
+
+        RESET_ALARM(Name   := erProfileSequence,
+                    SubID1 := sv_DeviceId.CompId,
+                    SubID2 := sv_DeviceId.IndexId,
+                    SubID3 := mMoveId);
+        
+        RESET_ALARM(Name   := erBackPresProfDamaged,
+                    SubID1 := sv_DeviceId.CompId,
+                    SubID2 := sv_DeviceId.IndexId,
+                    SubID3 := mMoveId,
+                    SubID4 := ANY);       
+    END_IF;
+    
+    //pressure profile     
+    FOR i := 1 TO iNoOfPoints DO
+       fbProfileCalc.RawProfilePoint.RawProfilePoints[i].XValue := mpPlastProfile^.Profile.Points[i].rStartPos;
+       fbProfileCalc.RawProfilePoint.RawProfilePoints[i].YValue := mpPlastProfile^.Profile.Points[i].rPressure;
+       fbProfileCalc.RawProfilePoint.RawProfilePoints[i].Ramp   := mpPlastProfile^.Profile.Points[i].rPressRamp / 100.0 *
+                                                                   mpPlastProfile^.rMaxRampPress;
+    END_FOR;
+
+    fbProfileCalc(MaxAcceleration := mpPlastProfile^.rMaxRampPress,
+                  MaxDeceleration := mpPlastProfile^.rMaxRampPress,
+                  RampType := mpPlastProfile^.RampTypePress);
+    IF fbProfileCalc.Error THEN // profile not possible       
+       IF (fbProfileCalc.ErrorOnPoint = -1) THEN
+           SET_ALARM(Name   := erProfileSequence,
+                     SubID1 := sv_DeviceId.CompId,
+                     SubID2 := sv_DeviceId.IndexId,
+                     SubID3 := mMoveId);
+       ELSE
+           SET_ALARM(Name   := erPresProfDamaged,
+                     SubID1 := sv_DeviceId.CompId,
+                     SubID2 := sv_DeviceId.IndexId,
+                     SubID3 := mMoveId,
+                     SubID4 := fbProfileCalc.ErrorOnPoint,
+                     Param1 := fbProfileCalc.MaximumPossibleValue);
+       END_IF;
+       mbProfileError := TRUE; 
+       
+    ELSE // copy data to yx - generator values
+        IF mpPlastProfile^.Profile.Points[1].rPressRamp > 0.0 THEN
+            PressureProfile.Acceleration := mpPlastProfile^.rMaxRampPress * mpPlastProfile^.Profile.Points[1].rPressRamp / 100.0;
+        ELSE
+            PressureProfile.Acceleration := mpPlastProfile^.rMaxRampPress;
+        END_IF;
+        PressureProfile.StopAcceleration := mpPlastProfile^.rMaxRampPress * mpPlastProfile^.Profile.Points[iNoOfPoints].rPressRamp / 100.0;
+        PressureProfile.ProfilePoints    := fbProfileCalc.CalcedProfile;
+        
+        RESET_ALARM(Name   := erProfileSequence,
+                    SubID1 := sv_DeviceId.CompId,
+                    SubID2 := sv_DeviceId.IndexId,
+                    SubID3 := mMoveId);
+        
+        RESET_ALARM(Name   := erPresProfDamaged,
+                    SubID1 := sv_DeviceId.CompId,
+                    SubID2 := sv_DeviceId.IndexId,
+                    SubID3 := mMoveId,
+                    SubID4 := ANY);
+    END_IF;
+    
+    // RPM - Profile
+    FOR i := 1 TO iNoOfPoints DO
+       fbProfileCalc.RawProfilePoint.RawProfilePoints[i].XValue := mpPlastProfile^.Profile.Points[i].rStartPos;
+       fbProfileCalc.RawProfilePoint.RawProfilePoints[i].YValue := mpPlastProfile^.Profile.Points[i].rRotation;
+       fbProfileCalc.RawProfilePoint.RawProfilePoints[i].Ramp   := mpPlastProfile^.Profile.Points[i].rRotationRamp / 100.0 *
+                                                                   mpPlastProfile^.rMaxRampVel;
+    END_FOR;
+
+    fbProfileCalc(MaxAcceleration := mpPlastProfile^.rMaxRampVel,
+                  MaxDeceleration := mpPlastProfile^.rMaxRampVel,
+                  RampType := mpPlastProfile^.RampTypeVel);
+    IF fbProfileCalc.Error THEN // profile not possible
+       IF (fbProfileCalc.ErrorOnPoint = -1) THEN
+           SET_ALARM(Name := erProfileSequence,
+                 SubID1 := sv_DeviceId.CompId,
+                 SubID2 := sv_DeviceId.IndexId,
+                 SubID3 := mMoveId);
+       ELSE
+           SET_ALARM(Name := erVelProfDamaged,
+                     SubID1 := sv_DeviceId.CompId,
+                     SubID2 := sv_DeviceId.IndexId,
+                     SubID3 := mMoveId,
+                     SubID4 := fbProfileCalc.ErrorOnPoint,
+                     Param1 := fbProfileCalc.MaximumPossibleValue);
+       END_IF;
+       mbProfileError := TRUE;
+       
+    ELSE // copy data to yx - generator values
+        //RotationProfile.Acceleration := mpPlastProfile^.rMaxRampVel;
+        IF mpPlastProfile^.Profile.Points[1].rRotationRamp > 0.0 THEN
+            RotationProfile.Acceleration := mpPlastProfile^.rMaxRampVel * mpPlastProfile^.Profile.Points[1].rRotationRamp / 100.0;
+        ELSE
+            RotationProfile.Acceleration := mpPlastProfile^.rMaxRampVel;
+        END_IF;
+        RotationProfile.StopAcceleration := mpPlastProfile^.rMaxRampVel * mpPlastProfile^.Profile.Points[iNoOfPoints].rRotationRamp / 100.0;
+        RotationProfile.ProfilePoints := fbProfileCalc.CalcedProfile;
+       
+        // calced profile for vis
+        IF CHECK_REF(mpPlastProfile^.pCalculatedProfile^) THEN
+           IF mpPlastProfile^.pCalculatedProfile^.VelocityProfile.CalculatedProfile <> fbProfileCalc.CalcedProfile THEN
+              mpPlastProfile^.pCalculatedProfile^.VelocityProfile.CalculatedProfile := fbProfileCalc.CalcedProfile;
+              mpPlastProfile^.pCalculatedProfile^.VelocityProfile.iProfileChangedCounter := mpPlastProfile^.pCalculatedProfile^.VelocityProfile.iProfileChangedCounter + 1;
+           END_IF;            
+        END_IF;
+       
+        RESET_ALARM(Name := erProfileSequence,
+                    SubID1 := sv_DeviceId.CompId,
+                    SubID2 := sv_DeviceId.IndexId,
+                    SubID3 := mMoveId);
+        
+        RESET_ALARM(Name := erVelProfDamaged,
+                    SubID1 := sv_DeviceId.CompId,
+                    SubID2 := sv_DeviceId.IndexId,
+                    SubID3 := mMoveId,
+                    SubID4 := ANY);
+    END_IF;        
+    
+    IF NOT mbInitPlastProfile THEN
+       DummyLintab.LintabPoints.uNoOfPoints := 2;
+       DummyLintab.LintabPoints.Point[1].rX := 0.0;
+       DummyLintab.LintabPoints.Point[1].rY := 0.0;
+       DummyLintab.LintabPoints.Point[2].rX := 1.0;
+       DummyLintab.LintabPoints.Point[2].rY := 1.0;
+       fbPlast(ProfileRevolution := RotationProfile,
+               ProfilePressure := BackPressureProfile,
+               PreOutputRampP := mpPlastProfile^.rPreOutputBackPressRamp,
+               PreOutputRampRev := mpPlastProfile^.rPreOutputVelRamp,
+               PreOutputValueP := mpPlastProfile^.rPreOutputBackPress,
+               PreOutputValueRev := mpPlastProfile^.rPreOutputVel,
+               MinOutputVelocity := mpPlastProfile^.rMinOutputVel,
+               Lintab_revolution_velocity := DummyLintab,
+               UseBackPressure := TRUE,
+               //ProfileDeadTime := ProfileDeadTime,
+               MeasureTask := TaskInject,
+               ReParam := TRUE);    
+    END_IF;
+          
+    // start with first point
+    mrInitOutputBackPressure := mpPlastProfile^.Profile.Points[1].rBackPressure;
+      
+    mbInitPlastProfile := TRUE;   
+    mbReParam := TRUE;
+    STOP_PROCESS_ALGORITHM();
+END_IF;
+
+@END_Body 
+
+@@@BEG_Comment@@@ 
+@TL(3)
+This algorithm does the initialization for the profile movement.
+This means profile calculation of pressure backpressure and RPM profile.
+If an error is detected during profile calculation an error will be set.
+@@@END_Comment@@@ 
+@END_Body 
+
+@END_Contents 

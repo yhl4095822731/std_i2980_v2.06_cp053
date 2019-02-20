@@ -1,0 +1,1488 @@
+IMPORT_OVER_LISTFILE
+ GET_SYNC_REFTO
+, cApplPlasticsPI
+, KSYS_Status
+, tOptionId
+, KSWO_Status
+
+END_IMPORT
+
+ALGORITHM_BLOCK ABSpeedPumpSimu #DUMMY_EDIT_BLOCK
+
+SYSTEM_VAR
+ sv_bSimulate : BOOL;
+ sv_bInitStart : BOOL;
+END_VAR
+
+SYSTEM_OBJECT
+ TaskSim : TASK;
+ TaskSlow : TASK;
+ TaskInject : TASK;
+ TaskAnalog : TASK;
+ PU_Task_13 : TASK;
+END_OBJECT
+
+VAR
+ mpMasterState : REFTO DWORD;
+ mpSlave1State : REFTO DWORD;
+ mpSlave2State : REFTO DWORD;
+ mprSetPressureMaster : REFTO REAL;
+ mprSetVelocityMaster : REFTO REAL;
+ mprSetPressureSlave1 : REFTO REAL;
+ mprSetVelocitySlave1 : REFTO REAL;
+ mprSetPressureSlave2 : REFTO REAL;
+ mprSetVelocitySlave2 : REFTO REAL;
+ mbMotorOnReq : BOOL;
+ mpbKeyOnOff : REFTO BOOL;
+ mpbKeyOnOffHMI : REFTO BOOL;
+ mpbMotorLocked : REFTO BOOL;
+ mbSpeedPump : BOOL;
+ mrAccelerationMaster : REAL;
+ mrAccelerationSlave1 : REAL;
+ mrAccelerationSlave2 : REAL;
+ mprMotorPowerMaster : REFTO REAL;
+ mprMotorPowerSlave1 : REFTO REAL;
+ mprTorqueMaster : REFTO REAL;
+ mprTorqueSlave1 : REFTO REAL;
+ mpbInjectionActive : REFTO BOOL;
+ mprActVelocitySlave1 : REFTO REAL;
+ mprActVelocityMaster : REFTO REAL;
+ mprActVelocitySlave2 : REFTO REAL;
+ mpsRevisionMaster : REFTO STRING(255);
+ mpsDrvIDMaster : REFTO STRING(255);
+ mpiDriveStatusMaster : REFTO INT;
+ mpsRevisionSlave1 : REFTO STRING(255);
+ mpsDrvIDSlave1 : REFTO STRING(255);
+ mpiDriveStatusSlave1 : REFTO INT;
+ miCount : INT;
+ mpiDriveStatusSlave2 : REFTO INT;
+ mpsRevisionSlave2 : REFTO STRING(255);
+ mpsDrvIDSlave2 : REFTO STRING(255);
+ mprTorqueSlave2 : REFTO REAL;
+ mprMotorPowerSlave2 : REFTO REAL;
+ mbSlave1Linked : BOOL;
+ mbSlave2Linked : BOOL;
+END_VAR
+
+PROCESS_ALGORITHM paSimulate ON TaskAnalog
+
+
+VAR_TEMP
+ b : BOOL;
+END_VAR
+
+VAR
+ Status : KSYS_Status;
+ rLastVelocityMaster : REAL;
+ rLastVelocitySlave1 : REAL;
+ rLastVelocitySlave2 : REAL;
+ k1 : REAL := 0.1  (* Inertia (kg*m^2) *);
+ k2 : REAL := 1.5 (* Coefficient (Nm/bar) *);
+ k3 : REAL := 0.5 (* Friction coefficient (Nm/rad/s) *);
+ rMaxVelocity : REAL := 209.44 (* rad/s *);
+ dCycleTime : TIME;
+ rCycleTime : REAL;
+ rMaxPressure : REAL := 250.0 (* bar *);
+ rLoadTorque : REAL := 1.0;
+ sRevisionMaster : STRING(255) := 'AxX System Application V1-7-138';
+ sDrvIDMaster : STRING(255) := 'AxM-II.35.70.4F';
+ rActVelocityMaster : REAL;
+ rActPressureMaster : REAL;
+ rActVelocitySlave1 : REAL;
+ rActPressureSlave1 : REAL;
+ rActVelocitySlave2 : REAL;
+ rActPressureSlave2 : REAL;
+END_VAR
+
+(* IecGraph-Code *)
+
+(* init step *)
+INITIAL_STEP INIT:
+aInit (P);
+END_STEP
+
+
+(* steps *)
+STEP SIM:
+aReadDriveInfo (P);
+aSimulate (N);
+END_STEP
+
+STEP STOP:
+aStopSimu (P);
+END_STEP
+
+
+(* transitions *)
+TRANSITION SimRequired (* SimRequired *) FROM INIT TO SIM :=  #BEGIN_EDIT_BLOCK
+sv_bSimulate
+;#END_EDIT_BLOCK
+END_TRANSITION
+
+TRANSITION StpSimRequired (* StpSimRequired *) FROM SIM TO STOP :=  #BEGIN_EDIT_BLOCK
+NOT sv_bSimulate
+;#END_EDIT_BLOCK
+END_TRANSITION
+
+TRANSITION Return (* Return *) FROM STOP TO SIM :=  #BEGIN_EDIT_BLOCK
+TRUE
+;#END_EDIT_BLOCK
+END_TRANSITION
+
+(* end IecGraph-Code *)
+(* sfc-code *)
+
+(* stand alone actions *)
+ACTION aInit: #BEGIN_EDIT_BLOCK
+(**************************************** WARNING ********************************************
+ *** The KEBA Kemro K2 System including software is not intended for safety control tasks! ***
+ ***                       For further information see Comment tab!                        ***
+ *********************************************************************************************)
+(*pointers*)
+mpbKeyOnOff := GET_SYNC_REFTO("ServoDrives1.sv_KeyMotorOnOff", T#0s, Status);
+// additionally listen to HMI on/off button (both can be linked)
+mpbKeyOnOffHMI := GET_SYNC_REFTO("ServoDrives1.sv_KeyMotorOnOffHMI", T#0s, Status);
+
+mpbMotorLocked := GET_SYNC_REFTO("ServoDrives1.sv_bMotorLocked", T#0s, Status);
+mpbInjectionActive := GET_SYNC_REFTO("Injection1.sv_bInjectionActive", t#0s, Status);
+
+(*Master*)
+mprSetPressureMaster := GET_SYNC_REFTO('Pump1.sv_KHW_ServoMaster_setValue.rAux[1]', T#0s, Status);
+mprSetVelocityMaster := GET_SYNC_REFTO('Pump1.sv_KHW_ServoMaster_setValue.rVeloc', T#0s, Status); 
+mprActVelocityMaster := GET_SYNC_REFTO("Pump1.sv_rActVelocityMaster", t#0s, Status); 
+mpMasterState := GET_SYNC_REFTO("Pump1.sv_KHW_ServoMaster_state_sim", T#0s, Status);
+IF Status <> KSYS_Status_OK THEN
+   mpMasterState := GET_SYNC_REFTO("Pump1.sv_KHW_ServoMaster_state", T#0s, Status);
+END_IF;
+mpiDriveStatusMaster := GET_SYNC_REFTO("Pump1.sv_iDriveStatusMaster", t#0s, Status); 
+mpsRevisionMaster := GET_SYNC_REFTO("Pump1.sv_sRevisionMaster", t#0s, Status); 
+mpsDrvIDMaster := GET_SYNC_REFTO("Pump1.sv_sDrvID_Master", t#0s, Status); 
+mprTorqueMaster := GET_SYNC_REFTO("Pump1.sv_rMotorTorqueMaster", T#0s, Status);
+mprMotorPowerMaster := GET_SYNC_REFTO("Pump1.sv_rMotorPowerMaster", T#0s, Status);     
+
+(*Slave1*)
+IF mbSlave1Linked THEN
+   mprSetPressureSlave1 := GET_SYNC_REFTO('Pump1.sv_KHW_ServoSlave1_setValue.rAux[1]', T#0s, Status);
+   mprSetVelocitySlave1 := GET_SYNC_REFTO('Pump1.sv_KHW_ServoSlave1_setValue.rVeloc', T#0s, Status);
+   mpSlave1State := GET_SYNC_REFTO("Pump1.sv_KHW_ServoSlave1_state_sim", T#0s, Status);
+   IF Status <> KSYS_Status_OK THEN
+      mpSlave1State := GET_SYNC_REFTO("Pump1.sv_KHW_ServoSlave1_state", T#0s, Status);
+   END_IF;   
+   mprActVelocitySlave1 := GET_SYNC_REFTO("Pump1.sv_rActVelocitySlave1", t#0s, Status); 
+   mpiDriveStatusSlave1 := GET_SYNC_REFTO("Pump1.sv_iDriveStatusSlave1", t#0s, Status); 
+   mpsRevisionSlave1 := GET_SYNC_REFTO("Pump1.sv_sRevisionSlave1", t#0s, Status); 
+   mpsDrvIDSlave1 := GET_SYNC_REFTO("Pump1.sv_sDrvID_Slave1", t#0s, Status); 
+   mprTorqueSlave1 := GET_SYNC_REFTO("Pump1.sv_rMotorTorqueSlave1", T#0s, Status);    
+   mprMotorPowerSlave1 := GET_SYNC_REFTO("Pump1.sv_rMotorPowerSlave1", T#0s, Status);         
+END_IF;
+
+(*Slave2*)
+IF mbSlave2Linked THEN
+   mprSetPressureSlave2 := GET_SYNC_REFTO('Pump1.sv_KHW_ServoSlave2_setValue.rAux[1]', T#0s, Status);
+   mprSetVelocitySlave2 := GET_SYNC_REFTO('Pump1.sv_KHW_ServoSlave2_setValue.rVeloc', T#0s, Status);
+   mpSlave2State := GET_SYNC_REFTO("Pump1.sv_KHW_ServoSlave2_state_sim", T#0s, Status);
+   IF Status <> KSYS_Status_OK THEN
+      mpSlave2State := GET_SYNC_REFTO("Pump1.sv_KHW_ServoSlave2_state", T#0s, Status);
+   END_IF;
+   mprActVelocitySlave2 := GET_SYNC_REFTO("Pump1.sv_rActVelocitySlave2", t#0s, Status); 
+   mpiDriveStatusSlave2 := GET_SYNC_REFTO("Pump1.sv_iDriveStatusSlave2", t#0s, Status); 
+   mpsRevisionSlave2 := GET_SYNC_REFTO("Pump1.sv_sRevisionSlave2", t#0s, Status); 
+   mpsDrvIDSlave2:= GET_SYNC_REFTO("Pump1.sv_sDrvID_Slave2", t#0s, Status); 
+   mprTorqueSlave2 := GET_SYNC_REFTO("Pump1.sv_rMotorTorqueSlave2", T#0s, Status);  
+   mprMotorPowerSlave2 := GET_SYNC_REFTO("Pump1.sv_rMotorPowerSlave2", T#0s, Status);  
+END_IF;
+
+dCycleTime := GET_TASK_INTERVAL();
+rCycleTime := (LINT_TO_REAL(TIME_TO_LINT(dCycleTime))) / 1000000.0;
+
+;#END_EDIT_BLOCK END_ACTION (*aInit*)
+ACTION aStopSimu: #BEGIN_EDIT_BLOCK
+(**************************************** WARNING ********************************************
+ *** The KEBA Kemro K2 System including software is not intended for safety control tasks! ***
+ ***                       For further information see Comment tab!                        ***
+ *********************************************************************************************)
+
+STOP_PROCESS_ALGORITHM();
+
+;#END_EDIT_BLOCK END_ACTION (*aStopSimu*)
+ACTION aSimulate: #BEGIN_EDIT_BLOCK
+(**************************************** WARNING ********************************************
+ *** The KEBA Kemro K2 System including software is not intended for safety control tasks! ***
+ ***                       For further information see Comment tab!                        ***
+ *********************************************************************************************)
+
+(*Get the feedback directly from the set values in case of simulation mode*)   
+(*scaling : 1000% -> 100%*)
+rActPressureMaster := mprSetPressureMaster^ / 10.0;
+rActVelocityMaster := mprSetVelocityMaster^ / 10.0;
+IF mbSlave1Linked THEN
+   rActPressureSlave1 := mprSetPressureSlave1^ / 10.0;
+   rActVelocitySlave1 := mprSetVelocitySlave1^ / 10.0;
+END_IF;
+IF mbSlave2Linked THEN
+   rActPressureSlave2 := mprSetPressureSlave2^ / 10.0;
+   rActVelocitySlave2 := mprSetVelocitySlave2^ / 10.0;
+END_IF;
+
+(*Velocity simulation*) 
+b := WRITE_SVREAL_DIRECT(mprActVelocityMaster^, (rMaxVelocity * rActVelocityMaster  / 100.0 * 30.0 / cApplPlasticsPI)); (*in rpm*)
+IF mbSlave1Linked THEN
+   b := WRITE_SVREAL_DIRECT(mprActVelocitySlave1^, (rMaxVelocity * rActVelocitySlave1  / 100.0 * 30.0 / cApplPlasticsPI)); (*in rpm*)
+END_IF;
+IF mbSlave2Linked THEN
+   b := WRITE_SVREAL_DIRECT(mprActVelocitySlave2^, (rMaxVelocity * rActVelocitySlave2  / 100.0 * 30.0 / cApplPlasticsPI)); (*in rpm*)
+END_IF;
+
+(*Limitation of acceleration in simulation*)
+IF rCycleTime <> 0.0 THEN
+   mrAccelerationMaster := LIMIT(-14000.0, (rActVelocityMaster - rLastVelocityMaster) /100.0 * rMaxVelocity / rCycleTime, 14000.0);
+   IF mbSlave1Linked THEN
+      mrAccelerationSlave1 := LIMIT(-14000.0, (rActVelocitySlave1 - rLastVelocitySlave1) /100.0 * rMaxVelocity / rCycleTime, 14000.0);
+   END_IF;
+   IF mbSlave2Linked THEN
+      mrAccelerationSlave2 := LIMIT(-14000.0, (rActVelocitySlave2 - rLastVelocitySlave2) /100.0 * rMaxVelocity / rCycleTime, 14000.0);
+   END_IF;
+END_IF;
+
+(*100ms as cycle time for torque and power updating*)
+IF miCount = 25 THEN   
+   (* simulate the motor torque *)      
+   IF mpbInjectionActive^ THEN
+      (* pressure-proptional torque is simulated only during injection *)  
+      b := WRITE_SVREAL_DIRECT(mprTorqueMaster^, (k1 * mrAccelerationMaster + k2 * rActPressureMaster / 100.0 * rMaxPressure + k3 * rActVelocityMaster / 100.0 * rMaxVelocity + rLoadTorque));
+      IF mbSlave1Linked THEN
+         b := WRITE_SVREAL_DIRECT(mprTorqueSlave1^, (k1 * mrAccelerationSlave1 + k2 * rActPressureSlave1 / 100.0 * rMaxPressure + k3 * rActVelocitySlave1 / 100.0 * rMaxVelocity + rLoadTorque));
+      END_IF;
+      IF mbSlave2Linked THEN
+         b := WRITE_SVREAL_DIRECT(mprTorqueSlave2^, (k1 * mrAccelerationSlave2 + k2 * rActPressureSlave2 / 100.0 * rMaxPressure + k3 * rActVelocitySlave2 / 100.0 * rMaxVelocity + rLoadTorque));
+      END_IF;
+   ELSE
+      b := WRITE_SVREAL_DIRECT(mprTorqueMaster^, (k1 * mrAccelerationMaster + k3 * rActVelocityMaster / 100.0 * rMaxVelocity + rLoadTorque)); 
+      IF mbSlave1Linked THEN
+         b := WRITE_SVREAL_DIRECT(mprTorqueSlave1^, (k1 * mrAccelerationSlave1 + k3 * rActVelocitySlave1 / 100.0 * rMaxVelocity + rLoadTorque));
+      END_IF;
+      IF mbSlave2Linked THEN
+         b := WRITE_SVREAL_DIRECT(mprTorqueSlave2^, (k1 * mrAccelerationSlave2 + k3 * rActVelocitySlave2 / 100.0 * rMaxVelocity + rLoadTorque));
+      END_IF;
+   END_IF; 
+   
+   (* simulate motor power *)
+   b := WRITE_SVREAL_DIRECT(mprMotorPowerMaster^, (mprTorqueMaster^ * rActVelocityMaster / 100.0 * rMaxVelocity / 1000.0));
+   IF mbSlave1Linked THEN    
+      b := WRITE_SVREAL_DIRECT(mprMotorPowerSlave1^, (mprTorqueSlave1^ * rActVelocitySlave1 / 100.0 * rMaxVelocity / 1000.0));  
+   END_IF;
+   IF mbSlave2Linked THEN
+      b := WRITE_SVREAL_DIRECT(mprMotorPowerSlave2^, (mprTorqueSlave2^ * rActVelocitySlave2 / 100.0 * rMaxVelocity / 1000.0));
+   END_IF;
+   
+   miCount := 0;
+ELSE
+   miCount := miCount + 1;
+END_IF;
+
+rLastVelocityMaster := rActVelocityMaster;
+rLastVelocitySlave1 := rActVelocitySlave1;
+rLastVelocitySlave2 := rActVelocitySlave2;
+
+;#END_EDIT_BLOCK END_ACTION (*aSimulate*)
+ACTION aReadDriveInfo: #BEGIN_EDIT_BLOCK
+(**************************************** WARNING ********************************************
+ *** The KEBA Kemro K2 System including software is not intended for safety control tasks! ***
+ ***                       For further information see Comment tab!                        ***
+ *********************************************************************************************)
+
+b := WRITE_SV_DIRECT(mpsRevisionMaster^, sRevisionMaster);  
+b := WRITE_SV_DIRECT(mpsDrvIDMaster^, sDrvIDMaster);
+
+IF mbSlave1Linked THEN
+   b := WRITE_SV_DIRECT(mpsRevisionSlave1^, sRevisionMaster);
+   b := WRITE_SV_DIRECT(mpsDrvIDSlave1^, sDrvIDMaster);
+END_IF;
+
+IF mbSlave2Linked THEN
+   b := WRITE_SV_DIRECT(mpsRevisionSlave2^, sRevisionMaster);
+   b := WRITE_SV_DIRECT(mpsDrvIDSlave2^, sDrvIDMaster);
+END_IF; 
+
+;#END_EDIT_BLOCK END_ACTION (*aReadDriveInfo*)
+(* end sfc-code *)
+
+
+END_ALGORITHM
+
+POSTUPDATE_ALGORITHM pStart ON TaskSim WITH sv_bSimulate,sv_bInitStart
+
+
+VAR
+ s : KSYS_Status;
+ pOptions : REFTO tOptionId;
+ bInitDone : BOOL;
+END_VAR
+#BEGIN_EDIT_BLOCK
+(**************************************** WARNING ********************************************
+ *** The KEBA Kemro K2 System including software is not intended for safety control tasks! ***
+ ***                       For further information see Comment tab!                        ***
+ *********************************************************************************************)
+
+IF NOT bInitDone THEN   
+   (*Check if the speed pump exists, simulation will not be started in case of no speedpump*)
+   pOptions := GET_SYNC_REFTO('Pump1.sv_Options', T#0s, s);
+   mbSpeedPump := (s = KSYS_Status_OK) AND ((pOptions^ AND cSubOpSpeedpumpMaster) = cSubOpSpeedpumpMaster);
+
+   IF ((pOptions^ AND cSubOpSpeedpumpSlave2) = cSubOpSpeedpumpSlave2) THEN     
+      mbSlave1Linked := TRUE;
+      mbSlave2Linked := TRUE;
+   ELSIF ((pOptions^ AND cSubOpSpeedpumpSlave1) = cSubOpSpeedpumpSlave1) THEN
+      mbSlave1Linked := TRUE;
+   END_IF;
+
+   bInitDone := TRUE;
+END_IF;    
+
+IF sv_bSimulate AND mbSpeedPump THEN
+   START_PROCESS_ALGORITHM(paSimulate);
+END_IF;    
+
+
+;#END_EDIT_BLOCK END_ALGORITHM
+
+POSTUPDATE_ALGORITHM pOnOff ON PU_Task_13(1) WITH mpbKeyOnOff^,mpbKeyOnOffHMI^,mpbMotorLocked^
+
+
+VAR
+ iDriveStatus : INT;
+ DriveState : DWORD;
+ bOnOff : BOOL;
+END_VAR
+#BEGIN_EDIT_BLOCK
+(**************************************** WARNING ********************************************
+ *** The KEBA Kemro K2 System including software is not intended for safety control tasks! ***
+ ***                       For further information see Comment tab!                        ***
+ *********************************************************************************************)
+IF mbSpeedPump THEN
+   
+   bOnOff := FALSE;
+
+   IF mpbKeyOnOff <> EMPTY THEN
+      bOnOff := mpbKeyOnOff^;
+   END_IF;
+   
+   IF mpbKeyOnOffHMI <> EMPTY THEN
+      bOnOff := bOnOff OR mpbKeyOnOffHMI^;
+   END_IF;
+      
+   IF (bOnOff OR mpbMotorLocked^) THEN  
+      mbMotorOnReq := (NOT mbMotorOnReq) AND (NOT mpbMotorLocked^);
+   END_IF;  
+    
+   (*Force the status word when motor is shut on or off, 
+   so that the state handler works in simulation mode*)
+   IF mbMotorOnReq THEN
+      DriveState := 16#27;
+      iDriveStatus := 2;
+   ELSE
+      DriveState := 0;
+      iDriveStatus := 1;
+   END_IF;
+   
+   mpMasterState^ := DriveState;
+   mpiDriveStatusMaster^ := iDriveStatus; 
+   
+   IF mbSlave1Linked THEN
+      mpSlave1State^ := DriveState; 
+      mpiDriveStatusSlave1^ := iDriveStatus;                        
+   END_IF;
+   
+   IF mbSlave2Linked THEN  
+      mpSlave2State^ := DriveState; 
+      mpiDriveStatusSlave2^ := iDriveStatus;
+   END_IF;
+END_IF;    
+
+
+;#END_EDIT_BLOCK END_ALGORITHM
+
+PROCESS_ALGORITHM paInitDebugMeasurement ON TaskSlow AUTOSTART
+
+
+VAR
+ fuName : STRING(255);
+ variableName : STRING(255);
+ swoState : KSWO_Status;
+END_VAR
+#BEGIN_EDIT_BLOCK
+(**************************************** WARNING ********************************************
+ *** The KEBA Kemro K2 System including software is not intended for safety control tasks! ***
+ ***                       For further information see Comment tab!                        ***
+ *********************************************************************************************)
+
+fuName := GET_MY_FU_NAME();
+variableName := CONCAT(fuName,'.rTorque Nm');
+swoState := KSWO_AddVariable( Task := TaskInject,
+                              Name := variableName,
+                              Variable := mprTorqueMaster^);
+
+variableName := CONCAT(fuName,'.rAcc rad/s/s');
+swoState := KSWO_AddVariable( Task := TaskInject,
+                              Name := variableName,
+                              Variable := mrAccelerationMaster);
+STOP_PROCESS_ALGORITHM();
+
+
+
+;#END_EDIT_BLOCK END_ALGORITHM
+
+
+
+END_ALGORITHM_BLOCK
+
+
+
+#END_OF_IEC_PART
+
+@Puma @IecEditor 6 127 @Pou 25 
+@@@BEG_Comment@@@
+
+@@@END_Comment@@@
+
+@BEG_Contents 
+
+@BEG_Func 
+@RT(17)FuncTreeContainer 
+1 
+@Var @RT(14)GET_SYNC_REFTO @RT(0) @T @T @DERIVED 0 @F @RT(22)KEBA_STANDARD_FUNCTION @F 
+@T 
+@BEG_Attrib 
+0 @RT(0) @RT(0) 
+@END_Attrib 
+1 1 @F @F @F @F 
+
+@END_Func 
+
+@BEG_Const 
+@RT(18)ConstTreeContainer 
+1 
+@Var @RT(15)cApplPlasticsPI @RT(0) @T @F @DT @RT(4)REAL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+0 @RT(10)3.14159265 @RT(13)pi=3.14159265 
+@END_Attrib 
+1 1 @F @F @F @F 
+
+@END_Const 
+
+@BEG_Export 
+
+@BEG_Kind 
+@ALGORITHM_BLOCK @RT(15)ABSpeedPumpSimu @STRUCTURED_TEXT 
+@RT(0) @RT(0) @RT(0) 
+@END_Kind 
+
+@BEG_Dcl 
+@RT(16)DclTreeContainer 
+46 
+@Var @RT(7)TaskSim @RT(0) @T @F @DT @RT(4)TASK @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 7 @F @F @F @F 
+
+@Var @RT(8)TaskSlow @RT(0) @T @F @DT @RT(4)TASK @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 7 @F @F @F @F 
+
+@Var @RT(10)TaskInject @RT(0) @T @F @DT @RT(4)TASK @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 7 @F @F @F @F 
+
+@Var @RT(10)TaskAnalog @RT(0) @T @T @RENAMED 0 @T @T @DT @RT(4)TASK @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 7 @F @F @F @F 
+
+@Var @RT(10)PU_Task_13 @RT(0) @T @F @DT @RT(4)TASK @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 7 @F @F @F @F 
+
+@Var @RT(12)sv_bSimulate @RT(0) @T @F @DT @RT(4)BOOL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 8 @F @F @F @F 
+
+@Var @RT(13)sv_bInitStart @RT(0) @T @F @DT @RT(4)BOOL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 8 @F @F @F @F 
+
+@Var @RT(13)mpMasterState @RT(0) @T @T @REFTO 0 @T @DT @RT(5)DWORD @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(13)mpSlave1State @RT(0) @T @T @REFTO 0 @T @DT @RT(5)DWORD @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(13)mpSlave2State @RT(0) @T @T @REFTO 0 @T @DT @RT(5)DWORD @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(20)mprSetPressureMaster @RT(0) @T @T @REFTO 0 @T @DT @RT(4)REAL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(20)mprSetVelocityMaster @RT(0) @T @T @REFTO 0 @T @DT @RT(4)REAL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(20)mprSetPressureSlave1 @RT(0) @T @T @REFTO 0 @T @DT @RT(4)REAL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(20)mprSetVelocitySlave1 @RT(0) @T @T @REFTO 0 @T @DT @RT(4)REAL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(20)mprSetPressureSlave2 @RT(0) @T @T @REFTO 0 @T @DT @RT(4)REAL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(20)mprSetVelocitySlave2 @RT(0) @T @T @REFTO 0 @T @DT @RT(4)REAL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(12)mbMotorOnReq @RT(0) @T @F @DT @RT(4)BOOL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(11)mpbKeyOnOff @RT(0) @T @T @REFTO 0 @T @DT @RT(4)BOOL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(14)mpbKeyOnOffHMI @RT(0) @T @T @REFTO 0 @T @DT @RT(4)BOOL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(14)mpbMotorLocked @RT(0) @T @T @REFTO 0 @T @DT @RT(4)BOOL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(11)mbSpeedPump @RT(0) @T @F @DT @RT(4)BOOL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(20)mrAccelerationMaster @RT(0) @T @F @DT @RT(4)REAL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(20)mrAccelerationSlave1 @RT(0) @T @F @DT @RT(4)REAL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(20)mrAccelerationSlave2 @RT(0) @T @F @DT @RT(4)REAL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(19)mprMotorPowerMaster @RT(0) @T @T @REFTO 0 @T @DT @RT(4)REAL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(19)mprMotorPowerSlave1 @RT(0) @T @T @REFTO 0 @T @DT @RT(4)REAL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(15)mprTorqueMaster @RT(0) @T @T @REFTO 0 @T @DT @RT(4)REAL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(15)mprTorqueSlave1 @RT(0) @T @T @REFTO 0 @T @DT @RT(4)REAL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(18)mpbInjectionActive @RT(0) @T @T @REFTO 0 @T @DT @RT(4)BOOL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(20)mprActVelocitySlave1 @RT(0) @T @T @REFTO 0 @T @DT @RT(4)REAL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(20)mprActVelocityMaster @RT(0) @T @T @REFTO 0 @T @DT @RT(4)REAL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(20)mprActVelocitySlave2 @RT(0) @T @T @REFTO 0 @T @DT @RT(4)REAL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(17)mpsRevisionMaster @RT(0) @T @T @REFTO 0 @T @DT @RT(11)STRING(255) @RT(0) @T @T @STRING 0 @F @RT(3)255 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(14)mpsDrvIDMaster @RT(0) @T @T @REFTO 0 @T @DT @RT(11)STRING(255) @RT(0) @T @T @STRING 0 @F @RT(3)255 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(20)mpiDriveStatusMaster @RT(0) @T @T @REFTO 0 @T @DT @RT(3)INT @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(17)mpsRevisionSlave1 @RT(0) @T @T @REFTO 0 @T @DT @RT(11)STRING(255) @RT(0) @T @T @STRING 0 @F @RT(3)255 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(14)mpsDrvIDSlave1 @RT(0) @T @T @REFTO 0 @T @DT @RT(11)STRING(255) @RT(0) @T @T @STRING 0 @F @RT(3)255 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(20)mpiDriveStatusSlave1 @RT(0) @T @T @REFTO 0 @T @DT @RT(3)INT @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(7)miCount @RT(0) @T @F @DT @RT(3)INT @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(20)mpiDriveStatusSlave2 @RT(0) @T @T @REFTO 0 @T @DT @RT(3)INT @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(17)mpsRevisionSlave2 @RT(0) @T @T @REFTO 0 @T @DT @RT(11)STRING(255) @RT(0) @T @T @STRING 0 @F @RT(3)255 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(14)mpsDrvIDSlave2 @RT(0) @T @T @REFTO 0 @T @DT @RT(11)STRING(255) @RT(0) @T @T @STRING 0 @F @RT(3)255 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(15)mprTorqueSlave2 @RT(0) @T @T @REFTO 0 @T @DT @RT(4)REAL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(19)mprMotorPowerSlave2 @RT(0) @T @T @REFTO 0 @T @DT @RT(4)REAL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(14)mbSlave1Linked @RT(0) @T @F @DT @RT(4)BOOL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(14)mbSlave2Linked @RT(0) @T @F @DT @RT(4)BOOL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@END_Dcl 
+
+@END_Export 
+
+@BEG_Body 
+
+4 
+
+@BEG_Export 
+
+@BEG_Algo 
+@PROCESS_ALGORITHM @RT(10)paSimulate @SEQUENTIAL_FLOW_CHART 
+@RT(0) @RT(0) @RT(10)TaskAnalog @F @F 
+@END_Algo 
+
+@BEG_Dcl 
+@RT(16)DclTreeContainer 
+21 
+@Var @RT(6)Status @RT(0) @T @T @DERIVED 0 @T @T @DT @RT(11)KSYS_Status @RT(0) @T @T @UNKNOWN 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(19)rLastVelocityMaster @RT(0) @T @F @DT @RT(4)REAL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(19)rLastVelocitySlave1 @RT(0) @T @F @DT @RT(4)REAL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(19)rLastVelocitySlave2 @RT(0) @T @F @DT @RT(4)REAL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(2)k1 @RT(0) @T @T @RENAMED 0 @T @T @DT @RT(4)REAL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(4)0.1  @RT(16)Inertia (kg*m^2) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(2)k2 @RT(0) @T @T @RENAMED 0 @T @T @DT @RT(4)REAL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(3)1.5 @RT(20)Coefficient (Nm/bar) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(2)k3 @RT(0) @T @T @RENAMED 0 @T @T @DT @RT(4)REAL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(3)0.5 @RT(31)Friction coefficient (Nm/rad/s) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(12)rMaxVelocity @RT(0) @T @F @DT @RT(4)REAL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(6)209.44 @RT(5)rad/s @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(10)dCycleTime @RT(0) @T @T @RENAMED 0 @T @T @DT @RT(4)TIME @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(10)rCycleTime @RT(0) @T @F @DT @RT(4)REAL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(12)rMaxPressure @RT(0) @T @F @DT @RT(4)REAL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(5)250.0 @RT(3)bar @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(11)rLoadTorque @RT(0) @T @F @DT @RT(4)REAL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(3)1.0 @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(15)sRevisionMaster @RT(0) @T @F @DT @RT(11)STRING(255) @RT(0) @T @T @STRING 0 @F @RT(3)255 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(33)'AxX System Application V1-7-138' @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(12)sDrvIDMaster @RT(0) @T @F @DT @RT(11)STRING(255) @RT(0) @T @T @STRING 0 @F @RT(3)255 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(17)'AxM-II.35.70.4F' @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(18)rActVelocityMaster @RT(0) @T @F @DT @RT(4)REAL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(18)rActPressureMaster @RT(0) @T @T @RENAMED 0 @T @T @DT @RT(4)REAL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(18)rActVelocitySlave1 @RT(0) @T @F @DT @RT(4)REAL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(18)rActPressureSlave1 @RT(0) @T @T @RENAMED 0 @T @T @DT @RT(4)REAL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(18)rActVelocitySlave2 @RT(0) @T @F @DT @RT(4)REAL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(18)rActPressureSlave2 @RT(0) @T @T @RENAMED 0 @T @T @DT @RT(4)REAL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(1)b @RT(0) @T @F @DT @RT(4)BOOL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 4 @F @F @F @F 
+
+@END_Dcl 
+
+@END_Export 
+
+@BEG_Export 
+
+@BEG_Algo 
+@POSTUPDATE_ALGORITHM @RT(6)pStart @STRUCTURED_TEXT 
+@RT(0) @RT(26)sv_bSimulate,sv_bInitStart @RT(7)TaskSim @F @F 
+@END_Algo 
+
+@BEG_Dcl 
+@RT(16)DclTreeContainer 
+3 
+@Var @RT(1)s @RT(0) @T @T @DERIVED 0 @T @T @DT @RT(11)KSYS_Status @RT(0) @T @T @UNKNOWN 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(8)pOptions @RT(0) @T @T @REFTO 0 @F @DERIVED 0 @T @T @DT @RT(9)tOptionId @RT(0) @T @T @UNKNOWN 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(9)bInitDone @RT(0) @T @F @DT @RT(4)BOOL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@END_Dcl 
+
+@END_Export 
+
+@BEG_Export 
+
+@BEG_Algo 
+@POSTUPDATE_ALGORITHM @RT(6)pOnOff @STRUCTURED_TEXT 
+@RT(0) @RT(44)mpbKeyOnOff^,mpbKeyOnOffHMI^,mpbMotorLocked^ @RT(13)PU_Task_13(1) @F @F 
+@END_Algo 
+
+@BEG_Dcl 
+@RT(16)DclTreeContainer 
+3 
+@Var @RT(12)iDriveStatus @RT(0) @T @F @DT @RT(3)INT @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(10)DriveState @RT(0) @T @F @DT @RT(5)DWORD @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(6)bOnOff @RT(0) @T @F @DT @RT(4)BOOL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@END_Dcl 
+
+@END_Export 
+
+@BEG_Export 
+
+@BEG_Algo 
+@PROCESS_ALGORITHM @RT(22)paInitDebugMeasurement @STRUCTURED_TEXT 
+@RT(0) @RT(0) @RT(8)TaskSlow @T @F 
+@END_Algo 
+
+@BEG_Dcl 
+@RT(16)DclTreeContainer 
+3 
+@Var @RT(6)fuName @RT(0) @T @F @DT @RT(11)STRING(255) @RT(0) @T @T @STRING 0 @F @RT(3)255 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(12)variableName @RT(0) @T @F @DT @RT(11)STRING(255) @RT(0) @T @T @STRING 0 @F @RT(3)255 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(8)swoState @RT(0) @T @T @DERIVED 0 @T @T @DT @RT(11)KSWO_Status @RT(0) @T @T @UNKNOWN 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@END_Dcl 
+
+@END_Export 
+
+@BEG_SfcBody 
+4 3 2 
+
+@BEG_SfcData 2 
+@StepSeq @RT(4)sseq @F 3 
+@Step @RT(4)INIT @F @T @F @F @RT(0) @F 
+@AcbCont @RT(7)unnamed @F 1 
+@Acb @RT(5)aInit @F @F @RT(1)P @RT(0) @F @F @F @F 
+
+@Trans @RT(11)SimRequired @F @T @F @F @T @T @TL(2)
+sv_bSimulate
+
+@RT(11)SimRequired @F 
+@Loop @RT(4)loop @F 2 
+@StepSeq @RT(4)sseq @F 3 
+@Step @RT(3)SIM @F @F @F @F @RT(0) @F 
+@AcbCont @RT(7)unnamed @F 2 
+@Acb @RT(14)aReadDriveInfo @F @F @RT(1)P @RT(0) @F @F @F @F 
+@Acb @RT(9)aSimulate @F @F @RT(1)N @RT(0) @F @F @F @F 
+
+@Trans @RT(14)StpSimRequired @F @T @F @F @T @T @TL(2)
+NOT sv_bSimulate
+
+@RT(14)StpSimRequired @F 
+@Step @RT(4)STOP @F @F @F @F @RT(0) @F 
+@AcbCont @RT(7)unnamed @F 1 
+@Acb @RT(9)aStopSimu @F @F @RT(1)P @RT(0) @F @F @F @F 
+
+
+@Trans @RT(6)Return @F @T @T @T @T @T @TL(2)
+TRUE
+
+@RT(6)Return @F 
+
+@END_SfcData 
+@SaActions 4 
+@SaText @RT(5)aInit 1 @TL(61)
+(**************************************** WARNING ********************************************
+ *** The KEBA Kemro K2 System including software is not intended for safety control tasks! ***
+ ***                       For further information see Comment tab!                        ***
+ *********************************************************************************************)
+(*pointers*)
+mpbKeyOnOff := GET_SYNC_REFTO("ServoDrives1.sv_KeyMotorOnOff", T#0s, Status);
+// additionally listen to HMI on/off button (both can be linked)
+mpbKeyOnOffHMI := GET_SYNC_REFTO("ServoDrives1.sv_KeyMotorOnOffHMI", T#0s, Status);
+
+mpbMotorLocked := GET_SYNC_REFTO("ServoDrives1.sv_bMotorLocked", T#0s, Status);
+mpbInjectionActive := GET_SYNC_REFTO("Injection1.sv_bInjectionActive", t#0s, Status);
+
+(*Master*)
+mprSetPressureMaster := GET_SYNC_REFTO('Pump1.sv_KHW_ServoMaster_setValue.rAux[1]', T#0s, Status);
+mprSetVelocityMaster := GET_SYNC_REFTO('Pump1.sv_KHW_ServoMaster_setValue.rVeloc', T#0s, Status); 
+mprActVelocityMaster := GET_SYNC_REFTO("Pump1.sv_rActVelocityMaster", t#0s, Status); 
+mpMasterState := GET_SYNC_REFTO("Pump1.sv_KHW_ServoMaster_state_sim", T#0s, Status);
+IF Status <> KSYS_Status_OK THEN
+   mpMasterState := GET_SYNC_REFTO("Pump1.sv_KHW_ServoMaster_state", T#0s, Status);
+END_IF;
+mpiDriveStatusMaster := GET_SYNC_REFTO("Pump1.sv_iDriveStatusMaster", t#0s, Status); 
+mpsRevisionMaster := GET_SYNC_REFTO("Pump1.sv_sRevisionMaster", t#0s, Status); 
+mpsDrvIDMaster := GET_SYNC_REFTO("Pump1.sv_sDrvID_Master", t#0s, Status); 
+mprTorqueMaster := GET_SYNC_REFTO("Pump1.sv_rMotorTorqueMaster", T#0s, Status);
+mprMotorPowerMaster := GET_SYNC_REFTO("Pump1.sv_rMotorPowerMaster", T#0s, Status);     
+
+(*Slave1*)
+IF mbSlave1Linked THEN
+   mprSetPressureSlave1 := GET_SYNC_REFTO('Pump1.sv_KHW_ServoSlave1_setValue.rAux[1]', T#0s, Status);
+   mprSetVelocitySlave1 := GET_SYNC_REFTO('Pump1.sv_KHW_ServoSlave1_setValue.rVeloc', T#0s, Status);
+   mpSlave1State := GET_SYNC_REFTO("Pump1.sv_KHW_ServoSlave1_state_sim", T#0s, Status);
+   IF Status <> KSYS_Status_OK THEN
+      mpSlave1State := GET_SYNC_REFTO("Pump1.sv_KHW_ServoSlave1_state", T#0s, Status);
+   END_IF;   
+   mprActVelocitySlave1 := GET_SYNC_REFTO("Pump1.sv_rActVelocitySlave1", t#0s, Status); 
+   mpiDriveStatusSlave1 := GET_SYNC_REFTO("Pump1.sv_iDriveStatusSlave1", t#0s, Status); 
+   mpsRevisionSlave1 := GET_SYNC_REFTO("Pump1.sv_sRevisionSlave1", t#0s, Status); 
+   mpsDrvIDSlave1 := GET_SYNC_REFTO("Pump1.sv_sDrvID_Slave1", t#0s, Status); 
+   mprTorqueSlave1 := GET_SYNC_REFTO("Pump1.sv_rMotorTorqueSlave1", T#0s, Status);    
+   mprMotorPowerSlave1 := GET_SYNC_REFTO("Pump1.sv_rMotorPowerSlave1", T#0s, Status);         
+END_IF;
+
+(*Slave2*)
+IF mbSlave2Linked THEN
+   mprSetPressureSlave2 := GET_SYNC_REFTO('Pump1.sv_KHW_ServoSlave2_setValue.rAux[1]', T#0s, Status);
+   mprSetVelocitySlave2 := GET_SYNC_REFTO('Pump1.sv_KHW_ServoSlave2_setValue.rVeloc', T#0s, Status);
+   mpSlave2State := GET_SYNC_REFTO("Pump1.sv_KHW_ServoSlave2_state_sim", T#0s, Status);
+   IF Status <> KSYS_Status_OK THEN
+      mpSlave2State := GET_SYNC_REFTO("Pump1.sv_KHW_ServoSlave2_state", T#0s, Status);
+   END_IF;
+   mprActVelocitySlave2 := GET_SYNC_REFTO("Pump1.sv_rActVelocitySlave2", t#0s, Status); 
+   mpiDriveStatusSlave2 := GET_SYNC_REFTO("Pump1.sv_iDriveStatusSlave2", t#0s, Status); 
+   mpsRevisionSlave2 := GET_SYNC_REFTO("Pump1.sv_sRevisionSlave2", t#0s, Status); 
+   mpsDrvIDSlave2:= GET_SYNC_REFTO("Pump1.sv_sDrvID_Slave2", t#0s, Status); 
+   mprTorqueSlave2 := GET_SYNC_REFTO("Pump1.sv_rMotorTorqueSlave2", T#0s, Status);  
+   mprMotorPowerSlave2 := GET_SYNC_REFTO("Pump1.sv_rMotorPowerSlave2", T#0s, Status);  
+END_IF;
+
+dCycleTime := GET_TASK_INTERVAL();
+rCycleTime := (LINT_TO_REAL(TIME_TO_LINT(dCycleTime))) / 1000000.0;
+
+
+@SaText @RT(9)aStopSimu 1 @TL(7)
+(**************************************** WARNING ********************************************
+ *** The KEBA Kemro K2 System including software is not intended for safety control tasks! ***
+ ***                       For further information see Comment tab!                        ***
+ *********************************************************************************************)
+
+STOP_PROCESS_ALGORITHM();
+
+
+@SaText @RT(9)aSimulate 1 @TL(78)
+(**************************************** WARNING ********************************************
+ *** The KEBA Kemro K2 System including software is not intended for safety control tasks! ***
+ ***                       For further information see Comment tab!                        ***
+ *********************************************************************************************)
+
+(*Get the feedback directly from the set values in case of simulation mode*)   
+(*scaling : 1000% -> 100%*)
+rActPressureMaster := mprSetPressureMaster^ / 10.0;
+rActVelocityMaster := mprSetVelocityMaster^ / 10.0;
+IF mbSlave1Linked THEN
+   rActPressureSlave1 := mprSetPressureSlave1^ / 10.0;
+   rActVelocitySlave1 := mprSetVelocitySlave1^ / 10.0;
+END_IF;
+IF mbSlave2Linked THEN
+   rActPressureSlave2 := mprSetPressureSlave2^ / 10.0;
+   rActVelocitySlave2 := mprSetVelocitySlave2^ / 10.0;
+END_IF;
+
+(*Velocity simulation*) 
+b := WRITE_SVREAL_DIRECT(mprActVelocityMaster^, (rMaxVelocity * rActVelocityMaster  / 100.0 * 30.0 / cApplPlasticsPI)); (*in rpm*)
+IF mbSlave1Linked THEN
+   b := WRITE_SVREAL_DIRECT(mprActVelocitySlave1^, (rMaxVelocity * rActVelocitySlave1  / 100.0 * 30.0 / cApplPlasticsPI)); (*in rpm*)
+END_IF;
+IF mbSlave2Linked THEN
+   b := WRITE_SVREAL_DIRECT(mprActVelocitySlave2^, (rMaxVelocity * rActVelocitySlave2  / 100.0 * 30.0 / cApplPlasticsPI)); (*in rpm*)
+END_IF;
+
+(*Limitation of acceleration in simulation*)
+IF rCycleTime <> 0.0 THEN
+   mrAccelerationMaster := LIMIT(-14000.0, (rActVelocityMaster - rLastVelocityMaster) /100.0 * rMaxVelocity / rCycleTime, 14000.0);
+   IF mbSlave1Linked THEN
+      mrAccelerationSlave1 := LIMIT(-14000.0, (rActVelocitySlave1 - rLastVelocitySlave1) /100.0 * rMaxVelocity / rCycleTime, 14000.0);
+   END_IF;
+   IF mbSlave2Linked THEN
+      mrAccelerationSlave2 := LIMIT(-14000.0, (rActVelocitySlave2 - rLastVelocitySlave2) /100.0 * rMaxVelocity / rCycleTime, 14000.0);
+   END_IF;
+END_IF;
+
+(*100ms as cycle time for torque and power updating*)
+IF miCount = 25 THEN   
+   (* simulate the motor torque *)      
+   IF mpbInjectionActive^ THEN
+      (* pressure-proptional torque is simulated only during injection *)  
+      b := WRITE_SVREAL_DIRECT(mprTorqueMaster^, (k1 * mrAccelerationMaster + k2 * rActPressureMaster / 100.0 * rMaxPressure + k3 * rActVelocityMaster / 100.0 * rMaxVelocity + rLoadTorque));
+      IF mbSlave1Linked THEN
+         b := WRITE_SVREAL_DIRECT(mprTorqueSlave1^, (k1 * mrAccelerationSlave1 + k2 * rActPressureSlave1 / 100.0 * rMaxPressure + k3 * rActVelocitySlave1 / 100.0 * rMaxVelocity + rLoadTorque));
+      END_IF;
+      IF mbSlave2Linked THEN
+         b := WRITE_SVREAL_DIRECT(mprTorqueSlave2^, (k1 * mrAccelerationSlave2 + k2 * rActPressureSlave2 / 100.0 * rMaxPressure + k3 * rActVelocitySlave2 / 100.0 * rMaxVelocity + rLoadTorque));
+      END_IF;
+   ELSE
+      b := WRITE_SVREAL_DIRECT(mprTorqueMaster^, (k1 * mrAccelerationMaster + k3 * rActVelocityMaster / 100.0 * rMaxVelocity + rLoadTorque)); 
+      IF mbSlave1Linked THEN
+         b := WRITE_SVREAL_DIRECT(mprTorqueSlave1^, (k1 * mrAccelerationSlave1 + k3 * rActVelocitySlave1 / 100.0 * rMaxVelocity + rLoadTorque));
+      END_IF;
+      IF mbSlave2Linked THEN
+         b := WRITE_SVREAL_DIRECT(mprTorqueSlave2^, (k1 * mrAccelerationSlave2 + k3 * rActVelocitySlave2 / 100.0 * rMaxVelocity + rLoadTorque));
+      END_IF;
+   END_IF; 
+   
+   (* simulate motor power *)
+   b := WRITE_SVREAL_DIRECT(mprMotorPowerMaster^, (mprTorqueMaster^ * rActVelocityMaster / 100.0 * rMaxVelocity / 1000.0));
+   IF mbSlave1Linked THEN    
+      b := WRITE_SVREAL_DIRECT(mprMotorPowerSlave1^, (mprTorqueSlave1^ * rActVelocitySlave1 / 100.0 * rMaxVelocity / 1000.0));  
+   END_IF;
+   IF mbSlave2Linked THEN
+      b := WRITE_SVREAL_DIRECT(mprMotorPowerSlave2^, (mprTorqueSlave2^ * rActVelocitySlave2 / 100.0 * rMaxVelocity / 1000.0));
+   END_IF;
+   
+   miCount := 0;
+ELSE
+   miCount := miCount + 1;
+END_IF;
+
+rLastVelocityMaster := rActVelocityMaster;
+rLastVelocitySlave1 := rActVelocitySlave1;
+rLastVelocitySlave2 := rActVelocitySlave2;
+
+
+@SaText @RT(14)aReadDriveInfo 1 @TL(18)
+(**************************************** WARNING ********************************************
+ *** The KEBA Kemro K2 System including software is not intended for safety control tasks! ***
+ ***                       For further information see Comment tab!                        ***
+ *********************************************************************************************)
+
+b := WRITE_SV_DIRECT(mpsRevisionMaster^, sRevisionMaster);  
+b := WRITE_SV_DIRECT(mpsDrvIDMaster^, sDrvIDMaster);
+
+IF mbSlave1Linked THEN
+   b := WRITE_SV_DIRECT(mpsRevisionSlave1^, sRevisionMaster);
+   b := WRITE_SV_DIRECT(mpsDrvIDSlave1^, sDrvIDMaster);
+END_IF;
+
+IF mbSlave2Linked THEN
+   b := WRITE_SV_DIRECT(mpsRevisionSlave2^, sRevisionMaster);
+   b := WRITE_SV_DIRECT(mpsDrvIDSlave2^, sDrvIDMaster);
+END_IF; 
+
+
+@SaTrans 0 
+@SaExits 0 
+@END_SfcBody 
+
+@@@BEG_Comment@@@ 
+@TL(0)
+
+@@@END_Comment@@@ 
+
+@BEG_Body 
+@TL(24)
+(**************************************** WARNING ********************************************
+ *** The KEBA Kemro K2 System including software is not intended for safety control tasks! ***
+ ***                       For further information see Comment tab!                        ***
+ *********************************************************************************************)
+
+IF NOT bInitDone THEN   
+   (*Check if the speed pump exists, simulation will not be started in case of no speedpump*)
+   pOptions := GET_SYNC_REFTO('Pump1.sv_Options', T#0s, s);
+   mbSpeedPump := (s = KSYS_Status_OK) AND ((pOptions^ AND cSubOpSpeedpumpMaster) = cSubOpSpeedpumpMaster);
+
+   IF ((pOptions^ AND cSubOpSpeedpumpSlave2) = cSubOpSpeedpumpSlave2) THEN     
+      mbSlave1Linked := TRUE;
+      mbSlave2Linked := TRUE;
+   ELSIF ((pOptions^ AND cSubOpSpeedpumpSlave1) = cSubOpSpeedpumpSlave1) THEN
+      mbSlave1Linked := TRUE;
+   END_IF;
+
+   bInitDone := TRUE;
+END_IF;    
+
+IF sv_bSimulate AND mbSpeedPump THEN
+   START_PROCESS_ALGORITHM(paSimulate);
+END_IF;    
+
+@END_Body 
+
+@@@BEG_Comment@@@ 
+@TL(0)
+
+@@@END_Comment@@@ 
+
+@BEG_Body 
+@TL(44)
+(**************************************** WARNING ********************************************
+ *** The KEBA Kemro K2 System including software is not intended for safety control tasks! ***
+ ***                       For further information see Comment tab!                        ***
+ *********************************************************************************************)
+IF mbSpeedPump THEN
+   
+   bOnOff := FALSE;
+
+   IF mpbKeyOnOff <> EMPTY THEN
+      bOnOff := mpbKeyOnOff^;
+   END_IF;
+   
+   IF mpbKeyOnOffHMI <> EMPTY THEN
+      bOnOff := bOnOff OR mpbKeyOnOffHMI^;
+   END_IF;
+      
+   IF (bOnOff OR mpbMotorLocked^) THEN  
+      mbMotorOnReq := (NOT mbMotorOnReq) AND (NOT mpbMotorLocked^);
+   END_IF;  
+    
+   (*Force the status word when motor is shut on or off, 
+   so that the state handler works in simulation mode*)
+   IF mbMotorOnReq THEN
+      DriveState := 16#27;
+      iDriveStatus := 2;
+   ELSE
+      DriveState := 0;
+      iDriveStatus := 1;
+   END_IF;
+   
+   mpMasterState^ := DriveState;
+   mpiDriveStatusMaster^ := iDriveStatus; 
+   
+   IF mbSlave1Linked THEN
+      mpSlave1State^ := DriveState; 
+      mpiDriveStatusSlave1^ := iDriveStatus;                        
+   END_IF;
+   
+   IF mbSlave2Linked THEN  
+      mpSlave2State^ := DriveState; 
+      mpiDriveStatusSlave2^ := iDriveStatus;
+   END_IF;
+END_IF;    
+
+@END_Body 
+
+@@@BEG_Comment@@@ 
+@TL(0)
+
+@@@END_Comment@@@ 
+
+@BEG_Body 
+@TL(18)
+(**************************************** WARNING ********************************************
+ *** The KEBA Kemro K2 System including software is not intended for safety control tasks! ***
+ ***                       For further information see Comment tab!                        ***
+ *********************************************************************************************)
+
+fuName := GET_MY_FU_NAME();
+variableName := CONCAT(fuName,'.rTorque Nm');
+swoState := KSWO_AddVariable( Task := TaskInject,
+                              Name := variableName,
+                              Variable := mprTorqueMaster^);
+
+variableName := CONCAT(fuName,'.rAcc rad/s/s');
+swoState := KSWO_AddVariable( Task := TaskInject,
+                              Name := variableName,
+                              Variable := mrAccelerationMaster);
+STOP_PROCESS_ALGORITHM();
+
+
+@END_Body 
+
+@@@BEG_Comment@@@ 
+@TL(0)
+
+@@@END_Comment@@@ 
+@END_Body 
+
+@END_Contents 

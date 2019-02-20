@@ -1,0 +1,2030 @@
+IMPORT_OVER_LISTFILE
+ cTimeSGAutoClose
+, cTimeSGAutoOpen
+, cTimeSGAutoLock
+, cTimeSGAutoUnlock
+, cTimeSGAutoFast
+, FBEPForceDI
+, FBEPUnForceDI
+, ABForceDigital
+, KSYS_Status
+, TON
+
+END_IMPORT
+
+ALGORITHM_BLOCK ABSafetySimu #DUMMY_EDIT_BLOCK
+
+SYSTEM_VAR
+ sv_bInitStart : BOOL;
+ sv_bSimulate : BOOL;
+ sv_ForceSGMoldClose : BOOL;
+ sv_ForceSGNozzleClose : BOOL;
+ sv_ForceSGNozzleRearClose : BOOL;
+ sv_ForceSGRearClose : BOOL;
+ sv_ForceEmergencyStop1 : BOOL;
+ sv_ForceEmergencyStop2 : BOOL;
+ sv_ForceEmergencyStop3 : BOOL;
+ sv_ForceEmergencyStop4 : BOOL;
+ sv_ForceOilFilterOK : BOOL;
+ sv_ForceLightCurtainClose : BOOL;
+ sv_ForceSafetyMat : BOOL;
+END_VAR
+
+SYSTEM_OBJECT
+ TaskSim : TASK;
+ PU_Task_13 : TASK;
+END_OBJECT
+
+VAR
+ fbEPForceDI : FBEPForceDI;
+ fbEPUnForceDI : FBEPUnForceDI;
+ mbDIEmergencyStop1Linked : BOOL;
+ mbDIEmergencyStop2Linked : BOOL;
+ mbDIEmergencyStop3Linked : BOOL;
+ mbDIEmergencyStop4Linked : BOOL;
+ mbDIOilFilterOkLinked : BOOL;
+ mbDISGNozzleLinked : BOOL;
+ mbDISGNozzleRearLinked : BOOL;
+ mbDISGRearLinked : BOOL;
+ mbDISGMoldLinked : BOOL;
+ mbDISGMoldOpenLinked : BOOL;
+ mpbDISGAutoClosed1 : REFTO BOOL;
+ mbDISGAutoClosed1Linked : BOOL;
+ mpbDISGAutoClosed2 : REFTO BOOL;
+ mbDISGAutoClosed2Linked : BOOL;
+ mpbDISGAutoOpen : REFTO BOOL;
+ mbDISGAutoOpenLinked : BOOL;
+ mpbDISGAutoCloseSlow : REFTO BOOL;
+ mbDISGAutoCloseSlowLinked : BOOL;
+ mbDISGAutoOpenSlowLinked : BOOL;
+ mpbDISGAutoLocked : REFTO BOOL;
+ mbDISGAutoLockedLinked : BOOL;
+ mpbDISGAutoUnlocked : REFTO BOOL;
+ mbDISGAutoUnlockedLinked : BOOL;
+ mpbDOSGAutoClose : REFTO BOOL;
+ mbDOSGAutoCloseLinked : BOOL;
+ mpbDOSGAutoFast : REFTO BOOL;
+ mbDOSGAutoFastLinked : BOOL;
+ mpbDOSGAutoOpen : REFTO BOOL;
+ mbDOSGAutoOpenLinked : BOOL;
+ mpbDOSGAutoLock : REFTO BOOL;
+ mbDOSGAutoLockLinked : BOOL;
+ mpbDOSGAutoUnlock : REFTO BOOL;
+ mbDOSGAutoUnlockLinked : BOOL;
+ mbDISafetyMat1Linked : BOOL;
+ mbDISafetyMat2Linked : BOOL;
+ mbDILightCurtainClosedLinked : BOOL;
+END_VAR
+
+POSTUPDATE_ALGORITHM pStart ON PU_Task_13 WITH sv_bSimulate,sv_bInitStart
+
+#BEGIN_EDIT_BLOCK
+(**************************************** WARNING ********************************************
+ *** The KEBA Kemro K2 System including software is not intended for safety control tasks! ***
+ ***                       For further information see Comment tab!                        ***
+ *********************************************************************************************)
+
+IF sv_bSimulate THEN
+   START_PROCESS_ALGORITHM(paSimulate);
+END_IF;
+
+IF sv_bSimulate AND mbDISGAutoClosed1Linked THEN
+   START_PROCESS_ALGORITHM(paSimulateSGAuto);
+END_IF;
+
+
+;#END_EDIT_BLOCK END_ALGORITHM
+
+PROCESS_ALGORITHM paSimulate ON TaskSim
+
+
+VAR
+ fbEPUnForceDI : FBEPUnForceDI;
+ mFirstTimeRun : BOOL := TRUE;
+ abForceMoldOpenMaxLimitSwitch : ABForceDigital;
+ abForceMoldCloseMinLimitSwitch : ABForceDigital;
+END_VAR
+
+(* IecGraph-Code *)
+
+(* init step *)
+INITIAL_STEP INIT:
+aInit (P);
+END_STEP
+
+
+(* steps *)
+STEP SIM:
+aSimulate (N);
+END_STEP
+
+STEP STOP:
+aStopSimu (P);
+END_STEP
+
+
+(* transitions *)
+TRANSITION SimRequired (* Trans11 *) FROM INIT TO SIM :=  #BEGIN_EDIT_BLOCK
+sv_bSimulate
+;#END_EDIT_BLOCK
+END_TRANSITION
+
+TRANSITION StpSimRequired (* Trans13 *) FROM SIM TO STOP :=  #BEGIN_EDIT_BLOCK
+NOT sv_bSimulate
+;#END_EDIT_BLOCK
+END_TRANSITION
+
+TRANSITION Return (* Trans16 *) FROM STOP TO SIM :=  #BEGIN_EDIT_BLOCK
+TRUE
+;#END_EDIT_BLOCK
+END_TRANSITION
+
+(* end IecGraph-Code *)
+(* sfc-code *)
+
+(* stand alone actions *)
+ACTION aSimulate: #BEGIN_EDIT_BLOCK
+(**************************************** WARNING ********************************************
+ *** The KEBA Kemro K2 System including software is not intended for safety control tasks! ***
+ ***                       For further information see Comment tab!                        ***
+ *********************************************************************************************)
+
+IF mFirstTimeRun THEN
+   sv_ForceSGMoldClose := TRUE;
+   sv_ForceSGNozzleClose := TRUE;
+   sv_ForceSGNozzleRearClose := TRUE;
+   sv_ForceSGRearClose := TRUE;
+   sv_ForceEmergencyStop1 := TRUE;
+   sv_ForceEmergencyStop2 := TRUE;   
+   sv_ForceEmergencyStop3 := TRUE;   
+   sv_ForceEmergencyStop4 := TRUE;   
+   sv_ForceOilFilterOK := FALSE;
+   sv_ForceLightCurtainClose := TRUE;
+   sv_ForceSafetyMat := TRUE;
+   abForceMoldOpenMaxLimitSwitch.aSetForceValue(TRUE);
+   abForceMoldCloseMinLimitSwitch.aSetForceValue(TRUE);
+   mFirstTimeRun := FALSE;
+END_IF;
+
+;#END_EDIT_BLOCK END_ACTION (*aSimulate*)
+ACTION aStopSimu: #BEGIN_EDIT_BLOCK
+IF mbDIEmergencyStop1Linked THEN
+   fbEPUnForceDI(sSysVar := 'OperationMode1.di_EmergencyStop1');
+END_IF;
+IF mbDIEmergencyStop2Linked THEN
+   fbEPUnForceDI(sSysVar := 'OperationMode1.di_EmergencyStop2');
+END_IF;
+IF mbDIEmergencyStop3Linked THEN
+   fbEPUnForceDI(sSysVar := 'OperationMode1.di_EmergencyStop3');
+END_IF;
+IF mbDIEmergencyStop4Linked THEN
+   fbEPUnForceDI(sSysVar := 'OperationMode1.di_EmergencyStop4');
+END_IF;
+
+IF mbDIOilFilterOkLinked THEN
+   fbEPUnForceDI(sSysVar := 'OilMaintenance1.di_OilFilterOK');
+END_IF;
+
+// SG nozzle
+IF mbDISGNozzleLinked THEN
+   fbEPUnForceDI(sSysVar := 'SafetyGateNozzle1.di_Closed');
+END_IF;   
+
+// SG nozzle rear
+IF mbDISGNozzleRearLinked THEN
+   fbEPUnForceDI(sSysVar := 'SafetyGateNozzleRear1.di_Closed');
+END_IF;     
+
+// SG rear
+IF mbDISGRearLinked THEN
+   fbEPUnForceDI(sSysVar := 'SafetyGateRear1.di_Closed');
+END_IF;   
+
+// SG mold
+IF mbDISGMoldLinked THEN
+   fbEPUnForceDI(sSysVar := 'SafetyGateMold1.di_Closed');
+END_IF;   
+IF mbDISGMoldOpenLinked THEN
+   fbEPUnForceDI(sSysVar := 'SafetyGateMold1.di_Open');
+END_IF;
+
+IF mbDISafetyMat1Linked THEN
+   fbEPUnForceDI(sSysVar := 'SafetyMat1.di_SafetyMat');
+END_IF;
+IF mbDISafetyMat2Linked THEN
+   fbEPUnForceDI(sSysVar := 'SafetyMat2.di_SafetyMat');
+END_IF;
+
+IF mbDILightCurtainClosedLinked THEN
+   fbEPUnForceDI(sSysVar := 'LightCurtain1.di_Closed');
+END_IF;
+
+abForceMoldOpenMaxLimitSwitch.aUnforce();
+abForceMoldCloseMinLimitSwitch.aUnforce();
+
+mFirstTimeRun := TRUE;
+STOP_PROCESS_ALGORITHM();
+
+;#END_EDIT_BLOCK END_ACTION (*aStopSimu*)
+ACTION aInit: #BEGIN_EDIT_BLOCK
+(**************************************** WARNING ********************************************
+ *** The KEBA Kemro K2 System including software is not intended for safety control tasks! ***
+ ***                       For further information see Comment tab!                        ***
+ *********************************************************************************************)
+
+abForceMoldOpenMaxLimitSwitch.aInit('Mold1.di_MoldOpenProtect');
+abForceMoldCloseMinLimitSwitch.aInit('Mold1.di_MoldCloseProtect');
+
+;#END_EDIT_BLOCK END_ACTION (*aInit*)
+(* end sfc-code *)
+
+
+END_ALGORITHM
+
+POSTUPDATE_ALGORITHM pEmergencyStop ON TaskSim WITH sv_ForceEmergencyStop1,sv_ForceEmergencyStop2,sv_ForceEmergencyStop3,sv_ForceEmergencyStop4,sv_bSimulate
+
+#BEGIN_EDIT_BLOCK
+IF sv_bSimulate THEN
+   IF mbDIEmergencyStop1Linked THEN
+      fbEPForceDI(sSysVar := 'OperationMode1.di_EmergencyStop1', Value := sv_ForceEmergencyStop1);
+   END_IF;
+   IF mbDIEmergencyStop2Linked THEN
+      fbEPForceDI(sSysVar := 'OperationMode1.di_EmergencyStop2', Value := sv_ForceEmergencyStop2);
+   END_IF;
+   IF mbDIEmergencyStop3Linked THEN
+      fbEPForceDI(sSysVar := 'OperationMode1.di_EmergencyStop3', Value := sv_ForceEmergencyStop3);
+   END_IF;
+   IF mbDIEmergencyStop4Linked THEN
+      fbEPForceDI(sSysVar := 'OperationMode1.di_EmergencyStop4', Value := sv_ForceEmergencyStop4);
+   END_IF;
+END_IF;
+
+
+
+
+;#END_EDIT_BLOCK END_ALGORITHM
+
+POSTUPDATE_ALGORITHM pOilFilterOK ON TaskSim WITH sv_ForceOilFilterOK,sv_bSimulate
+
+#BEGIN_EDIT_BLOCK
+IF mbDIOilFilterOkLinked THEN
+   IF sv_bSimulate THEN
+      fbEPForceDI(sSysVar := 'OilMaintenance1.di_OilFilterOK', Value := sv_ForceOilFilterOK);
+   END_IF;
+END_IF;
+
+
+;#END_EDIT_BLOCK END_ALGORITHM
+
+POSTUPDATE_ALGORITHM pSGMoldClose ON TaskSim WITH sv_ForceSGMoldClose,sv_bSimulate
+
+#BEGIN_EDIT_BLOCK
+IF sv_bSimulate THEN
+   IF mbDISGMoldLinked THEN
+      fbEPForceDI(sSysVar :='SafetyGateMold1.di_Closed', Value := sv_ForceSGMoldClose);
+   END_IF;
+   IF mbDISGMoldOpenLinked THEN
+      fbEPForceDI(sSysVar := 'SafetyGateMold1.di_Open', Value := NOT sv_ForceSGMoldClose);
+   END_IF;
+END_IF;
+
+
+
+;#END_EDIT_BLOCK END_ALGORITHM
+
+POSTUPDATE_ALGORITHM pSGNozzleClose ON TaskSim WITH sv_ForceSGNozzleClose,sv_bSimulate
+
+#BEGIN_EDIT_BLOCK
+IF sv_bSimulate THEN
+   IF mbDISGNozzleLinked THEN
+      fbEPForceDI(sSysVar :='SafetyGateNozzle1.di_Closed', Value := sv_ForceSGNozzleClose);
+   END_IF;
+END_IF;
+
+
+
+;#END_EDIT_BLOCK END_ALGORITHM
+
+POSTUPDATE_ALGORITHM pSGNozzleRearClose ON TaskSim WITH sv_ForceSGNozzleRearClose,sv_bSimulate
+
+#BEGIN_EDIT_BLOCK
+IF sv_bSimulate THEN
+   IF mbDISGNozzleRearLinked THEN
+      fbEPForceDI(sSysVar :='SafetyGateNozzleRear1.di_Closed', Value := sv_ForceSGNozzleRearClose);
+   END_IF;
+END_IF;
+
+
+
+;#END_EDIT_BLOCK END_ALGORITHM
+
+POSTUPDATE_ALGORITHM pSGRearClose ON TaskSim WITH sv_ForceSGRearClose,sv_bSimulate
+
+#BEGIN_EDIT_BLOCK
+IF sv_bSimulate THEN
+   IF mbDISGRearLinked THEN
+      fbEPForceDI(sSysVar :='SafetyGateRear1.di_Closed', Value := sv_ForceSGRearClose);
+   END_IF;
+END_IF;
+
+
+
+;#END_EDIT_BLOCK END_ALGORITHM
+
+POSTUPDATE_ALGORITHM pLightCurtainClose ON TaskSim WITH sv_ForceLightCurtainClose,sv_bSimulate
+
+#BEGIN_EDIT_BLOCK
+IF sv_bSimulate THEN
+   IF mbDILightCurtainClosedLinked THEN
+      fbEPForceDI(sSysVar :='LightCurtain1.di_Closed', Value := sv_ForceLightCurtainClose);
+   END_IF;
+END_IF;
+
+
+
+;#END_EDIT_BLOCK END_ALGORITHM
+
+POSTUPDATE_ALGORITHM pSafetyMat ON TaskSim WITH sv_ForceSafetyMat,sv_bSimulate
+
+#BEGIN_EDIT_BLOCK
+IF sv_bSimulate THEN
+   IF mbDISafetyMat1Linked THEN
+      fbEPForceDI(sSysVar :='SafetyMat1.di_SafetyMat', Value := sv_ForceSafetyMat);
+   END_IF;
+   IF mbDISafetyMat2Linked THEN
+      fbEPForceDI(sSysVar :='SafetyMat2.di_SafetyMat', Value := sv_ForceSafetyMat);
+   END_IF;
+END_IF;
+
+
+
+;#END_EDIT_BLOCK END_ALGORITHM
+
+PROCESS_ALGORITHM paInit ON TaskSim AUTOSTART
+
+
+VAR
+ Status : KSYS_Status;
+ pbDummy : REFTO BOOL;
+END_VAR
+#BEGIN_EDIT_BLOCK
+pbDummy := GET_SYNC_REFTO('OperationMode1.di_EmergencyStop1', T#0s, Status);
+mbDIEmergencyStop1Linked := (Status = KSYS_Status_OK);
+pbDummy := GET_SYNC_REFTO('OperationMode1.di_EmergencyStop2', T#0s, Status);
+mbDIEmergencyStop2Linked := (Status = KSYS_Status_OK);
+pbDummy := GET_SYNC_REFTO('OperationMode1.di_EmergencyStop3', T#0s, Status);
+mbDIEmergencyStop3Linked := (Status = KSYS_Status_OK);
+pbDummy := GET_SYNC_REFTO('OperationMode1.di_EmergencyStop4', T#0s, Status);
+mbDIEmergencyStop4Linked := (Status = KSYS_Status_OK);
+
+pbDummy := GET_SYNC_REFTO('OilMaintenance1.di_OilFilterOK', T#0s, Status);
+mbDIOilFilterOkLinked := (Status = KSYS_Status_OK);
+
+pbDummy := GET_SYNC_REFTO('SafetyGateNozzle1.di_Closed', T#0s, Status);
+mbDISGNozzleLinked := (Status = KSYS_Status_OK);
+
+(*Optional Safety Gate Nozzle Rear*)
+pbDummy := GET_SYNC_REFTO('SafetyGateNozzleRear1.di_Closed', T#0s, Status);
+mbDISGNozzleRearLinked := (Status = KSYS_Status_OK);
+
+// Safety Gate Rear
+pbDummy := GET_SYNC_REFTO('SafetyGateRear1.di_Closed', T#0s, Status);
+mbDISGRearLinked := (Status = KSYS_Status_OK);
+
+// Safety Gate Mold
+pbDummy := GET_SYNC_REFTO('SafetyGateMold1.di_Closed', T#0s, Status);
+mbDISGMoldLinked := (Status = KSYS_Status_OK);
+pbDummy := GET_SYNC_REFTO('SafetyGateMold1.di_Open', T#0s, Status);
+mbDISGMoldOpenLinked := (Status = KSYS_Status_OK);
+
+// SafetyGateAuto
+mpbDISGAutoClosed1 := GET_SYNC_REFTO('SafetyGateAuto1.di_Closed', T#0s, Status);
+mbDISGAutoClosed1Linked := (Status = KSYS_Status_OK);
+
+mpbDISGAutoClosed2 := GET_SYNC_REFTO('SafetyGateAuto1.di_Closed2', T#0s, Status);
+mbDISGAutoClosed2Linked := (Status = KSYS_Status_OK);
+
+mpbDISGAutoOpen := GET_SYNC_REFTO('SafetyGateAuto1.di_Open', T#0s, Status);
+mbDISGAutoOpenLinked := (Status = KSYS_Status_OK);
+   
+mpbDISGAutoCloseSlow := GET_SYNC_REFTO('SafetyGateAuto1.di_CloseSlow', T#0s, Status);
+mbDISGAutoCloseSlowLinked := (Status = KSYS_Status_OK);
+
+pbDummy := GET_SYNC_REFTO('SafetyGateAuto1.di_OpenSlow', T#0s, Status);
+mbDISGAutoOpenSlowLinked := (Status = KSYS_Status_OK);
+
+mpbDISGAutoLocked := GET_SYNC_REFTO('SafetyGateAuto1.di_Locked', T#0s, Status);
+mbDISGAutoLockedLinked := (Status = KSYS_Status_OK);
+
+mpbDISGAutoUnlocked := GET_SYNC_REFTO('SafetyGateAuto1.di_Unlocked', T#0s, Status);
+mbDISGAutoUnlockedLinked := (Status = KSYS_Status_OK);
+
+
+mpbDOSGAutoClose := GET_SYNC_REFTO('SafetyGateAuto1.do_Close', T#0s, Status);
+mbDOSGAutoCloseLinked := (Status = KSYS_Status_OK);
+
+mpbDOSGAutoFast := GET_SYNC_REFTO('SafetyGateAuto1.do_Fast', T#0s, Status);
+mbDOSGAutoFastLinked := (Status = KSYS_Status_OK);
+
+mpbDOSGAutoOpen := GET_SYNC_REFTO('SafetyGateAuto1.do_Open', T#0s, Status);
+mbDOSGAutoOpenLinked := (Status = KSYS_Status_OK);
+
+mpbDOSGAutoLock := GET_SYNC_REFTO('SafetyGateAuto1.do_Lock', T#0s, Status);
+mbDOSGAutoLockLinked := (Status = KSYS_Status_OK);
+
+mpbDOSGAutoUnlock := GET_SYNC_REFTO('SafetyGateAuto1.do_Unlock', T#0s, Status);
+mbDOSGAutoUnlockLinked := (Status = KSYS_Status_OK);
+
+// SafetyMat
+pbDummy := GET_SYNC_REFTO('SafetyMat1.di_SafetyMat', T#0s, Status);
+mbDISafetyMat1Linked := (Status = KSYS_Status_OK);
+
+pbDummy := GET_SYNC_REFTO('SafetyMat2.di_SafetyMat', T#0s, Status);
+mbDISafetyMat2Linked := (Status = KSYS_Status_OK);
+
+//LightCurtain
+pbDummy:= GET_SYNC_REFTO('LightCurtain1.di_Closed', T#0s, Status);
+mbDILightCurtainClosedLinked := (Status = KSYS_Status_OK);
+
+STOP_PROCESS_ALGORITHM();
+
+
+
+;#END_EDIT_BLOCK END_ALGORITHM
+
+PROCESS_ALGORITHM paSimulateSGAuto ON TaskSim
+
+
+VAR
+ fbTimerSGAutoClose : TON;
+ fbTimerSGAutoOpen : TON;
+ fbTimerSGAutoLock : TON;
+ fbTimerSGAutoUnlock : TON;
+ fbTimerSGAutoFast : TON;
+ bInitDone : BOOL;
+END_VAR
+
+(* IecGraph-Code *)
+
+(* init step *)
+INITIAL_STEP INIT:
+END_STEP
+
+
+(* steps *)
+STEP SIM:
+aSimulate (N);
+END_STEP
+
+STEP STOP:
+aStopSimu (P);
+END_STEP
+
+
+(* transitions *)
+TRANSITION SimRequired (* Trans11 *) FROM INIT TO SIM :=  #BEGIN_EDIT_BLOCK
+sv_bSimulate
+;#END_EDIT_BLOCK
+END_TRANSITION
+
+TRANSITION StpSimRequired (* Trans13 *) FROM SIM TO STOP :=  #BEGIN_EDIT_BLOCK
+NOT sv_bSimulate
+;#END_EDIT_BLOCK
+END_TRANSITION
+
+TRANSITION Return (* Trans16 *) FROM STOP TO SIM :=  #BEGIN_EDIT_BLOCK
+TRUE
+;#END_EDIT_BLOCK
+END_TRANSITION
+
+(* end IecGraph-Code *)
+(* sfc-code *)
+
+(* stand alone actions *)
+ACTION aStopSimu: #BEGIN_EDIT_BLOCK
+IF mbDISGAutoClosed1Linked THEN
+   fbEPUnForceDI(sSysVar := 'SafetyGateAuto1.di_Closed');
+END_IF;
+
+IF mbDISGAutoClosed2Linked THEN
+   fbEPUnForceDI(sSysVar := 'SafetyGateAuto1.di_Closed2');
+END_IF;
+
+IF mbDISGAutoOpenLinked THEN
+   fbEPUnForceDI(sSysVar := 'SafetyGateAuto1.di_Open');
+END_IF;
+
+IF mbDISGAutoOpenSlowLinked THEN
+   fbEPUnForceDI(sSysVar := 'SafetyGateAuto1.di_OpenSlow');
+END_IF;
+
+IF mbDISGAutoCloseSlowLinked THEN
+   fbEPUnForceDI(sSysVar := 'SafetyGateAuto1.di_CloseSlow');
+END_IF;
+
+IF mbDISGAutoLockedLinked THEN
+   fbEPUnForceDI(sSysVar := 'SafetyGateAuto1.di_Locked');
+END_IF;
+
+IF mbDISGAutoUnlockedLinked THEN
+   fbEPUnForceDI(sSysVar := 'SafetyGateAuto1.di_Unlocked');
+END_IF;
+
+STOP_PROCESS_ALGORITHM();
+
+;#END_EDIT_BLOCK END_ACTION (*aStopSimu*)
+ACTION aSimulate: #BEGIN_EDIT_BLOCK
+//-------------------------------------------//
+// normal movement simulation                //
+//-------------------------------------------//
+
+IF NOT bInitDone THEN
+   fbEPForceDI(sSysVar := 'SafetyGateAuto1.di_Emergency',Value := TRUE);
+   fbEPForceDI(sSysVar := 'SafetyGateAuto1.di_Emergency2',Value := TRUE);
+   
+   IF mbDISGAutoClosed1Linked THEN
+      fbEPForceDI(sSysVar :='SafetyGateAuto1.di_Closed', Value := FALSE);
+   END_IF;
+   IF mbDISGAutoClosed2Linked THEN
+      fbEPForceDI(sSysVar :='SafetyGateAuto1.di_Closed2', Value := TRUE);
+   END_IF;
+   IF mbDISGAutoCloseSlowLinked THEN
+      fbEPForceDI(sSysVar :='SafetyGateAuto1.di_CloseSlow', Value := FALSE);
+   END_IF;
+   
+   IF mbDISGAutoOpenLinked THEN
+      fbEPForceDI(sSysVar :='SafetyGateAuto1.di_Open', Value := TRUE);
+   END_IF;
+   IF mbDISGAutoOpenSlowLinked THEN
+      fbEPForceDI(sSysVar :='SafetyGateAuto1.di_OpenSlow', Value := TRUE);
+   END_IF;
+
+   IF mbDISGAutoLockedLinked THEN
+      fbEPForceDI(sSysVar :='SafetyGateAuto1.di_Locked', Value := TRUE);
+   END_IF;
+   IF mbDISGAutoUnlockedLinked THEN
+      fbEPForceDI(sSysVar :='SafetyGateAuto1.di_Unlocked', Value := FALSE);
+   END_IF;
+   
+   bInitDone := TRUE;   
+END_IF;
+
+// Safety Gate Close
+IF mbDOSGAutoCloseLinked AND mpbDOSGAutoClose^ THEN
+    
+   IF mbDISGAutoOpenLinked AND mpbDISGAutoOpen^ THEN
+      fbEPForceDI(sSysVar := 'SafetyGateAuto1.di_Open',Value := FALSE);
+      fbEPForceDI(sSysVar := 'SafetyGateAuto1.di_OpenSlow',Value := FALSE);
+   END_IF;
+    
+
+
+   IF mbDOSGAutoFastLinked THEN    
+       fbTimerSGAutoFast (IN := mpbDOSGAutoFast^,
+                      PT := cTimeSGAutoFast);
+   END_IF;
+   IF fbTimerSGAutoFast.Q THEN
+      fbTimerSGAutoFast(IN := FALSE);
+      fbEPForceDI(sSysVar := 'SafetyGateAuto1.di_CloseSlow',Value := TRUE);
+   END_IF;    
+
+    
+   fbTimerSGAutoClose (IN := mpbDOSGAutoClose^,
+                       PT := cTimeSGAutoClose);
+   IF fbTimerSGAutoClose.Q THEN
+      fbTimerSGAutoClose(IN := FALSE);
+      fbEPForceDI(sSysVar := 'SafetyGateAuto1.di_Closed',Value := TRUE);
+      fbEPForceDI(sSysVar := 'SafetyGateAuto1.di_Closed2',Value := FALSE);
+   END_IF;    
+END_IF;
+
+
+// Safety Gate Open
+IF mbDOSGAutoOpenLinked AND mpbDOSGAutoOpen^ THEN
+   IF mbDISGAutoClosed1Linked AND mpbDISGAutoClosed1^ THEN
+      fbEPForceDI(sSysVar := 'SafetyGateAuto1.di_Closed',Value := FALSE);
+      fbEPForceDI(sSysVar := 'SafetyGateAuto1.di_CloseSlow',Value := FALSE);
+   END_IF;
+    
+   IF mbDISGAutoClosed2Linked AND NOT mpbDISGAutoClosed2^ THEN
+      fbEPForceDI(sSysVar := 'SafetyGateAuto1.di_Closed2',Value := TRUE);
+   END_IF;
+
+   
+   IF mbDOSGAutoFastLinked THEN 
+   fbTimerSGAutoFast (IN := mpbDOSGAutoFast^,
+                      PT := cTimeSGAutoFast);
+   END_IF;
+   IF fbTimerSGAutoFast.Q THEN
+      fbTimerSGAutoFast(IN := FALSE);
+      fbEPForceDI(sSysVar := 'SafetyGateAuto1.di_OpenSlow',Value := TRUE);
+   END_IF;    
+
+   fbTimerSGAutoOpen (IN := mpbDOSGAutoOpen^,
+                       PT := cTimeSGAutoOpen);
+   IF fbTimerSGAutoOpen.Q THEN
+      fbTimerSGAutoOpen(IN := FALSE);
+      fbEPForceDI(sSysVar := 'SafetyGateAuto1.di_Open',Value := TRUE);
+   END_IF;    
+END_IF;
+
+
+// Safety Gate Lock
+IF mbDOSGAutoLockLinked AND mpbDOSGAutoLock^ THEN
+   IF mbDISGAutoUnlockedLinked AND mpbDISGAutoUnlocked^ THEN
+      fbEPForceDI(sSysVar := 'SafetyGateAuto1.di_Unlocked',Value := FALSE);
+   END_IF;
+    
+   fbTimerSGAutoLock (IN := mpbDOSGAutoLock^,
+                      PT := cTimeSGAutoLock);
+   IF fbTimerSGAutoLock.Q THEN
+      fbTimerSGAutoLock(IN := TRUE);
+      fbEPForceDI(sSysVar := 'SafetyGateAuto1.di_Locked',Value := TRUE);
+   END_IF;    
+END_IF;
+
+
+// Safety Gate Unlock
+IF mbDOSGAutoUnlockLinked AND mpbDOSGAutoUnlock^ THEN
+   IF mbDISGAutoLockedLinked AND mpbDISGAutoLocked^ THEN
+      fbEPForceDI(sSysVar := 'SafetyGateAuto1.di_Locked',Value := FALSE);
+   END_IF;
+    
+   fbTimerSGAutoUnlock (IN := mpbDOSGAutoUnlock^,
+                        PT := cTimeSGAutoUnlock);
+   IF fbTimerSGAutoUnlock.Q THEN
+      fbTimerSGAutoUnlock(IN := TRUE);
+      fbEPForceDI(sSysVar := 'SafetyGateAuto1.di_Unlocked',Value := TRUE);
+   END_IF;    
+END_IF;
+
+;#END_EDIT_BLOCK END_ACTION (*aSimulate*)
+(* end sfc-code *)
+
+
+END_ALGORITHM
+
+
+
+END_ALGORITHM_BLOCK
+
+
+
+#END_OF_IEC_PART
+
+@Puma @IecEditor 6 97 @Pou 25 
+@@@BEG_Comment@@@
+
+@@@END_Comment@@@
+
+@BEG_Contents 
+
+@BEG_Func 
+@RT(17)FuncTreeContainer 
+0 
+@END_Func 
+
+@BEG_Const 
+@RT(18)ConstTreeContainer 
+5 
+@Var @RT(16)cTimeSGAutoClose @RT(0) @T @F @DT @RT(4)TIME @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+0 @RT(4)t#3s @RT(0) 
+@END_Attrib 
+1 1 @F @F @F @F 
+
+@Var @RT(15)cTimeSGAutoOpen @RT(0) @T @F @DT @RT(4)TIME @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+0 @RT(4)t#3s @RT(0) 
+@END_Attrib 
+1 1 @F @F @F @F 
+
+@Var @RT(15)cTimeSGAutoLock @RT(0) @T @F @DT @RT(4)TIME @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+0 @RT(4)t#1s @RT(0) 
+@END_Attrib 
+1 1 @F @F @F @F 
+
+@Var @RT(17)cTimeSGAutoUnlock @RT(0) @T @F @DT @RT(4)TIME @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+0 @RT(4)t#1s @RT(0) 
+@END_Attrib 
+1 1 @F @F @F @F 
+
+@Var @RT(15)cTimeSGAutoFast @RT(0) @T @F @DT @RT(4)TIME @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+0 @RT(4)t#2s @RT(0) 
+@END_Attrib 
+1 1 @F @F @F @F 
+
+@END_Const 
+
+@BEG_Export 
+
+@BEG_Kind 
+@ALGORITHM_BLOCK @RT(12)ABSafetySimu @STRUCTURED_TEXT 
+@RT(0) @RT(0) @RT(0) 
+@END_Kind 
+
+@BEG_Dcl 
+@RT(16)DclTreeContainer 
+53 
+@Var @RT(7)TaskSim @RT(0) @T @T @RENAMED 0 @T @T @DT @RT(4)TASK @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 7 @F @F @F @F 
+
+@Var @RT(10)PU_Task_13 @RT(0) @T @T @RENAMED 0 @T @T @DT @RT(4)TASK @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 7 @F @F @F @F 
+
+@Var @RT(13)sv_bInitStart @RT(0) @T @F @DT @RT(4)BOOL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 8 @F @F @F @F 
+
+@Var @RT(12)sv_bSimulate @RT(0) @T @F @DT @RT(4)BOOL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 8 @F @F @F @F 
+
+@Var @RT(11)fbEPForceDI @RT(0) @T @T @DERIVED 0 @T @T @DT @RT(11)FBEPForceDI @RT(0) @T @T @UNKNOWN 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(13)fbEPUnForceDI @RT(0) @T @T @DERIVED 0 @T @T @DT @RT(13)FBEPUnForceDI @RT(0) @T @T @UNKNOWN 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(19)sv_ForceSGMoldClose @RT(0) @T @F @DT @RT(4)BOOL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 8 @F @F @F @F 
+
+@Var @RT(21)sv_ForceSGNozzleClose @RT(0) @T @F @DT @RT(4)BOOL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 8 @F @F @F @F 
+
+@Var @RT(25)sv_ForceSGNozzleRearClose @RT(0) @T @F @DT @RT(4)BOOL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 8 @F @F @F @F 
+
+@Var @RT(19)sv_ForceSGRearClose @RT(0) @T @F @DT @RT(4)BOOL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 8 @F @F @F @F 
+
+@Var @RT(22)sv_ForceEmergencyStop1 @RT(0) @T @F @DT @RT(4)BOOL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 8 @F @F @F @F 
+
+@Var @RT(22)sv_ForceEmergencyStop2 @RT(0) @T @F @DT @RT(4)BOOL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 8 @F @F @F @F 
+
+@Var @RT(22)sv_ForceEmergencyStop3 @RT(0) @T @F @DT @RT(4)BOOL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 8 @F @F @F @F 
+
+@Var @RT(22)sv_ForceEmergencyStop4 @RT(0) @T @F @DT @RT(4)BOOL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 8 @F @F @F @F 
+
+@Var @RT(19)sv_ForceOilFilterOK @RT(0) @T @F @DT @RT(4)BOOL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 8 @F @F @F @F 
+
+@Var @RT(25)sv_ForceLightCurtainClose @RT(0) @T @T @RENAMED 0 @T @T @DT @RT(4)BOOL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 8 @F @F @F @F 
+
+@Var @RT(17)sv_ForceSafetyMat @RT(0) @T @T @RENAMED 0 @T @T @DT @RT(4)BOOL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 8 @F @F @F @F 
+
+@Var @RT(24)mbDIEmergencyStop1Linked @RT(0) @T @F @DT @RT(4)BOOL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(24)mbDIEmergencyStop2Linked @RT(0) @T @F @DT @RT(4)BOOL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(24)mbDIEmergencyStop3Linked @RT(0) @T @F @DT @RT(4)BOOL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(24)mbDIEmergencyStop4Linked @RT(0) @T @F @DT @RT(4)BOOL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(21)mbDIOilFilterOkLinked @RT(0) @T @F @DT @RT(4)BOOL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(18)mbDISGNozzleLinked @RT(0) @T @F @DT @RT(4)BOOL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(22)mbDISGNozzleRearLinked @RT(0) @T @F @DT @RT(4)BOOL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(16)mbDISGRearLinked @RT(0) @T @F @DT @RT(4)BOOL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(16)mbDISGMoldLinked @RT(0) @T @F @DT @RT(4)BOOL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(20)mbDISGMoldOpenLinked @RT(0) @T @F @DT @RT(4)BOOL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(18)mpbDISGAutoClosed1 @RT(0) @T @T @REFTO 0 @T @DT @RT(4)BOOL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(23)mbDISGAutoClosed1Linked @RT(0) @T @F @DT @RT(4)BOOL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(18)mpbDISGAutoClosed2 @RT(0) @T @T @REFTO 0 @T @DT @RT(4)BOOL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(23)mbDISGAutoClosed2Linked @RT(0) @T @F @DT @RT(4)BOOL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(15)mpbDISGAutoOpen @RT(0) @T @T @REFTO 0 @T @DT @RT(4)BOOL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(20)mbDISGAutoOpenLinked @RT(0) @T @F @DT @RT(4)BOOL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(20)mpbDISGAutoCloseSlow @RT(0) @T @T @REFTO 0 @T @DT @RT(4)BOOL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(25)mbDISGAutoCloseSlowLinked @RT(0) @T @F @DT @RT(4)BOOL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(24)mbDISGAutoOpenSlowLinked @RT(0) @T @F @DT @RT(4)BOOL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(17)mpbDISGAutoLocked @RT(0) @T @T @REFTO 0 @T @DT @RT(4)BOOL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(22)mbDISGAutoLockedLinked @RT(0) @T @F @DT @RT(4)BOOL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(19)mpbDISGAutoUnlocked @RT(0) @T @T @REFTO 0 @T @DT @RT(4)BOOL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(24)mbDISGAutoUnlockedLinked @RT(0) @T @F @DT @RT(4)BOOL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(16)mpbDOSGAutoClose @RT(0) @T @T @REFTO 0 @T @DT @RT(4)BOOL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(21)mbDOSGAutoCloseLinked @RT(0) @T @F @DT @RT(4)BOOL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(15)mpbDOSGAutoFast @RT(0) @T @T @REFTO 0 @T @DT @RT(4)BOOL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(20)mbDOSGAutoFastLinked @RT(0) @T @F @DT @RT(4)BOOL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(15)mpbDOSGAutoOpen @RT(0) @T @T @REFTO 0 @T @DT @RT(4)BOOL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(20)mbDOSGAutoOpenLinked @RT(0) @T @F @DT @RT(4)BOOL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(15)mpbDOSGAutoLock @RT(0) @T @T @REFTO 0 @T @DT @RT(4)BOOL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(20)mbDOSGAutoLockLinked @RT(0) @T @F @DT @RT(4)BOOL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(17)mpbDOSGAutoUnlock @RT(0) @T @T @REFTO 0 @T @DT @RT(4)BOOL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(22)mbDOSGAutoUnlockLinked @RT(0) @T @F @DT @RT(4)BOOL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(20)mbDISafetyMat1Linked @RT(0) @T @F @DT @RT(4)BOOL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(20)mbDISafetyMat2Linked @RT(0) @T @F @DT @RT(4)BOOL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(28)mbDILightCurtainClosedLinked @RT(0) @T @F @DT @RT(4)BOOL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@END_Dcl 
+
+@END_Export 
+
+@BEG_Body 
+
+12 
+
+@BEG_Export 
+
+@BEG_Algo 
+@POSTUPDATE_ALGORITHM @RT(6)pStart @STRUCTURED_TEXT 
+@RT(0) @RT(26)sv_bSimulate,sv_bInitStart @RT(10)PU_Task_13 @F @F 
+@END_Algo 
+
+@BEG_Dcl 
+@RT(16)DclTreeContainer 
+0 
+@END_Dcl 
+
+@END_Export 
+
+@BEG_Export 
+
+@BEG_Algo 
+@PROCESS_ALGORITHM @RT(10)paSimulate @SEQUENTIAL_FLOW_CHART 
+@RT(0) @RT(0) @RT(7)TaskSim @F @F 
+@END_Algo 
+
+@BEG_Dcl 
+@RT(16)DclTreeContainer 
+4 
+@Var @RT(13)fbEPUnForceDI @RT(0) @T @T @DERIVED 0 @T @T @DT @RT(13)FBEPUnForceDI @RT(0) @T @T @UNKNOWN 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(13)mFirstTimeRun @RT(0) @T @F @DT @RT(4)BOOL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(4)TRUE @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(29)abForceMoldOpenMaxLimitSwitch @RT(0) @T @T @DERIVED 0 @F @RT(14)ABForceDigital @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(30)abForceMoldCloseMinLimitSwitch @RT(0) @T @T @DERIVED 0 @F @RT(14)ABForceDigital @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@END_Dcl 
+
+@END_Export 
+
+@BEG_Export 
+
+@BEG_Algo 
+@POSTUPDATE_ALGORITHM @RT(14)pEmergencyStop @STRUCTURED_TEXT 
+@RT(0) @RT(104)sv_ForceEmergencyStop1,sv_ForceEmergencyStop2,sv_ForceEmergencyStop3,sv_ForceEmergencyStop4,sv_bSimulate @RT(7)TaskSim @F @F 
+@END_Algo 
+
+@BEG_Dcl 
+@RT(16)DclTreeContainer 
+0 
+@END_Dcl 
+
+@END_Export 
+
+@BEG_Export 
+
+@BEG_Algo 
+@POSTUPDATE_ALGORITHM @RT(12)pOilFilterOK @STRUCTURED_TEXT 
+@RT(0) @RT(32)sv_ForceOilFilterOK,sv_bSimulate @RT(7)TaskSim @F @F 
+@END_Algo 
+
+@BEG_Dcl 
+@RT(16)DclTreeContainer 
+0 
+@END_Dcl 
+
+@END_Export 
+
+@BEG_Export 
+
+@BEG_Algo 
+@POSTUPDATE_ALGORITHM @RT(12)pSGMoldClose @STRUCTURED_TEXT 
+@RT(0) @RT(32)sv_ForceSGMoldClose,sv_bSimulate @RT(7)TaskSim @F @F 
+@END_Algo 
+
+@BEG_Dcl 
+@RT(16)DclTreeContainer 
+0 
+@END_Dcl 
+
+@END_Export 
+
+@BEG_Export 
+
+@BEG_Algo 
+@POSTUPDATE_ALGORITHM @RT(14)pSGNozzleClose @STRUCTURED_TEXT 
+@RT(0) @RT(34)sv_ForceSGNozzleClose,sv_bSimulate @RT(7)TaskSim @F @F 
+@END_Algo 
+
+@BEG_Dcl 
+@RT(16)DclTreeContainer 
+0 
+@END_Dcl 
+
+@END_Export 
+
+@BEG_Export 
+
+@BEG_Algo 
+@POSTUPDATE_ALGORITHM @RT(18)pSGNozzleRearClose @STRUCTURED_TEXT 
+@RT(0) @RT(38)sv_ForceSGNozzleRearClose,sv_bSimulate @RT(7)TaskSim @F @F 
+@END_Algo 
+
+@BEG_Dcl 
+@RT(16)DclTreeContainer 
+0 
+@END_Dcl 
+
+@END_Export 
+
+@BEG_Export 
+
+@BEG_Algo 
+@POSTUPDATE_ALGORITHM @RT(12)pSGRearClose @STRUCTURED_TEXT 
+@RT(0) @RT(32)sv_ForceSGRearClose,sv_bSimulate @RT(7)TaskSim @F @F 
+@END_Algo 
+
+@BEG_Dcl 
+@RT(16)DclTreeContainer 
+0 
+@END_Dcl 
+
+@END_Export 
+
+@BEG_Export 
+
+@BEG_Algo 
+@POSTUPDATE_ALGORITHM @RT(18)pLightCurtainClose @STRUCTURED_TEXT 
+@RT(0) @RT(38)sv_ForceLightCurtainClose,sv_bSimulate @RT(7)TaskSim @F @F 
+@END_Algo 
+
+@BEG_Dcl 
+@RT(16)DclTreeContainer 
+0 
+@END_Dcl 
+
+@END_Export 
+
+@BEG_Export 
+
+@BEG_Algo 
+@POSTUPDATE_ALGORITHM @RT(10)pSafetyMat @STRUCTURED_TEXT 
+@RT(0) @RT(30)sv_ForceSafetyMat,sv_bSimulate @RT(7)TaskSim @F @F 
+@END_Algo 
+
+@BEG_Dcl 
+@RT(16)DclTreeContainer 
+0 
+@END_Dcl 
+
+@END_Export 
+
+@BEG_Export 
+
+@BEG_Algo 
+@PROCESS_ALGORITHM @RT(6)paInit @STRUCTURED_TEXT 
+@RT(0) @RT(0) @RT(7)TaskSim @T @F 
+@END_Algo 
+
+@BEG_Dcl 
+@RT(16)DclTreeContainer 
+2 
+@Var @RT(6)Status @RT(0) @T @T @DERIVED 0 @T @T @DT @RT(11)KSYS_Status @RT(0) @T @T @UNKNOWN 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(7)pbDummy @RT(0) @T @T @REFTO 0 @T @DT @RT(4)BOOL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@END_Dcl 
+
+@END_Export 
+
+@BEG_Export 
+
+@BEG_Algo 
+@PROCESS_ALGORITHM @RT(16)paSimulateSGAuto @SEQUENTIAL_FLOW_CHART 
+@RT(0) @RT(0) @RT(7)TaskSim @F @F 
+@END_Algo 
+
+@BEG_Dcl 
+@RT(16)DclTreeContainer 
+6 
+@Var @RT(18)fbTimerSGAutoClose @RT(0) @T @T @DERIVED 0 @T @T @DT @RT(3)TON @RT(0) @T @T @UNKNOWN 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(17)fbTimerSGAutoOpen @RT(0) @T @T @DERIVED 0 @T @T @DT @RT(3)TON @RT(0) @T @T @UNKNOWN 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(17)fbTimerSGAutoLock @RT(0) @T @T @DERIVED 0 @T @T @DT @RT(3)TON @RT(0) @T @T @UNKNOWN 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(19)fbTimerSGAutoUnlock @RT(0) @T @T @DERIVED 0 @T @T @DT @RT(3)TON @RT(0) @T @T @UNKNOWN 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(17)fbTimerSGAutoFast @RT(0) @T @T @DERIVED 0 @T @T @DT @RT(3)TON @RT(0) @T @T @UNKNOWN 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(9)bInitDone @RT(0) @T @F @DT @RT(4)BOOL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@END_Dcl 
+
+@END_Export 
+
+@BEG_Body 
+@TL(13)
+(**************************************** WARNING ********************************************
+ *** The KEBA Kemro K2 System including software is not intended for safety control tasks! ***
+ ***                       For further information see Comment tab!                        ***
+ *********************************************************************************************)
+
+IF sv_bSimulate THEN
+   START_PROCESS_ALGORITHM(paSimulate);
+END_IF;
+
+IF sv_bSimulate AND mbDISGAutoClosed1Linked THEN
+   START_PROCESS_ALGORITHM(paSimulateSGAuto);
+END_IF;
+
+@END_Body 
+
+@@@BEG_Comment@@@ 
+@TL(0)
+
+@@@END_Comment@@@ 
+
+@BEG_SfcBody 
+16 13 17 
+
+@BEG_SfcData 2 
+@StepSeq @RT(4)sseq @F 3 
+@Step @RT(4)INIT @F @T @F @F @RT(0) @F 
+@AcbCont @RT(7)unnamed @F 1 
+@Acb @RT(5)aInit @F @F @RT(1)P @RT(0) @F @F @F @F 
+
+@Trans @RT(11)SimRequired @F @T @F @F @T @T @TL(2)
+sv_bSimulate
+
+@RT(7)Trans11 @F 
+@Loop @RT(4)loop @F 2 
+@StepSeq @RT(3)seq @F 3 
+@Step @RT(3)SIM @F @F @F @F @RT(0) @F 
+@AcbCont @RT(7)unnamed @F 1 
+@Acb @RT(9)aSimulate @F @F @RT(1)N @RT(0) @F @F @T @F 
+
+@Trans @RT(14)StpSimRequired @F @T @F @F @T @T @TL(2)
+NOT sv_bSimulate
+
+@RT(7)Trans13 @F 
+@Step @RT(4)STOP @F @F @F @F @RT(0) @F 
+@AcbCont @RT(7)unnamed @F 1 
+@Acb @RT(9)aStopSimu @F @F @RT(1)P @RT(0) @F @F @T @F 
+
+
+@Trans @RT(6)Return @F @T @T @T @T @T @TL(2)
+TRUE
+
+@RT(7)Trans16 @F 
+
+@END_SfcData 
+@SaActions 3 
+@SaText @RT(9)aSimulate 1 @TL(22)
+(**************************************** WARNING ********************************************
+ *** The KEBA Kemro K2 System including software is not intended for safety control tasks! ***
+ ***                       For further information see Comment tab!                        ***
+ *********************************************************************************************)
+
+IF mFirstTimeRun THEN
+   sv_ForceSGMoldClose := TRUE;
+   sv_ForceSGNozzleClose := TRUE;
+   sv_ForceSGNozzleRearClose := TRUE;
+   sv_ForceSGRearClose := TRUE;
+   sv_ForceEmergencyStop1 := TRUE;
+   sv_ForceEmergencyStop2 := TRUE;   
+   sv_ForceEmergencyStop3 := TRUE;   
+   sv_ForceEmergencyStop4 := TRUE;   
+   sv_ForceOilFilterOK := FALSE;
+   sv_ForceLightCurtainClose := TRUE;
+   sv_ForceSafetyMat := TRUE;
+   abForceMoldOpenMaxLimitSwitch.aSetForceValue(TRUE);
+   abForceMoldCloseMinLimitSwitch.aSetForceValue(TRUE);
+   mFirstTimeRun := FALSE;
+END_IF;
+
+
+@SaText @RT(9)aStopSimu 1 @TL(57)
+IF mbDIEmergencyStop1Linked THEN
+   fbEPUnForceDI(sSysVar := 'OperationMode1.di_EmergencyStop1');
+END_IF;
+IF mbDIEmergencyStop2Linked THEN
+   fbEPUnForceDI(sSysVar := 'OperationMode1.di_EmergencyStop2');
+END_IF;
+IF mbDIEmergencyStop3Linked THEN
+   fbEPUnForceDI(sSysVar := 'OperationMode1.di_EmergencyStop3');
+END_IF;
+IF mbDIEmergencyStop4Linked THEN
+   fbEPUnForceDI(sSysVar := 'OperationMode1.di_EmergencyStop4');
+END_IF;
+
+IF mbDIOilFilterOkLinked THEN
+   fbEPUnForceDI(sSysVar := 'OilMaintenance1.di_OilFilterOK');
+END_IF;
+
+// SG nozzle
+IF mbDISGNozzleLinked THEN
+   fbEPUnForceDI(sSysVar := 'SafetyGateNozzle1.di_Closed');
+END_IF;   
+
+// SG nozzle rear
+IF mbDISGNozzleRearLinked THEN
+   fbEPUnForceDI(sSysVar := 'SafetyGateNozzleRear1.di_Closed');
+END_IF;     
+
+// SG rear
+IF mbDISGRearLinked THEN
+   fbEPUnForceDI(sSysVar := 'SafetyGateRear1.di_Closed');
+END_IF;   
+
+// SG mold
+IF mbDISGMoldLinked THEN
+   fbEPUnForceDI(sSysVar := 'SafetyGateMold1.di_Closed');
+END_IF;   
+IF mbDISGMoldOpenLinked THEN
+   fbEPUnForceDI(sSysVar := 'SafetyGateMold1.di_Open');
+END_IF;
+
+IF mbDISafetyMat1Linked THEN
+   fbEPUnForceDI(sSysVar := 'SafetyMat1.di_SafetyMat');
+END_IF;
+IF mbDISafetyMat2Linked THEN
+   fbEPUnForceDI(sSysVar := 'SafetyMat2.di_SafetyMat');
+END_IF;
+
+IF mbDILightCurtainClosedLinked THEN
+   fbEPUnForceDI(sSysVar := 'LightCurtain1.di_Closed');
+END_IF;
+
+abForceMoldOpenMaxLimitSwitch.aUnforce();
+abForceMoldCloseMinLimitSwitch.aUnforce();
+
+mFirstTimeRun := TRUE;
+STOP_PROCESS_ALGORITHM();
+
+
+@SaText @RT(5)aInit 1 @TL(8)
+(**************************************** WARNING ********************************************
+ *** The KEBA Kemro K2 System including software is not intended for safety control tasks! ***
+ ***                       For further information see Comment tab!                        ***
+ *********************************************************************************************)
+
+abForceMoldOpenMaxLimitSwitch.aInit('Mold1.di_MoldOpenProtect');
+abForceMoldCloseMinLimitSwitch.aInit('Mold1.di_MoldCloseProtect');
+
+
+@SaTrans 0 
+@SaExits 0 
+@END_SfcBody 
+
+@@@BEG_Comment@@@ 
+@TL(0)
+
+@@@END_Comment@@@ 
+
+@BEG_Body 
+@TL(17)
+IF sv_bSimulate THEN
+   IF mbDIEmergencyStop1Linked THEN
+      fbEPForceDI(sSysVar := 'OperationMode1.di_EmergencyStop1', Value := sv_ForceEmergencyStop1);
+   END_IF;
+   IF mbDIEmergencyStop2Linked THEN
+      fbEPForceDI(sSysVar := 'OperationMode1.di_EmergencyStop2', Value := sv_ForceEmergencyStop2);
+   END_IF;
+   IF mbDIEmergencyStop3Linked THEN
+      fbEPForceDI(sSysVar := 'OperationMode1.di_EmergencyStop3', Value := sv_ForceEmergencyStop3);
+   END_IF;
+   IF mbDIEmergencyStop4Linked THEN
+      fbEPForceDI(sSysVar := 'OperationMode1.di_EmergencyStop4', Value := sv_ForceEmergencyStop4);
+   END_IF;
+END_IF;
+
+
+
+@END_Body 
+
+@@@BEG_Comment@@@ 
+@TL(0)
+
+@@@END_Comment@@@ 
+
+@BEG_Body 
+@TL(6)
+IF mbDIOilFilterOkLinked THEN
+   IF sv_bSimulate THEN
+      fbEPForceDI(sSysVar := 'OilMaintenance1.di_OilFilterOK', Value := sv_ForceOilFilterOK);
+   END_IF;
+END_IF;
+
+@END_Body 
+
+@@@BEG_Comment@@@ 
+@TL(0)
+
+@@@END_Comment@@@ 
+
+@BEG_Body 
+@TL(10)
+IF sv_bSimulate THEN
+   IF mbDISGMoldLinked THEN
+      fbEPForceDI(sSysVar :='SafetyGateMold1.di_Closed', Value := sv_ForceSGMoldClose);
+   END_IF;
+   IF mbDISGMoldOpenLinked THEN
+      fbEPForceDI(sSysVar := 'SafetyGateMold1.di_Open', Value := NOT sv_ForceSGMoldClose);
+   END_IF;
+END_IF;
+
+
+@END_Body 
+
+@@@BEG_Comment@@@ 
+@TL(0)
+
+@@@END_Comment@@@ 
+
+@BEG_Body 
+@TL(7)
+IF sv_bSimulate THEN
+   IF mbDISGNozzleLinked THEN
+      fbEPForceDI(sSysVar :='SafetyGateNozzle1.di_Closed', Value := sv_ForceSGNozzleClose);
+   END_IF;
+END_IF;
+
+
+@END_Body 
+
+@@@BEG_Comment@@@ 
+@TL(0)
+
+@@@END_Comment@@@ 
+
+@BEG_Body 
+@TL(7)
+IF sv_bSimulate THEN
+   IF mbDISGNozzleRearLinked THEN
+      fbEPForceDI(sSysVar :='SafetyGateNozzleRear1.di_Closed', Value := sv_ForceSGNozzleRearClose);
+   END_IF;
+END_IF;
+
+
+@END_Body 
+
+@@@BEG_Comment@@@ 
+@TL(0)
+
+@@@END_Comment@@@ 
+
+@BEG_Body 
+@TL(7)
+IF sv_bSimulate THEN
+   IF mbDISGRearLinked THEN
+      fbEPForceDI(sSysVar :='SafetyGateRear1.di_Closed', Value := sv_ForceSGRearClose);
+   END_IF;
+END_IF;
+
+
+@END_Body 
+
+@@@BEG_Comment@@@ 
+@TL(0)
+
+@@@END_Comment@@@ 
+
+@BEG_Body 
+@TL(7)
+IF sv_bSimulate THEN
+   IF mbDILightCurtainClosedLinked THEN
+      fbEPForceDI(sSysVar :='LightCurtain1.di_Closed', Value := sv_ForceLightCurtainClose);
+   END_IF;
+END_IF;
+
+
+@END_Body 
+
+@@@BEG_Comment@@@ 
+@TL(0)
+
+@@@END_Comment@@@ 
+
+@BEG_Body 
+@TL(10)
+IF sv_bSimulate THEN
+   IF mbDISafetyMat1Linked THEN
+      fbEPForceDI(sSysVar :='SafetyMat1.di_SafetyMat', Value := sv_ForceSafetyMat);
+   END_IF;
+   IF mbDISafetyMat2Linked THEN
+      fbEPForceDI(sSysVar :='SafetyMat2.di_SafetyMat', Value := sv_ForceSafetyMat);
+   END_IF;
+END_IF;
+
+
+@END_Body 
+
+@@@BEG_Comment@@@ 
+@TL(0)
+
+@@@END_Comment@@@ 
+
+@BEG_Body 
+@TL(81)
+pbDummy := GET_SYNC_REFTO('OperationMode1.di_EmergencyStop1', T#0s, Status);
+mbDIEmergencyStop1Linked := (Status = KSYS_Status_OK);
+pbDummy := GET_SYNC_REFTO('OperationMode1.di_EmergencyStop2', T#0s, Status);
+mbDIEmergencyStop2Linked := (Status = KSYS_Status_OK);
+pbDummy := GET_SYNC_REFTO('OperationMode1.di_EmergencyStop3', T#0s, Status);
+mbDIEmergencyStop3Linked := (Status = KSYS_Status_OK);
+pbDummy := GET_SYNC_REFTO('OperationMode1.di_EmergencyStop4', T#0s, Status);
+mbDIEmergencyStop4Linked := (Status = KSYS_Status_OK);
+
+pbDummy := GET_SYNC_REFTO('OilMaintenance1.di_OilFilterOK', T#0s, Status);
+mbDIOilFilterOkLinked := (Status = KSYS_Status_OK);
+
+pbDummy := GET_SYNC_REFTO('SafetyGateNozzle1.di_Closed', T#0s, Status);
+mbDISGNozzleLinked := (Status = KSYS_Status_OK);
+
+(*Optional Safety Gate Nozzle Rear*)
+pbDummy := GET_SYNC_REFTO('SafetyGateNozzleRear1.di_Closed', T#0s, Status);
+mbDISGNozzleRearLinked := (Status = KSYS_Status_OK);
+
+// Safety Gate Rear
+pbDummy := GET_SYNC_REFTO('SafetyGateRear1.di_Closed', T#0s, Status);
+mbDISGRearLinked := (Status = KSYS_Status_OK);
+
+// Safety Gate Mold
+pbDummy := GET_SYNC_REFTO('SafetyGateMold1.di_Closed', T#0s, Status);
+mbDISGMoldLinked := (Status = KSYS_Status_OK);
+pbDummy := GET_SYNC_REFTO('SafetyGateMold1.di_Open', T#0s, Status);
+mbDISGMoldOpenLinked := (Status = KSYS_Status_OK);
+
+// SafetyGateAuto
+mpbDISGAutoClosed1 := GET_SYNC_REFTO('SafetyGateAuto1.di_Closed', T#0s, Status);
+mbDISGAutoClosed1Linked := (Status = KSYS_Status_OK);
+
+mpbDISGAutoClosed2 := GET_SYNC_REFTO('SafetyGateAuto1.di_Closed2', T#0s, Status);
+mbDISGAutoClosed2Linked := (Status = KSYS_Status_OK);
+
+mpbDISGAutoOpen := GET_SYNC_REFTO('SafetyGateAuto1.di_Open', T#0s, Status);
+mbDISGAutoOpenLinked := (Status = KSYS_Status_OK);
+   
+mpbDISGAutoCloseSlow := GET_SYNC_REFTO('SafetyGateAuto1.di_CloseSlow', T#0s, Status);
+mbDISGAutoCloseSlowLinked := (Status = KSYS_Status_OK);
+
+pbDummy := GET_SYNC_REFTO('SafetyGateAuto1.di_OpenSlow', T#0s, Status);
+mbDISGAutoOpenSlowLinked := (Status = KSYS_Status_OK);
+
+mpbDISGAutoLocked := GET_SYNC_REFTO('SafetyGateAuto1.di_Locked', T#0s, Status);
+mbDISGAutoLockedLinked := (Status = KSYS_Status_OK);
+
+mpbDISGAutoUnlocked := GET_SYNC_REFTO('SafetyGateAuto1.di_Unlocked', T#0s, Status);
+mbDISGAutoUnlockedLinked := (Status = KSYS_Status_OK);
+
+
+mpbDOSGAutoClose := GET_SYNC_REFTO('SafetyGateAuto1.do_Close', T#0s, Status);
+mbDOSGAutoCloseLinked := (Status = KSYS_Status_OK);
+
+mpbDOSGAutoFast := GET_SYNC_REFTO('SafetyGateAuto1.do_Fast', T#0s, Status);
+mbDOSGAutoFastLinked := (Status = KSYS_Status_OK);
+
+mpbDOSGAutoOpen := GET_SYNC_REFTO('SafetyGateAuto1.do_Open', T#0s, Status);
+mbDOSGAutoOpenLinked := (Status = KSYS_Status_OK);
+
+mpbDOSGAutoLock := GET_SYNC_REFTO('SafetyGateAuto1.do_Lock', T#0s, Status);
+mbDOSGAutoLockLinked := (Status = KSYS_Status_OK);
+
+mpbDOSGAutoUnlock := GET_SYNC_REFTO('SafetyGateAuto1.do_Unlock', T#0s, Status);
+mbDOSGAutoUnlockLinked := (Status = KSYS_Status_OK);
+
+// SafetyMat
+pbDummy := GET_SYNC_REFTO('SafetyMat1.di_SafetyMat', T#0s, Status);
+mbDISafetyMat1Linked := (Status = KSYS_Status_OK);
+
+pbDummy := GET_SYNC_REFTO('SafetyMat2.di_SafetyMat', T#0s, Status);
+mbDISafetyMat2Linked := (Status = KSYS_Status_OK);
+
+//LightCurtain
+pbDummy:= GET_SYNC_REFTO('LightCurtain1.di_Closed', T#0s, Status);
+mbDILightCurtainClosedLinked := (Status = KSYS_Status_OK);
+
+STOP_PROCESS_ALGORITHM();
+
+
+@END_Body 
+
+@@@BEG_Comment@@@ 
+@TL(0)
+
+@@@END_Comment@@@ 
+
+@BEG_SfcBody 
+2 2 1 
+
+@BEG_SfcData 2 
+@StepSeq @RT(4)sseq @F 3 
+@Step @RT(4)INIT @F @T @F @F @RT(0) @F 
+@AcbCont @RT(7)unnamed @F 0 
+
+@Trans @RT(11)SimRequired @F @T @F @F @T @T @TL(2)
+sv_bSimulate
+
+@RT(7)Trans11 @F 
+@Loop @RT(4)loop @F 2 
+@StepSeq @RT(3)seq @F 3 
+@Step @RT(3)SIM @F @F @F @F @RT(0) @F 
+@AcbCont @RT(7)unnamed @F 1 
+@Acb @RT(9)aSimulate @F @F @RT(1)N @RT(0) @F @F @T @F 
+
+@Trans @RT(14)StpSimRequired @F @T @F @F @T @T @TL(2)
+NOT sv_bSimulate
+
+@RT(7)Trans13 @F 
+@Step @RT(4)STOP @F @F @F @F @RT(0) @F 
+@AcbCont @RT(7)unnamed @F 1 
+@Acb @RT(9)aStopSimu @F @F @RT(1)P @RT(0) @F @F @T @F 
+
+
+@Trans @RT(6)Return @F @T @T @T @T @T @TL(2)
+TRUE
+
+@RT(7)Trans16 @F 
+
+@END_SfcData 
+@SaActions 2 
+@SaText @RT(9)aStopSimu 1 @TL(30)
+IF mbDISGAutoClosed1Linked THEN
+   fbEPUnForceDI(sSysVar := 'SafetyGateAuto1.di_Closed');
+END_IF;
+
+IF mbDISGAutoClosed2Linked THEN
+   fbEPUnForceDI(sSysVar := 'SafetyGateAuto1.di_Closed2');
+END_IF;
+
+IF mbDISGAutoOpenLinked THEN
+   fbEPUnForceDI(sSysVar := 'SafetyGateAuto1.di_Open');
+END_IF;
+
+IF mbDISGAutoOpenSlowLinked THEN
+   fbEPUnForceDI(sSysVar := 'SafetyGateAuto1.di_OpenSlow');
+END_IF;
+
+IF mbDISGAutoCloseSlowLinked THEN
+   fbEPUnForceDI(sSysVar := 'SafetyGateAuto1.di_CloseSlow');
+END_IF;
+
+IF mbDISGAutoLockedLinked THEN
+   fbEPUnForceDI(sSysVar := 'SafetyGateAuto1.di_Locked');
+END_IF;
+
+IF mbDISGAutoUnlockedLinked THEN
+   fbEPUnForceDI(sSysVar := 'SafetyGateAuto1.di_Unlocked');
+END_IF;
+
+STOP_PROCESS_ALGORITHM();
+
+
+@SaText @RT(9)aSimulate 1 @TL(124)
+//-------------------------------------------//
+// normal movement simulation                //
+//-------------------------------------------//
+
+IF NOT bInitDone THEN
+   fbEPForceDI(sSysVar := 'SafetyGateAuto1.di_Emergency',Value := TRUE);
+   fbEPForceDI(sSysVar := 'SafetyGateAuto1.di_Emergency2',Value := TRUE);
+   
+   IF mbDISGAutoClosed1Linked THEN
+      fbEPForceDI(sSysVar :='SafetyGateAuto1.di_Closed', Value := FALSE);
+   END_IF;
+   IF mbDISGAutoClosed2Linked THEN
+      fbEPForceDI(sSysVar :='SafetyGateAuto1.di_Closed2', Value := TRUE);
+   END_IF;
+   IF mbDISGAutoCloseSlowLinked THEN
+      fbEPForceDI(sSysVar :='SafetyGateAuto1.di_CloseSlow', Value := FALSE);
+   END_IF;
+   
+   IF mbDISGAutoOpenLinked THEN
+      fbEPForceDI(sSysVar :='SafetyGateAuto1.di_Open', Value := TRUE);
+   END_IF;
+   IF mbDISGAutoOpenSlowLinked THEN
+      fbEPForceDI(sSysVar :='SafetyGateAuto1.di_OpenSlow', Value := TRUE);
+   END_IF;
+
+   IF mbDISGAutoLockedLinked THEN
+      fbEPForceDI(sSysVar :='SafetyGateAuto1.di_Locked', Value := TRUE);
+   END_IF;
+   IF mbDISGAutoUnlockedLinked THEN
+      fbEPForceDI(sSysVar :='SafetyGateAuto1.di_Unlocked', Value := FALSE);
+   END_IF;
+   
+   bInitDone := TRUE;   
+END_IF;
+
+// Safety Gate Close
+IF mbDOSGAutoCloseLinked AND mpbDOSGAutoClose^ THEN
+    
+   IF mbDISGAutoOpenLinked AND mpbDISGAutoOpen^ THEN
+      fbEPForceDI(sSysVar := 'SafetyGateAuto1.di_Open',Value := FALSE);
+      fbEPForceDI(sSysVar := 'SafetyGateAuto1.di_OpenSlow',Value := FALSE);
+   END_IF;
+    
+
+
+   IF mbDOSGAutoFastLinked THEN    
+       fbTimerSGAutoFast (IN := mpbDOSGAutoFast^,
+                      PT := cTimeSGAutoFast);
+   END_IF;
+   IF fbTimerSGAutoFast.Q THEN
+      fbTimerSGAutoFast(IN := FALSE);
+      fbEPForceDI(sSysVar := 'SafetyGateAuto1.di_CloseSlow',Value := TRUE);
+   END_IF;    
+
+    
+   fbTimerSGAutoClose (IN := mpbDOSGAutoClose^,
+                       PT := cTimeSGAutoClose);
+   IF fbTimerSGAutoClose.Q THEN
+      fbTimerSGAutoClose(IN := FALSE);
+      fbEPForceDI(sSysVar := 'SafetyGateAuto1.di_Closed',Value := TRUE);
+      fbEPForceDI(sSysVar := 'SafetyGateAuto1.di_Closed2',Value := FALSE);
+   END_IF;    
+END_IF;
+
+
+// Safety Gate Open
+IF mbDOSGAutoOpenLinked AND mpbDOSGAutoOpen^ THEN
+   IF mbDISGAutoClosed1Linked AND mpbDISGAutoClosed1^ THEN
+      fbEPForceDI(sSysVar := 'SafetyGateAuto1.di_Closed',Value := FALSE);
+      fbEPForceDI(sSysVar := 'SafetyGateAuto1.di_CloseSlow',Value := FALSE);
+   END_IF;
+    
+   IF mbDISGAutoClosed2Linked AND NOT mpbDISGAutoClosed2^ THEN
+      fbEPForceDI(sSysVar := 'SafetyGateAuto1.di_Closed2',Value := TRUE);
+   END_IF;
+
+   
+   IF mbDOSGAutoFastLinked THEN 
+   fbTimerSGAutoFast (IN := mpbDOSGAutoFast^,
+                      PT := cTimeSGAutoFast);
+   END_IF;
+   IF fbTimerSGAutoFast.Q THEN
+      fbTimerSGAutoFast(IN := FALSE);
+      fbEPForceDI(sSysVar := 'SafetyGateAuto1.di_OpenSlow',Value := TRUE);
+   END_IF;    
+
+   fbTimerSGAutoOpen (IN := mpbDOSGAutoOpen^,
+                       PT := cTimeSGAutoOpen);
+   IF fbTimerSGAutoOpen.Q THEN
+      fbTimerSGAutoOpen(IN := FALSE);
+      fbEPForceDI(sSysVar := 'SafetyGateAuto1.di_Open',Value := TRUE);
+   END_IF;    
+END_IF;
+
+
+// Safety Gate Lock
+IF mbDOSGAutoLockLinked AND mpbDOSGAutoLock^ THEN
+   IF mbDISGAutoUnlockedLinked AND mpbDISGAutoUnlocked^ THEN
+      fbEPForceDI(sSysVar := 'SafetyGateAuto1.di_Unlocked',Value := FALSE);
+   END_IF;
+    
+   fbTimerSGAutoLock (IN := mpbDOSGAutoLock^,
+                      PT := cTimeSGAutoLock);
+   IF fbTimerSGAutoLock.Q THEN
+      fbTimerSGAutoLock(IN := TRUE);
+      fbEPForceDI(sSysVar := 'SafetyGateAuto1.di_Locked',Value := TRUE);
+   END_IF;    
+END_IF;
+
+
+// Safety Gate Unlock
+IF mbDOSGAutoUnlockLinked AND mpbDOSGAutoUnlock^ THEN
+   IF mbDISGAutoLockedLinked AND mpbDISGAutoLocked^ THEN
+      fbEPForceDI(sSysVar := 'SafetyGateAuto1.di_Locked',Value := FALSE);
+   END_IF;
+    
+   fbTimerSGAutoUnlock (IN := mpbDOSGAutoUnlock^,
+                        PT := cTimeSGAutoUnlock);
+   IF fbTimerSGAutoUnlock.Q THEN
+      fbTimerSGAutoUnlock(IN := TRUE);
+      fbEPForceDI(sSysVar := 'SafetyGateAuto1.di_Unlocked',Value := TRUE);
+   END_IF;    
+END_IF;
+
+
+@SaTrans 0 
+@SaExits 0 
+@END_SfcBody 
+
+@@@BEG_Comment@@@ 
+@TL(0)
+
+@@@END_Comment@@@ 
+@END_Body 
+
+@END_Contents 

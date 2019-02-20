@@ -1,0 +1,83 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<base:Mask xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xmlns:base="http://www.keba.at/viewedit.model.base" widgetId="kvs.mask" name="MoldAdjustMaskDirectLock1">
+  <resolution width="714" height="476"/>
+  <position x="1" y="1"/>
+  <attributeValues key="Title" value="Mold adjust"/>
+  <attributeValues key="Background" value="BG_Desktop:30,30,30"/>
+  <attributeValues key="Icon" value="MoldHeightAdjust1/hmi/images/iconMoldAdjust.gif"/>
+  <widgetInstances xsi:type="base:ContainerWidgetInstance" widgetId="keplast.kvs.borderpanelsmall" name="panelMain" layoutConstraint="NORTH">
+    <resolution width="714" height="109"/>
+    <position/>
+    <attributeValues key="Title" value="Mold adjust settings"/>
+    <attributeValues key="PreferredSize" value="714, 109"/>
+    <widgetInstances widgetId="keplast.kvs.separator" name="separator1" layoutConstraint="SEPARATOR">
+      <resolution width="2" height="72"/>
+      <position x="356" y="33"/>
+    </widgetInstances>
+    <widgetInstances xsi:type="base:ContainerWidgetInstance" widgetId="kvs.panel" name="panelRight" layoutConstraint="RIGHT">
+      <resolution width="347" height="58"/>
+      <position x="361" y="33"/>
+      <widgetInstances widgetId="keplast.kvs.actsetnumfieldtext" name="numfieldMonitoringTime" layoutConstraint="null">
+        <resolution width="347" height="29"/>
+        <position/>
+        <attributeValues key="Variable" value="MoldHeightAdjust1.sv_dMaxMoldHeightAdjustTime"/>
+        <attributeValues key="VariableActual" value="MoldHeightAdjust1.sv_dActMoldHeightAdjustTime"/>
+      </widgetInstances>
+      <widgetInstances widgetId="keplast.kvs.numfieldtext" name="numfieldStandStillDetect" layoutConstraint="null">
+        <resolution width="347" height="29"/>
+        <position y="29"/>
+        <attributeValues key="Variable" value="MoldHeightAdjust1.sv_dSetStandstillDetectionTime"/>
+      </widgetInstances>
+      <layout layoutID="kvs.layout.GridLayout" name="GridLayout">
+        <attributeValues key="Rows" value="0"/>
+        <attributeValues key="Columns" value="1"/>
+      </layout>
+    </widgetInstances>
+    <widgetInstances xsi:type="base:ContainerWidgetInstance" widgetId="kvs.panel" name="panelLeft" layoutConstraint="LEFT">
+      <resolution width="347" height="29"/>
+      <position x="6" y="33"/>
+      <widgetInstances widgetId="keplast.kvs.startbuttonmarktext" name="markMoldAdjustActive" layoutConstraint="null">
+        <resolution width="347" height="29"/>
+        <position/>
+        <attributeValues key="Variable" value="MoldHeightAdjust1.sv_bMoldHeightAutoAdjHMI"/>
+        <attributeValues key="MarkColumnWidth" value="60"/>
+        <attributeValues key="MarkColor" value="Plast_green:94,151,24"/>
+      </widgetInstances>
+      <layout layoutID="kvs.layout.GridLayout" name="GridLayout">
+        <attributeValues key="Rows" value="0"/>
+        <attributeValues key="Columns" value="1"/>
+      </layout>
+    </widgetInstances>
+    <layout layoutID="keplast.kvs.layout.horizontalsplitlayout" name="HorizontalSplitLayout"/>
+  </widgetInstances>
+  <widgetInstances xsi:type="base:ContainerWidgetInstance" widgetId="kvs.panel" name="containerOptions" layoutConstraint="CENTER">
+    <resolution width="714" height="359"/>
+    <position y="117"/>
+    <widgetInstances xsi:type="base:CompositeWidgetInstance" widgetId="b6798391-d387-400c-bdf2-ae37aff2558b" name="moldClampForceBuildUp1" layoutConstraint="null">
+      <resolution width="714" height="96"/>
+      <position/>
+      <dynamicAttributes key="Create">
+        <value function="isDeviceElectric : UserFunctions" equal="true" unequal="false">
+          <parameter key="1" value="devicename; PlastFunctionUtils.createDeviceName(&quot;Mold1&quot;)"/>
+        </value>
+      </dynamicAttributes>
+    </widgetInstances>
+    <widgetInstances xsi:type="base:CompositeWidgetInstance" widgetId="54352daa-873c-48cd-8a74-26735e221e4a" name="moldClampForcemonitoring1" layoutConstraint="null">
+      <resolution width="714" height="126"/>
+      <position y="104"/>
+      <dynamicAttributes key="Create">
+        <value function="doesVariableExist : UserFunctions" equal="true" unequal="false">
+          <parameter key="1" value="variableasstring; PlastFunctionUtils.createVariableString(&quot;Mold1.ai_ClampPress&quot;)"/>
+        </value>
+      </dynamicAttributes>
+    </widgetInstances>
+    <layout layoutID="kvs.layout.VerticalFlowLayout" name="VerticalFlowLayout">
+      <attributeValues key="OuterGaps" value="false"/>
+      <attributeValues key="Hgap" value="0"/>
+      <attributeValues key="Vgap" value="8"/>
+    </layout>
+  </widgetInstances>
+  <layout layoutID="kvs.layout.BorderLayout" name="BorderLayout">
+    <attributeValues key="Vgap" value="8"/>
+  </layout>
+</base:Mask>

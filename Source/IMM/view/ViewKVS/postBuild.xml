@@ -1,0 +1,38 @@
+<?xml version="1.0" encoding="ISO-8859-1"?>
+<project name="postBuild_ViewKVS" default="default" basedir=".">
+	<property file="build.properties" />
+	<property name="helpPath" value="/libraries/help" />
+	<target name="default" description="Start target of post build" depends="init, createHelpFiles, copyFilesToDownloadFolder, updateApplicationJar" />
+	<target name="init" description="Initialize properties" depends="clean">
+		<available property="iecPrjDirExists" type="dir" file="${iecPrjDir}" />
+		<available property="hmicfgFileExist" type="file" file="${projectContentsDir}/hmicfg.properties" />
+	</target>
+	<target name="createHelpFiles" if="iecPrjDirExists">
+		<exec executable="${installPath}/Plugins/Prop2Help/prop2help.exe" failonerror="false">
+			<arg value="--project-directory" />
+			<arg value="${basedir}" />
+			<arg value="--input-directory" />
+			<arg value="${iecPrjDir}" />
+			<arg value="--output-directory" />
+			<arg value="${projectPath}${helpPath}/tmp" />
+			<arg value="--export-type" />
+			<arg value="KVS" />
+		</exec>
+		<delete file="${projectPath}${helpPath}/alarm.jar" quiet="true" />
+		<jar destfile="${projectPath}${helpPath}/alarm.jar" basedir="${projectPath}${helpPath}/tmp" includes="**/*.properties,**/*.txt,**/*.htm,**/*.html,**/*.gif,**/*.jpg,**/*.png" excludes="**/*.jar" update="true" />
+		<delete includeEmptyDirs="true">
+			<fileset dir="${projectPath}${helpPath}/tmp" excludes="**/*.jar" />
+		</delete>
+	</target>
+	<target name="copyFilesToDownloadFolder" description="Copies file, which are not handles by VE to download folder">
+		<copy file="${projectContentsDir}/config.xml" todir="${applicationJarDownloadDir}" overwrite="true" failonerror="false" />
+	</target>
+	<target name="clean" description="Clean">
+	</target>
+	<target name="updateApplicationJar" description="Integrate hmiCfg.properties in application.jar" depends="init" if="hmicfgFileExist">
+		<jar jarfile="${applicationJarDownloadDir}/application.jar" update="true">
+			<fileset casesensitive="no" file="${projectContentsDir}/hmicfg.properties" />
+		</jar>
+	</target>
+
+</project>

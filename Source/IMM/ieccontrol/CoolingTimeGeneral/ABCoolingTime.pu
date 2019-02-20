@@ -1,0 +1,692 @@
+IMPORT_OVER_LISTFILE
+ WRITE_SVREAL_DIRECT
+, WRITE_SV_DIRECT
+, SET_EVENT
+, tsMoveData
+, tsDeviceId
+, tevStart
+, tevStop
+, tevStartedStopped
+, tevStartedStoppedData
+, TON
+, tsTraceLevel
+, ABMovementRegister
+, tevStartData
+, FBSetMovementState
+, FBDebugTrace
+, tevStopData
+
+END_IMPORT
+
+ALGORITHM_BLOCK ABCoolingTime #DUMMY_EDIT_BLOCK
+
+SYSTEM_VAR
+ sv_bInitStart : BOOL;
+ sv_MoveCooling : tsMoveData;
+ sv_DeviceId : tsDeviceId;
+ sv_dCoolingTime : TIME;
+ sv_dRemainTime : TIME;
+ sv_bDeviceReady : BOOL;
+ sv_dActCoolingTime : TIME;
+ sv_rActCoolingTime : REAL (* actual cooling time as real value (for displaying in odc editor) *);
+ sv_TraceLevel : tsTraceLevel;
+END_VAR
+
+SYSTEM_OBJECT
+ PU_Task_7 : TASK;
+ EV_Task_3 : TASK;
+ evStart : tevStart;
+ evStop : tevStop;
+ evStartedStopped : tevStartedStopped;
+ TaskAnalog : TASK;
+ erDeviceActive : ALARM;
+END_OBJECT
+
+VAR
+ evStartedStoppedData : tevStartedStoppedData;
+ fbCooling : TON;
+END_VAR
+
+POSTUPDATE_ALGORITHM pMovementRegister ON PU_Task_7 WITH sv_bInitStart
+
+
+VAR
+ abMovementRegister : ABMovementRegister;
+END_VAR
+#BEGIN_EDIT_BLOCK
+(**************************************** WARNING ********************************************
+ *** The KEBA Kemro K2 System including software is not intended for safety control tasks! ***
+ ***                       For further information see Comment tab!                        ***
+ *********************************************************************************************)
+
+// movement registration
+sv_MoveCooling.sIconPath := CONCAT(GET_MY_FU_NAME(),"\hmi\images\movCoolingTime.gif");;
+sv_MoveCooling.pdActiveTimeAct := @sv_dActCoolingTime;
+
+abMovementRegister.aRegister(@sv_MoveCooling);
+
+
+;#END_EDIT_BLOCK END_ALGORITHM
+
+EVENT_ALGORITHM evaStart ON EV_Task_3 WITH evStart
+
+
+VAR_INPUT
+ evStartData : tevStartData;
+END_VAR
+
+VAR
+ fbSetMovementState : FBSetMovementState;
+ fbDebugTrace : FBDebugTrace;
+END_VAR
+#BEGIN_EDIT_BLOCK
+(**************************************** WARNING ********************************************
+ *** The KEBA Kemro K2 System including software is not intended for safety control tasks! ***
+ ***                       For further information see Comment tab!                        ***
+ *********************************************************************************************)
+
+IF evStartData.DeviceId = sv_DeviceId THEN
+   IF sv_bDeviceReady THEN
+      sv_bDeviceReady := FALSE;
+      fbCooling(IN := FALSE);  
+      evStartedStoppedData.State := nStarted;      
+   ELSE
+      // Device already active
+      IF sv_TraceLevel.bDeviceState THEN
+         fbDebugTrace('ABCoolingTime: Device already active -> not starting movement');
+      END_IF;
+      
+      SET_ALARM(Name := erDeviceActive,
+                SubID1 :=sv_DeviceId.CompId,
+                SubID2 := sv_DeviceId.IndexId);
+        
+      evStartedStoppedData.State := nStartNotAllowed;     
+   END_IF;
+   
+   //send "started" or "start not allowed" message
+   evStartedStoppedData.DeviceId := sv_DeviceId;
+   evStartedStoppedData.MoveId := sv_MoveCooling.MoveId;
+   evStartedStoppedData.MoveDir := sv_MoveCooling.MoveDir;
+   SET_EVENT(evStartedStopped,evStartedStoppedData);
+   
+   IF evStartedStoppedData.State = nStarted THEN
+      fbSetMovementState(MoveId   := sv_MoveCooling.MoveId,
+                        MoveDir  := sv_MoveCooling.MoveDir,
+                        State    := nActive);  
+      START_PROCESS_ALGORITHM(paRun);
+   END_IF;
+END_IF;
+
+
+;#END_EDIT_BLOCK END_ALGORITHM
+
+EVENT_ALGORITHM evaStop ON EV_Task_3 WITH evStop
+
+
+VAR_INPUT
+ evStopData : tevStopData;
+END_VAR
+
+VAR
+ fbSetMovementState : FBSetMovementState;
+END_VAR
+#BEGIN_EDIT_BLOCK
+(**************************************** WARNING ********************************************
+ *** The KEBA Kemro K2 System including software is not intended for safety control tasks! ***
+ ***                       For further information see Comment tab!                        ***
+ *********************************************************************************************)
+
+ 
+IF evStopData.DeviceId = sv_DeviceId THEN
+    
+    STOP_PROCESS_ALGORITHM(paRun);
+    
+    fbSetMovementState(MoveId   := sv_MoveCooling.MoveId,
+                       MoveDir  := sv_MoveCooling.MoveDir,
+                       State    := nInactive);
+    
+    // send stopped-Message
+    evStartedStoppedData.DeviceId := sv_DeviceId;
+    evStartedStoppedData.MoveId := sv_MoveCooling.MoveId;
+    evStartedStoppedData.MoveDir := sv_MoveCooling.MoveDir;
+    evStartedStoppedData.State := nStopped;
+    SET_EVENT(evStartedStopped,evStartedStoppedData);
+    
+    sv_bDeviceReady := TRUE;
+END_IF;
+
+
+;#END_EDIT_BLOCK END_ALGORITHM
+
+PROCESS_ALGORITHM paRun ON TaskAnalog(5000)
+
+
+VAR_TEMP
+ dRemainTime : TIME;
+ rActCoolingTime : REAL;
+ b : BOOL;
+END_VAR
+
+VAR
+ fbSetMovementState : FBSetMovementState;
+END_VAR
+#BEGIN_EDIT_BLOCK
+(**************************************** WARNING ********************************************
+ *** The KEBA Kemro K2 System including software is not intended for safety control tasks! ***
+ ***                       For further information see Comment tab!                        ***
+ *********************************************************************************************)
+
+
+fbCooling(IN := TRUE,
+          PT := sv_dCoolingTime);
+dRemainTime := sv_dCoolingTime - fbCooling.ET;
+b := WRITE_SV_DIRECT(sv_dRemainTime, dRemainTime);
+b := WRITE_SV_DIRECT(sv_dActCoolingTime, fbCooling.ET);
+rActCoolingTime := LINT_TO_REAL(TIME_TO_LINT(sv_dActCoolingTime))/1000000.0;
+b := WRITE_SVREAL_DIRECT(sv_rActCoolingTime, rActCoolingTime);
+
+IF fbCooling.Q THEN
+    
+    sv_bDeviceReady := TRUE;
+    
+    fbSetMovementState(MoveId   := sv_MoveCooling.MoveId,
+                       MoveDir  := sv_MoveCooling.MoveDir,
+                       State    := nInactive);
+    
+    // send stopped-Message
+    evStartedStoppedData.DeviceId := sv_DeviceId;
+    evStartedStoppedData.MoveId := sv_MoveCooling.MoveId;
+    evStartedStoppedData.MoveDir := sv_MoveCooling.MoveDir;
+    evStartedStoppedData.State := nStopped;
+    SET_EVENT(evStartedStopped,evStartedStoppedData);
+   
+    STOP_PROCESS_ALGORITHM();
+END_IF;
+
+
+
+;#END_EDIT_BLOCK END_ALGORITHM
+
+
+
+END_ALGORITHM_BLOCK
+
+
+
+#END_OF_IEC_PART
+
+@Puma @IecEditor 6 68 @Pou 25 
+@@@BEG_Comment@@@
+
+@@@END_Comment@@@
+
+@BEG_Contents 
+
+@BEG_Func 
+@RT(17)FuncTreeContainer 
+3 
+@Var @RT(19)WRITE_SVREAL_DIRECT @RT(0) @T @T @DERIVED 0 @F @RT(22)KEBA_STANDARD_FUNCTION @F 
+@T 
+@BEG_Attrib 
+0 @RT(0) @RT(0) 
+@END_Attrib 
+1 1 @F @F @F @F 
+
+@Var @RT(15)WRITE_SV_DIRECT @RT(0) @T @T @DERIVED 0 @F @RT(22)KEBA_STANDARD_FUNCTION @F 
+@T 
+@BEG_Attrib 
+0 @RT(0) @RT(0) 
+@END_Attrib 
+1 1 @F @F @F @F 
+
+@Var @RT(9)SET_EVENT @RT(0) @T @T @DERIVED 0 @F @RT(23)KEBA_STANDARD_PROCEDURE @F 
+@T 
+@BEG_Attrib 
+0 @RT(0) @RT(0) 
+@END_Attrib 
+1 1 @F @F @F @F 
+
+@END_Func 
+
+@BEG_Const 
+@RT(18)ConstTreeContainer 
+0 
+@END_Const 
+
+@BEG_Export 
+
+@BEG_Kind 
+@ALGORITHM_BLOCK @RT(13)ABCoolingTime @STRUCTURED_TEXT 
+@RT(0) @RT(0) @RT(0) 
+@END_Kind 
+
+@BEG_Dcl 
+@RT(16)DclTreeContainer 
+18 
+@Var @RT(13)sv_bInitStart @RT(0) @T @F @DT @RT(4)BOOL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 8 @F @F @F @F 
+
+@Var @RT(14)sv_MoveCooling @RT(0) @T @T @DERIVED 0 @F @RT(10)tsMoveData @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 8 @F @F @F @F 
+
+@Var @RT(11)sv_DeviceId @RT(0) @T @T @DERIVED 0 @T @T @DT @RT(10)tsDeviceId @RT(0) @T @T @UNKNOWN 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 8 @F @F @F @F 
+
+@Var @RT(15)sv_dCoolingTime @RT(0) @T @F @DT @RT(4)TIME @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 8 @F @F @F @F 
+
+@Var @RT(14)sv_dRemainTime @RT(0) @T @F @DT @RT(4)TIME @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 8 @F @F @F @F 
+
+@Var @RT(15)sv_bDeviceReady @RT(0) @T @F @DT @RT(4)BOOL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 8 @F @F @F @F 
+
+@Var @RT(18)sv_dActCoolingTime @RT(0) @T @F @DT @RT(4)TIME @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 8 @F @F @F @F 
+
+@Var @RT(9)PU_Task_7 @RT(0) @T @F @DT @RT(4)TASK @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 7 @F @F @F @F 
+
+@Var @RT(9)EV_Task_3 @RT(0) @T @F @DT @RT(4)TASK @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 7 @F @F @F @F 
+
+@Var @RT(7)evStart @RT(0) @T @T @DERIVED 0 @T @T @DT @RT(8)tevStart @RT(0) @T @T @UNKNOWN 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 7 @F @F @F @F 
+
+@Var @RT(6)evStop @RT(0) @T @T @DERIVED 0 @T @T @DT @RT(7)tevStop @RT(0) @T @T @UNKNOWN 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 7 @F @F @F @F 
+
+@Var @RT(16)evStartedStopped @RT(0) @T @T @DERIVED 0 @T @T @DT @RT(17)tevStartedStopped @RT(0) @T @T @UNKNOWN 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 7 @F @F @F @F 
+
+@Var @RT(20)evStartedStoppedData @RT(0) @T @T @DERIVED 0 @T @T @DT @RT(21)tevStartedStoppedData @RT(0) @T @T @UNKNOWN 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(9)fbCooling @RT(0) @T @T @DERIVED 0 @T @T @DT @RT(3)TON @RT(0) @T @T @UNKNOWN 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(18)sv_rActCoolingTime @RT(0) @T @F @DT @RT(4)REAL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(64)actual cooling time as real value (for displaying in odc editor) @RT(0) 
+@END_Attrib 
+1 8 @F @F @F @F 
+
+@Var @RT(10)TaskAnalog @RT(0) @T @T @RENAMED 0 @T @T @DT @RT(4)TASK @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 7 @F @F @F @F 
+
+@Var @RT(13)sv_TraceLevel @RT(0) @T @T @DERIVED 0 @F @RT(12)tsTraceLevel @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 8 @F @F @F @F 
+
+@Var @RT(14)erDeviceActive @RT(0) @T @F @DT @RT(5)ALARM @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 7 @F @F @F @F 
+
+@END_Dcl 
+
+@END_Export 
+
+@BEG_Body 
+
+4 
+
+@BEG_Export 
+
+@BEG_Algo 
+@POSTUPDATE_ALGORITHM @RT(17)pMovementRegister @STRUCTURED_TEXT 
+@RT(0) @RT(13)sv_bInitStart @RT(9)PU_Task_7 @F @F 
+@END_Algo 
+
+@BEG_Dcl 
+@RT(16)DclTreeContainer 
+1 
+@Var @RT(18)abMovementRegister @RT(0) @T @T @DERIVED 0 @T @T @DT @RT(18)ABMovementRegister @RT(0) @T @T @UNKNOWN 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@END_Dcl 
+
+@END_Export 
+
+@BEG_Export 
+
+@BEG_Algo 
+@EVENT_ALGORITHM @RT(8)evaStart @STRUCTURED_TEXT 
+@RT(0) @RT(7)evStart @RT(9)EV_Task_3 @F @F 
+@END_Algo 
+
+@BEG_Dcl 
+@RT(16)DclTreeContainer 
+3 
+@Var @RT(11)evStartData @RT(0) @T @T @DERIVED 0 @F @RT(12)tevStartData @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 1 @F @F @F @F 
+
+@Var @RT(18)fbSetMovementState @RT(0) @T @T @DERIVED 0 @T @T @DT @RT(18)FBSetMovementState @RT(0) @T @T @UNKNOWN 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(12)fbDebugTrace @RT(0) @T @T @DERIVED 0 @F @RT(12)FBDebugTrace @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@END_Dcl 
+
+@END_Export 
+
+@BEG_Export 
+
+@BEG_Algo 
+@EVENT_ALGORITHM @RT(7)evaStop @STRUCTURED_TEXT 
+@RT(0) @RT(6)evStop @RT(9)EV_Task_3 @F @F 
+@END_Algo 
+
+@BEG_Dcl 
+@RT(16)DclTreeContainer 
+2 
+@Var @RT(10)evStopData @RT(0) @T @T @DERIVED 0 @T @T @DT @RT(11)tevStopData @RT(0) @T @T @UNKNOWN 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 1 @F @F @F @F 
+
+@Var @RT(18)fbSetMovementState @RT(0) @T @T @DERIVED 0 @T @T @DT @RT(18)FBSetMovementState @RT(0) @T @T @UNKNOWN 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@END_Dcl 
+
+@END_Export 
+
+@BEG_Export 
+
+@BEG_Algo 
+@PROCESS_ALGORITHM @RT(5)paRun @STRUCTURED_TEXT 
+@RT(0) @RT(0) @RT(16)TaskAnalog(5000) @F @F 
+@END_Algo 
+
+@BEG_Dcl 
+@RT(16)DclTreeContainer 
+4 
+@Var @RT(18)fbSetMovementState @RT(0) @T @T @DERIVED 0 @T @T @DT @RT(18)FBSetMovementState @RT(0) @T @T @UNKNOWN 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(11)dRemainTime @RT(0) @T @F @DT @RT(4)TIME @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 4 @F @F @F @F 
+
+@Var @RT(15)rActCoolingTime @RT(0) @T @F @DT @RT(4)REAL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 4 @F @F @F @F 
+
+@Var @RT(1)b @RT(0) @T @F @DT @RT(4)BOOL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 4 @F @F @F @F 
+
+@END_Dcl 
+
+@END_Export 
+
+@BEG_Body 
+@TL(11)
+(**************************************** WARNING ********************************************
+ *** The KEBA Kemro K2 System including software is not intended for safety control tasks! ***
+ ***                       For further information see Comment tab!                        ***
+ *********************************************************************************************)
+
+// movement registration
+sv_MoveCooling.sIconPath := CONCAT(GET_MY_FU_NAME(),"\hmi\images\movCoolingTime.gif");;
+sv_MoveCooling.pdActiveTimeAct := @sv_dActCoolingTime;
+
+abMovementRegister.aRegister(@sv_MoveCooling);
+
+@END_Body 
+
+@@@BEG_Comment@@@ 
+@TL(0)
+
+@@@END_Comment@@@ 
+
+@BEG_Body 
+@TL(37)
+(**************************************** WARNING ********************************************
+ *** The KEBA Kemro K2 System including software is not intended for safety control tasks! ***
+ ***                       For further information see Comment tab!                        ***
+ *********************************************************************************************)
+
+IF evStartData.DeviceId = sv_DeviceId THEN
+   IF sv_bDeviceReady THEN
+      sv_bDeviceReady := FALSE;
+      fbCooling(IN := FALSE);  
+      evStartedStoppedData.State := nStarted;      
+   ELSE
+      // Device already active
+      IF sv_TraceLevel.bDeviceState THEN
+         fbDebugTrace('ABCoolingTime: Device already active -> not starting movement');
+      END_IF;
+      
+      SET_ALARM(Name := erDeviceActive,
+                SubID1 :=sv_DeviceId.CompId,
+                SubID2 := sv_DeviceId.IndexId);
+        
+      evStartedStoppedData.State := nStartNotAllowed;     
+   END_IF;
+   
+   //send "started" or "start not allowed" message
+   evStartedStoppedData.DeviceId := sv_DeviceId;
+   evStartedStoppedData.MoveId := sv_MoveCooling.MoveId;
+   evStartedStoppedData.MoveDir := sv_MoveCooling.MoveDir;
+   SET_EVENT(evStartedStopped,evStartedStoppedData);
+   
+   IF evStartedStoppedData.State = nStarted THEN
+      fbSetMovementState(MoveId   := sv_MoveCooling.MoveId,
+                        MoveDir  := sv_MoveCooling.MoveDir,
+                        State    := nActive);  
+      START_PROCESS_ALGORITHM(paRun);
+   END_IF;
+END_IF;
+
+@END_Body 
+
+@@@BEG_Comment@@@ 
+@TL(0)
+
+@@@END_Comment@@@ 
+
+@BEG_Body 
+@TL(24)
+(**************************************** WARNING ********************************************
+ *** The KEBA Kemro K2 System including software is not intended for safety control tasks! ***
+ ***                       For further information see Comment tab!                        ***
+ *********************************************************************************************)
+
+ 
+IF evStopData.DeviceId = sv_DeviceId THEN
+    
+    STOP_PROCESS_ALGORITHM(paRun);
+    
+    fbSetMovementState(MoveId   := sv_MoveCooling.MoveId,
+                       MoveDir  := sv_MoveCooling.MoveDir,
+                       State    := nInactive);
+    
+    // send stopped-Message
+    evStartedStoppedData.DeviceId := sv_DeviceId;
+    evStartedStoppedData.MoveId := sv_MoveCooling.MoveId;
+    evStartedStoppedData.MoveDir := sv_MoveCooling.MoveDir;
+    evStartedStoppedData.State := nStopped;
+    SET_EVENT(evStartedStopped,evStartedStoppedData);
+    
+    sv_bDeviceReady := TRUE;
+END_IF;
+
+@END_Body 
+
+@@@BEG_Comment@@@ 
+@TL(0)
+
+@@@END_Comment@@@ 
+
+@BEG_Body 
+@TL(33)
+(**************************************** WARNING ********************************************
+ *** The KEBA Kemro K2 System including software is not intended for safety control tasks! ***
+ ***                       For further information see Comment tab!                        ***
+ *********************************************************************************************)
+
+
+fbCooling(IN := TRUE,
+          PT := sv_dCoolingTime);
+dRemainTime := sv_dCoolingTime - fbCooling.ET;
+b := WRITE_SV_DIRECT(sv_dRemainTime, dRemainTime);
+b := WRITE_SV_DIRECT(sv_dActCoolingTime, fbCooling.ET);
+rActCoolingTime := LINT_TO_REAL(TIME_TO_LINT(sv_dActCoolingTime))/1000000.0;
+b := WRITE_SVREAL_DIRECT(sv_rActCoolingTime, rActCoolingTime);
+
+IF fbCooling.Q THEN
+    
+    sv_bDeviceReady := TRUE;
+    
+    fbSetMovementState(MoveId   := sv_MoveCooling.MoveId,
+                       MoveDir  := sv_MoveCooling.MoveDir,
+                       State    := nInactive);
+    
+    // send stopped-Message
+    evStartedStoppedData.DeviceId := sv_DeviceId;
+    evStartedStoppedData.MoveId := sv_MoveCooling.MoveId;
+    evStartedStoppedData.MoveDir := sv_MoveCooling.MoveDir;
+    evStartedStoppedData.State := nStopped;
+    SET_EVENT(evStartedStopped,evStartedStoppedData);
+   
+    STOP_PROCESS_ALGORITHM();
+END_IF;
+
+
+@END_Body 
+
+@@@BEG_Comment@@@ 
+@TL(0)
+
+@@@END_Comment@@@ 
+@END_Body 
+
+@END_Contents 

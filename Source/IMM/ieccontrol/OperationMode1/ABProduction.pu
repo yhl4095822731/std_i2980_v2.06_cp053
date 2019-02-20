@@ -1,0 +1,678 @@
+(*
+@h    ! WARNING !
+@h    The Kemro K2 system (including software) only meets category B according to EN 954-1,
+@h    thus it is not intended for usage in safety-relevant control applications in the field 
+@h    of personal safety (e.g. emergency stop).
+@h    To implement potentially necessary safety-relevant control tasks, always use additional 
+@h    external safety devices that are intended for the particular purpose, and meet the necessary 
+@h    functional safety.
+@h    For further information see EN 954-1 (EN ISO 13849-1) and/or the K2-x00 user manual, chapter 
+@h    "CE conformity, directives and standards".
+
+production statistic (good/bad part)
+called by ABShotCounter in order to provide some additional production information
+*)
+
+IMPORT_OVER_LISTFILE
+ cCompPDP
+, cCompMotionProtectMold
+, tsTraceLevel
+, tevPartCheck
+, tnBadPartReason
+, tsProduction
+, RTC
+, FBDebugTrace
+, tevPartCheckData
+
+END_IMPORT
+
+ALGORITHM_BLOCK ABProduction #DUMMY_EDIT_BLOCK
+
+SYSTEM_VAR
+ sv_TraceLevel : tsTraceLevel;
+ sv_bBadPart : BOOL;
+ sv_iProdCounterAct : DINT;
+ sv_iShotCounterRetain : UDINT (* shot counter retain (used for lubrication) *);
+ sv_iCavities : DINT;
+ sv_BadPartReason : tnBadPartReason;
+ sv_Production : tsProduction;
+ sv_dShotTimeAct : DATE_AND_TIME;
+END_VAR
+
+SYSTEM_OBJECT
+ evPartCheck : tevPartCheck;
+ EV_Task_7 : TASK;
+ PU_Task_7 : TASK;
+END_OBJECT
+
+VAR
+ miRejectsPerTime : DINT;
+ fbRtc : RTC;
+ mdStartTime : DT;
+ fbDebugTrace : FBDebugTrace;
+END_VAR
+
+(*
+@h    ! WARNING !
+@h    The Kemro K2 system (including software) only meets category B according to EN 954-1,
+@h    thus it is not intended for usage in safety-relevant control applications in the field 
+@h    of personal safety (e.g. emergency stop).
+@h    To implement potentially necessary safety-relevant control tasks, always use additional 
+@h    external safety devices that are intended for the particular purpose, and meet the necessary 
+@h    functional safety.
+@h    For further information see EN 954-1 (EN ISO 13849-1) and/or the K2-x00 user manual, chapter 
+@h    "CE conformity, directives and standards".
+
+reacts on partcheck events with bBadPart == TRUE,
+sets sv_bBadPart and sv_BadPartReason
+*)
+
+EVENT_ALGORITHM evaPartCheck ON EV_Task_7 WITH evPartCheck
+
+
+VAR_INPUT
+ partCheckData : tevPartCheckData;
+END_VAR
+
+VAR
+ s : STRING(255);
+END_VAR
+#BEGIN_EDIT_BLOCK
+(**************************************** WARNING ********************************************
+ *** The KEBA Kemro K2 System including software is not intended for safety control tasks! ***
+ ***                       For further information see Comment tab!                        ***
+ *********************************************************************************************)
+
+IF sv_TraceLevel.bApplication THEN
+    s := CONCAT('part check event recieved: device ', 
+                DINT_TO_STRING(partCheckData.DeviceID.CompId), 
+                '/',
+                DINT_TO_STRING(partCheckData.DeviceID.IndexId),
+                ' bad ',
+                BOOL_TO_STRING(partCheckData.bBadPart),
+                ' reject',
+                BOOL_TO_STRING(partCheckData.bReject) 
+            );
+    fbDebugTrace(sText := s);
+END_IF;
+
+IF partCheckData.bBadPart THEN
+    sv_bBadPart := TRUE;    
+    
+    // set bad part reason 
+    IF sv_BadPartReason = nReason_GoodPart THEN
+       CASE (partCheckData.DeviceID.CompId) OF
+            cCompPDP:
+                 sv_BadPartReason := nReason_PDS;
+           
+            cCompMotionProtectMold:
+                 sv_BadPartReason := nReason_MoldProtection;
+       ELSE
+             sv_BadPartReason := nReason_Unknown;
+       END_CASE;        
+    END_IF;
+    
+END_IF;
+
+
+
+
+;#END_EDIT_BLOCK END_ALGORITHM
+
+(*
+@h    ! WARNING !
+@h    The Kemro K2 system (including software) only meets category B according to EN 954-1,
+@h    thus it is not intended for usage in safety-relevant control applications in the field 
+@h    of personal safety (e.g. emergency stop).
+@h    To implement potentially necessary safety-relevant control tasks, always use additional 
+@h    external safety devices that are intended for the particular purpose, and meet the necessary 
+@h    functional safety.
+@h    For further information see EN 954-1 (EN ISO 13849-1) and/or the K2-x00 user manual, chapter 
+@h    "CE conformity, directives and standards".
+
+called by ABShotCounter before shotcounter is increased, so sv_Production vars that can be recorded
+by PDP are written before sampled by PDP
+*)
+
+ALGORITHM aNewCycle
+
+#BEGIN_EDIT_BLOCK
+(**************************************** WARNING ********************************************
+ *** The KEBA Kemro K2 System including software is not intended for safety control tasks! ***
+ ***                       For further information see Comment tab!                        ***
+ *********************************************************************************************)
+
+// end of actual cycle, calc some production data
+
+fbRtc();
+sv_dShotTimeAct := fbRtc.CDT;
+
+IF ((fbRtc.CDT - mdStartTime) >= LINT_TO_TIME(DINT_TO_LINT(sv_Production.iRejectTimeSpan * 60 * 1000) * 1000)) THEN 
+    mdStartTime := fbRtc.CDT; 
+    sv_Production.iRejectsPerTime := miRejectsPerTime;
+    miRejectsPerTime := 0; 
+END_IF;
+
+IF sv_bBadPart THEN
+    sv_Production.iRejectCounter := sv_Production.iRejectCounter + sv_iCavities;        
+    miRejectsPerTime := miRejectsPerTime + sv_iCavities;
+    sv_Production.iRejectsInSeries := sv_Production.iRejectsInSeries + 1;
+ELSE
+    sv_Production.iRejectsInSeries := 0;
+END_IF;
+
+IF sv_Production.iRejectCounter > 0 THEN
+    sv_Production.iGoodPartsPerReject := (sv_iProdCounterAct - sv_Production.iRejectCounter) / sv_Production.iRejectCounter;
+END_IF;
+
+
+
+
+;#END_EDIT_BLOCK END_ALGORITHM
+
+(*
+@h    ! WARNING !
+@h    The Kemro K2 system (including software) only meets category B according to EN 954-1,
+@h    thus it is not intended for usage in safety-relevant control applications in the field 
+@h    of personal safety (e.g. emergency stop).
+@h    To implement potentially necessary safety-relevant control tasks, always use additional 
+@h    external safety devices that are intended for the particular purpose, and meet the necessary 
+@h    functional safety.
+@h    For further information see EN 954-1 (EN ISO 13849-1) and/or the K2-x00 user manual, chapter 
+@h    "CE conformity, directives and standards".
+
+called by ABShotCounter when shotcounter is reset
+to clear all production statistics variables also
+*)
+
+ALGORITHM aResetData
+
+#BEGIN_EDIT_BLOCK
+(**************************************** WARNING ********************************************
+ *** The KEBA Kemro K2 System including software is not intended for safety control tasks! ***
+ ***                       For further information see Comment tab!                        ***
+ *********************************************************************************************)
+
+sv_Production.iRejectCounter := 0;
+sv_Production.iRejectsPerTime := 0;
+sv_Production.iGoodPartsPerReject := 2147483647;
+sv_Production.iRejectsInSeries := 0;
+
+miRejectsPerTime := 0;
+fbRtc();
+mdStartTime := fbRtc.CDT;
+
+
+;#END_EDIT_BLOCK END_ALGORITHM
+
+(*
+@h    ! WARNING !
+@h    The Kemro K2 system (including software) only meets category B according to EN 954-1,
+@h    thus it is not intended for usage in safety-relevant control applications in the field 
+@h    of personal safety (e.g. emergency stop).
+@h    To implement potentially necessary safety-relevant control tasks, always use additional 
+@h    external safety devices that are intended for the particular purpose, and meet the necessary 
+@h    functional safety.
+@h    For further information see EN 954-1 (EN ISO 13849-1) and/or the K2-x00 user manual, chapter 
+@h    "CE conformity, directives and standards".
+
+called when new cycle starts (shotcounter has just been increased) but lower prio than PDP recording
+so SVs to be recorded by PDP are sampled before reset
+*)
+
+POSTUPDATE_ALGORITHM pNewCycle ON PU_Task_7 WITH sv_iShotCounterRetain
+
+#BEGIN_EDIT_BLOCK
+(**************************************** WARNING ********************************************
+ *** The KEBA Kemro K2 System including software is not intended for safety control tasks! ***
+ ***                       For further information see Comment tab!                        ***
+ *********************************************************************************************)
+       
+//reset bad part 
+// ATTENTION: lower prio than PDP MS Task so PDP has recorded these SVs before reset!
+
+sv_bBadPart := FALSE;
+sv_BadPartReason := nReason_GoodPart;
+
+
+
+;#END_EDIT_BLOCK END_ALGORITHM
+
+
+
+END_ALGORITHM_BLOCK
+
+
+
+#END_OF_IEC_PART
+
+@Puma @IecEditor 6 103 @Pou 25 
+@@@BEG_Comment@@@
+@h    ! WARNING !
+@h    The Kemro K2 system (including software) only meets category B according to EN 954-1,
+@h    thus it is not intended for usage in safety-relevant control applications in the field 
+@h    of personal safety (e.g. emergency stop).
+@h    To implement potentially necessary safety-relevant control tasks, always use additional 
+@h    external safety devices that are intended for the particular purpose, and meet the necessary 
+@h    functional safety.
+@h    For further information see EN 954-1 (EN ISO 13849-1) and/or the K2-x00 user manual, chapter 
+@h    "CE conformity, directives and standards".
+
+production statistic (good/bad part)
+called by ABShotCounter in order to provide some additional production information
+@@@END_Comment@@@
+
+@BEG_Contents 
+
+@BEG_Func 
+@RT(17)FuncTreeContainer 
+0 
+@END_Func 
+
+@BEG_Const 
+@RT(18)ConstTreeContainer 
+2 
+@Var @RT(8)cCompPDP @RT(0) @T @F @DT @RT(4)DINT @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+0 @RT(3)119 @RT(30)Component Process Data Package 
+@END_Attrib 
+1 1 @F @F @F @F 
+
+@Var @RT(22)cCompMotionProtectMold @RT(0) @T @F @DT @RT(4)DINT @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+0 @RT(3)130 @RT(29)Component Motion Protect Mold 
+@END_Attrib 
+1 1 @F @F @F @F 
+
+@END_Const 
+
+@BEG_Export 
+
+@BEG_Kind 
+@ALGORITHM_BLOCK @RT(12)ABProduction @STRUCTURED_TEXT 
+@RT(0) @RT(0) @RT(0) 
+@END_Kind 
+
+@BEG_Dcl 
+@RT(16)DclTreeContainer 
+15 
+@Var @RT(13)sv_TraceLevel @RT(0) @T @T @DERIVED 0 @T @T @DT @RT(12)tsTraceLevel @RT(0) @T @T @UNKNOWN 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 8 @F @F @F @F 
+
+@Var @RT(11)evPartCheck @RT(0) @T @T @DERIVED 0 @T @T @DT @RT(12)tevPartCheck @RT(0) @T @T @UNKNOWN 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 7 @F @F @F @F 
+
+@Var @RT(9)EV_Task_7 @RT(0) @T @T @RENAMED 0 @T @T @DT @RT(4)TASK @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 7 @F @F @F @F 
+
+@Var @RT(11)sv_bBadPart @RT(0) @T @F @DT @RT(4)BOOL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 8 @F @F @F @F 
+
+@Var @RT(18)sv_iProdCounterAct @RT(0) @T @F @DT @RT(4)DINT @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 8 @F @F @F @F 
+
+@Var @RT(21)sv_iShotCounterRetain @RT(0) @T @F @DT @RT(5)UDINT @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(42)shot counter retain (used for lubrication) @RT(0) 
+@END_Attrib 
+1 8 @F @F @F @F 
+
+@Var @RT(12)sv_iCavities @RT(0) @T @F @DT @RT(4)DINT @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 8 @F @F @F @F 
+
+@Var @RT(16)sv_BadPartReason @RT(0) @T @T @DERIVED 0 @T @T @DT @RT(15)tnBadPartReason @RT(0) @T @T @UNKNOWN 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 8 @F @F @F @F 
+
+@Var @RT(13)sv_Production @RT(0) @T @T @DERIVED 0 @T @T @DT @RT(12)tsProduction @RT(0) @T @T @UNKNOWN 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 8 @F @F @F @F 
+
+@Var @RT(16)miRejectsPerTime @RT(0) @T @F @DT @RT(4)DINT @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(5)fbRtc @RT(0) @T @T @DERIVED 0 @T @T @DT @RT(3)RTC @RT(0) @T @T @UNKNOWN 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(15)sv_dShotTimeAct @RT(0) @T @F @DT @RT(13)DATE_AND_TIME @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 8 @F @F @F @F 
+
+@Var @RT(11)mdStartTime @RT(0) @T @F @DT @RT(2)DT @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(9)PU_Task_7 @RT(0) @T @T @RENAMED 0 @T @T @DT @RT(4)TASK @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 7 @F @F @F @F 
+
+@Var @RT(12)fbDebugTrace @RT(0) @T @T @DERIVED 0 @T @T @DT @RT(12)FBDebugTrace @RT(0) @T @T @UNKNOWN 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@END_Dcl 
+
+@END_Export 
+
+@BEG_Body 
+
+4 
+
+@BEG_Export 
+
+@BEG_Algo 
+@EVENT_ALGORITHM @RT(12)evaPartCheck @STRUCTURED_TEXT 
+@RT(0) @RT(11)evPartCheck @RT(9)EV_Task_7 @F @F 
+@END_Algo 
+
+@BEG_Dcl 
+@RT(16)DclTreeContainer 
+2 
+@Var @RT(13)partCheckData @RT(0) @T @T @DERIVED 0 @T @T @DT @RT(16)tevPartCheckData @RT(0) @T @T @UNKNOWN 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 1 @F @F @F @F 
+
+@Var @RT(1)s @RT(0) @T @F @DT @RT(11)STRING(255) @RT(0) @T @T @STRING 0 @F @RT(3)255 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@END_Dcl 
+
+@END_Export 
+
+@BEG_Export 
+
+@BEG_Algo 
+@ALGORITHM @RT(9)aNewCycle @STRUCTURED_TEXT 
+@RT(0) @RT(0) @RT(0) @F @F 
+@END_Algo 
+
+@BEG_Dcl 
+@RT(16)DclTreeContainer 
+0 
+@END_Dcl 
+
+@END_Export 
+
+@BEG_Export 
+
+@BEG_Algo 
+@ALGORITHM @RT(10)aResetData @STRUCTURED_TEXT 
+@RT(0) @RT(0) @RT(0) @F @F 
+@END_Algo 
+
+@BEG_Dcl 
+@RT(16)DclTreeContainer 
+0 
+@END_Dcl 
+
+@END_Export 
+
+@BEG_Export 
+
+@BEG_Algo 
+@POSTUPDATE_ALGORITHM @RT(9)pNewCycle @STRUCTURED_TEXT 
+@RT(0) @RT(21)sv_iShotCounterRetain @RT(9)PU_Task_7 @F @F 
+@END_Algo 
+
+@BEG_Dcl 
+@RT(16)DclTreeContainer 
+0 
+@END_Dcl 
+
+@END_Export 
+
+@BEG_Body 
+@TL(38)
+(**************************************** WARNING ********************************************
+ *** The KEBA Kemro K2 System including software is not intended for safety control tasks! ***
+ ***                       For further information see Comment tab!                        ***
+ *********************************************************************************************)
+
+IF sv_TraceLevel.bApplication THEN
+    s := CONCAT('part check event recieved: device ', 
+                DINT_TO_STRING(partCheckData.DeviceID.CompId), 
+                '/',
+                DINT_TO_STRING(partCheckData.DeviceID.IndexId),
+                ' bad ',
+                BOOL_TO_STRING(partCheckData.bBadPart),
+                ' reject',
+                BOOL_TO_STRING(partCheckData.bReject) 
+            );
+    fbDebugTrace(sText := s);
+END_IF;
+
+IF partCheckData.bBadPart THEN
+    sv_bBadPart := TRUE;    
+    
+    // set bad part reason 
+    IF sv_BadPartReason = nReason_GoodPart THEN
+       CASE (partCheckData.DeviceID.CompId) OF
+            cCompPDP:
+                 sv_BadPartReason := nReason_PDS;
+           
+            cCompMotionProtectMold:
+                 sv_BadPartReason := nReason_MoldProtection;
+       ELSE
+             sv_BadPartReason := nReason_Unknown;
+       END_CASE;        
+    END_IF;
+    
+END_IF;
+
+
+
+@END_Body 
+
+@@@BEG_Comment@@@ 
+@TL(12)
+@h    ! WARNING !
+@h    The Kemro K2 system (including software) only meets category B according to EN 954-1,
+@h    thus it is not intended for usage in safety-relevant control applications in the field 
+@h    of personal safety (e.g. emergency stop).
+@h    To implement potentially necessary safety-relevant control tasks, always use additional 
+@h    external safety devices that are intended for the particular purpose, and meet the necessary 
+@h    functional safety.
+@h    For further information see EN 954-1 (EN ISO 13849-1) and/or the K2-x00 user manual, chapter 
+@h    "CE conformity, directives and standards".
+
+reacts on partcheck events with bBadPart == TRUE,
+sets sv_bBadPart and sv_BadPartReason
+@@@END_Comment@@@ 
+
+@BEG_Body 
+@TL(30)
+(**************************************** WARNING ********************************************
+ *** The KEBA Kemro K2 System including software is not intended for safety control tasks! ***
+ ***                       For further information see Comment tab!                        ***
+ *********************************************************************************************)
+
+// end of actual cycle, calc some production data
+
+fbRtc();
+sv_dShotTimeAct := fbRtc.CDT;
+
+IF ((fbRtc.CDT - mdStartTime) >= LINT_TO_TIME(DINT_TO_LINT(sv_Production.iRejectTimeSpan * 60 * 1000) * 1000)) THEN 
+    mdStartTime := fbRtc.CDT; 
+    sv_Production.iRejectsPerTime := miRejectsPerTime;
+    miRejectsPerTime := 0; 
+END_IF;
+
+IF sv_bBadPart THEN
+    sv_Production.iRejectCounter := sv_Production.iRejectCounter + sv_iCavities;        
+    miRejectsPerTime := miRejectsPerTime + sv_iCavities;
+    sv_Production.iRejectsInSeries := sv_Production.iRejectsInSeries + 1;
+ELSE
+    sv_Production.iRejectsInSeries := 0;
+END_IF;
+
+IF sv_Production.iRejectCounter > 0 THEN
+    sv_Production.iGoodPartsPerReject := (sv_iProdCounterAct - sv_Production.iRejectCounter) / sv_Production.iRejectCounter;
+END_IF;
+
+
+
+@END_Body 
+
+@@@BEG_Comment@@@ 
+@TL(12)
+@h    ! WARNING !
+@h    The Kemro K2 system (including software) only meets category B according to EN 954-1,
+@h    thus it is not intended for usage in safety-relevant control applications in the field 
+@h    of personal safety (e.g. emergency stop).
+@h    To implement potentially necessary safety-relevant control tasks, always use additional 
+@h    external safety devices that are intended for the particular purpose, and meet the necessary 
+@h    functional safety.
+@h    For further information see EN 954-1 (EN ISO 13849-1) and/or the K2-x00 user manual, chapter 
+@h    "CE conformity, directives and standards".
+
+called by ABShotCounter before shotcounter is increased, so sv_Production vars that can be recorded
+by PDP are written before sampled by PDP
+@@@END_Comment@@@ 
+
+@BEG_Body 
+@TL(14)
+(**************************************** WARNING ********************************************
+ *** The KEBA Kemro K2 System including software is not intended for safety control tasks! ***
+ ***                       For further information see Comment tab!                        ***
+ *********************************************************************************************)
+
+sv_Production.iRejectCounter := 0;
+sv_Production.iRejectsPerTime := 0;
+sv_Production.iGoodPartsPerReject := 2147483647;
+sv_Production.iRejectsInSeries := 0;
+
+miRejectsPerTime := 0;
+fbRtc();
+mdStartTime := fbRtc.CDT;
+
+@END_Body 
+
+@@@BEG_Comment@@@ 
+@TL(12)
+@h    ! WARNING !
+@h    The Kemro K2 system (including software) only meets category B according to EN 954-1,
+@h    thus it is not intended for usage in safety-relevant control applications in the field 
+@h    of personal safety (e.g. emergency stop).
+@h    To implement potentially necessary safety-relevant control tasks, always use additional 
+@h    external safety devices that are intended for the particular purpose, and meet the necessary 
+@h    functional safety.
+@h    For further information see EN 954-1 (EN ISO 13849-1) and/or the K2-x00 user manual, chapter 
+@h    "CE conformity, directives and standards".
+
+called by ABShotCounter when shotcounter is reset
+to clear all production statistics variables also
+@@@END_Comment@@@ 
+
+@BEG_Body 
+@TL(12)
+(**************************************** WARNING ********************************************
+ *** The KEBA Kemro K2 System including software is not intended for safety control tasks! ***
+ ***                       For further information see Comment tab!                        ***
+ *********************************************************************************************)
+       
+//reset bad part 
+// ATTENTION: lower prio than PDP MS Task so PDP has recorded these SVs before reset!
+
+sv_bBadPart := FALSE;
+sv_BadPartReason := nReason_GoodPart;
+
+
+@END_Body 
+
+@@@BEG_Comment@@@ 
+@TL(12)
+@h    ! WARNING !
+@h    The Kemro K2 system (including software) only meets category B according to EN 954-1,
+@h    thus it is not intended for usage in safety-relevant control applications in the field 
+@h    of personal safety (e.g. emergency stop).
+@h    To implement potentially necessary safety-relevant control tasks, always use additional 
+@h    external safety devices that are intended for the particular purpose, and meet the necessary 
+@h    functional safety.
+@h    For further information see EN 954-1 (EN ISO 13849-1) and/or the K2-x00 user manual, chapter 
+@h    "CE conformity, directives and standards".
+
+called when new cycle starts (shotcounter has just been increased) but lower prio than PDP recording
+so SVs to be recorded by PDP are sampled before reset
+@@@END_Comment@@@ 
+@END_Body 
+
+@END_Contents 

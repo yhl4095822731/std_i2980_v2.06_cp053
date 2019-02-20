@@ -1,0 +1,722 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<base:Mask xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xmlns:base="http://www.keba.at/viewedit.model.base" widgetId="kvs.mask" name="TimeSettingsMask">
+  <resolution width="714" height="476"/>
+  <position x="1" y="1"/>
+  <attributeValues key="Title" value="Time settings"/>
+  <attributeValues key="Icon" value="system/hmi/images/maskicons/iconTimeSet.gif"/>
+  <attributeValues key="Background" value="BG_Desktop:30,30,30"/>
+  <attributeValues key="DisplayLevel" value="2"/>
+  <widgetInstances xsi:type="base:MultiPageWidgetInstance" widgetId="keplast.kvs.tabpanelplast" name="tabPanelPlast1" layoutConstraint="CENTER">
+    <resolution width="714" height="476"/>
+    <position/>
+    <attributeValues key="Tabs" value="Movement delay, Tab1; Delay times, Tab2"/>
+    <attributeValues key="SelectedPage" value="1"/>
+    <pages widgetId="keplast.kvs.tabpanelplast.container" name="Tab1">
+      <resolution width="714" height="446"/>
+      <position/>
+      <attributeValues key="HelpSubID" value="movedelay"/>
+      <attributeValues key="Background" value="BG_Panel:220,220,220"/>
+      <widgetInstances xsi:type="base:ContainerWidgetInstance" widgetId="kvs.panel" name="panelMoveDelayLeft" layoutConstraint="LEFT">
+        <resolution width="351" height="440"/>
+        <position x="3"/>
+        <attributeValues key="PreferredSize" value="351, 446"/>
+        <widgetInstances xsi:type="base:ContainerWidgetInstance" widgetId="keplast.kvs.borderpanelsmall" name="panelMold" layoutConstraint="null">
+          <resolution width="351" height="95"/>
+          <position/>
+          <attributeValues key="Title" value="Mold"/>
+          <widgetInstances widgetId="keplast.kvs.actsetnumfieldtext" name="numfieldMoldCloseDelay" layoutConstraint="null">
+            <resolution width="345" height="29"/>
+            <position x="3" y="33"/>
+            <attributeValues key="Variable" value="Mold1.sv_MoldCloseTimesSet.dSetDelayTime"/>
+            <attributeValues key="VariableActual" value="Mold1.sv_MoldCloseTimesAct.dActDelayTime"/>
+          </widgetInstances>
+          <widgetInstances widgetId="keplast.kvs.actsetnumfieldtext" name="numfieldMoldOpenDelay" layoutConstraint="null">
+            <resolution width="345" height="29"/>
+            <position x="3" y="62"/>
+            <attributeValues key="Variable" value="Mold1.sv_MoldOpenTimesSet.dSetDelayTime"/>
+            <attributeValues key="VariableActual" value="Mold1.sv_MoldOpenTimesAct.dActDelayTime"/>
+          </widgetInstances>
+          <layout layoutID="kvs.layout.GridLayout" name="GridLayout">
+            <attributeValues key="Rows" value="2"/>
+            <attributeValues key="Columns" value="1"/>
+          </layout>
+        </widgetInstances>
+        <widgetInstances xsi:type="base:ContainerWidgetInstance" widgetId="keplast.kvs.borderpanelsmall" name="panelEjector" layoutConstraint="null">
+          <resolution width="351" height="95"/>
+          <position y="95"/>
+          <attributeValues key="Title" value="Ejector"/>
+          <widgetInstances widgetId="keplast.kvs.actsetnumfieldtext" name="numfieldEjectFwdDelay" layoutConstraint="null">
+            <resolution width="345" height="29"/>
+            <position x="3" y="33"/>
+            <attributeValues key="Variable" value="Ejector1.sv_EjectorFwdTimesSet.dSetDelayTime"/>
+            <attributeValues key="VariableActual" value="Ejector1.sv_EjectorFwdTimesAct.dActDelayTime"/>
+          </widgetInstances>
+          <widgetInstances widgetId="keplast.kvs.actsetnumfieldtext" name="numfieldEjectBwdDelay" layoutConstraint="null">
+            <resolution width="345" height="29"/>
+            <position x="3" y="62"/>
+            <attributeValues key="Variable" value="Ejector1.sv_EjectorBwdTimesSet.dSetDelayTime"/>
+            <attributeValues key="VariableActual" value="Ejector1.sv_EjectorBwdTimesAct.dActDelayTime"/>
+          </widgetInstances>
+          <layout layoutID="kvs.layout.GridLayout" name="GridLayout">
+            <attributeValues key="Rows" value="2"/>
+            <attributeValues key="Columns" value="1"/>
+          </layout>
+        </widgetInstances>
+        <widgetInstances xsi:type="base:ContainerWidgetInstance" widgetId="keplast.kvs.borderpanelsmall" name="panelMoldNuts" layoutConstraint="null">
+          <resolution width="351" height="95"/>
+          <position y="190"/>
+          <attributeValues key="Title" value="Mold nuts"/>
+          <dynamicAttributes key="Create">
+            <value function="doesDeviceExist : UserFunctions" equal="true" unequal="false">
+              <parameter key="1" value="devicename;PlastFunctionUtils.createDeviceName(&quot;MoldNuts1&quot;)"/>
+            </value>
+          </dynamicAttributes>
+          <widgetInstances widgetId="keplast.kvs.actsetnumfieldtext" name="numfieldNutsCloseDelay" layoutConstraint="null">
+            <resolution width="345" height="29"/>
+            <position x="3" y="33"/>
+            <attributeValues key="Variable" value="MoldNuts1.sv_NutsCloseTimesSet.dSetDelayTime"/>
+            <attributeValues key="VariableActual" value="MoldNuts1.sv_NutsCloseTimesAct.dActDelayTime"/>
+          </widgetInstances>
+          <widgetInstances widgetId="keplast.kvs.actsetnumfieldtext" name="numfieldNutsOpenDelay" layoutConstraint="null">
+            <resolution width="345" height="29"/>
+            <position x="3" y="62"/>
+            <attributeValues key="Variable" value="MoldNuts1.sv_NutsOpenTimesSet.dSetDelayTime"/>
+            <attributeValues key="VariableActual" value="MoldNuts1.sv_NutsOpenTimesAct.dActDelayTime"/>
+          </widgetInstances>
+          <layout layoutID="kvs.layout.GridLayout" name="GridLayout">
+            <attributeValues key="Rows" value="2"/>
+            <attributeValues key="Columns" value="1"/>
+          </layout>
+        </widgetInstances>
+        <widgetInstances xsi:type="base:ContainerWidgetInstance" widgetId="kvs.panel" name="container1" layoutConstraint="null">
+          <resolution width="351" height="155"/>
+          <position y="285"/>
+          <attributeValues key="PreferredSize" value="351, 155"/>
+          <widgetInstances xsi:type="base:ContainerWidgetInstance" widgetId="keplast.kvs.borderpanelsmall" name="pSlideTable" layoutConstraint="0,0,100,100">
+            <resolution width="351" height="155"/>
+            <position/>
+            <attributeValues key="Title" value="Slide Table"/>
+            <dynamicAttributes key="Create">
+              <value function="doesDeviceExist : UserFunctions" equal="true" unequal="false">
+                <parameter key="1" value="devicename;PlastFunctionUtils.createDeviceName(&quot;SlideTable1&quot;)"/>
+              </value>
+            </dynamicAttributes>
+            <widgetInstances widgetId="keplast.kvs.actsetnumfieldtext" name="fSlideOutDelay" layoutConstraint="null">
+              <resolution width="345" height="29"/>
+              <position x="3" y="34"/>
+              <attributeValues key="Variable" value="SlideTable1.sv_BwdTimesSet.dSetDelayTime"/>
+              <attributeValues key="VariableActual" value="SlideTable1.sv_BwdTimesAct.dActDelayTime"/>
+              <attributeValues key="Text" value="Slide Out"/>
+              <attributeValues key="_TextWidth" value="181"/>
+            </widgetInstances>
+            <widgetInstances widgetId="keplast.kvs.actsetnumfieldtext" name="fSlideInDelay" layoutConstraint="null">
+              <resolution width="345" height="29"/>
+              <position x="3" y="63"/>
+              <attributeValues key="TextLabelType" value="Short Variable Label"/>
+              <attributeValues key="Variable" value="SlideTable1.sv_FwdTimesSet.dSetDelayTime"/>
+              <attributeValues key="VariableActual" value="SlideTable1.sv_FwdTimesAct.dActDelayTime"/>
+              <attributeValues key="Text" value="Slide In"/>
+              <attributeValues key="_TextWidth" value="181"/>
+            </widgetInstances>
+            <widgetInstances widgetId="keplast.kvs.actsetnumfieldtext" name="fLockPinInDelay" layoutConstraint="null">
+              <resolution width="345" height="29"/>
+              <position x="3" y="92"/>
+              <attributeValues key="Variable" value="SlideTable1.sv_PinInTimesSet.dSetDelayTime"/>
+              <attributeValues key="VariableActual" value="SlideTable1.sv_PinInTimesAct.dActDelayTime"/>
+            </widgetInstances>
+            <widgetInstances widgetId="keplast.kvs.actsetnumfieldtext" name="fLockPinOutDelay" layoutConstraint="null">
+              <resolution width="345" height="29"/>
+              <position x="3" y="121"/>
+              <attributeValues key="Variable" value="SlideTable1.sv_PinOutTimesSet.dSetDelayTime"/>
+              <attributeValues key="VariableActual" value="SlideTable1.sv_PinOutTimesAct.dActDelayTime"/>
+            </widgetInstances>
+            <layout layoutID="kvs.layout.GridLayout" name="GridLayout">
+              <attributeValues key="Rows" value="4"/>
+              <attributeValues key="Columns" value="1"/>
+            </layout>
+          </widgetInstances>
+          <widgetInstances xsi:type="base:ContainerWidgetInstance" widgetId="keplast.kvs.borderpanelsmall" name="pRotaryTable" layoutConstraint="0,0,100,100">
+            <resolution width="351" height="155"/>
+            <position/>
+            <attributeValues key="PreferredSize" value="351, 155"/>
+            <attributeValues key="Title" value="Rotary Table"/>
+            <dynamicAttributes key="Create">
+              <value function="doesDeviceExist : UserFunctions" equal="true" unequal="false">
+                <parameter key="1" value="devicename;PlastFunctionUtils.createDeviceName(&quot;RotaryTable1&quot;)"/>
+              </value>
+            </dynamicAttributes>
+            <widgetInstances widgetId="keplast.kvs.actsetnumfieldtext" name="fDelayRotateCW" layoutConstraint="null">
+              <resolution width="345" height="29"/>
+              <position x="3" y="34"/>
+              <attributeValues key="Variable" value="RotaryTable1.sv_RotateCWTimesSet.dSetDelayTime"/>
+              <attributeValues key="VariableActual" value="RotaryTable1.sv_RotateCWTimesAct.dActDelayTime"/>
+              <attributeValues key="Text" value="Rotate CW"/>
+              <attributeValues key="_TextWidth" value="181"/>
+            </widgetInstances>
+            <widgetInstances xsi:type="base:ContainerWidgetInstance" widgetId="kvs.panel" name="container2" layoutConstraint="null">
+              <resolution width="345" height="29"/>
+              <position x="3" y="63"/>
+              <widgetInstances widgetId="keplast.kvs.actsetnumfieldtext" name="fDelayRotateCCW" layoutConstraint="0, 0, 100, 97">
+                <resolution width="345" height="28"/>
+                <position/>
+                <attributeValues key="Variable" value="RotaryTable1.sv_RotateCCWTimesSet.dSetDelayTime"/>
+                <attributeValues key="VariableActual" value="RotaryTable1.sv_RotateCCWTimesAct.dActDelayTime"/>
+                <attributeValues key="Text" value="Rotate CCW"/>
+                <attributeValues key="_TextWidth" value="181"/>
+                <dynamicAttributes key="Create">
+                  <value function="hasOption : UserFunctions" equal="true" unequal="false">
+                    <parameter key="1" value="devicename;PlastFunctionUtils.createDeviceName(&quot;RotaryTable1&quot;)"/>
+                    <parameter key="2" value="machineoptionid;system.hmi.MachineEquipment.SUB_OPTION_ROTARY_POSITION"/>
+                  </value>
+                </dynamicAttributes>
+              </widgetInstances>
+              <layout layoutID="kvs.layout.PercentLayout" name="PercentLayout"/>
+            </widgetInstances>
+            <widgetInstances widgetId="keplast.kvs.actsetnumfieldtext" name="fLockPinInDelay1" layoutConstraint="null">
+              <resolution width="345" height="29"/>
+              <position x="3" y="92"/>
+              <attributeValues key="Variable" value="RotaryTable1.sv_PinInTimesSet.dSetDelayTime"/>
+              <attributeValues key="VariableActual" value="RotaryTable1.sv_PinInTimesAct.dActDelayTime"/>
+            </widgetInstances>
+            <widgetInstances widgetId="keplast.kvs.actsetnumfieldtext" name="fLockPinOutDelay1" layoutConstraint="null">
+              <resolution width="345" height="29"/>
+              <position x="3" y="121"/>
+              <attributeValues key="Variable" value="RotaryTable1.sv_PinOutTimesSet.dSetDelayTime"/>
+              <attributeValues key="VariableActual" value="RotaryTable1.sv_PinOutTimesAct.dActDelayTime"/>
+            </widgetInstances>
+            <layout layoutID="kvs.layout.GridLayout" name="GridLayout">
+              <attributeValues key="Rows" value="4"/>
+              <attributeValues key="Columns" value="1"/>
+            </layout>
+          </widgetInstances>
+          <layout layoutID="kvs.layout.PercentLayout" name="PercentLayout"/>
+        </widgetInstances>
+        <layout layoutID="kvs.layout.VerticalFlowLayout" name="VerticalFlowLayout">
+          <attributeValues key="Hgap" value="0"/>
+          <attributeValues key="Vgap" value="0"/>
+          <attributeValues key="OuterGaps" value="false"/>
+        </layout>
+      </widgetInstances>
+      <widgetInstances xsi:type="base:ContainerWidgetInstance" widgetId="kvs.panel" name="panelMoveDelayRight" layoutConstraint="RIGHT">
+        <resolution width="351" height="440"/>
+        <position x="360"/>
+        <attributeValues key="PreferredSize" value="351, 446"/>
+        <widgetInstances xsi:type="base:ContainerWidgetInstance" widgetId="keplast.kvs.borderpanelsmall" name="panelInject" layoutConstraint="null">
+          <resolution width="351" height="95"/>
+          <position/>
+          <attributeValues key="Title" value="Inject"/>
+          <widgetInstances widgetId="keplast.kvs.actsetnumfieldtext" name="numfieldInjectDelay" layoutConstraint="null">
+            <resolution width="345" height="29"/>
+            <position x="3" y="33"/>
+            <attributeValues key="Variable" value="Injection1.sv_InjectTimesSet.dSetDelayTime"/>
+            <attributeValues key="VariableActual" value="Injection1.sv_InjectTimesAct.dActDelayTime"/>
+          </widgetInstances>
+          <layout layoutID="kvs.layout.GridLayout" name="GridLayout">
+            <attributeValues key="Rows" value="2"/>
+            <attributeValues key="Columns" value="1"/>
+          </layout>
+        </widgetInstances>
+        <widgetInstances xsi:type="base:ContainerWidgetInstance" widgetId="keplast.kvs.borderpanelsmall" name="panelDecompression" layoutConstraint="null">
+          <resolution width="351" height="95"/>
+          <position y="95"/>
+          <attributeValues key="Title" value="Decompression"/>
+          <widgetInstances widgetId="keplast.kvs.actsetnumfieldtext" name="numfieldDecompBeforeDelay" layoutConstraint="null">
+            <resolution width="345" height="29"/>
+            <position x="3" y="33"/>
+            <attributeValues key="Variable" value="Injection1.sv_DecompTimesSet.dSetDelayTime"/>
+            <attributeValues key="VariableActual" value="Injection1.sv_DecompTimesAct.dActDelayTime"/>
+          </widgetInstances>
+          <widgetInstances widgetId="keplast.kvs.actsetnumfieldtext" name="numfieldDecompAfterDelay" layoutConstraint="null">
+            <resolution width="345" height="29"/>
+            <position x="3" y="62"/>
+            <attributeValues key="Variable" value="Injection1.sv_DecompAfterTimesSet.dSetDelayTime"/>
+            <attributeValues key="VariableActual" value="Injection1.sv_DecompAfterTimesAct.dActDelayTime"/>
+          </widgetInstances>
+          <layout layoutID="kvs.layout.GridLayout" name="GridLayout">
+            <attributeValues key="Rows" value="2"/>
+            <attributeValues key="Columns" value="1"/>
+          </layout>
+        </widgetInstances>
+        <widgetInstances xsi:type="base:ContainerWidgetInstance" widgetId="keplast.kvs.borderpanelsmall" name="panelNozzle" layoutConstraint="null">
+          <resolution width="351" height="95"/>
+          <position y="190"/>
+          <attributeValues key="Title" value="Nozzle"/>
+          <widgetInstances widgetId="keplast.kvs.actsetnumfieldtext" name="numfieldNozzleFwdDelay" layoutConstraint="null">
+            <resolution width="345" height="29"/>
+            <position x="3" y="33"/>
+            <attributeValues key="Variable" value="Nozzle1.sv_NozzleFwdTimesSet.dSetDelayTime"/>
+            <attributeValues key="VariableActual" value="Nozzle1.sv_NozzleFwdTimesAct.dActDelayTime"/>
+          </widgetInstances>
+          <widgetInstances widgetId="keplast.kvs.actsetnumfieldtext" name="numfieldNozzleBwdDelay" layoutConstraint="null">
+            <resolution width="345" height="29"/>
+            <position x="3" y="62"/>
+            <attributeValues key="Variable" value="Nozzle1.sv_NozzleBwdTimesSet.dSetDelayTime"/>
+            <attributeValues key="VariableActual" value="Nozzle1.sv_NozzleBwdTimesAct.dActDelayTime"/>
+          </widgetInstances>
+          <layout layoutID="kvs.layout.GridLayout" name="GridLayout">
+            <attributeValues key="Rows" value="2"/>
+            <attributeValues key="Columns" value="1"/>
+          </layout>
+        </widgetInstances>
+        <widgetInstances xsi:type="base:ContainerWidgetInstance" widgetId="keplast.kvs.borderpanelsmall" name="pTieBars" layoutConstraint="null">
+          <resolution width="351" height="153"/>
+          <position y="285"/>
+          <attributeValues key="Title" value="Tiebars"/>
+          <dynamicAttributes key="Create">
+            <value function="doesDeviceExist : UserFunctions" equal="true" unequal="false">
+              <parameter key="1" value="devicename;PlastFunctionUtils.createDeviceName(&quot;TieBars1&quot;)"/>
+            </value>
+          </dynamicAttributes>
+          <widgetInstances widgetId="keplast.kvs.actsetnumfieldtext" name="fTieBarTargetDelay" layoutConstraint="null">
+            <resolution width="345" height="29"/>
+            <position x="3" y="33"/>
+            <attributeValues key="Variable" value="TieBars1.sv_TieBarTargetTimesSet[5].dSetDelayTime"/>
+            <attributeValues key="VariableActual" value="TieBars1.sv_dActTieBarTargetDelay"/>
+          </widgetInstances>
+          <widgetInstances widgetId="keplast.kvs.actsetnumfieldtext" name="fTieBarBwdDelay" layoutConstraint="null">
+            <resolution width="345" height="29"/>
+            <position x="3" y="62"/>
+            <attributeValues key="Variable" value="TieBars1.sv_TieBarBwdTimesSet[5].dSetDelayTime"/>
+            <attributeValues key="VariableActual" value="TieBars1.sv_TieBarBwdTimesAct[5].dActDelayTime"/>
+          </widgetInstances>
+          <widgetInstances widgetId="keplast.kvs.actsetnumfieldtext" name="fPressBuilUpDelay" layoutConstraint="null">
+            <resolution width="345" height="29"/>
+            <position x="3" y="91"/>
+            <attributeValues key="Variable" value="TieBars1.sv_HighPressureBuildUpTimesSet.dSetDelayTime"/>
+            <attributeValues key="VariableActual" value="TieBars1.sv_HighPressureBuildUpTimesAct.dActDelayTime"/>
+          </widgetInstances>
+          <widgetInstances widgetId="keplast.kvs.actsetnumfieldtext" name="fPressReleaseDelay" layoutConstraint="null">
+            <resolution width="345" height="29"/>
+            <position x="3" y="120"/>
+            <attributeValues key="Variable" value="TieBars1.sv_HighPressureReleaseTimesSet.dSetDelayTime"/>
+            <attributeValues key="VariableActual" value="TieBars1.sv_HighPressureReleaseTimesAct.dActDelayTime"/>
+          </widgetInstances>
+          <layout layoutID="kvs.layout.GridLayout" name="GridLayout">
+            <attributeValues key="Rows" value="4"/>
+            <attributeValues key="Columns" value="1"/>
+          </layout>
+        </widgetInstances>
+        <layout layoutID="kvs.layout.VerticalFlowLayout" name="VerticalFlowLayout">
+          <attributeValues key="Hgap" value="0"/>
+          <attributeValues key="Vgap" value="0"/>
+          <attributeValues key="OuterGaps" value="false"/>
+        </layout>
+      </widgetInstances>
+      <layout layoutID="keplast.kvs.layout.horizontalsplitlayout" name="HorizontalSplitLayout"/>
+    </pages>
+    <pages widgetId="keplast.kvs.tabpanelplast.container" name="Tab2">
+      <resolution width="714" height="446"/>
+      <position/>
+      <attributeValues key="Background" value="BG_Panel:220,220,220"/>
+      <attributeValues key="HelpSubID" value="delaytimes1"/>
+      <dynamicAttributes key="Create">
+        <value function="spezialCodeFunction : UserFunctions" equal="true" unequal="false">
+          <parameter key="1" value="javaresultfromstring; PlastFunctionUtils.createJavaResult(MachineEquipment.isDeviceHydraulic(&quot;Mold1&quot;) || MachineEquipment.isDeviceHydraulic(&quot;Ejector1&quot;) || MachineEquipment.isDeviceHydraulic(&quot;Injection1&quot;) || MachineEquipment.isDeviceHydraulic(&quot;Nozzle1&quot;))"/>
+        </value>
+      </dynamicAttributes>
+      <widgetInstances xsi:type="base:ContainerWidgetInstance" widgetId="kvs.panel" name="panelDelayTimesLeft1" layoutConstraint="LEFT">
+        <resolution width="351" height="440"/>
+        <position x="3"/>
+        <attributeValues key="PreferredSize" value="351, 447"/>
+        <widgetInstances xsi:type="base:ContainerWidgetInstance" widgetId="keplast.kvs.borderpanelsmall" name="brdpanelMold" layoutConstraint="null">
+          <resolution width="351" height="153"/>
+          <position/>
+          <attributeValues key="Title" value="Mold"/>
+          <widgetInstances xsi:type="base:ContainerWidgetInstance" widgetId="kvs.panel" name="panelHeaderDelayLeft" layoutConstraint="null">
+            <resolution width="345" height="29"/>
+            <position x="3" y="33"/>
+            <widgetInstances xsi:type="base:ContainerWidgetInstance" widgetId="kvs.panel" name="panelHeaderDelayLeftDummy1" layoutConstraint="null">
+              <resolution width="10" height="10"/>
+              <position x="3" y="9"/>
+              <layout layoutID="kvs.layout.PercentLayout" name="PercentLayout"/>
+            </widgetInstances>
+            <widgetInstances widgetId="keplast.kvs.klabeltip" name="labelPumpLeft" layoutConstraint="null">
+              <resolution width="63" height="29"/>
+              <position x="178"/>
+              <attributeValues key="Text" value="Pump on"/>
+              <attributeValues key="PreferredSize" value="63, 29"/>
+            </widgetInstances>
+            <widgetInstances widgetId="keplast.kvs.klabeltip" name="labelValveLeft" layoutConstraint="null">
+              <resolution width="63" height="29"/>
+              <position x="244"/>
+              <attributeValues key="Text" value="Valve off"/>
+              <attributeValues key="PreferredSize" value="63, 29"/>
+            </widgetInstances>
+            <widgetInstances xsi:type="base:ContainerWidgetInstance" widgetId="kvs.panel" name="panelHeaderDelayLeftDummy2" layoutConstraint="null">
+              <resolution width="35" height="10"/>
+              <position x="310" y="9"/>
+              <attributeValues key="PreferredSize" value="35, 10"/>
+              <layout layoutID="kvs.layout.PercentLayout" name="PercentLayout"/>
+            </widgetInstances>
+            <layout layoutID="keplast.kvs.layout.beanlayout" name="BeanLayout"/>
+          </widgetInstances>
+          <widgetInstances xsi:type="base:ContainerWidgetInstance" widgetId="kvs.panel" name="panelHeaderDelayUnitsLeft" layoutConstraint="null">
+            <resolution width="345" height="29"/>
+            <position x="3" y="62"/>
+            <widgetInstances xsi:type="base:ContainerWidgetInstance" widgetId="kvs.panel" name="panelUnitsLeft" layoutConstraint="EAST">
+              <resolution width="213" height="29"/>
+              <position x="132"/>
+              <attributeValues key="PreferredSize" value="213, 29"/>
+              <widgetInstances widgetId="keplast.kvs.varlabeltip" name="unitLabelPumpLeft" layoutConstraint="null">
+                <resolution width="61" height="29"/>
+                <position x="51"/>
+                <attributeValues key="TextLabelType" value="Unit Variable Label"/>
+                <attributeValues key="PreferredSize" value="61, 29"/>
+                <attributeValues key="Variable" value="Mold1.sv_MoldOpenTimesSet.dSetDelayTimePump"/>
+              </widgetInstances>
+              <widgetInstances widgetId="keplast.kvs.varlabeltip" name="unitLabelValveLeft" layoutConstraint="null">
+                <resolution width="61" height="29"/>
+                <position x="112"/>
+                <attributeValues key="TextLabelType" value="Unit Variable Label"/>
+                <attributeValues key="PreferredSize" value="61, 29"/>
+                <attributeValues key="Variable" value="Mold1.sv_MoldOpenTimesSet.dSetDelayTimeValve"/>
+              </widgetInstances>
+              <widgetInstances xsi:type="base:ContainerWidgetInstance" widgetId="kvs.panel" name="containerUnitDummyLeft" layoutConstraint="null">
+                <resolution width="40" height="10"/>
+                <position x="173" y="9"/>
+                <attributeValues key="PreferredSize" value="40, 10"/>
+                <layout layoutID="kvs.layout.PercentLayout" name="PercentLayout"/>
+              </widgetInstances>
+              <layout layoutID="kvs.layout.FlowLayout" name="FlowLayout">
+                <attributeValues key="Hgap" value="0"/>
+                <attributeValues key="Vgap" value="0"/>
+                <attributeValues key="Alignment" value="RIGHT"/>
+              </layout>
+            </widgetInstances>
+            <layout layoutID="kvs.layout.BorderLayout" name="BorderLayout"/>
+          </widgetInstances>
+          <widgetInstances widgetId="keplast.kvs.twonumfieldtext" name="twonumfieldMoldOpen" layoutConstraint="null">
+            <resolution width="345" height="29"/>
+            <position x="3" y="91"/>
+            <attributeValues key="Text" value="Mold open"/>
+            <attributeValues key="_TextWidth" value="143"/>
+            <attributeValues key="RemoveUnitLeft" value="true"/>
+            <attributeValues key="UnitVisibleRight" value="false"/>
+            <attributeValues key="VariableLeft" value="Mold1.sv_MoldOpenTimesSet.dSetDelayTimePump"/>
+            <attributeValues key="VariableRight" value="Mold1.sv_MoldOpenTimesSet.dSetDelayTimeValve"/>
+            <dynamicAttributes key="Create">
+              <value function="isDeviceHydraulic : UserFunctions" equal="true" unequal="false">
+                <parameter key="1" value="devicename; PlastFunctionUtils.createDeviceName(&quot;Mold1&quot;)"/>
+              </value>
+            </dynamicAttributes>
+          </widgetInstances>
+          <widgetInstances widgetId="keplast.kvs.twonumfieldtext" name="twonumfieldMoldClose" layoutConstraint="null">
+            <resolution width="345" height="29"/>
+            <position x="3" y="120"/>
+            <attributeValues key="Text" value="Mold close"/>
+            <attributeValues key="_TextWidth" value="143"/>
+            <attributeValues key="RemoveUnitLeft" value="true"/>
+            <attributeValues key="UnitVisibleRight" value="false"/>
+            <attributeValues key="VariableLeft" value="Mold1.sv_MoldCloseTimesSet.dSetDelayTimePump"/>
+            <attributeValues key="VariableRight" value="Mold1.sv_MoldCloseTimesSet.dSetDelayTimeValve"/>
+            <dynamicAttributes key="Create">
+              <value function="isDeviceHydraulic : UserFunctions" equal="true" unequal="false">
+                <parameter key="1" value="devicename; PlastFunctionUtils.createDeviceName(&quot;Mold1&quot;)"/>
+              </value>
+            </dynamicAttributes>
+          </widgetInstances>
+          <layout layoutID="kvs.layout.GridLayout" name="GridLayout">
+            <attributeValues key="Rows" value="4"/>
+            <attributeValues key="Columns" value="1"/>
+          </layout>
+        </widgetInstances>
+        <widgetInstances xsi:type="base:ContainerWidgetInstance" widgetId="keplast.kvs.borderpanelsmall" name="brdpanelEjector" layoutConstraint="null">
+          <resolution width="351" height="95"/>
+          <position y="153"/>
+          <attributeValues key="Title" value="Ejector"/>
+          <dynamicAttributes key="Create">
+            <value function="isDeviceHydraulic : UserFunctions" equal="true" unequal="false">
+              <parameter key="1" value="devicename; PlastFunctionUtils.createDeviceName(&quot;Ejector1&quot;)"/>
+            </value>
+          </dynamicAttributes>
+          <widgetInstances widgetId="keplast.kvs.twonumfieldtext" name="twoNumFieldtext1" layoutConstraint="null">
+            <resolution width="345" height="29"/>
+            <position x="3" y="33"/>
+            <attributeValues key="UnitVisibleRight" value="false"/>
+            <attributeValues key="RemoveUnitLeft" value="true"/>
+            <attributeValues key="Text" value="Ejector forward"/>
+            <attributeValues key="_TextWidth" value="143"/>
+            <attributeValues key="VariableLeft" value="Ejector1.sv_EjectorFwdTimesSet.dSetDelayTimePump"/>
+            <attributeValues key="VariableRight" value="Ejector1.sv_EjectorFwdTimesSet.dSetDelayTimeValve"/>
+          </widgetInstances>
+          <widgetInstances widgetId="keplast.kvs.twonumfieldtext" name="twoNumFieldtext2" layoutConstraint="null">
+            <resolution width="345" height="29"/>
+            <position x="3" y="62"/>
+            <attributeValues key="UnitVisibleRight" value="false"/>
+            <attributeValues key="RemoveUnitLeft" value="true"/>
+            <attributeValues key="Text" value="Ejector backward"/>
+            <attributeValues key="_TextWidth" value="143"/>
+            <attributeValues key="VariableLeft" value="Ejector1.sv_EjectorBwdTimesSet.dSetDelayTimePump"/>
+            <attributeValues key="VariableRight" value="Ejector1.sv_EjectorBwdTimesSet.dSetDelayTimeValve"/>
+          </widgetInstances>
+          <layout layoutID="kvs.layout.GridLayout" name="GridLayout">
+            <attributeValues key="Rows" value="2"/>
+            <attributeValues key="Columns" value="1"/>
+          </layout>
+        </widgetInstances>
+        <widgetInstances xsi:type="base:ContainerWidgetInstance" widgetId="keplast.kvs.borderpanelsmall" name="brdpanelMoldNuts" layoutConstraint="null">
+          <resolution width="351" height="95"/>
+          <position y="248"/>
+          <attributeValues key="Title" value="Mold nuts"/>
+          <dynamicAttributes key="Create">
+            <value function="doesDeviceExist : UserFunctions" equal="true" unequal="false">
+              <parameter key="1" value="devicename;PlastFunctionUtils.createDeviceName(&quot;MoldNuts1&quot;)"/>
+            </value>
+          </dynamicAttributes>
+          <widgetInstances widgetId="keplast.kvs.twonumfieldtext" name="twoNumNutsClose" layoutConstraint="null">
+            <resolution width="345" height="29"/>
+            <position x="3" y="33"/>
+            <attributeValues key="UnitVisibleRight" value="false"/>
+            <attributeValues key="RemoveUnitLeft" value="true"/>
+            <attributeValues key="VariableLeft" value="MoldNuts1.sv_NutsCloseTimesSet.dSetDelayTimePump"/>
+            <attributeValues key="VariableRight" value="MoldNuts1.sv_NutsCloseTimesSet.dSetDelayTimeValve"/>
+            <attributeValues key="Text" value="Mold nuts close"/>
+            <attributeValues key="_TextWidth" value="143"/>
+          </widgetInstances>
+          <widgetInstances widgetId="keplast.kvs.twonumfieldtext" name="twoNumFieldNutsOpen" layoutConstraint="null">
+            <resolution width="345" height="29"/>
+            <position x="3" y="62"/>
+            <attributeValues key="UnitVisibleRight" value="false"/>
+            <attributeValues key="RemoveUnitLeft" value="true"/>
+            <attributeValues key="Text" value="Mold nuts open"/>
+            <attributeValues key="_TextWidth" value="143"/>
+            <attributeValues key="VariableLeft" value="MoldNuts1.sv_NutsOpenTimesSet.dSetDelayTimePump"/>
+            <attributeValues key="VariableRight" value="MoldNuts1.sv_NutsOpenTimesSet.dSetDelayTimeValve"/>
+          </widgetInstances>
+          <layout layoutID="kvs.layout.GridLayout" name="GridLayout">
+            <attributeValues key="Rows" value="2"/>
+            <attributeValues key="Columns" value="1"/>
+          </layout>
+        </widgetInstances>
+        <widgetInstances xsi:type="base:ContainerWidgetInstance" widgetId="keplast.kvs.borderpanelsmall" name="brdpanelTieBars" layoutConstraint="null">
+          <resolution width="351" height="95"/>
+          <position y="343"/>
+          <attributeValues key="Title" value="Tiebars"/>
+          <dynamicAttributes key="Create">
+            <value function="doesDeviceExist : UserFunctions" equal="true" unequal="false">
+              <parameter key="1" value="devicename;PlastFunctionUtils.createDeviceName(&quot;TieBars1&quot;)"/>
+            </value>
+          </dynamicAttributes>
+          <widgetInstances widgetId="keplast.kvs.twonumfieldtext" name="twoNumFieldPressBuild" layoutConstraint="null">
+            <resolution width="345" height="29"/>
+            <position x="3" y="33"/>
+            <attributeValues key="UnitVisibleRight" value="false"/>
+            <attributeValues key="RemoveUnitLeft" value="true"/>
+            <attributeValues key="Text" value="Pressure build up"/>
+            <attributeValues key="_TextWidth" value="143"/>
+            <attributeValues key="VariableLeft" value="TieBars1.sv_HighPressureBuildUpTimesSet.dSetDelayTimePump"/>
+            <attributeValues key="VariableRight" value="TieBars1.sv_HighPressureBuildUpTimesSet.dSetDelayTimeValve"/>
+          </widgetInstances>
+          <widgetInstances widgetId="keplast.kvs.twonumfieldtext" name="twoNumFieldPressRelease" layoutConstraint="null">
+            <resolution width="345" height="29"/>
+            <position x="3" y="62"/>
+            <attributeValues key="UnitVisibleRight" value="false"/>
+            <attributeValues key="RemoveUnitLeft" value="true"/>
+            <attributeValues key="Text" value="Pressure release"/>
+            <attributeValues key="_TextWidth" value="143"/>
+            <attributeValues key="VariableLeft" value="TieBars1.sv_HighPressureReleaseTimesSet.dSetDelayTimePump"/>
+            <attributeValues key="VariableRight" value="TieBars1.sv_HighPressureReleaseTimesSet.dSetDelayTimeValve"/>
+          </widgetInstances>
+          <layout layoutID="kvs.layout.GridLayout" name="GridLayout">
+            <attributeValues key="Rows" value="2"/>
+            <attributeValues key="Columns" value="1"/>
+          </layout>
+        </widgetInstances>
+        <layout layoutID="kvs.layout.VerticalFlowLayout" name="VerticalFlowLayout">
+          <attributeValues key="Hgap" value="0"/>
+          <attributeValues key="Vgap" value="0"/>
+          <attributeValues key="OuterGaps" value="false"/>
+        </layout>
+      </widgetInstances>
+      <widgetInstances xsi:type="base:ContainerWidgetInstance" widgetId="kvs.panel" name="panelDelayTimesRight1" layoutConstraint="RIGHT">
+        <resolution width="351" height="440"/>
+        <position x="360"/>
+        <attributeValues key="PreferredSize" value="351, 461"/>
+        <widgetInstances xsi:type="base:ContainerWidgetInstance" widgetId="keplast.kvs.borderpanelsmall" name="brdpanelInject" layoutConstraint="null">
+          <resolution width="351" height="153"/>
+          <position/>
+          <attributeValues key="Title" value="Inject"/>
+          <widgetInstances xsi:type="base:ContainerWidgetInstance" widgetId="kvs.panel" name="panelHeaderDelayRight" layoutConstraint="null">
+            <resolution width="345" height="29"/>
+            <position x="3" y="33"/>
+            <widgetInstances xsi:type="base:ContainerWidgetInstance" widgetId="kvs.panel" name="panelHeaderDelayRightDummy1" layoutConstraint="null">
+              <resolution width="10" height="10"/>
+              <position x="3" y="9"/>
+              <layout layoutID="kvs.layout.PercentLayout" name="PercentLayout"/>
+            </widgetInstances>
+            <widgetInstances widgetId="keplast.kvs.klabeltip" name="labelPumpRight" layoutConstraint="null">
+              <resolution width="63" height="29"/>
+              <position x="178"/>
+              <attributeValues key="Text" value="Pump on"/>
+              <attributeValues key="PreferredSize" value="63, 29"/>
+            </widgetInstances>
+            <widgetInstances widgetId="keplast.kvs.klabeltip" name="labelValveRight" layoutConstraint="null">
+              <resolution width="63" height="29"/>
+              <position x="244"/>
+              <attributeValues key="Text" value="Valve off"/>
+              <attributeValues key="PreferredSize" value="63, 29"/>
+            </widgetInstances>
+            <widgetInstances xsi:type="base:ContainerWidgetInstance" widgetId="kvs.panel" name="panelHeaderDelayRightDummy" layoutConstraint="null">
+              <resolution width="35" height="10"/>
+              <position x="310" y="9"/>
+              <attributeValues key="PreferredSize" value="35, 10"/>
+              <layout layoutID="kvs.layout.PercentLayout" name="PercentLayout"/>
+            </widgetInstances>
+            <layout layoutID="keplast.kvs.layout.beanlayout" name="BeanLayout"/>
+          </widgetInstances>
+          <widgetInstances xsi:type="base:ContainerWidgetInstance" widgetId="kvs.panel" name="panelHeaderDelayUnitsRight" layoutConstraint="null">
+            <resolution width="345" height="29"/>
+            <position x="3" y="62"/>
+            <widgetInstances xsi:type="base:ContainerWidgetInstance" widgetId="kvs.panel" name="panelUnitsRight" layoutConstraint="NORTH">
+              <resolution width="345" height="29"/>
+              <position/>
+              <attributeValues key="PreferredSize" value="213, 29"/>
+              <widgetInstances widgetId="keplast.kvs.varlabeltip" name="unitLabelPumpRight" layoutConstraint="null">
+                <resolution width="61" height="29"/>
+                <position x="183"/>
+                <attributeValues key="TextLabelType" value="Unit Variable Label"/>
+                <attributeValues key="PreferredSize" value="61, 29"/>
+                <attributeValues key="Variable" value="Injection1.sv_InjectTimesSet.dSetDelayTimePump"/>
+              </widgetInstances>
+              <widgetInstances widgetId="keplast.kvs.varlabeltip" name="unitLabelValveRight" layoutConstraint="null">
+                <resolution width="61" height="29"/>
+                <position x="244"/>
+                <attributeValues key="TextLabelType" value="Unit Variable Label"/>
+                <attributeValues key="PreferredSize" value="61, 29"/>
+                <attributeValues key="Variable" value="Injection1.sv_InjectTimesSet.dSetDelayTimeValve"/>
+              </widgetInstances>
+              <widgetInstances xsi:type="base:ContainerWidgetInstance" widgetId="kvs.panel" name="containerUnitDummyRight" layoutConstraint="null">
+                <resolution width="40" height="10"/>
+                <position x="305" y="9"/>
+                <attributeValues key="PreferredSize" value="40, 10"/>
+                <layout layoutID="kvs.layout.PercentLayout" name="PercentLayout"/>
+              </widgetInstances>
+              <layout layoutID="kvs.layout.FlowLayout" name="FlowLayout">
+                <attributeValues key="Hgap" value="0"/>
+                <attributeValues key="Vgap" value="0"/>
+                <attributeValues key="Alignment" value="RIGHT"/>
+              </layout>
+            </widgetInstances>
+            <layout layoutID="kvs.layout.BorderLayout" name="BorderLayout"/>
+          </widgetInstances>
+          <widgetInstances widgetId="keplast.kvs.twonumfieldtext" name="twonumfieldInject" layoutConstraint="null">
+            <resolution width="345" height="29"/>
+            <position x="3" y="91"/>
+            <attributeValues key="UnitVisibleRight" value="false"/>
+            <attributeValues key="RemoveUnitLeft" value="true"/>
+            <attributeValues key="VariableLeft" value="Injection1.sv_InjectTimesSet.dSetDelayTimePump"/>
+            <attributeValues key="VariableRight" value="Injection1.sv_InjectTimesSet.dSetDelayTimeValve"/>
+            <attributeValues key="Text" value="Inject"/>
+            <attributeValues key="_TextWidth" value="143"/>
+            <dynamicAttributes key="Create">
+              <value function="isDeviceHydraulic : UserFunctions" equal="true" unequal="false">
+                <parameter key="1" value="devicename; PlastFunctionUtils.createDeviceName(&quot;Injection1&quot;)"/>
+              </value>
+            </dynamicAttributes>
+          </widgetInstances>
+          <layout layoutID="kvs.layout.GridLayout" name="GridLayout">
+            <attributeValues key="Rows" value="4"/>
+            <attributeValues key="Columns" value="1"/>
+          </layout>
+        </widgetInstances>
+        <widgetInstances xsi:type="base:ContainerWidgetInstance" widgetId="keplast.kvs.borderpanelsmall" name="brdpanelPlast" layoutConstraint="null">
+          <resolution width="351" height="95"/>
+          <position y="153"/>
+          <attributeValues key="Title" value="Plasticize"/>
+          <widgetInstances widgetId="keplast.kvs.twonumfieldtext" name="twonumfieldPlast" layoutConstraint="null">
+            <resolution width="345" height="29"/>
+            <position x="3" y="33"/>
+            <attributeValues key="UnitVisibleRight" value="false"/>
+            <attributeValues key="RemoveUnitLeft" value="true"/>
+            <attributeValues key="VariableLeft" value="Injection1.sv_PlastTimesSet.dSetDelayTimePump"/>
+            <attributeValues key="VariableRight" value="Injection1.sv_PlastTimesSet.dSetDelayTimeValve"/>
+            <attributeValues key="Text" value="Plasticize"/>
+            <attributeValues key="_TextWidth" value="143"/>
+            <dynamicAttributes key="Create">
+              <value function="isDeviceHydraulic : UserFunctions" equal="true" unequal="false">
+                <parameter key="1" value="devicename; PlastFunctionUtils.createDeviceName(&quot;Injection1&quot;)"/>
+              </value>
+            </dynamicAttributes>
+          </widgetInstances>
+          <layout layoutID="kvs.layout.GridLayout" name="GridLayout">
+            <attributeValues key="Rows" value="2"/>
+            <attributeValues key="Columns" value="1"/>
+          </layout>
+        </widgetInstances>
+        <widgetInstances xsi:type="base:ContainerWidgetInstance" widgetId="keplast.kvs.borderpanelsmall" name="brdpanelDecompression" layoutConstraint="null">
+          <resolution width="351" height="66"/>
+          <position y="248"/>
+          <attributeValues key="Title" value="Decompression"/>
+          <widgetInstances widgetId="keplast.kvs.twonumfieldtext" name="twonumfieldDecomp" layoutConstraint="null">
+            <resolution width="345" height="29"/>
+            <position x="3" y="33"/>
+            <attributeValues key="VariableLeft" value="Injection1.sv_DecompTimesSet.dSetDelayTimePump"/>
+            <attributeValues key="VariableRight" value="Injection1.sv_DecompTimesSet.dSetDelayTimeValve"/>
+            <attributeValues key="Text" value="Decompression"/>
+            <attributeValues key="_TextWidth" value="143"/>
+            <attributeValues key="RemoveUnitLeft" value="true"/>
+            <attributeValues key="UnitVisibleRight" value="false"/>
+            <dynamicAttributes key="Create">
+              <value function="isDeviceHydraulic : UserFunctions" equal="true" unequal="false">
+                <parameter key="1" value="devicename; PlastFunctionUtils.createDeviceName(&quot;Injection1&quot;)"/>
+              </value>
+            </dynamicAttributes>
+          </widgetInstances>
+          <layout layoutID="kvs.layout.GridLayout" name="GridLayout">
+            <attributeValues key="Columns" value="1"/>
+            <attributeValues key="Rows" value="1"/>
+          </layout>
+        </widgetInstances>
+        <widgetInstances xsi:type="base:ContainerWidgetInstance" widgetId="keplast.kvs.borderpanelsmall" name="brdpanelNozzle" layoutConstraint="null">
+          <resolution width="351" height="95"/>
+          <position y="314"/>
+          <attributeValues key="Title" value="Nozzle"/>
+          <widgetInstances widgetId="keplast.kvs.twonumfieldtext" name="twonumfieldNozzleFwd" layoutConstraint="null">
+            <resolution width="345" height="29"/>
+            <position x="3" y="33"/>
+            <attributeValues key="RemoveUnitLeft" value="true"/>
+            <attributeValues key="UnitVisibleRight" value="false"/>
+            <attributeValues key="Text" value="Nozzle forward"/>
+            <attributeValues key="_TextWidth" value="143"/>
+            <attributeValues key="VariableLeft" value="Nozzle1.sv_NozzleFwdTimesSet.dSetDelayTimePump"/>
+            <attributeValues key="VariableRight" value="Nozzle1.sv_NozzleFwdTimesSet.dSetDelayTimeValve"/>
+            <dynamicAttributes key="Create">
+              <value function="isDeviceHydraulic : UserFunctions" equal="true" unequal="false">
+                <parameter key="1" value="devicename; PlastFunctionUtils.createDeviceName(&quot;Nozzle1&quot;)"/>
+              </value>
+            </dynamicAttributes>
+          </widgetInstances>
+          <widgetInstances widgetId="keplast.kvs.twonumfieldtext" name="twonumfieldNozzleBwd" layoutConstraint="null">
+            <resolution width="345" height="29"/>
+            <position x="3" y="62"/>
+            <attributeValues key="UnitVisibleRight" value="false"/>
+            <attributeValues key="RemoveUnitLeft" value="true"/>
+            <attributeValues key="Text" value="Nozzle backward"/>
+            <attributeValues key="_TextWidth" value="143"/>
+            <attributeValues key="VariableLeft" value="Nozzle1.sv_NozzleBwdTimesSet.dSetDelayTimePump"/>
+            <attributeValues key="VariableRight" value="Nozzle1.sv_NozzleBwdTimesSet.dSetDelayTimeValve"/>
+            <dynamicAttributes key="Create">
+              <value function="isDeviceHydraulic : UserFunctions" equal="true" unequal="false">
+                <parameter key="1" value="devicename; PlastFunctionUtils.createDeviceName(&quot;Nozzle1&quot;)"/>
+              </value>
+            </dynamicAttributes>
+          </widgetInstances>
+          <layout layoutID="kvs.layout.GridLayout" name="GridLayout">
+            <attributeValues key="Rows" value="2"/>
+            <attributeValues key="Columns" value="1"/>
+          </layout>
+        </widgetInstances>
+        <layout layoutID="kvs.layout.VerticalFlowLayout" name="VerticalFlowLayout">
+          <attributeValues key="Hgap" value="0"/>
+          <attributeValues key="Vgap" value="0"/>
+          <attributeValues key="OuterGaps" value="false"/>
+        </layout>
+      </widgetInstances>
+      <layout layoutID="keplast.kvs.layout.horizontalsplitlayout" name="HorizontalSplitLayout"/>
+    </pages>
+    <layout layoutID="kvs.layout.xylayout" name="null"/>
+    <contentPanePosition y="30"/>
+    <contentPaneResolution width="714" height="446"/>
+  </widgetInstances>
+  <layout layoutID="kvs.layout.BorderLayout" name="BorderLayout"/>
+</base:Mask>

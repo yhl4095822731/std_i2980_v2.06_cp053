@@ -1,0 +1,700 @@
+(*
+@h    ! WARNING !
+@h    The Kemro K2 system (including software) only meets category B according to EN 954-1,
+@h    thus it is not intended for usage in safety-relevant control applications in the field 
+@h    of personal safety (e.g. emergency stop).
+@h    To implement potentially necessary safety-relevant control tasks, always use additional 
+@h    external safety devices that are intended for the particular purpose, and meet the necessary 
+@h    functional safety.
+@h    For further information see EN 954-1 (EN ISO 13849-1) and/or the K2-x00 user manual, chapter 
+@h    "CE conformity, directives and standards".
+
+This algorithm block is used for mold protect detection
+
+function:
+When movement is active and in protect stage a timer is started.
+If movement stops in protect stage (button released) and continues again then the timer will also continue. 
+If timer is equal the allowed time (dProtectTime) a protection error is detected and
+all mold fwd movements are locked automatically.
+Furthermore a protect event (evProtect) is sent. 
+After pressing the alarm confirm button, the mold fwd movements will be unlocked.
+
+@FunctionID: S_KPIEC_ALAOP_02
+*)
+
+IMPORT_OVER_LISTFILE
+ cCompMold
+, tevAlarmConfirm
+, tevProtect
+, tsDeviceId
+, ALARM_EVENT
+, tnOperationMode
+, tnLockUnlock
+, FBLockUnlock
+, KAPPL_VisProfile
+, TON
+, R_TRIG
+, tevProtectData
+, ALARM_EVENT_DATA
+, tevAlarmConfirmData
+
+END_IMPORT
+
+ALGORITHM_BLOCK ABMoldProtection #DUMMY_EDIT_BLOCK
+
+SYSTEM_VAR
+ sv_DeviceId : tsDeviceId;
+ sv_bInitDone : BOOL;
+ sv_iActMoldProtectRetry : DINT;
+ sv_iSetMoldProtectRetry : DINT;
+ sv_bOpenAfterProtect : BOOL;
+ sv_OperationMode : tnOperationMode;
+END_VAR
+
+SYSTEM_OBJECT
+ erMoldProtection : ALARM;
+ EV_Task_7 : TASK;
+ evAlarmConfirm : tevAlarmConfirm;
+ evProtect : tevProtect;
+ evAlarmAutoManual : ALARM_EVENT;
+END_OBJECT
+
+(*
+This algorithm locks/unlocks all mold fwd movements
+*)
+
+ALGORITHM aLockUnlock
+
+
+VAR_INPUT
+ nMode : tnLockUnlock;
+END_VAR
+
+VAR
+ bInitDone : BOOL;
+ fbLockUnlock : FBLockUnlock;
+END_VAR
+#BEGIN_EDIT_BLOCK
+(**************************************** WARNING ********************************************
+ *** The KEBA Kemro K2 System including software is not intended for safety control tasks! ***
+ ***                       For further information see Comment tab!                        ***
+ *********************************************************************************************)
+
+IF NOT sv_bInitDone THEN
+   RETURN;
+END_IF;
+
+IF NOT bInitDone THEN
+   fbLockUnlock.DeviceId.CompId := cCompMold;
+   fbLockUnlock.DeviceId.IndexId := 1;
+   fbLockUnlock.MoveDir := cMoveFwd;
+   fbLockUnlock.MoveId := cMoveAll;
+   fbLockUnlock.Alarm.AlarmId := erMoldProtection;
+   bInitDone := TRUE;
+END_IF;
+
+fbLockUnlock.Mode := nMode;
+
+//lock all mold fwd movements
+fbLockUnlock();
+
+
+;#END_EDIT_BLOCK END_ALGORITHM
+
+(*
+In this algorithm the detection of protect erros is done
+*)
+
+ALGORITHM aRun
+
+
+VAR_INPUT
+ bMovementActive : BOOL (* activate detection *);
+ rActPosition : REAL (* actual mold position *);
+ pVisProfile : REFTO KAPPL_VisProfile (* pointer to mold close profile *);
+ dProtectTime : TIME (* set mold protect time *);
+END_VAR
+
+VAR_OUTPUT
+ dActTime : TIME (* elapsed protect time *);
+ bMoldProtectError : BOOL (* mold protect error detected *);
+END_VAR
+
+VAR
+ fbTonProtect : TON;
+ fbRTrigActive : R_TRIG;
+ rProtectStartPos : REAL (* startposition of mold protect *);
+ rProtectEndPos : REAL (* endposition of mold protect *);
+ dLastProtectTime : TIME;
+ dAllowedProtectTime : TIME;
+ evProtectData : tevProtectData;
+ evAlarmAutoManualData : ALARM_EVENT_DATA;
+ bProtectOnce : BOOL;
+ dummy : DINT;
+END_VAR
+#BEGIN_EDIT_BLOCK
+(**************************************** WARNING ********************************************
+ *** The KEBA Kemro K2 System including software is not intended for safety control tasks! ***
+ ***                       For further information see Comment tab!                        ***
+ *********************************************************************************************)
+
+rProtectStartPos := pVisProfile^.Profile.Points[(pVisProfile^.Profile.iNoOfPoints-1)].rStartPos;
+rProtectEndPos := pVisProfile^.Profile.Points[pVisProfile^.Profile.iNoOfPoints].rStartPos;
+
+fbRTrigActive(CLK := bMovementActive);
+IF fbRTrigActive.Q THEN
+    IF (rActPosition < rProtectStartPos) AND (rActPosition > rProtectEndPos) AND NOT bMoldProtectError THEN
+       //movement started and mold already in mold protect area and no protect error occured at last mold move
+       dLastProtectTime := dActTime; //save elapsed time from last mold movement and continue timer
+    ELSE
+       //mold out of protect area at start of movement or mold protect error occured last time 
+       dLastProtectTime := t#0.0s;
+    END_IF;
+    
+    dAllowedProtectTime := dProtectTime - dLastProtectTime;
+    fbTonProtect(IN := FALSE);
+    bProtectOnce := FALSE;
+   
+END_IF;
+
+IF bMovementActive THEN
+   IF (rActPosition < rProtectStartPos) AND rActPosition > rProtectEndPos THEN 
+      // mold in mold protection area
+      fbTonProtect(IN := TRUE,
+                   PT := dAllowedProtectTime);
+      dActTime := fbTonProtect.ET + dLastProtectTime;
+   ELSE
+      //mold outside mold protect area
+      fbTonProtect(IN := FALSE);
+   END_IF;
+
+   bMoldProtectError := fbTonProtect.Q;
+   
+   IF fbTonProtect.Q AND NOT bProtectOnce THEN
+      dummy := Print('send mold protect event');
+            
+      IF (sv_OperationMode > nManual) AND sv_bOpenAfterProtect AND (sv_iActMoldProtectRetry < sv_iSetMoldProtectRetry) THEN
+         //only switch opmode, no alarm or buzzer
+         SET_EVENT(evAlarmAutoManual, evAlarmAutoManualData);
+      ELSE
+          //lock all mold fwd movements
+         aLockUnlock(nMode := nLockAbort);
+      END_IF;
+    
+      //send protect event
+      evProtectData.DeviceIdSender := sv_DeviceId;
+      evProtectData.DeviceIdReceiver.CompId := cCompMold;
+      evProtectData.DeviceIdReceiver.IndexId := 1;
+      SET_EVENT(evProtect, evProtectData);
+   END_IF;
+   
+   bProtectOnce := fbTonProtect.Q;
+END_IF;
+
+
+;#END_EDIT_BLOCK END_ALGORITHM
+
+(*
+This event algorithm reacts on pressing the alarm confirm button.
+After alarm confirmation all mold fwd movements are unlocked
+*)
+
+EVENT_ALGORITHM evaAlarmConfirm ON EV_Task_7 WITH evAlarmConfirm
+
+
+VAR_INPUT
+ evAlarmConfirmData : tevAlarmConfirmData;
+END_VAR
+#BEGIN_EDIT_BLOCK
+(**************************************** WARNING ********************************************
+ *** The KEBA Kemro K2 System including software is not intended for safety control tasks! ***
+ ***                       For further information see Comment tab!                        ***
+ *********************************************************************************************)
+
+//unlock all mold fwd movements when alarm confirm button is pressed
+aLockUnlock(nMode := nUnlock);
+
+
+
+;#END_EDIT_BLOCK END_ALGORITHM
+
+
+
+END_ALGORITHM_BLOCK
+
+
+
+#END_OF_IEC_PART
+
+@Puma @IecEditor 6 68 @Pou 25 
+@@@BEG_Comment@@@
+@h    ! WARNING !
+@h    The Kemro K2 system (including software) only meets category B according to EN 954-1,
+@h    thus it is not intended for usage in safety-relevant control applications in the field 
+@h    of personal safety (e.g. emergency stop).
+@h    To implement potentially necessary safety-relevant control tasks, always use additional 
+@h    external safety devices that are intended for the particular purpose, and meet the necessary 
+@h    functional safety.
+@h    For further information see EN 954-1 (EN ISO 13849-1) and/or the K2-x00 user manual, chapter 
+@h    "CE conformity, directives and standards".
+
+This algorithm block is used for mold protect detection
+
+function:
+When movement is active and in protect stage a timer is started.
+If movement stops in protect stage (button released) and continues again then the timer will also continue. 
+If timer is equal the allowed time (dProtectTime) a protection error is detected and
+all mold fwd movements are locked automatically.
+Furthermore a protect event (evProtect) is sent. 
+After pressing the alarm confirm button, the mold fwd movements will be unlocked.
+
+@FunctionID: S_KPIEC_ALAOP_02
+@@@END_Comment@@@
+
+@BEG_Contents 
+
+@BEG_Func 
+@RT(17)FuncTreeContainer 
+0 
+@END_Func 
+
+@BEG_Const 
+@RT(18)ConstTreeContainer 
+1 
+@Var @RT(9)cCompMold @RT(0) @T @F @DT @RT(4)DINT @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+0 @RT(3)101 @RT(14)Component Mold 
+@END_Attrib 
+1 1 @F @F @F @F 
+
+@END_Const 
+
+@BEG_Export 
+
+@BEG_Kind 
+@ALGORITHM_BLOCK @RT(16)ABMoldProtection @STRUCTURED_TEXT 
+@RT(0) @RT(0) @RT(0) 
+@END_Kind 
+
+@BEG_Dcl 
+@RT(16)DclTreeContainer 
+11 
+@Var @RT(16)erMoldProtection @RT(0) @T @F @DT @RT(5)ALARM @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 7 @F @F @F @F 
+
+@Var @RT(9)EV_Task_7 @RT(0) @T @F @DT @RT(4)TASK @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 7 @F @F @F @F 
+
+@Var @RT(14)evAlarmConfirm @RT(0) @T @T @RENAMED 0 @T @T @DT @RT(15)tevAlarmConfirm @RT(0) @T @T @UNKNOWN 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 7 @F @F @F @F 
+
+@Var @RT(9)evProtect @RT(0) @T @T @DERIVED 0 @T @T @DT @RT(10)tevProtect @RT(0) @T @T @UNKNOWN 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 7 @F @F @F @F 
+
+@Var @RT(11)sv_DeviceId @RT(0) @T @T @DERIVED 0 @T @T @DT @RT(10)tsDeviceId @RT(0) @T @T @UNKNOWN 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 8 @F @F @F @F 
+
+@Var @RT(12)sv_bInitDone @RT(0) @T @T @RENAMED 0 @T @T @DT @RT(4)BOOL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 8 @F @F @F @F 
+
+@Var @RT(23)sv_iActMoldProtectRetry @RT(0) @T @F @DT @RT(4)DINT @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 8 @F @F @F @F 
+
+@Var @RT(23)sv_iSetMoldProtectRetry @RT(0) @T @F @DT @RT(4)DINT @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 8 @F @F @F @F 
+
+@Var @RT(17)evAlarmAutoManual @RT(0) @T @T @RENAMED 0 @T @T @DT @RT(11)ALARM_EVENT @RT(0) @T @T @UNKNOWN 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 7 @F @F @F @F 
+
+@Var @RT(20)sv_bOpenAfterProtect @RT(0) @T @F @DT @RT(4)BOOL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 8 @F @F @F @F 
+
+@Var @RT(16)sv_OperationMode @RT(0) @T @T @DERIVED 0 @F @RT(15)tnOperationMode @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 8 @F @F @F @F 
+
+@END_Dcl 
+
+@END_Export 
+
+@BEG_Body 
+
+3 
+
+@BEG_Export 
+
+@BEG_Algo 
+@ALGORITHM @RT(11)aLockUnlock @STRUCTURED_TEXT 
+@RT(0) @RT(0) @RT(0) @F @F 
+@END_Algo 
+
+@BEG_Dcl 
+@RT(16)DclTreeContainer 
+3 
+@Var @RT(5)nMode @RT(0) @T @T @DERIVED 0 @T @T @DT @RT(12)tnLockUnlock @RT(0) @T @T @UNKNOWN 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 1 @F @F @F @F 
+
+@Var @RT(9)bInitDone @RT(0) @T @F @DT @RT(4)BOOL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(12)fbLockUnlock @RT(0) @T @T @DERIVED 0 @T @T @DT @RT(12)FBLockUnlock @RT(0) @T @T @UNKNOWN 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@END_Dcl 
+
+@END_Export 
+
+@BEG_Export 
+
+@BEG_Algo 
+@ALGORITHM @RT(4)aRun @STRUCTURED_TEXT 
+@RT(0) @RT(0) @RT(0) @F @F 
+@END_Algo 
+
+@BEG_Dcl 
+@RT(16)DclTreeContainer 
+16 
+@Var @RT(15)bMovementActive @RT(0) @T @F @DT @RT(4)BOOL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(18)activate detection @RT(0) 
+@END_Attrib 
+1 1 @F @F @F @F 
+
+@Var @RT(12)rActPosition @RT(0) @T @F @DT @RT(4)REAL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(20)actual mold position @RT(0) 
+@END_Attrib 
+1 1 @F @F @F @F 
+
+@Var @RT(11)pVisProfile @RT(0) @T @T @REFTO 0 @F @DERIVED 0 @T @T @DT @RT(16)KAPPL_VisProfile @RT(0) @T @T @UNKNOWN 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(29)pointer to mold close profile @RT(0) 
+@END_Attrib 
+1 1 @F @F @F @F 
+
+@Var @RT(12)dProtectTime @RT(0) @T @F @DT @RT(4)TIME @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(21)set mold protect time @RT(0) 
+@END_Attrib 
+1 1 @F @F @F @F 
+
+@Var @RT(8)dActTime @RT(0) @T @F @DT @RT(4)TIME @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(20)elapsed protect time @RT(0) 
+@END_Attrib 
+1 3 @F @F @F @F 
+
+@Var @RT(17)bMoldProtectError @RT(0) @T @F @DT @RT(4)BOOL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(27)mold protect error detected @RT(0) 
+@END_Attrib 
+1 3 @F @F @F @F 
+
+@Var @RT(12)fbTonProtect @RT(0) @T @T @DERIVED 0 @T @T @DT @RT(3)TON @RT(0) @T @T @UNKNOWN 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(13)fbRTrigActive @RT(0) @T @T @DERIVED 0 @T @T @DT @RT(6)R_TRIG @RT(0) @T @T @UNKNOWN 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(16)rProtectStartPos @RT(0) @T @F @DT @RT(4)REAL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(29)startposition of mold protect @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(14)rProtectEndPos @RT(0) @T @F @DT @RT(4)REAL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(27)endposition of mold protect @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(16)dLastProtectTime @RT(0) @T @F @DT @RT(4)TIME @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(19)dAllowedProtectTime @RT(0) @T @F @DT @RT(4)TIME @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(13)evProtectData @RT(0) @T @T @DERIVED 0 @T @T @DT @RT(14)tevProtectData @RT(0) @T @T @UNKNOWN 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(21)evAlarmAutoManualData @RT(0) @T @T @DERIVED 0 @T @T @DT @RT(16)ALARM_EVENT_DATA @RT(0) @T @T @UNKNOWN 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(12)bProtectOnce @RT(0) @T @F @DT @RT(4)BOOL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(5)dummy @RT(0) @T @F @DT @RT(4)DINT @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@END_Dcl 
+
+@END_Export 
+
+@BEG_Export 
+
+@BEG_Algo 
+@EVENT_ALGORITHM @RT(15)evaAlarmConfirm @STRUCTURED_TEXT 
+@RT(0) @RT(14)evAlarmConfirm @RT(9)EV_Task_7 @F @F 
+@END_Algo 
+
+@BEG_Dcl 
+@RT(16)DclTreeContainer 
+1 
+@Var @RT(18)evAlarmConfirmData @RT(0) @T @T @DERIVED 0 @T @T @DT @RT(19)tevAlarmConfirmData @RT(0) @T @T @UNKNOWN 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 1 @F @F @F @F 
+
+@END_Dcl 
+
+@END_Export 
+
+@BEG_Body 
+@TL(23)
+(**************************************** WARNING ********************************************
+ *** The KEBA Kemro K2 System including software is not intended for safety control tasks! ***
+ ***                       For further information see Comment tab!                        ***
+ *********************************************************************************************)
+
+IF NOT sv_bInitDone THEN
+   RETURN;
+END_IF;
+
+IF NOT bInitDone THEN
+   fbLockUnlock.DeviceId.CompId := cCompMold;
+   fbLockUnlock.DeviceId.IndexId := 1;
+   fbLockUnlock.MoveDir := cMoveFwd;
+   fbLockUnlock.MoveId := cMoveAll;
+   fbLockUnlock.Alarm.AlarmId := erMoldProtection;
+   bInitDone := TRUE;
+END_IF;
+
+fbLockUnlock.Mode := nMode;
+
+//lock all mold fwd movements
+fbLockUnlock();
+
+@END_Body 
+
+@@@BEG_Comment@@@ 
+@TL(1)
+This algorithm locks/unlocks all mold fwd movements
+@@@END_Comment@@@ 
+
+@BEG_Body 
+@TL(58)
+(**************************************** WARNING ********************************************
+ *** The KEBA Kemro K2 System including software is not intended for safety control tasks! ***
+ ***                       For further information see Comment tab!                        ***
+ *********************************************************************************************)
+
+rProtectStartPos := pVisProfile^.Profile.Points[(pVisProfile^.Profile.iNoOfPoints-1)].rStartPos;
+rProtectEndPos := pVisProfile^.Profile.Points[pVisProfile^.Profile.iNoOfPoints].rStartPos;
+
+fbRTrigActive(CLK := bMovementActive);
+IF fbRTrigActive.Q THEN
+    IF (rActPosition < rProtectStartPos) AND (rActPosition > rProtectEndPos) AND NOT bMoldProtectError THEN
+       //movement started and mold already in mold protect area and no protect error occured at last mold move
+       dLastProtectTime := dActTime; //save elapsed time from last mold movement and continue timer
+    ELSE
+       //mold out of protect area at start of movement or mold protect error occured last time 
+       dLastProtectTime := t#0.0s;
+    END_IF;
+    
+    dAllowedProtectTime := dProtectTime - dLastProtectTime;
+    fbTonProtect(IN := FALSE);
+    bProtectOnce := FALSE;
+   
+END_IF;
+
+IF bMovementActive THEN
+   IF (rActPosition < rProtectStartPos) AND rActPosition > rProtectEndPos THEN 
+      // mold in mold protection area
+      fbTonProtect(IN := TRUE,
+                   PT := dAllowedProtectTime);
+      dActTime := fbTonProtect.ET + dLastProtectTime;
+   ELSE
+      //mold outside mold protect area
+      fbTonProtect(IN := FALSE);
+   END_IF;
+
+   bMoldProtectError := fbTonProtect.Q;
+   
+   IF fbTonProtect.Q AND NOT bProtectOnce THEN
+      dummy := Print('send mold protect event');
+            
+      IF (sv_OperationMode > nManual) AND sv_bOpenAfterProtect AND (sv_iActMoldProtectRetry < sv_iSetMoldProtectRetry) THEN
+         //only switch opmode, no alarm or buzzer
+         SET_EVENT(evAlarmAutoManual, evAlarmAutoManualData);
+      ELSE
+          //lock all mold fwd movements
+         aLockUnlock(nMode := nLockAbort);
+      END_IF;
+    
+      //send protect event
+      evProtectData.DeviceIdSender := sv_DeviceId;
+      evProtectData.DeviceIdReceiver.CompId := cCompMold;
+      evProtectData.DeviceIdReceiver.IndexId := 1;
+      SET_EVENT(evProtect, evProtectData);
+   END_IF;
+   
+   bProtectOnce := fbTonProtect.Q;
+END_IF;
+
+@END_Body 
+
+@@@BEG_Comment@@@ 
+@TL(1)
+In this algorithm the detection of protect erros is done
+@@@END_Comment@@@ 
+
+@BEG_Body 
+@TL(9)
+(**************************************** WARNING ********************************************
+ *** The KEBA Kemro K2 System including software is not intended for safety control tasks! ***
+ ***                       For further information see Comment tab!                        ***
+ *********************************************************************************************)
+
+//unlock all mold fwd movements when alarm confirm button is pressed
+aLockUnlock(nMode := nUnlock);
+
+
+@END_Body 
+
+@@@BEG_Comment@@@ 
+@TL(2)
+This event algorithm reacts on pressing the alarm confirm button.
+After alarm confirmation all mold fwd movements are unlocked
+@@@END_Comment@@@ 
+@END_Body 
+
+@END_Contents 

@@ -1,0 +1,1053 @@
+(*
+ATTENTION: Task for paOut is maybe mapped to another task because Inject and Mold run with 1ms
+*)
+
+IMPORT_OVER_LISTFILE
+ WRITE_SVREAL_DIRECT
+, cMoveAll
+, nLockAbort
+, cMaxDeviceMovements
+, cMoveNone
+, nUnlock
+, nOperationState_AF
+, tsTraceLevel
+, tsServo
+, KHW_Servo_Data
+, FBDebugTrace
+, tsPQForce
+
+END_IMPORT
+
+ALGORITHM_BLOCK ABOutSpeedPump #DUMMY_EDIT_BLOCK
+
+SYSTEM_VAR
+ sv_TraceLevel : tsTraceLevel;
+ sv_Servo : tsServo;
+ sv_bInitDone : BOOL;
+ sv_bEmergencyStop : BOOL;
+ sv_KHW_Servo_setValue : KHW_Servo_Data;
+ sv_ForceP : tsPQForce (* pressure force  *);
+ sv_ForceQ : tsPQForce (* flow force *);
+ sv_rDrivePressure : REAL;
+ sv_rDriveVelocity : REAL;
+END_VAR
+
+SYSTEM_OBJECT
+ TaskMid : TASK;
+ TaskAnalog : TASK (* ATTENTION: MAYBE MAPPED *);
+ PU_Task_7 : TASK;
+END_OBJECT
+
+VAR
+ fbDebugTrace : FBDebugTrace;
+ mbInitDone : BOOL;
+ mbStop : BOOL;
+ mbDriveError : BOOL;
+ mbForceStarted : BOOL;
+END_VAR
+
+PROCESS_ALGORITHM paInit ON TaskMid AUTOSTART
+
+
+VAR
+ bInit : BOOL;
+END_VAR
+#BEGIN_EDIT_BLOCK
+(**************************************** WARNING ********************************************
+ *** The KEBA Kemro K2 System including software is not intended for safety control tasks! ***
+ ***                       For further information see Comment tab!                        ***
+ *********************************************************************************************)
+IF NOT IS_LINKED(sv_KHW_Servo_setValue) THEN
+    RETURN;
+END_IF;    
+
+IF NOT bInit AND sv_bInitDone THEN
+   
+   bInit := TRUE;     
+   IF NOT IS_LINKED(sv_Servo) THEN
+      IF sv_TraceLevel.bAnalog THEN
+         fbDebugTrace.sText := 'ABOutSpeedPump.paInit: sv_Servo not linked';
+         fbDebugTrace();
+      END_IF;
+   END_IF;
+END_IF;
+
+IF bInit THEN
+   // all required data for analog output are ok -> start DriveInit
+   IF sv_Servo.bInitDone THEN
+      mbInitDone := TRUE;
+      STOP_PROCESS_ALGORITHM();
+   ELSE
+      sv_Servo.bInitStart := TRUE;            
+   END_IF;
+ELSIF sv_bInitDone THEN
+   STOP_PROCESS_ALGORITHM();
+END_IF;
+
+
+
+;#END_EDIT_BLOCK END_ALGORITHM
+
+PROCESS_ALGORITHM paOut ON TaskAnalog(15001)
+
+
+VAR_TEMP
+ b : BOOL;
+END_VAR
+
+(* IecGraph-Code *)
+
+(* init step *)
+INITIAL_STEP INIT:
+END_STEP
+
+
+(* steps *)
+STEP OUT:
+aOut (N);
+END_STEP
+
+STEP IDLE_OUT:
+aStopOut (P);
+END_STEP
+
+STEP STOP:
+aStopOut (P);
+Action3 (P);
+END_STEP
+
+ACTION Action3: #BEGIN_EDIT_BLOCK
+IF mbStop OR mbDriveError OR sv_bEmergencyStop THEN
+   STOP_PROCESS_ALGORITHM();
+END_IF;
+
+;#END_EDIT_BLOCK END_ACTION (*Action3*)
+
+(* transitions *)
+GO_ON_TRANSITION Trans1 (* Trans1 *) FROM INIT TO OUT :=  #BEGIN_EDIT_BLOCK
+sv_Servo.ServoState.OperationState 
+= nOperationState_AF  
+
+;#END_EDIT_BLOCK
+END_TRANSITION
+
+TRANSITION Trans13 (* Trans13 *) FROM INIT TO STOP :=  #BEGIN_EDIT_BLOCK
+mbStop OR 
+mbDriveError OR
+sv_bEmergencyStop 
+
+;#END_EDIT_BLOCK
+END_TRANSITION
+
+GO_ON_TRANSITION Trans2 (* Trans2 *) FROM OUT TO STOP :=  #BEGIN_EDIT_BLOCK
+mbStop OR mbDriveError OR
+sv_bEmergencyStop
+;#END_EDIT_BLOCK
+(*Use GoOn transitions to avoid timing problem
+between releasing and requesting the drive!*)
+END_TRANSITION
+
+GO_ON_TRANSITION Trans4 (* Trans4 *) FROM OUT TO IDLE_OUT :=  #BEGIN_EDIT_BLOCK
+sv_Servo.ServoState.OperationState 
+<> nOperationState_AF
+;#END_EDIT_BLOCK
+END_TRANSITION
+
+TRANSITION Trans6 (* Trans6 *) FROM IDLE_OUT TO OUT :=  #BEGIN_EDIT_BLOCK
+sv_Servo.ServoState.OperationState 
+= nOperationState_AF
+;#END_EDIT_BLOCK
+END_TRANSITION
+
+GO_ON_TRANSITION Trans7 (* Trans7 *) FROM IDLE_OUT TO STOP :=  #BEGIN_EDIT_BLOCK
+mbStop OR mbDriveError
+;#END_EDIT_BLOCK
+END_TRANSITION
+
+TRANSITION Trans3 (* Trans3 *) FROM STOP TO INIT :=  #BEGIN_EDIT_BLOCK
+TRUE
+;#END_EDIT_BLOCK
+END_TRANSITION
+
+(* end IecGraph-Code *)
+(* sfc-code *)
+
+(* stand alone actions *)
+ACTION aStopOut: #BEGIN_EDIT_BLOCK
+
+sv_KHW_Servo_setValue.rVeloc := 0.0;
+sv_KHW_Servo_setValue.rAux[2] := 0.0;
+
+
+
+;#END_EDIT_BLOCK END_ACTION (*aStopOut*)
+ACTION aOut: #BEGIN_EDIT_BLOCK
+//Assignment PQ endpoints
+b := WRITE_SVREAL_DIRECT(sv_KHW_Servo_setValue.rAux[1], sv_rDrivePressure);
+b := WRITE_SVREAL_DIRECT(sv_KHW_Servo_setValue.rVeloc, sv_rDriveVelocity);
+
+
+
+
+
+;#END_EDIT_BLOCK END_ACTION (*aOut*)
+(* end sfc-code *)
+
+
+END_ALGORITHM
+
+ALGORITHM aStart
+
+
+VAR_INPUT
+ piCtrlParamSet : REFTO INT;
+ bMaster : BOOL (* TRUE: pump is master, FALSE: pump is slave *);
+END_VAR
+
+VAR_TEMP
+ b : BOOL;
+END_VAR
+
+VAR
+ rTmp : REAL;
+END_VAR
+#BEGIN_EDIT_BLOCK
+(**************************************** WARNING ********************************************
+ *** The KEBA Kemro K2 System including software is not intended for safety control tasks! ***
+ ***                       For further information see Comment tab!                        ***
+ *********************************************************************************************)
+
+IF mbInitDone THEN 
+    
+   IF NOT sv_Servo.ServoState.bError THEN
+             
+      //Bit 0: first or second parameter set (first parameter set should be default)
+      //Bit 1: master or slave (master = 0, slave = 1)
+      IF bMaster THEN
+         rTmp := 0.0;
+      ELSE
+         rTmp := 2.0;
+      END_IF;
+
+      IF CHECK_REF(piCtrlParamSet^) AND (piCtrlParamSet^ = 2) THEN
+         rTmp := rTmp + 1.0;
+      END_IF;
+      
+      b := WRITE_SV_DIRECT(sv_KHW_Servo_setValue.rAux[2], rTmp);
+           
+      mbStop := FALSE;
+      START_PROCESS_ALGORITHM(paOut);
+        
+    END_IF;
+END_IF;
+
+
+;#END_EDIT_BLOCK END_ALGORITHM
+
+ALGORITHM aStop
+
+#BEGIN_EDIT_BLOCK
+(**************************************** WARNING ********************************************
+ *** The KEBA Kemro K2 System including software is not intended for safety control tasks! ***
+ ***                       For further information see Comment tab!                        ***
+ *********************************************************************************************)
+
+mbStop := TRUE;
+
+
+;#END_EDIT_BLOCK END_ALGORITHM
+
+POSTUPDATE_ALGORITHM pDriveError ON PU_Task_7 WITH sv_Servo.ServoState.bError,sv_Servo.bInitDone
+
+#BEGIN_EDIT_BLOCK
+(**************************************** WARNING ********************************************
+ *** The KEBA Kemro K2 System including software is not intended for safety control tasks! ***
+ ***                       For further information see Comment tab!                        ***
+ *********************************************************************************************)
+
+IF NOT IS_LINKED(sv_KHW_Servo_setValue) THEN
+   RETURN;
+END_IF;    
+
+mbDriveError := sv_Servo.ServoState.bError;
+
+
+;#END_EDIT_BLOCK END_ALGORITHM
+
+POSTUPDATE_ALGORITHM pPQForce ON PU_Task_7 WITH sv_ForceP.bForce,sv_ForceQ.bForce
+
+#BEGIN_EDIT_BLOCK
+(**************************************** WARNING ********************************************
+ *** The KEBA Kemro K2 System including software is not intended for safety control tasks! ***
+ ***                       For further information see Comment tab!                        ***
+ *********************************************************************************************)
+
+//Force PQ endpoints
+IF sv_ForceP.bForce OR sv_ForceQ.bForce THEN
+   IF NOT mbForceStarted THEN
+      mbForceStarted := TRUE;  
+      START_PROCESS_ALGORITHM(paPQForce);
+   END_IF; 
+END_IF;
+
+
+
+
+
+
+;#END_EDIT_BLOCK END_ALGORITHM
+
+PROCESS_ALGORITHM paPQForce ON TaskAnalog
+
+
+VAR_TEMP
+ rForceP : REAL;
+ rForceQ : REAL;
+ b : BOOL;
+END_VAR
+
+VAR CONSTANT
+ rMaxPressure : REAL := 400.0;
+END_VAR
+#BEGIN_EDIT_BLOCK
+(**************************************** WARNING ********************************************
+ *** The KEBA Kemro K2 System including software is not intended for safety control tasks! ***
+ ***                       For further information see Comment tab!                        ***
+ *********************************************************************************************)
+
+//Force PQ endpoints
+IF sv_ForceP.bForce THEN
+   rForceP := sv_ForceP.rForceValue / rMaxPressure * 1000.0;
+   b := WRITE_SVREAL_DIRECT(sv_KHW_Servo_setValue.rAux[1], rForceP);
+   b := WRITE_SVREAL_DIRECT(sv_ForceP.rActualValue, sv_ForceP.rForceValue);
+ELSIF NOT sv_ForceP.bForce THEN 
+   b := WRITE_SVREAL_DIRECT(sv_KHW_Servo_setValue.rAux[1], 0.0);
+   b := WRITE_SVREAL_DIRECT(sv_ForceP.rActualValue, 0.0);
+END_IF;
+
+IF sv_ForceQ.bForce THEN
+   rForceQ := sv_ForceQ.rForceValue * 10.0; 
+   b := WRITE_SVREAL_DIRECT(sv_KHW_Servo_setValue.rVeloc, rForceQ);
+   b := WRITE_SVREAL_DIRECT(sv_ForceQ.rActualValue, sv_ForceQ.rForceValue);
+ELSIF NOT sv_ForceQ.bForce THEN 
+   b := WRITE_SVREAL_DIRECT(sv_KHW_Servo_setValue.rVeloc, 0.0);
+   b := WRITE_SVREAL_DIRECT(sv_ForceQ.rActualValue, 0.0);
+END_IF;
+
+IF NOT sv_ForceQ.bForce AND NOT sv_ForceP.bForce THEN
+   mbForceStarted := FALSE;
+   STOP_PROCESS_ALGORITHM();
+END_IF;
+
+
+;#END_EDIT_BLOCK END_ALGORITHM
+
+
+
+END_ALGORITHM_BLOCK
+
+
+
+#END_OF_IEC_PART
+
+@Puma @IecEditor 6 114 @Pou 25 
+@@@BEG_Comment@@@
+ATTENTION: Task for paOut is maybe mapped to another task because Inject and Mold run with 1ms
+@@@END_Comment@@@
+
+@BEG_Contents 
+
+@BEG_Func 
+@RT(17)FuncTreeContainer 
+1 
+@Var @RT(19)WRITE_SVREAL_DIRECT @RT(0) @T @T @DERIVED 0 @F @RT(22)KEBA_STANDARD_FUNCTION @F 
+@T 
+@BEG_Attrib 
+0 @RT(0) @RT(0) 
+@END_Attrib 
+1 1 @F @F @F @F 
+
+@END_Func 
+
+@BEG_Const 
+@RT(18)ConstTreeContainer 
+6 
+@Var @RT(8)cMoveAll @RT(0) @T @F @DT @RT(4)DINT @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+0 @RT(13)cMaxMoveIdent @RT(32)all movements (for evLockUnlock) 
+@END_Attrib 
+1 1 @F @F @F @F 
+
+@Var @RT(10)nLockAbort @RT(0) @T @T @DERIVED 0 @F @RT(12)tnLockUnlock @F 
+@T 
+@BEG_Attrib 
+0 @RT(1)0 @RT(0) 
+@END_Attrib 
+1 1 @F @F @F @F 
+
+@Var @RT(19)cMaxDeviceMovements @RT(0) @T @F @DT @RT(4)DINT @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+0 @RT(2)20 @RT(34)max number of movements per device 
+@END_Attrib 
+1 1 @F @F @F @F 
+
+@Var @RT(9)cMoveNone @RT(0) @T @F @DT @RT(4)DINT @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+0 @RT(13)cMinMoveIdent @RT(4)None 
+@END_Attrib 
+1 1 @F @F @F @F 
+
+@Var @RT(7)nUnlock @RT(0) @T @T @DERIVED 0 @F @RT(12)tnLockUnlock @F 
+@T 
+@BEG_Attrib 
+0 @RT(1)2 @RT(0) 
+@END_Attrib 
+1 1 @F @F @F @F 
+
+@Var @RT(18)nOperationState_AF @RT(0) @T @T @DERIVED 0 @F @RT(16)tnOperationState @F 
+@T 
+@BEG_Attrib 
+0 @RT(1)4 @RT(12)drive enable 
+@END_Attrib 
+1 1 @F @F @F @F 
+
+@END_Const 
+
+@BEG_Export 
+
+@BEG_Kind 
+@ALGORITHM_BLOCK @RT(14)ABOutSpeedPump @STRUCTURED_TEXT 
+@RT(0) @RT(0) @RT(0) 
+@END_Kind 
+
+@BEG_Dcl 
+@RT(16)DclTreeContainer 
+17 
+@Var @RT(13)sv_TraceLevel @RT(0) @T @T @DERIVED 0 @T @T @DT @RT(12)tsTraceLevel @RT(0) @T @T @UNKNOWN 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 8 @F @F @F @F 
+
+@Var @RT(8)sv_Servo @RT(0) @T @T @DERIVED 0 @T @T @DT @RT(7)tsServo @RT(0) @T @T @UNKNOWN 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 8 @F @F @F @F 
+
+@Var @RT(12)sv_bInitDone @RT(0) @T @F @DT @RT(4)BOOL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 8 @F @F @F @F 
+
+@Var @RT(17)sv_bEmergencyStop @RT(0) @T @F @DT @RT(4)BOOL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 8 @F @F @F @F 
+
+@Var @RT(21)sv_KHW_Servo_setValue @RT(0) @T @T @DERIVED 0 @T @T @DT @RT(14)KHW_Servo_Data @RT(0) @T @T @UNKNOWN 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 8 @F @F @F @F 
+
+@Var @RT(7)TaskMid @RT(0) @T @F @DT @RT(4)TASK @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 7 @F @F @F @F 
+
+@Var @RT(10)TaskAnalog @RT(0) @T @F @DT @RT(4)TASK @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(23)ATTENTION: MAYBE MAPPED @RT(0) 
+@END_Attrib 
+1 7 @F @F @F @F 
+
+@Var @RT(9)PU_Task_7 @RT(0) @T @F @DT @RT(4)TASK @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 7 @F @F @F @F 
+
+@Var @RT(12)fbDebugTrace @RT(0) @T @T @DERIVED 0 @T @T @DT @RT(12)FBDebugTrace @RT(0) @T @T @UNKNOWN 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(10)mbInitDone @RT(0) @T @F @DT @RT(4)BOOL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(6)mbStop @RT(0) @T @F @DT @RT(4)BOOL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(12)mbDriveError @RT(0) @T @F @DT @RT(4)BOOL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(9)sv_ForceP @RT(0) @T @T @DERIVED 0 @T @T @DT @RT(9)tsPQForce @RT(0) @T @T @UNKNOWN 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(15)pressure force  @RT(0) 
+@END_Attrib 
+1 8 @F @F @F @F 
+
+@Var @RT(9)sv_ForceQ @RT(0) @T @T @DERIVED 0 @T @T @DT @RT(9)tsPQForce @RT(0) @T @T @UNKNOWN 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(10)flow force @RT(0) 
+@END_Attrib 
+1 8 @F @F @F @F 
+
+@Var @RT(14)mbForceStarted @RT(0) @T @T @RENAMED 0 @T @T @DT @RT(4)BOOL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(17)sv_rDrivePressure @RT(0) @T @F @DT @RT(4)REAL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 8 @F @F @F @F 
+
+@Var @RT(17)sv_rDriveVelocity @RT(0) @T @F @DT @RT(4)REAL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 8 @F @F @F @F 
+
+@END_Dcl 
+
+@END_Export 
+
+@BEG_Body 
+
+7 
+
+@BEG_Export 
+
+@BEG_Algo 
+@PROCESS_ALGORITHM @RT(6)paInit @STRUCTURED_TEXT 
+@RT(0) @RT(0) @RT(7)TaskMid @T @F 
+@END_Algo 
+
+@BEG_Dcl 
+@RT(16)DclTreeContainer 
+1 
+@Var @RT(5)bInit @RT(0) @T @F @DT @RT(4)BOOL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@END_Dcl 
+
+@END_Export 
+
+@BEG_Export 
+
+@BEG_Algo 
+@PROCESS_ALGORITHM @RT(5)paOut @SEQUENTIAL_FLOW_CHART 
+@RT(0) @RT(0) @RT(17)TaskAnalog(15001) @F @F 
+@END_Algo 
+
+@BEG_Dcl 
+@RT(16)DclTreeContainer 
+1 
+@Var @RT(1)b @RT(0) @T @F @DT @RT(4)BOOL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 4 @F @F @F @F 
+
+@END_Dcl 
+
+@END_Export 
+
+@BEG_Export 
+
+@BEG_Algo 
+@ALGORITHM @RT(6)aStart @STRUCTURED_TEXT 
+@RT(0) @RT(0) @RT(0) @F @F 
+@END_Algo 
+
+@BEG_Dcl 
+@RT(16)DclTreeContainer 
+4 
+@Var @RT(14)piCtrlParamSet @RT(0) @T @T @REFTO 0 @T @DT @RT(3)INT @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 1 @F @F @F @F 
+
+@Var @RT(7)bMaster @RT(0) @T @F @DT @RT(4)BOOL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(42)TRUE: pump is master, FALSE: pump is slave @RT(0) 
+@END_Attrib 
+1 1 @F @F @F @F 
+
+@Var @RT(4)rTmp @RT(0) @T @F @DT @RT(4)REAL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(1)b @RT(0) @T @F @DT @RT(4)BOOL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 4 @F @F @F @F 
+
+@END_Dcl 
+
+@END_Export 
+
+@BEG_Export 
+
+@BEG_Algo 
+@ALGORITHM @RT(5)aStop @STRUCTURED_TEXT 
+@RT(0) @RT(0) @RT(0) @F @F 
+@END_Algo 
+
+@BEG_Dcl 
+@RT(16)DclTreeContainer 
+0 
+@END_Dcl 
+
+@END_Export 
+
+@BEG_Export 
+
+@BEG_Algo 
+@POSTUPDATE_ALGORITHM @RT(11)pDriveError @STRUCTURED_TEXT 
+@RT(0) @RT(45)sv_Servo.ServoState.bError,sv_Servo.bInitDone @RT(9)PU_Task_7 @F @F 
+@END_Algo 
+
+@BEG_Dcl 
+@RT(16)DclTreeContainer 
+0 
+@END_Dcl 
+
+@END_Export 
+
+@BEG_Export 
+
+@BEG_Algo 
+@POSTUPDATE_ALGORITHM @RT(8)pPQForce @STRUCTURED_TEXT 
+@RT(0) @RT(33)sv_ForceP.bForce,sv_ForceQ.bForce @RT(9)PU_Task_7 @F @F 
+@END_Algo 
+
+@BEG_Dcl 
+@RT(16)DclTreeContainer 
+0 
+@END_Dcl 
+
+@END_Export 
+
+@BEG_Export 
+
+@BEG_Algo 
+@PROCESS_ALGORITHM @RT(9)paPQForce @STRUCTURED_TEXT 
+@RT(0) @RT(0) @RT(10)TaskAnalog @F @F 
+@END_Algo 
+
+@BEG_Dcl 
+@RT(16)DclTreeContainer 
+4 
+@Var @RT(12)rMaxPressure @RT(0) @T @F @DT @RT(4)REAL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(5)400.0 @RT(0) @RT(0) 
+@END_Attrib 
+1 15 @F @F @F @F 
+
+@Var @RT(7)rForceP @RT(0) @T @F @DT @RT(4)REAL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 4 @F @F @F @F 
+
+@Var @RT(7)rForceQ @RT(0) @T @F @DT @RT(4)REAL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 4 @F @F @F @F 
+
+@Var @RT(1)b @RT(0) @T @F @DT @RT(4)BOOL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 4 @F @F @F @F 
+
+@END_Dcl 
+
+@END_Export 
+
+@BEG_Body 
+@TL(32)
+(**************************************** WARNING ********************************************
+ *** The KEBA Kemro K2 System including software is not intended for safety control tasks! ***
+ ***                       For further information see Comment tab!                        ***
+ *********************************************************************************************)
+IF NOT IS_LINKED(sv_KHW_Servo_setValue) THEN
+    RETURN;
+END_IF;    
+
+IF NOT bInit AND sv_bInitDone THEN
+   
+   bInit := TRUE;     
+   IF NOT IS_LINKED(sv_Servo) THEN
+      IF sv_TraceLevel.bAnalog THEN
+         fbDebugTrace.sText := 'ABOutSpeedPump.paInit: sv_Servo not linked';
+         fbDebugTrace();
+      END_IF;
+   END_IF;
+END_IF;
+
+IF bInit THEN
+   // all required data for analog output are ok -> start DriveInit
+   IF sv_Servo.bInitDone THEN
+      mbInitDone := TRUE;
+      STOP_PROCESS_ALGORITHM();
+   ELSE
+      sv_Servo.bInitStart := TRUE;            
+   END_IF;
+ELSIF sv_bInitDone THEN
+   STOP_PROCESS_ALGORITHM();
+END_IF;
+
+
+@END_Body 
+
+@@@BEG_Comment@@@ 
+@TL(0)
+
+@@@END_Comment@@@ 
+
+@BEG_SfcBody 
+6 8 8 
+
+@BEG_SfcData 2 
+@StepSeq @RT(4)sseq @F 1 
+@Loop @RT(4)loop @F 2 
+@StepSeq @RT(4)sseq @F 5 
+@Step @RT(4)INIT @F @T @F @F @RT(0) @F 
+@AcbCont @RT(7)unnamed @F 0 
+
+@AltBranch @RT(3)alt @F 2 
+@TransSeq @RT(4)tseq @F 1 
+@Trans @RT(6)Trans1 @F @T @F @F @T @F @TL(4)
+sv_Servo.ServoState.OperationState 
+= nOperationState_AF  
+
+
+@RT(6)Trans1 @F 
+
+@TransSeq @RT(4)tseq @F 2 
+@Trans @RT(7)Trans13 @F @T @F @F @T @T @TL(5)
+mbStop OR 
+mbDriveError OR
+sv_bEmergencyStop 
+
+
+@RT(7)Trans13 @F 
+@Goto @RT(4)STOP @F @F 
+
+
+@Step @RT(3)OUT @F @F @T @F @RT(0) @F 
+@AcbCont @RT(7)unnamed @F 1 
+@Acb @RT(4)aOut @F @F @RT(1)N @RT(0) @F @F @F @F 
+
+@AltBranch @RT(3)alt @F 2 
+@TransSeq @RT(4)tseq @F 1 
+@Trans @RT(6)Trans2 @F @T @F @F @T @F @TL(3)
+mbStop OR mbDriveError OR
+sv_bEmergencyStop
+
+@RT(6)Trans2 @T @TL(2)
+Use GoOn transitions to avoid timing problem
+between releasing and requesting the drive!
+
+
+@TransSeq @RT(4)tseq @F 4 
+@Trans @RT(6)Trans4 @F @T @F @F @T @F @TL(3)
+sv_Servo.ServoState.OperationState 
+<> nOperationState_AF
+
+@RT(6)Trans4 @F 
+@Step @RT(8)IDLE_OUT @F @F @F @F @RT(0) @F 
+@AcbCont @RT(7)unnamed @F 1 
+@Acb @RT(8)aStopOut @F @F @RT(1)P @RT(0) @F @F @F @F 
+
+@AltBranch @RT(3)alt @F 2 
+@TransSeq @RT(4)tseq @F 1 
+@Trans @RT(6)Trans6 @F @T @F @F @T @T @TL(3)
+sv_Servo.ServoState.OperationState 
+= nOperationState_AF
+
+@RT(6)Trans6 @F 
+
+@TransSeq @RT(4)tseq @F 2 
+@Trans @RT(6)Trans7 @F @T @F @F @T @F @TL(2)
+mbStop OR mbDriveError
+
+@RT(6)Trans7 @F 
+@Goto @RT(4)STOP @F @F 
+
+
+@Goto @RT(3)OUT @F @F 
+
+
+@Step @RT(4)STOP @F @F @T @F @RT(0) @F 
+@AcbCont @RT(7)unnamed @F 2 
+@Acb @RT(8)aStopOut @F @F @RT(1)P @RT(0) @F @F @F @F 
+@Acb @RT(7)Action3 @F @T @RT(1)P @RT(0) @F @F @T @TL(4)
+IF mbStop OR mbDriveError OR sv_bEmergencyStop THEN
+   STOP_PROCESS_ALGORITHM();
+END_IF;
+
+@F 
+
+
+@Trans @RT(6)Trans3 @F @T @T @T @T @T @TL(2)
+TRUE
+
+@RT(6)Trans3 @F 
+
+@END_SfcData 
+@SaActions 2 
+@SaText @RT(8)aStopOut 1 @TL(6)
+
+sv_KHW_Servo_setValue.rVeloc := 0.0;
+sv_KHW_Servo_setValue.rAux[2] := 0.0;
+
+
+
+
+@SaText @RT(4)aOut 1 @TL(8)
+//Assignment PQ endpoints
+b := WRITE_SVREAL_DIRECT(sv_KHW_Servo_setValue.rAux[1], sv_rDrivePressure);
+b := WRITE_SVREAL_DIRECT(sv_KHW_Servo_setValue.rVeloc, sv_rDriveVelocity);
+
+
+
+
+
+
+@SaTrans 0 
+@SaExits 0 
+@END_SfcBody 
+
+@@@BEG_Comment@@@ 
+@TL(0)
+
+@@@END_Comment@@@ 
+
+@BEG_Body 
+@TL(29)
+(**************************************** WARNING ********************************************
+ *** The KEBA Kemro K2 System including software is not intended for safety control tasks! ***
+ ***                       For further information see Comment tab!                        ***
+ *********************************************************************************************)
+
+IF mbInitDone THEN 
+    
+   IF NOT sv_Servo.ServoState.bError THEN
+             
+      //Bit 0: first or second parameter set (first parameter set should be default)
+      //Bit 1: master or slave (master = 0, slave = 1)
+      IF bMaster THEN
+         rTmp := 0.0;
+      ELSE
+         rTmp := 2.0;
+      END_IF;
+
+      IF CHECK_REF(piCtrlParamSet^) AND (piCtrlParamSet^ = 2) THEN
+         rTmp := rTmp + 1.0;
+      END_IF;
+      
+      b := WRITE_SV_DIRECT(sv_KHW_Servo_setValue.rAux[2], rTmp);
+           
+      mbStop := FALSE;
+      START_PROCESS_ALGORITHM(paOut);
+        
+    END_IF;
+END_IF;
+
+@END_Body 
+
+@@@BEG_Comment@@@ 
+@TL(0)
+
+@@@END_Comment@@@ 
+
+@BEG_Body 
+@TL(7)
+(**************************************** WARNING ********************************************
+ *** The KEBA Kemro K2 System including software is not intended for safety control tasks! ***
+ ***                       For further information see Comment tab!                        ***
+ *********************************************************************************************)
+
+mbStop := TRUE;
+
+@END_Body 
+
+@@@BEG_Comment@@@ 
+@TL(0)
+
+@@@END_Comment@@@ 
+
+@BEG_Body 
+@TL(11)
+(**************************************** WARNING ********************************************
+ *** The KEBA Kemro K2 System including software is not intended for safety control tasks! ***
+ ***                       For further information see Comment tab!                        ***
+ *********************************************************************************************)
+
+IF NOT IS_LINKED(sv_KHW_Servo_setValue) THEN
+   RETURN;
+END_IF;    
+
+mbDriveError := sv_Servo.ServoState.bError;
+
+@END_Body 
+
+@@@BEG_Comment@@@ 
+@TL(0)
+
+@@@END_Comment@@@ 
+
+@BEG_Body 
+@TL(17)
+(**************************************** WARNING ********************************************
+ *** The KEBA Kemro K2 System including software is not intended for safety control tasks! ***
+ ***                       For further information see Comment tab!                        ***
+ *********************************************************************************************)
+
+//Force PQ endpoints
+IF sv_ForceP.bForce OR sv_ForceQ.bForce THEN
+   IF NOT mbForceStarted THEN
+      mbForceStarted := TRUE;  
+      START_PROCESS_ALGORITHM(paPQForce);
+   END_IF; 
+END_IF;
+
+
+
+
+
+@END_Body 
+
+@@@BEG_Comment@@@ 
+@TL(0)
+
+@@@END_Comment@@@ 
+
+@BEG_Body 
+@TL(29)
+(**************************************** WARNING ********************************************
+ *** The KEBA Kemro K2 System including software is not intended for safety control tasks! ***
+ ***                       For further information see Comment tab!                        ***
+ *********************************************************************************************)
+
+//Force PQ endpoints
+IF sv_ForceP.bForce THEN
+   rForceP := sv_ForceP.rForceValue / rMaxPressure * 1000.0;
+   b := WRITE_SVREAL_DIRECT(sv_KHW_Servo_setValue.rAux[1], rForceP);
+   b := WRITE_SVREAL_DIRECT(sv_ForceP.rActualValue, sv_ForceP.rForceValue);
+ELSIF NOT sv_ForceP.bForce THEN 
+   b := WRITE_SVREAL_DIRECT(sv_KHW_Servo_setValue.rAux[1], 0.0);
+   b := WRITE_SVREAL_DIRECT(sv_ForceP.rActualValue, 0.0);
+END_IF;
+
+IF sv_ForceQ.bForce THEN
+   rForceQ := sv_ForceQ.rForceValue * 10.0; 
+   b := WRITE_SVREAL_DIRECT(sv_KHW_Servo_setValue.rVeloc, rForceQ);
+   b := WRITE_SVREAL_DIRECT(sv_ForceQ.rActualValue, sv_ForceQ.rForceValue);
+ELSIF NOT sv_ForceQ.bForce THEN 
+   b := WRITE_SVREAL_DIRECT(sv_KHW_Servo_setValue.rVeloc, 0.0);
+   b := WRITE_SVREAL_DIRECT(sv_ForceQ.rActualValue, 0.0);
+END_IF;
+
+IF NOT sv_ForceQ.bForce AND NOT sv_ForceP.bForce THEN
+   mbForceStarted := FALSE;
+   STOP_PROCESS_ALGORITHM();
+END_IF;
+
+@END_Body 
+
+@@@BEG_Comment@@@ 
+@TL(0)
+
+@@@END_Comment@@@ 
+@END_Body 
+
+@END_Contents 

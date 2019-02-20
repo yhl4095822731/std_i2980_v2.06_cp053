@@ -1,0 +1,361 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<base:Mask xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xmlns:base="http://www.keba.at/viewedit.model.base" widgetId="kvs.mask" name="OverviewMask">
+  <resolution width="714" height="476"/>
+  <position x="1" y="1"/>
+  <attributeValues key="Background" value="BG_Panel:220,220,220"/>
+  <attributeValues key="Title" value="Overview"/>
+  <attributeValues key="Icon" value="system/hmi/images/maskicons/iconOverview.gif"/>
+  <border name="TitledBorder" id="kv.border.TitledBorder"/>
+  <widgetInstances xsi:type="base:ContainerWidgetInstance" widgetId="kvs.panel" name="panelNorth" layoutConstraint="NORTH">
+    <resolution width="708" height="335"/>
+    <position x="3" y="5"/>
+    <attributeValues key="PreferredSize" value="708, 335"/>
+    <widgetInstances xsi:type="base:CompositeWidgetInstance" widgetId="b94583ee-823e-4139-ad0e-167911327b1e" name="overviewMachineStatePanel1" layoutConstraint="0,0,100,100">
+      <resolution width="708" height="335"/>
+      <position/>
+      <dynamicAttributes key="Create">
+        <value function="b1_EQ_true : ViewEditFunctions" equal="false" unequal="true">
+          <parameter key="1" value="kvariable;system.sv_bVerticalMachine"/>
+        </value>
+      </dynamicAttributes>
+    </widgetInstances>
+    <widgetInstances xsi:type="base:CompositeWidgetInstance" widgetId="b8a0b0c6-d1a5-4515-83f6-343200e332ce" name="overviewVerticalMachineStatePanel1" layoutConstraint="0,0,100,100">
+      <resolution width="708" height="335"/>
+      <position/>
+      <dynamicAttributes key="Create">
+        <value function="b1_EQ_true : ViewEditFunctions" equal="true" unequal="false">
+          <parameter key="1" value="kvariable;system.sv_bVerticalMachine"/>
+        </value>
+      </dynamicAttributes>
+    </widgetInstances>
+    <layout layoutID="kvs.layout.PercentLayout" name="PercentLayout"/>
+  </widgetInstances>
+  <widgetInstances xsi:type="base:ContainerWidgetInstance" widgetId="kvs.panel" name="panelCenter" layoutConstraint="CENTER">
+    <resolution width="708" height="131"/>
+    <position x="3" y="340"/>
+    <widgetInstances xsi:type="base:ContainerWidgetInstance" widgetId="kvs.panel" name="panelHorizontalData" layoutConstraint="SOUTH">
+      <resolution width="708" height="122"/>
+      <position y="9"/>
+      <widgetInstances widgetId="keplast.kvs.separator" name="separator2" layoutConstraint="SEPARATOR">
+        <resolution width="2" height="122"/>
+        <position x="353"/>
+      </widgetInstances>
+      <widgetInstances xsi:type="base:ContainerWidgetInstance" widgetId="kvs.panel" name="panelHorizontalDataRight" layoutConstraint="RIGHT">
+        <resolution width="350" height="116"/>
+        <position x="358" y="3"/>
+        <widgetInstances widgetId="keplast.kvs.labeltextfield" name="textfieldMoldDataName" layoutConstraint="NORTH">
+          <resolution width="350" height="29"/>
+          <position/>
+          <attributeValues key="RemoveUnit" value="true"/>
+          <attributeValues key="Editable" value="false"/>
+          <attributeValues key="Variable" value="system.sv_sMoldData"/>
+          <attributeValues key="TextLabel" value="Mold data"/>
+          <attributeValues key="_TextLabelWidth" value="189"/>
+          <attributeValues key="AlignmentLabel" value="MIDDLE/LEFT"/>
+          <attributeValues key="PreferredSize" value="340, 29"/>
+          <attributeValues key="PreferredSizeField" value="240, 29"/>
+          <attributeValues key="UseUnitFieldGap" value="false"/>
+        </widgetInstances>
+        <widgetInstances xsi:type="base:ContainerWidgetInstance" widgetId="kvs.panel" name="containerCoreStates" layoutConstraint="SOUTH">
+          <resolution width="350" height="87"/>
+          <position y="29"/>
+          <widgetInstances xsi:type="base:ContainerWidgetInstance" widgetId="kvs.panel" name="containerStates" compositeWidgetID="7c56855e-2168-49c0-9537-d58cdcdc28a8" layoutConstraint="WEST">
+            <resolution width="261" height="87"/>
+            <position/>
+            <widgetInstances xsi:type="base:ContainerWidgetInstance" widgetId="kvs.panel" name="containerStateHeader" compositeWidgetID="7c56855e-2168-49c0-9537-d58cdcdc28a8" layoutConstraint="null">
+              <resolution width="29" height="87"/>
+              <position/>
+              <attributeValues key="PreferredSize" value="29, 87"/>
+              <dynamicAttributes key="Create">
+                <value function="doesDeviceExist : UserFunctions" equal="true" unequal="false">
+                  <parameter key="1" value="devicename; PlastFunctionUtils.createDeviceName(&quot;Core1&quot;)"/>
+                </value>
+              </dynamicAttributes>
+              <widgetInstances widgetId="kvs.label" name="labelDummy1" compositeWidgetID="7c56855e-2168-49c0-9537-d58cdcdc28a8" layoutConstraint="null">
+                <resolution width="29" height="29"/>
+                <position/>
+              </widgetInstances>
+              <widgetInstances widgetId="kvs.bitmap" name="bmpCoreIn" compositeWidgetID="7c56855e-2168-49c0-9537-d58cdcdc28a8" layoutConstraint="null">
+                <resolution width="29" height="29"/>
+                <position y="29"/>
+                <attributeValues key="Image" value="Core/hmi/images/iconCoreIn.gif"/>
+              </widgetInstances>
+              <widgetInstances widgetId="kvs.bitmap" name="bmpCoreOut" compositeWidgetID="7c56855e-2168-49c0-9537-d58cdcdc28a8" layoutConstraint="null">
+                <resolution width="29" height="29"/>
+                <position y="58"/>
+                <attributeValues key="Image" value="Core/hmi/images/iconCoreOut.gif"/>
+              </widgetInstances>
+              <layout layoutID="kvs.layout.GridLayout" name="GridLayout">
+                <attributeValues key="Rows" value="3"/>
+                <attributeValues key="Columns" value="1"/>
+              </layout>
+            </widgetInstances>
+            <widgetInstances xsi:type="base:CompositeWidgetInstance" widgetId="faa53baf-f535-41a0-b8cd-80c528151ad9" name="singleCorestate1" compositeWidgetID="7c56855e-2168-49c0-9537-d58cdcdc28a8" layoutConstraint="null">
+              <resolution width="29" height="87"/>
+              <position x="29"/>
+              <attributeValues key="DeviceIdCore" value="1"/>
+              <attributeValues key="Text" value="1"/>
+              <dynamicAttributes key="Create">
+                <value function="doesDeviceExist : UserFunctions" equal="true" unequal="false">
+                  <parameter key="1" value="devicename; PlastFunctionUtils.createDeviceName(&quot;Core1&quot;)"/>
+                </value>
+              </dynamicAttributes>
+            </widgetInstances>
+            <widgetInstances xsi:type="base:CompositeWidgetInstance" widgetId="faa53baf-f535-41a0-b8cd-80c528151ad9" name="singleCorestate2" compositeWidgetID="7c56855e-2168-49c0-9537-d58cdcdc28a8" layoutConstraint="null">
+              <resolution width="29" height="87"/>
+              <position x="58"/>
+              <attributeValues key="PreferredSize" value="29, 87"/>
+              <attributeValues key="DeviceIdCore" value="2"/>
+              <attributeValues key="Text" value="2"/>
+              <dynamicAttributes key="Create">
+                <value function="doesDeviceExist : UserFunctions" equal="true" unequal="false">
+                  <parameter key="1" value="devicename; PlastFunctionUtils.createDeviceName(&quot;Core2&quot;)"/>
+                </value>
+              </dynamicAttributes>
+            </widgetInstances>
+            <widgetInstances xsi:type="base:CompositeWidgetInstance" widgetId="faa53baf-f535-41a0-b8cd-80c528151ad9" name="singleCorestate3" compositeWidgetID="7c56855e-2168-49c0-9537-d58cdcdc28a8" layoutConstraint="null">
+              <resolution width="29" height="87"/>
+              <position x="87"/>
+              <attributeValues key="PreferredSize" value="29,87"/>
+              <attributeValues key="DeviceIdCore" value="3"/>
+              <attributeValues key="Text" value="3"/>
+              <dynamicAttributes key="Create">
+                <value function="doesDeviceExist : UserFunctions" equal="true" unequal="false">
+                  <parameter key="1" value="devicename; PlastFunctionUtils.createDeviceName(&quot;Core3&quot;)"/>
+                </value>
+              </dynamicAttributes>
+            </widgetInstances>
+            <widgetInstances xsi:type="base:CompositeWidgetInstance" widgetId="faa53baf-f535-41a0-b8cd-80c528151ad9" name="singleCorestate4" compositeWidgetID="7c56855e-2168-49c0-9537-d58cdcdc28a8" layoutConstraint="null">
+              <resolution width="29" height="87"/>
+              <position x="116"/>
+              <attributeValues key="PreferredSize" value="29, 87"/>
+              <attributeValues key="DeviceIdCore" value="4"/>
+              <attributeValues key="Text" value="4"/>
+              <dynamicAttributes key="Create">
+                <value function="doesDeviceExist : UserFunctions" equal="true" unequal="false">
+                  <parameter key="1" value="devicename; PlastFunctionUtils.createDeviceName(&quot;Core4&quot;)"/>
+                </value>
+              </dynamicAttributes>
+            </widgetInstances>
+            <widgetInstances xsi:type="base:CompositeWidgetInstance" widgetId="faa53baf-f535-41a0-b8cd-80c528151ad9" name="singleCorestate5" compositeWidgetID="7c56855e-2168-49c0-9537-d58cdcdc28a8" layoutConstraint="null">
+              <resolution width="29" height="87"/>
+              <position x="145"/>
+              <attributeValues key="PreferredSize" value="29, 87"/>
+              <attributeValues key="DeviceIdCore" value="5"/>
+              <attributeValues key="Text" value="5"/>
+              <dynamicAttributes key="Create">
+                <value function="doesDeviceExist : UserFunctions" equal="true" unequal="false">
+                  <parameter key="1" value="devicename; PlastFunctionUtils.createDeviceName(&quot;Core5&quot;)"/>
+                </value>
+              </dynamicAttributes>
+            </widgetInstances>
+            <widgetInstances xsi:type="base:CompositeWidgetInstance" widgetId="faa53baf-f535-41a0-b8cd-80c528151ad9" name="singleCorestate6" compositeWidgetID="7c56855e-2168-49c0-9537-d58cdcdc28a8" layoutConstraint="null">
+              <resolution width="29" height="87"/>
+              <position x="174"/>
+              <attributeValues key="PreferredSize" value="29, 87"/>
+              <attributeValues key="DeviceIdCore" value="6"/>
+              <attributeValues key="Text" value="6"/>
+              <dynamicAttributes key="Create">
+                <value function="doesDeviceExist : UserFunctions" equal="true" unequal="false">
+                  <parameter key="1" value="devicename; PlastFunctionUtils.createDeviceName(&quot;Core6&quot;)"/>
+                </value>
+              </dynamicAttributes>
+            </widgetInstances>
+            <widgetInstances xsi:type="base:CompositeWidgetInstance" widgetId="faa53baf-f535-41a0-b8cd-80c528151ad9" name="singleCorestate7" compositeWidgetID="7c56855e-2168-49c0-9537-d58cdcdc28a8" layoutConstraint="null">
+              <resolution width="29" height="87"/>
+              <position x="203"/>
+              <attributeValues key="PreferredSize" value="29, 87"/>
+              <attributeValues key="DeviceIdCore" value="7"/>
+              <attributeValues key="Text" value="7"/>
+              <dynamicAttributes key="Create">
+                <value function="doesDeviceExist : UserFunctions" equal="true" unequal="false">
+                  <parameter key="1" value="devicename; PlastFunctionUtils.createDeviceName(&quot;Core7&quot;)"/>
+                </value>
+              </dynamicAttributes>
+            </widgetInstances>
+            <widgetInstances xsi:type="base:CompositeWidgetInstance" widgetId="faa53baf-f535-41a0-b8cd-80c528151ad9" name="singleCorestate8" compositeWidgetID="7c56855e-2168-49c0-9537-d58cdcdc28a8" layoutConstraint="null">
+              <resolution width="29" height="87"/>
+              <position x="232"/>
+              <attributeValues key="PreferredSize" value="29, 87"/>
+              <attributeValues key="DeviceIdCore" value="8"/>
+              <attributeValues key="Text" value="8"/>
+              <dynamicAttributes key="Create">
+                <value function="doesDeviceExist : UserFunctions" equal="true" unequal="false">
+                  <parameter key="1" value="devicename; PlastFunctionUtils.createDeviceName(&quot;Core8&quot;)"/>
+                </value>
+              </dynamicAttributes>
+            </widgetInstances>
+            <layout layoutID="kvs.layout.GridLayout" name="GridLayout">
+              <attributeValues key="Rows" value="1"/>
+              <attributeValues key="Columns" value="9"/>
+            </layout>
+          </widgetInstances>
+          <layout layoutID="kvs.layout.BorderLayout" name="BorderLayout"/>
+        </widgetInstances>
+        <layout layoutID="kvs.layout.BorderLayout" name="BorderLayout"/>
+      </widgetInstances>
+      <widgetInstances xsi:type="base:ContainerWidgetInstance" widgetId="kvs.panel" name="panelHorizontalDataLeft" layoutConstraint="LEFT">
+        <resolution width="353" height="116"/>
+        <position y="3"/>
+        <widgetInstances xsi:type="base:ContainerWidgetInstance" widgetId="kvs.panel" name="panelProductionHeader" layoutConstraint="null">
+          <resolution width="353" height="29"/>
+          <position/>
+          <attributeValues key="PreferredSize" value="10, 29"/>
+          <widgetInstances xsi:type="base:ContainerWidgetInstance" widgetId="kvs.panel" name="containerHeaderDummy" layoutConstraint="null">
+            <resolution width="10" height="10"/>
+            <position x="1" y="9"/>
+            <layout layoutID="kvs.layout.PercentLayout" name="PercentLayout"/>
+          </widgetInstances>
+          <widgetInstances widgetId="keplast.kvs.klabeltip" name="labelHeaderActual" layoutConstraint="null">
+            <resolution width="62" height="29"/>
+            <position x="127"/>
+            <attributeValues key="Text" value="Actual"/>
+            <attributeValues key="PreferredSize" value="62, 29"/>
+          </widgetInstances>
+          <widgetInstances widgetId="keplast.kvs.klabeltip" name="labelHeaderRemain" layoutConstraint="null">
+            <resolution width="62" height="29"/>
+            <position x="190"/>
+            <attributeValues key="Text" value="Remain"/>
+            <attributeValues key="PreferredSize" value="62, 29"/>
+          </widgetInstances>
+          <widgetInstances widgetId="keplast.kvs.klabeltip" name="labelHeaderTotal" layoutConstraint="null">
+            <resolution width="62" height="29"/>
+            <position x="253"/>
+            <attributeValues key="Text" value="Total"/>
+            <attributeValues key="PreferredSize" value="62, 29"/>
+          </widgetInstances>
+          <layout layoutID="keplast.kvs.layout.beanlayout" name="BeanLayout">
+            <attributeValues key="UseUnitFieldGap" value="true"/>
+            <attributeValues key="Hgap" value="1"/>
+          </layout>
+        </widgetInstances>
+        <widgetInstances xsi:type="base:ContainerWidgetInstance" widgetId="kvs.panel" name="panelProdCounter" layoutConstraint="null">
+          <resolution width="353" height="29"/>
+          <position y="29"/>
+          <attributeValues key="PreferredSize" value="10, 29"/>
+          <widgetInstances widgetId="keplast.kvs.varlabeltip" name="labelProdCounter" layoutConstraint="null">
+            <resolution width="126" height="21"/>
+            <position x="3" y="4"/>
+            <attributeValues key="TextLabelType" value="Short Variable Label"/>
+            <attributeValues key="Alignment" value="MIDDLE/LEFT"/>
+            <attributeValues key="Variable" value="system.sv_iProdCounterAct"/>
+          </widgetInstances>
+          <widgetInstances widgetId="keplast.kvs.actvaluenumfield" name="numfieldProdCountAct" layoutConstraint="null">
+            <resolution width="60" height="29"/>
+            <position x="129"/>
+            <attributeValues key="Variable" value="system.sv_iProdCounterAct"/>
+            <attributeValues key="VariableMaximum" value="system.sv_iProdCounterSet"/>
+          </widgetInstances>
+          <widgetInstances widgetId="keplast.kvs.actvaluenumfield" name="numfieldProdCountRem" layoutConstraint="null">
+            <resolution width="60" height="29"/>
+            <position x="192"/>
+            <attributeValues key="VariableMaximum" value="system.sv_iProdCounterSet"/>
+            <attributeValues key="Variable" value="OperationMode1.sv_iProdCounterRemaining"/>
+          </widgetInstances>
+          <widgetInstances widgetId="kvs.numfield" name="numfieldProdCountTotal" layoutConstraint="null">
+            <resolution width="60" height="29"/>
+            <position x="255"/>
+            <attributeValues key="Variable" value="system.sv_iProdCounterSet"/>
+          </widgetInstances>
+          <layout layoutID="keplast.kvs.layout.beanlayout" name="BeanLayout">
+            <attributeValues key="FieldWidth" value="60"/>
+            <attributeValues key="UseUnitFieldGap" value="true"/>
+            <attributeValues key="FieldHeight" value="29"/>
+          </layout>
+        </widgetInstances>
+        <widgetInstances xsi:type="base:ContainerWidgetInstance" widgetId="kvs.panel" name="panelProdTime" layoutConstraint="null">
+          <resolution width="353" height="29"/>
+          <position y="58"/>
+          <attributeValues key="Visible" value="true"/>
+          <attributeValues key="PreferredSize" value="10, 29"/>
+          <widgetInstances widgetId="keplast.kvs.varlabeltip" name="labelProdTime" layoutConstraint="null">
+            <resolution width="126" height="21"/>
+            <position x="3" y="4"/>
+            <attributeValues key="TextLabelType" value="Short Variable Label"/>
+            <attributeValues key="Alignment" value="MIDDLE/LEFT"/>
+            <attributeValues key="Variable" value="OperationMode1.sv_rProdTimeAct"/>
+          </widgetInstances>
+          <widgetInstances widgetId="keplast.kvs.actvaluenumfield" name="numfieldProdTimeAct" layoutConstraint="null">
+            <resolution width="60" height="29"/>
+            <position x="129"/>
+            <attributeValues key="Variable" value="OperationMode1.sv_rProdTimeAct"/>
+            <attributeValues key="VariableMaximum" value="OperationMode1.sv_rProdTimeTotal"/>
+          </widgetInstances>
+          <widgetInstances widgetId="keplast.kvs.actvaluenumfield" name="numfieldProdTimeRem" layoutConstraint="null">
+            <resolution width="60" height="29"/>
+            <position x="192"/>
+            <attributeValues key="Variable" value="OperationMode1.sv_rProdTimeRemaining"/>
+            <attributeValues key="VariableMaximum" value="OperationMode1.sv_rProdTimeTotal"/>
+          </widgetInstances>
+          <widgetInstances widgetId="kvs.numfield" name="numfieldProdCountTimeTotal" layoutConstraint="null">
+            <resolution width="60" height="29"/>
+            <position x="255"/>
+            <attributeValues key="Variable" value="OperationMode1.sv_rProdTimeTotal"/>
+            <attributeValues key="Editable" value="false"/>
+          </widgetInstances>
+          <widgetInstances widgetId="keplast.kvs.varlabeltip" name="unitProdTime" layoutConstraint="null">
+            <resolution width="38" height="21"/>
+            <position x="315" y="4"/>
+            <attributeValues key="TextLabelType" value="Unit Variable Label"/>
+            <attributeValues key="Variable" value="OperationMode1.sv_rProdTimeTotal"/>
+            <attributeValues key="Alignment" value="MIDDLE/LEFT"/>
+          </widgetInstances>
+          <layout layoutID="keplast.kvs.layout.beanlayout" name="BeanLayout">
+            <attributeValues key="FieldWidth" value="60"/>
+            <attributeValues key="FieldHeight" value="29"/>
+          </layout>
+        </widgetInstances>
+        <widgetInstances xsi:type="base:ContainerWidgetInstance" widgetId="kvs.panel" name="panelCycleTime" layoutConstraint="null">
+          <resolution width="353" height="29"/>
+          <position y="87"/>
+          <attributeValues key="PreferredSize" value="10, 29"/>
+          <widgetInstances widgetId="keplast.kvs.varlabeltip" name="labelCycleTime" layoutConstraint="null">
+            <resolution width="126" height="21"/>
+            <position x="3" y="4"/>
+            <attributeValues key="TextLabelType" value="Short Variable Label"/>
+            <attributeValues key="Alignment" value="MIDDLE/LEFT"/>
+            <attributeValues key="Variable" value="system.sv_dCycleTime"/>
+          </widgetInstances>
+          <widgetInstances widgetId="keplast.kvs.actvaluenumfield" name="numfieldCycleTimeAct" layoutConstraint="null">
+            <resolution width="60" height="29"/>
+            <position x="129"/>
+            <attributeValues key="Variable" value="system.sv_dCycleTime"/>
+            <attributeValues key="VariableMaximum" value="system.sv_dMaxCycleTime"/>
+          </widgetInstances>
+          <widgetInstances widgetId="keplast.kvs.actvaluenumfield" name="numfieldCycleTimeLast" layoutConstraint="null">
+            <resolution width="60" height="29"/>
+            <position x="192"/>
+            <attributeValues key="Variable" value="system.sv_dLastCycleTime"/>
+            <attributeValues key="VariableMaximum" value="system.sv_dMaxCycleTime"/>
+          </widgetInstances>
+          <widgetInstances widgetId="kvs.numfield" name="numfieldCycleTimeSet" layoutConstraint="null">
+            <resolution width="60" height="29"/>
+            <position x="255"/>
+            <attributeValues key="Variable" value="system.sv_dMaxCycleTime"/>
+          </widgetInstances>
+          <widgetInstances widgetId="keplast.kvs.varlabeltip" name="unitCycleTime" layoutConstraint="null">
+            <resolution width="38" height="21"/>
+            <position x="315" y="4"/>
+            <attributeValues key="TextLabelType" value="Unit Variable Label"/>
+            <attributeValues key="Variable" value="system.sv_dCycleTime"/>
+            <attributeValues key="Alignment" value="MIDDLE/LEFT"/>
+          </widgetInstances>
+          <layout layoutID="keplast.kvs.layout.beanlayout" name="BeanLayout">
+            <attributeValues key="FieldWidth" value="60"/>
+            <attributeValues key="FieldHeight" value="29"/>
+          </layout>
+        </widgetInstances>
+        <layout layoutID="kvs.layout.GridLayout" name="GridLayout">
+          <attributeValues key="Rows" value="4"/>
+          <attributeValues key="Columns" value="1"/>
+        </layout>
+      </widgetInstances>
+      <layout layoutID="keplast.kvs.layout.horizontalsplitlayout" name="HorizontalSplitLayout">
+        <attributeValues key="InsetsLeft" value="3, 0, 3, 0"/>
+        <attributeValues key="InsetsRight" value="3, 3, 3, 0"/>
+      </layout>
+    </widgetInstances>
+    <layout layoutID="kvs.layout.BorderLayout" name="BorderLayout"/>
+  </widgetInstances>
+  <layout layoutID="kvs.layout.BorderLayout" name="BorderLayout"/>
+</base:Mask>

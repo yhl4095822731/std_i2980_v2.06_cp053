@@ -1,0 +1,1089 @@
+IMPORT_OVER_LISTFILE
+ KTEMP_Ptn
+, KTEMP_PtnParam
+, FBEPForceAI
+, FBEPUnForceAI
+
+END_IMPORT
+
+ALGORITHM_BLOCK ABZoneSimu #DUMMY_EDIT_BLOCK
+
+VAR
+ abPTN : KTEMP_Ptn;
+ mdCycleTime : TIME;
+ msZoneName : STRING(255);
+ mbZoneLinked : BOOL;
+ abPTNRadiation : KTEMP_Ptn;
+ abPTNConductionLeft : KTEMP_Ptn;
+ abPTNConductionRight : KTEMP_Ptn;
+ mrCycleTime : REAL;
+ mrCoilFactor : REAL := 1.0;
+ mrRadiationFactor : REAL := 0.25;
+ mrConductionFactor : REAL := 0.25;
+ ptnParamCoil : KTEMP_PtnParam;
+ ptnParamRadiation : KTEMP_PtnParam;
+ ptnParamConduction : KTEMP_PtnParam;
+ mrRadiationTimeFactor : REAL := 5.0;
+ mrConductionTimeFactor : REAL := 5.0;
+ mrCoilTimeFactor : REAL := 0.1;
+ mrRadiationCoilFactor : REAL := 0.002;
+ mrConductionCoilFactor : REAL := 0.001;
+END_VAR
+
+ALGORITHM aInit
+
+
+VAR_IN_OUT
+ ptnParam : KTEMP_PtnParam;
+END_VAR
+
+VAR_INPUT
+ dCycleTime : TIME;
+ sZoneName : STRING(255);
+ bZoneLinked : BOOL;
+ rRadiationCoilFactor : REAL;
+ rConductionCoilFactor : REAL;
+ bZoneModelMode : BOOL;
+END_VAR
+#BEGIN_EDIT_BLOCK
+mdCycleTime := dCycleTime;
+
+mrCycleTime := LINT_TO_REAL(TIME_TO_LINT(mdCycleTime)) * 1.0e-6;
+IF (ptnParam.rK > 0.0) AND (ptnParam.rT[0] + ptnParam.rT[1] + ptnParam.rT[2] > T#0s) THEN
+   mrCoilFactor := ptnParam.rK * mrCycleTime / LINT_TO_REAL(TIME_TO_LINT(ptnParam.rT[0] + ptnParam.rT[1] + ptnParam.rT[2])) * 1.0e6;
+   ptnParamCoil.rK := 1.0;
+   ptnParamCoil.uN := ptnParam.uN;
+   ptnParamCoil.rT[0] := MULTIME(ptnParam.rT[0],mrCoilTimeFactor);
+   ptnParamCoil.rT[1] := MULTIME(ptnParam.rT[1],mrCoilTimeFactor);
+   ptnParamCoil.rT[2] := MULTIME(ptnParam.rT[2],mrCoilTimeFactor);
+   ptnParamCoil.rT[3] := MULTIME(ptnParam.rT[3],mrCoilTimeFactor);
+   ptnParamCoil.rT[4] := MULTIME(ptnParam.rT[4],mrCoilTimeFactor);
+   ptnParamCoil.rT[5] := MULTIME(ptnParam.rT[5],mrCoilTimeFactor);
+ELSE // use default value
+   ptnParamCoil.rK := 1.0;
+   ptnParamCoil.uN := 3;
+   mrCoilFactor := 0.1; 
+   ptnParamCoil.rT[0] := T#200ms;
+   ptnParamCoil.rT[1] := ptnParamCoil.rT[0];
+   ptnParamCoil.rT[2] := ptnParamCoil.rT[0];
+   ptnParamCoil.rT[3] := ptnParamCoil.rT[0];
+   ptnParamCoil.rT[4] := ptnParamCoil.rT[0];
+   ptnParamCoil.rT[5] := ptnParamCoil.rT[0];
+END_IF; 
+
+IF (rRadiationCoilFactor > 0.0)  THEN
+   mrRadiationCoilFactor := rRadiationCoilFactor;
+ELSE
+   // default value
+   mrRadiationCoilFactor := 0.002;
+END_IF;
+mrRadiationFactor := mrRadiationCoilFactor * mrCoilFactor;
+ptnParamRadiation.rK := 1.0;
+ptnParamRadiation.uN := ptnParam.uN;
+ptnParamRadiation.rT[0] := MULTIME(ptnParamCoil.rT[0],mrRadiationTimeFactor);
+ptnParamRadiation.rT[1] := MULTIME(ptnParamCoil.rT[1],mrRadiationTimeFactor);
+ptnParamRadiation.rT[2] := MULTIME(ptnParamCoil.rT[2],mrRadiationTimeFactor);
+ptnParamRadiation.rT[3] := MULTIME(ptnParamCoil.rT[3],mrRadiationTimeFactor);
+ptnParamRadiation.rT[4] := MULTIME(ptnParamCoil.rT[4],mrRadiationTimeFactor);
+ptnParamRadiation.rT[5] := MULTIME(ptnParamCoil.rT[4],mrRadiationTimeFactor);
+abPTNRadiation.Par(dCycleTime:=mdCycleTime,
+                   Param:=ptnParamRadiation);
+abPTNRadiation.Init(rU:=0.0);
+
+IF (rConductionCoilFactor > 0.0)  THEN
+   mrConductionCoilFactor := rConductionCoilFactor;
+ELSE
+   // default value
+   mrConductionCoilFactor := 0.00125;
+END_IF;
+mrConductionFactor := mrConductionCoilFactor * mrCoilFactor;
+ptnParamConduction.rK := 1.0;
+ptnParamConduction.uN := ptnParam.uN;
+ptnParamConduction.rT[0] := MULTIME(ptnParamCoil.rT[0],mrConductionTimeFactor);
+ptnParamConduction.rT[1] := MULTIME(ptnParamCoil.rT[1],mrConductionTimeFactor);
+ptnParamConduction.rT[2] := MULTIME(ptnParamCoil.rT[2],mrConductionTimeFactor);
+ptnParamConduction.rT[3] := MULTIME(ptnParamCoil.rT[3],mrConductionTimeFactor);
+ptnParamConduction.rT[4] := MULTIME(ptnParamCoil.rT[4],mrConductionTimeFactor);
+ptnParamConduction.rT[5] := MULTIME(ptnParamCoil.rT[4],mrConductionTimeFactor);
+abPTNConductionLeft.Par(dCycleTime:=mdCycleTime,
+                       Param:=ptnParamConduction);
+abPTNConductionLeft.Init(rU:=0.0);
+abPTNConductionRight.Par(dCycleTime:=mdCycleTime,
+                        Param:=ptnParamConduction);
+abPTNConductionRight.Init(rU:=0.0);
+
+msZoneName := sZoneName;
+mbZoneLinked := bZoneLinked;
+
+IF (bZoneModelMode) THEN
+   abPTN.Par(dCycleTime:=mdCycleTime,
+             Param:=ptnParamCoil);
+ELSE
+   abPTN.Par(dCycleTime:=mdCycleTime,
+             Param:=ptnParam);
+END_IF;
+abPTN.Init(rU:=0.0);
+
+
+
+;#END_EDIT_BLOCK END_ALGORITHM
+
+ALGORITHM aRun
+
+
+VAR_INPUT
+ rControlValue : REAL;
+END_VAR
+
+VAR_OUTPUT
+ rZoneTemp : REAL;
+END_VAR
+
+VAR
+ rAmbientAirTemperatue : REAL := 30.0;
+ rActTemp : REAL;
+ fbEPForceTemp : FBEPForceAI;
+END_VAR
+#BEGIN_EDIT_BLOCK
+IF mbZoneLinked THEN
+    abPTN.Calculate(rE:=rControlValue);
+    rActTemp:=rAmbientAirTemperatue + abPTN.Calculate.rU;
+    IF rActTemp < rAmbientAirTemperatue THEN
+      rActTemp := rAmbientAirTemperatue;
+    END_IF;
+    fbEPForceTemp(sSysVar := msZoneName,Value := rActTemp);
+END_IF;    
+rZoneTemp := rActTemp;
+
+
+;#END_EDIT_BLOCK END_ALGORITHM
+
+ALGORITHM aRunRef
+
+
+VAR_INPUT
+ rControlValue : REFTO REAL;
+ bReset : BOOL R_EDGE;
+ rLeftZoneTemp : REAL;
+ rRightZoneTemp : REAL;
+ bZoneModelMode : BOOL;
+ rSetTempZone : REAL;
+ rActTempZone : REAL;
+ bHeatingOn : BOOL;
+END_VAR
+
+VAR_OUTPUT
+ rZoneTemp : REAL;
+END_VAR
+
+VAR
+ rAmbientAirTemperatue : REAL := 30.0;
+ rActTemp : REAL := 30.0;
+ fbEPForceTemp : FBEPForceAI;
+ rHeatingDivision : REAL := 0.94;
+END_VAR
+#BEGIN_EDIT_BLOCK
+IF mbZoneLinked THEN
+   IF bReset THEN
+      // e.g. fastest cooling heating off
+      abPTN.Init(rU := 0.0);
+      abPTNRadiation.Init(rU:=0.0);
+      abPTNConductionLeft.Init(rU:=0.0);
+      abPTNConductionRight.Init(rU:=0.0);
+      rActTemp := rAmbientAirTemperatue;
+   END_IF;
+
+   IF (bZoneModelMode) THEN
+      // developer mode: like real heating system
+      abPTN.Calculate(rE:=rControlValue^);
+      abPTNRadiation.Calculate(rE:=(rActTemp - rAmbientAirTemperatue));
+      IF (rLeftZoneTemp) > 0.0 THEN  // nozzle?
+         abPTNConductionLeft.Calculate(rE:=(rActTemp - rLeftZoneTemp));
+      END_IF;
+      IF (rRightZoneTemp) > 0.0 THEN // hopper?
+         abPTNConductionRight.Calculate(rE:=(rActTemp - rRightZoneTemp));
+      END_IF;
+      rActTemp := rActTemp + mrCoilFactor * abPTN.Calculate.rU 
+               - mrRadiationFactor * abPTNRadiation.Calculate.rU
+               - mrConductionFactor * (abPTNConductionLeft.Calculate.rU + abPTNConductionRight.Calculate.rU);
+      IF rActTemp < rAmbientAirTemperatue THEN
+         rActTemp := rAmbientAirTemperatue;
+      END_IF;
+   ELSE
+      IF bHeatingOn THEN
+         rActTemp := rSetTempZone * (1.0 - rHeatingDivision) + rActTempZone * rHeatingDivision;
+      ELSE
+         rActTemp := rAmbientAirTemperatue * (1.0 - rHeatingDivision) + rActTempZone * rHeatingDivision;
+      END_IF;
+   END_IF;
+   fbEPForceTemp(sSysVar := msZoneName,Value := rActTemp);
+   rZoneTemp := rActTemp;
+ELSE   
+   rZoneTemp := rAmbientAirTemperatue;
+END_IF;    
+
+
+;#END_EDIT_BLOCK END_ALGORITHM
+
+ALGORITHM aUnforce
+
+
+VAR
+ fbEPUnForceTemp : FBEPUnForceAI;
+END_VAR
+#BEGIN_EDIT_BLOCK
+IF mbZoneLinked THEN
+   fbEPUnForceTemp(sSysVar := msZoneName);
+END_IF;
+
+
+;#END_EDIT_BLOCK END_ALGORITHM
+
+ALGORITHM aReParamPlant
+
+
+VAR_IN_OUT
+ ptnParam : KTEMP_PtnParam;
+END_VAR
+
+VAR_INPUT
+ bZoneModelMode : BOOL;
+ rRadiationCoilFactor : REAL;
+ rConductionCoilFactor : REAL;
+END_VAR
+#BEGIN_EDIT_BLOCK
+IF bZoneModelMode THEN
+   IF (ptnParam.rK > 0.0) AND (ptnParam.rT[0] + ptnParam.rT[1] + ptnParam.rT[2] > T#0s) THEN
+      mrCoilFactor := ptnParam.rK * mrCycleTime / LINT_TO_REAL(TIME_TO_LINT(ptnParam.rT[0] + ptnParam.rT[1] + ptnParam.rT[2])) * 1.0e6;
+      ptnParamCoil.rK := 1.0;
+      ptnParamCoil.uN := ptnParam.uN;
+      ptnParamCoil.rT[0] := MULTIME(ptnParam.rT[0],mrCoilTimeFactor);
+      ptnParamCoil.rT[1] := MULTIME(ptnParam.rT[1],mrCoilTimeFactor);
+      ptnParamCoil.rT[2] := MULTIME(ptnParam.rT[2],mrCoilTimeFactor);
+      ptnParamCoil.rT[3] := MULTIME(ptnParam.rT[3],mrCoilTimeFactor);
+      ptnParamCoil.rT[4] := MULTIME(ptnParam.rT[4],mrCoilTimeFactor);
+      ptnParamCoil.rT[5] := MULTIME(ptnParam.rT[5],mrCoilTimeFactor);
+   ELSE // use default value
+      ptnParamCoil.rK := 1.0;
+      ptnParamCoil.uN := 3;
+      mrCoilFactor := 0.1; 
+      ptnParamCoil.rT[0] := T#200ms;
+      ptnParamCoil.rT[1] := ptnParamCoil.rT[0];
+      ptnParamCoil.rT[2] := ptnParamCoil.rT[0];
+      ptnParamCoil.rT[3] := ptnParamCoil.rT[0];
+      ptnParamCoil.rT[4] := ptnParamCoil.rT[0];
+      ptnParamCoil.rT[5] := ptnParamCoil.rT[0];
+   END_IF; 
+   abPTN.Par(dCycleTime:=mdCycleTime,
+            Param:=ptnParamCoil);
+   abPTN.Init(rU := abPTN.Calculate.rU);
+   
+   IF (rRadiationCoilFactor > 0.0)  THEN
+      mrRadiationCoilFactor := rRadiationCoilFactor;
+   ELSE
+      // default value
+      mrRadiationCoilFactor := 0.0025;
+   END_IF;
+   mrRadiationFactor := mrRadiationCoilFactor * mrCoilFactor;
+   ptnParamRadiation.rK := 1.0;
+   ptnParamRadiation.uN := ptnParamCoil.uN;
+   ptnParamRadiation.rT[0] := MULTIME(ptnParamCoil.rT[0],mrRadiationTimeFactor);
+   ptnParamRadiation.rT[1] := MULTIME(ptnParamCoil.rT[1],mrRadiationTimeFactor);
+   ptnParamRadiation.rT[2] := MULTIME(ptnParamCoil.rT[2],mrRadiationTimeFactor);
+   ptnParamRadiation.rT[3] := MULTIME(ptnParamCoil.rT[3],mrRadiationTimeFactor);
+   ptnParamRadiation.rT[4] := MULTIME(ptnParamCoil.rT[4],mrRadiationTimeFactor);
+   ptnParamRadiation.rT[5] := MULTIME(ptnParamCoil.rT[5],mrRadiationTimeFactor);
+   abPTNRadiation.Par(dCycleTime:=mdCycleTime,
+                     Param:=ptnParamRadiation);
+   abPTNRadiation.Init(rU:=abPTNRadiation.Calculate.rU);
+   
+   IF (rConductionCoilFactor > 0.0)  THEN
+      mrConductionCoilFactor := rConductionCoilFactor;
+   ELSE
+      // default value
+      mrConductionCoilFactor := 0.001;
+   END_IF;
+   mrConductionFactor := mrConductionCoilFactor * mrCoilFactor;
+   ptnParamConduction.rK := 1.0;
+   ptnParamConduction.uN := ptnParamCoil.uN;
+   ptnParamConduction.rT[0] := MULTIME(ptnParamCoil.rT[0],mrConductionTimeFactor);
+   ptnParamConduction.rT[1] := MULTIME(ptnParamCoil.rT[1],mrConductionTimeFactor);
+   ptnParamConduction.rT[2] := MULTIME(ptnParamCoil.rT[2],mrConductionTimeFactor);
+   ptnParamConduction.rT[3] := MULTIME(ptnParamCoil.rT[3],mrConductionTimeFactor);
+   ptnParamConduction.rT[4] := MULTIME(ptnParamCoil.rT[4],mrConductionTimeFactor);
+   ptnParamConduction.rT[5] := MULTIME(ptnParamCoil.rT[5],mrConductionTimeFactor);
+   mrConductionFactor := mrConductionCoilFactor * mrCoilFactor;
+   abPTNConductionLeft.Par(dCycleTime:=mdCycleTime,
+                        Param:=ptnParamConduction);
+   abPTNConductionLeft.Init(rU:=abPTNConductionLeft.Calculate.rU);
+   abPTNConductionRight.Par(dCycleTime:=mdCycleTime,
+                           Param:=ptnParamConduction);
+   abPTNConductionRight.Init(rU:=abPTNConductionRight.Calculate.rU);
+ELSE
+   abPTN.Par(dCycleTime:=mdCycleTime,
+          Param:=ptnParam);
+   abPTN.Init(rU:=abPTN.Calculate.rU);
+END_IF;
+
+
+
+;#END_EDIT_BLOCK END_ALGORITHM
+
+
+
+END_ALGORITHM_BLOCK
+
+
+
+#END_OF_IEC_PART
+
+@Puma @IecEditor 6 176 @Pou 25 
+@@@BEG_Comment@@@
+
+@@@END_Comment@@@
+
+@BEG_Contents 
+
+@BEG_Func 
+@RT(17)FuncTreeContainer 
+0 
+@END_Func 
+
+@BEG_Const 
+@RT(18)ConstTreeContainer 
+0 
+@END_Const 
+
+@BEG_Export 
+
+@BEG_Kind 
+@ALGORITHM_BLOCK @RT(10)ABZoneSimu @STRUCTURED_TEXT 
+@RT(0) @RT(0) @RT(0) 
+@END_Kind 
+
+@BEG_Dcl 
+@RT(16)DclTreeContainer 
+19 
+@Var @RT(5)abPTN @RT(0) @T @T @DERIVED 0 @T @T @DT @RT(9)KTEMP_Ptn @RT(0) @T @T @UNKNOWN 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(11)mdCycleTime @RT(0) @T @F @DT @RT(4)TIME @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(10)msZoneName @RT(0) @T @F @DT @RT(11)STRING(255) @RT(0) @T @T @STRING 0 @F @RT(3)255 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(12)mbZoneLinked @RT(0) @T @F @DT @RT(4)BOOL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(14)abPTNRadiation @RT(0) @T @T @DERIVED 0 @T @T @DT @RT(9)KTEMP_Ptn @RT(0) @T @T @UNKNOWN 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(19)abPTNConductionLeft @RT(0) @T @T @DERIVED 0 @T @T @DT @RT(9)KTEMP_Ptn @RT(0) @T @T @UNKNOWN 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(20)abPTNConductionRight @RT(0) @T @T @DERIVED 0 @T @T @DT @RT(9)KTEMP_Ptn @RT(0) @T @T @UNKNOWN 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(11)mrCycleTime @RT(0) @T @F @DT @RT(4)REAL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(12)mrCoilFactor @RT(0) @T @F @DT @RT(4)REAL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(3)1.0 @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(17)mrRadiationFactor @RT(0) @T @F @DT @RT(4)REAL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(4)0.25 @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(18)mrConductionFactor @RT(0) @T @F @DT @RT(4)REAL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(4)0.25 @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(12)ptnParamCoil @RT(0) @T @T @DERIVED 0 @T @T @DT @RT(14)KTEMP_PtnParam @RT(0) @T @T @UNKNOWN 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(17)ptnParamRadiation @RT(0) @T @T @DERIVED 0 @T @T @DT @RT(14)KTEMP_PtnParam @RT(0) @T @T @UNKNOWN 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(18)ptnParamConduction @RT(0) @T @T @DERIVED 0 @T @T @DT @RT(14)KTEMP_PtnParam @RT(0) @T @T @UNKNOWN 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(21)mrRadiationTimeFactor @RT(0) @T @F @DT @RT(4)REAL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(3)5.0 @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(22)mrConductionTimeFactor @RT(0) @T @F @DT @RT(4)REAL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(3)5.0 @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(16)mrCoilTimeFactor @RT(0) @T @F @DT @RT(4)REAL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(3)0.1 @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(21)mrRadiationCoilFactor @RT(0) @T @F @DT @RT(4)REAL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(5)0.002 @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(22)mrConductionCoilFactor @RT(0) @T @F @DT @RT(4)REAL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(5)0.001 @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@END_Dcl 
+
+@END_Export 
+
+@BEG_Body 
+
+5 
+
+@BEG_Export 
+
+@BEG_Algo 
+@ALGORITHM @RT(5)aInit @STRUCTURED_TEXT 
+@RT(0) @RT(0) @RT(0) @F @F 
+@END_Algo 
+
+@BEG_Dcl 
+@RT(16)DclTreeContainer 
+7 
+@Var @RT(8)ptnParam @RT(0) @T @T @DERIVED 0 @T @T @DT @RT(14)KTEMP_PtnParam @RT(0) @T @T @UNKNOWN 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 2 @F @F @F @F 
+
+@Var @RT(10)dCycleTime @RT(0) @T @F @DT @RT(4)TIME @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 1 @F @F @F @F 
+
+@Var @RT(9)sZoneName @RT(0) @T @F @DT @RT(11)STRING(255) @RT(0) @T @T @STRING 0 @F @RT(3)255 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 1 @F @F @F @F 
+
+@Var @RT(11)bZoneLinked @RT(0) @T @F @DT @RT(4)BOOL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 1 @F @F @F @F 
+
+@Var @RT(20)rRadiationCoilFactor @RT(0) @T @F @DT @RT(4)REAL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 1 @F @F @F @F 
+
+@Var @RT(21)rConductionCoilFactor @RT(0) @T @F @DT @RT(4)REAL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 1 @F @F @F @F 
+
+@Var @RT(14)bZoneModelMode @RT(0) @T @F @DT @RT(4)BOOL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 1 @F @F @F @F 
+
+@END_Dcl 
+
+@END_Export 
+
+@BEG_Export 
+
+@BEG_Algo 
+@ALGORITHM @RT(4)aRun @STRUCTURED_TEXT 
+@RT(0) @RT(0) @RT(0) @F @F 
+@END_Algo 
+
+@BEG_Dcl 
+@RT(16)DclTreeContainer 
+5 
+@Var @RT(13)rControlValue @RT(0) @T @F @DT @RT(4)REAL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 1 @F @F @F @F 
+
+@Var @RT(9)rZoneTemp @RT(0) @T @F @DT @RT(4)REAL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 3 @F @F @F @F 
+
+@Var @RT(21)rAmbientAirTemperatue @RT(0) @T @F @DT @RT(4)REAL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(4)30.0 @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(8)rActTemp @RT(0) @T @F @DT @RT(4)REAL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(13)fbEPForceTemp @RT(0) @T @T @DERIVED 0 @T @T @DT @RT(11)FBEPForceAI @RT(0) @T @T @UNKNOWN 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@END_Dcl 
+
+@END_Export 
+
+@BEG_Export 
+
+@BEG_Algo 
+@ALGORITHM @RT(7)aRunRef @STRUCTURED_TEXT 
+@RT(0) @RT(0) @RT(0) @F @F 
+@END_Algo 
+
+@BEG_Dcl 
+@RT(16)DclTreeContainer 
+13 
+@Var @RT(13)rControlValue @RT(0) @T @T @REFTO 0 @T @DT @RT(4)REAL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 1 @F @F @F @F 
+
+@Var @RT(6)bReset @RT(0) @T @F @DT @RT(11)BOOL R_EDGE @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 1 @F @F @F @F 
+
+@Var @RT(13)rLeftZoneTemp @RT(0) @T @F @DT @RT(4)REAL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 1 @F @F @F @F 
+
+@Var @RT(14)rRightZoneTemp @RT(0) @T @F @DT @RT(4)REAL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 1 @F @F @F @F 
+
+@Var @RT(14)bZoneModelMode @RT(0) @T @F @DT @RT(4)BOOL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 1 @F @F @F @F 
+
+@Var @RT(12)rSetTempZone @RT(0) @T @F @DT @RT(4)REAL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 1 @F @F @F @F 
+
+@Var @RT(12)rActTempZone @RT(0) @T @F @DT @RT(4)REAL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 1 @F @F @F @F 
+
+@Var @RT(10)bHeatingOn @RT(0) @T @F @DT @RT(4)BOOL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 1 @F @F @F @F 
+
+@Var @RT(9)rZoneTemp @RT(0) @T @F @DT @RT(4)REAL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 3 @F @F @F @F 
+
+@Var @RT(21)rAmbientAirTemperatue @RT(0) @T @F @DT @RT(4)REAL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(4)30.0 @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(8)rActTemp @RT(0) @T @F @DT @RT(4)REAL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(4)30.0 @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(13)fbEPForceTemp @RT(0) @T @T @DERIVED 0 @T @T @DT @RT(11)FBEPForceAI @RT(0) @T @T @UNKNOWN 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(16)rHeatingDivision @RT(0) @T @F @DT @RT(4)REAL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(4)0.94 @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@END_Dcl 
+
+@END_Export 
+
+@BEG_Export 
+
+@BEG_Algo 
+@ALGORITHM @RT(8)aUnforce @STRUCTURED_TEXT 
+@RT(0) @RT(0) @RT(0) @F @F 
+@END_Algo 
+
+@BEG_Dcl 
+@RT(16)DclTreeContainer 
+1 
+@Var @RT(15)fbEPUnForceTemp @RT(0) @T @T @DERIVED 0 @T @T @DT @RT(13)FBEPUnForceAI @RT(0) @T @T @UNKNOWN 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@END_Dcl 
+
+@END_Export 
+
+@BEG_Export 
+
+@BEG_Algo 
+@ALGORITHM @RT(13)aReParamPlant @STRUCTURED_TEXT 
+@RT(0) @RT(0) @RT(0) @F @F 
+@END_Algo 
+
+@BEG_Dcl 
+@RT(16)DclTreeContainer 
+4 
+@Var @RT(8)ptnParam @RT(0) @T @T @DERIVED 0 @T @T @DT @RT(14)KTEMP_PtnParam @RT(0) @T @T @UNKNOWN 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 2 @F @F @F @F 
+
+@Var @RT(14)bZoneModelMode @RT(0) @T @F @DT @RT(4)BOOL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 1 @F @F @F @F 
+
+@Var @RT(20)rRadiationCoilFactor @RT(0) @T @F @DT @RT(4)REAL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 1 @F @F @F @F 
+
+@Var @RT(21)rConductionCoilFactor @RT(0) @T @F @DT @RT(4)REAL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 1 @F @F @F @F 
+
+@END_Dcl 
+
+@END_Export 
+
+@BEG_Body 
+@TL(79)
+mdCycleTime := dCycleTime;
+
+mrCycleTime := LINT_TO_REAL(TIME_TO_LINT(mdCycleTime)) * 1.0e-6;
+IF (ptnParam.rK > 0.0) AND (ptnParam.rT[0] + ptnParam.rT[1] + ptnParam.rT[2] > T#0s) THEN
+   mrCoilFactor := ptnParam.rK * mrCycleTime / LINT_TO_REAL(TIME_TO_LINT(ptnParam.rT[0] + ptnParam.rT[1] + ptnParam.rT[2])) * 1.0e6;
+   ptnParamCoil.rK := 1.0;
+   ptnParamCoil.uN := ptnParam.uN;
+   ptnParamCoil.rT[0] := MULTIME(ptnParam.rT[0],mrCoilTimeFactor);
+   ptnParamCoil.rT[1] := MULTIME(ptnParam.rT[1],mrCoilTimeFactor);
+   ptnParamCoil.rT[2] := MULTIME(ptnParam.rT[2],mrCoilTimeFactor);
+   ptnParamCoil.rT[3] := MULTIME(ptnParam.rT[3],mrCoilTimeFactor);
+   ptnParamCoil.rT[4] := MULTIME(ptnParam.rT[4],mrCoilTimeFactor);
+   ptnParamCoil.rT[5] := MULTIME(ptnParam.rT[5],mrCoilTimeFactor);
+ELSE // use default value
+   ptnParamCoil.rK := 1.0;
+   ptnParamCoil.uN := 3;
+   mrCoilFactor := 0.1; 
+   ptnParamCoil.rT[0] := T#200ms;
+   ptnParamCoil.rT[1] := ptnParamCoil.rT[0];
+   ptnParamCoil.rT[2] := ptnParamCoil.rT[0];
+   ptnParamCoil.rT[3] := ptnParamCoil.rT[0];
+   ptnParamCoil.rT[4] := ptnParamCoil.rT[0];
+   ptnParamCoil.rT[5] := ptnParamCoil.rT[0];
+END_IF; 
+
+IF (rRadiationCoilFactor > 0.0)  THEN
+   mrRadiationCoilFactor := rRadiationCoilFactor;
+ELSE
+   // default value
+   mrRadiationCoilFactor := 0.002;
+END_IF;
+mrRadiationFactor := mrRadiationCoilFactor * mrCoilFactor;
+ptnParamRadiation.rK := 1.0;
+ptnParamRadiation.uN := ptnParam.uN;
+ptnParamRadiation.rT[0] := MULTIME(ptnParamCoil.rT[0],mrRadiationTimeFactor);
+ptnParamRadiation.rT[1] := MULTIME(ptnParamCoil.rT[1],mrRadiationTimeFactor);
+ptnParamRadiation.rT[2] := MULTIME(ptnParamCoil.rT[2],mrRadiationTimeFactor);
+ptnParamRadiation.rT[3] := MULTIME(ptnParamCoil.rT[3],mrRadiationTimeFactor);
+ptnParamRadiation.rT[4] := MULTIME(ptnParamCoil.rT[4],mrRadiationTimeFactor);
+ptnParamRadiation.rT[5] := MULTIME(ptnParamCoil.rT[4],mrRadiationTimeFactor);
+abPTNRadiation.Par(dCycleTime:=mdCycleTime,
+                   Param:=ptnParamRadiation);
+abPTNRadiation.Init(rU:=0.0);
+
+IF (rConductionCoilFactor > 0.0)  THEN
+   mrConductionCoilFactor := rConductionCoilFactor;
+ELSE
+   // default value
+   mrConductionCoilFactor := 0.00125;
+END_IF;
+mrConductionFactor := mrConductionCoilFactor * mrCoilFactor;
+ptnParamConduction.rK := 1.0;
+ptnParamConduction.uN := ptnParam.uN;
+ptnParamConduction.rT[0] := MULTIME(ptnParamCoil.rT[0],mrConductionTimeFactor);
+ptnParamConduction.rT[1] := MULTIME(ptnParamCoil.rT[1],mrConductionTimeFactor);
+ptnParamConduction.rT[2] := MULTIME(ptnParamCoil.rT[2],mrConductionTimeFactor);
+ptnParamConduction.rT[3] := MULTIME(ptnParamCoil.rT[3],mrConductionTimeFactor);
+ptnParamConduction.rT[4] := MULTIME(ptnParamCoil.rT[4],mrConductionTimeFactor);
+ptnParamConduction.rT[5] := MULTIME(ptnParamCoil.rT[4],mrConductionTimeFactor);
+abPTNConductionLeft.Par(dCycleTime:=mdCycleTime,
+                       Param:=ptnParamConduction);
+abPTNConductionLeft.Init(rU:=0.0);
+abPTNConductionRight.Par(dCycleTime:=mdCycleTime,
+                        Param:=ptnParamConduction);
+abPTNConductionRight.Init(rU:=0.0);
+
+msZoneName := sZoneName;
+mbZoneLinked := bZoneLinked;
+
+IF (bZoneModelMode) THEN
+   abPTN.Par(dCycleTime:=mdCycleTime,
+             Param:=ptnParamCoil);
+ELSE
+   abPTN.Par(dCycleTime:=mdCycleTime,
+             Param:=ptnParam);
+END_IF;
+abPTN.Init(rU:=0.0);
+
+
+@END_Body 
+
+@@@BEG_Comment@@@ 
+@TL(0)
+
+@@@END_Comment@@@ 
+
+@BEG_Body 
+@TL(10)
+IF mbZoneLinked THEN
+    abPTN.Calculate(rE:=rControlValue);
+    rActTemp:=rAmbientAirTemperatue + abPTN.Calculate.rU;
+    IF rActTemp < rAmbientAirTemperatue THEN
+      rActTemp := rAmbientAirTemperatue;
+    END_IF;
+    fbEPForceTemp(sSysVar := msZoneName,Value := rActTemp);
+END_IF;    
+rZoneTemp := rActTemp;
+
+@END_Body 
+
+@@@BEG_Comment@@@ 
+@TL(0)
+
+@@@END_Comment@@@ 
+
+@BEG_Body 
+@TL(39)
+IF mbZoneLinked THEN
+   IF bReset THEN
+      // e.g. fastest cooling heating off
+      abPTN.Init(rU := 0.0);
+      abPTNRadiation.Init(rU:=0.0);
+      abPTNConductionLeft.Init(rU:=0.0);
+      abPTNConductionRight.Init(rU:=0.0);
+      rActTemp := rAmbientAirTemperatue;
+   END_IF;
+
+   IF (bZoneModelMode) THEN
+      // developer mode: like real heating system
+      abPTN.Calculate(rE:=rControlValue^);
+      abPTNRadiation.Calculate(rE:=(rActTemp - rAmbientAirTemperatue));
+      IF (rLeftZoneTemp) > 0.0 THEN  // nozzle?
+         abPTNConductionLeft.Calculate(rE:=(rActTemp - rLeftZoneTemp));
+      END_IF;
+      IF (rRightZoneTemp) > 0.0 THEN // hopper?
+         abPTNConductionRight.Calculate(rE:=(rActTemp - rRightZoneTemp));
+      END_IF;
+      rActTemp := rActTemp + mrCoilFactor * abPTN.Calculate.rU 
+               - mrRadiationFactor * abPTNRadiation.Calculate.rU
+               - mrConductionFactor * (abPTNConductionLeft.Calculate.rU + abPTNConductionRight.Calculate.rU);
+      IF rActTemp < rAmbientAirTemperatue THEN
+         rActTemp := rAmbientAirTemperatue;
+      END_IF;
+   ELSE
+      IF bHeatingOn THEN
+         rActTemp := rSetTempZone * (1.0 - rHeatingDivision) + rActTempZone * rHeatingDivision;
+      ELSE
+         rActTemp := rAmbientAirTemperatue * (1.0 - rHeatingDivision) + rActTempZone * rHeatingDivision;
+      END_IF;
+   END_IF;
+   fbEPForceTemp(sSysVar := msZoneName,Value := rActTemp);
+   rZoneTemp := rActTemp;
+ELSE   
+   rZoneTemp := rAmbientAirTemperatue;
+END_IF;    
+
+@END_Body 
+
+@@@BEG_Comment@@@ 
+@TL(0)
+
+@@@END_Comment@@@ 
+
+@BEG_Body 
+@TL(4)
+IF mbZoneLinked THEN
+   fbEPUnForceTemp(sSysVar := msZoneName);
+END_IF;
+
+@END_Body 
+
+@@@BEG_Comment@@@ 
+@TL(0)
+
+@@@END_Comment@@@ 
+
+@BEG_Body 
+@TL(74)
+IF bZoneModelMode THEN
+   IF (ptnParam.rK > 0.0) AND (ptnParam.rT[0] + ptnParam.rT[1] + ptnParam.rT[2] > T#0s) THEN
+      mrCoilFactor := ptnParam.rK * mrCycleTime / LINT_TO_REAL(TIME_TO_LINT(ptnParam.rT[0] + ptnParam.rT[1] + ptnParam.rT[2])) * 1.0e6;
+      ptnParamCoil.rK := 1.0;
+      ptnParamCoil.uN := ptnParam.uN;
+      ptnParamCoil.rT[0] := MULTIME(ptnParam.rT[0],mrCoilTimeFactor);
+      ptnParamCoil.rT[1] := MULTIME(ptnParam.rT[1],mrCoilTimeFactor);
+      ptnParamCoil.rT[2] := MULTIME(ptnParam.rT[2],mrCoilTimeFactor);
+      ptnParamCoil.rT[3] := MULTIME(ptnParam.rT[3],mrCoilTimeFactor);
+      ptnParamCoil.rT[4] := MULTIME(ptnParam.rT[4],mrCoilTimeFactor);
+      ptnParamCoil.rT[5] := MULTIME(ptnParam.rT[5],mrCoilTimeFactor);
+   ELSE // use default value
+      ptnParamCoil.rK := 1.0;
+      ptnParamCoil.uN := 3;
+      mrCoilFactor := 0.1; 
+      ptnParamCoil.rT[0] := T#200ms;
+      ptnParamCoil.rT[1] := ptnParamCoil.rT[0];
+      ptnParamCoil.rT[2] := ptnParamCoil.rT[0];
+      ptnParamCoil.rT[3] := ptnParamCoil.rT[0];
+      ptnParamCoil.rT[4] := ptnParamCoil.rT[0];
+      ptnParamCoil.rT[5] := ptnParamCoil.rT[0];
+   END_IF; 
+   abPTN.Par(dCycleTime:=mdCycleTime,
+            Param:=ptnParamCoil);
+   abPTN.Init(rU := abPTN.Calculate.rU);
+   
+   IF (rRadiationCoilFactor > 0.0)  THEN
+      mrRadiationCoilFactor := rRadiationCoilFactor;
+   ELSE
+      // default value
+      mrRadiationCoilFactor := 0.0025;
+   END_IF;
+   mrRadiationFactor := mrRadiationCoilFactor * mrCoilFactor;
+   ptnParamRadiation.rK := 1.0;
+   ptnParamRadiation.uN := ptnParamCoil.uN;
+   ptnParamRadiation.rT[0] := MULTIME(ptnParamCoil.rT[0],mrRadiationTimeFactor);
+   ptnParamRadiation.rT[1] := MULTIME(ptnParamCoil.rT[1],mrRadiationTimeFactor);
+   ptnParamRadiation.rT[2] := MULTIME(ptnParamCoil.rT[2],mrRadiationTimeFactor);
+   ptnParamRadiation.rT[3] := MULTIME(ptnParamCoil.rT[3],mrRadiationTimeFactor);
+   ptnParamRadiation.rT[4] := MULTIME(ptnParamCoil.rT[4],mrRadiationTimeFactor);
+   ptnParamRadiation.rT[5] := MULTIME(ptnParamCoil.rT[5],mrRadiationTimeFactor);
+   abPTNRadiation.Par(dCycleTime:=mdCycleTime,
+                     Param:=ptnParamRadiation);
+   abPTNRadiation.Init(rU:=abPTNRadiation.Calculate.rU);
+   
+   IF (rConductionCoilFactor > 0.0)  THEN
+      mrConductionCoilFactor := rConductionCoilFactor;
+   ELSE
+      // default value
+      mrConductionCoilFactor := 0.001;
+   END_IF;
+   mrConductionFactor := mrConductionCoilFactor * mrCoilFactor;
+   ptnParamConduction.rK := 1.0;
+   ptnParamConduction.uN := ptnParamCoil.uN;
+   ptnParamConduction.rT[0] := MULTIME(ptnParamCoil.rT[0],mrConductionTimeFactor);
+   ptnParamConduction.rT[1] := MULTIME(ptnParamCoil.rT[1],mrConductionTimeFactor);
+   ptnParamConduction.rT[2] := MULTIME(ptnParamCoil.rT[2],mrConductionTimeFactor);
+   ptnParamConduction.rT[3] := MULTIME(ptnParamCoil.rT[3],mrConductionTimeFactor);
+   ptnParamConduction.rT[4] := MULTIME(ptnParamCoil.rT[4],mrConductionTimeFactor);
+   ptnParamConduction.rT[5] := MULTIME(ptnParamCoil.rT[5],mrConductionTimeFactor);
+   mrConductionFactor := mrConductionCoilFactor * mrCoilFactor;
+   abPTNConductionLeft.Par(dCycleTime:=mdCycleTime,
+                        Param:=ptnParamConduction);
+   abPTNConductionLeft.Init(rU:=abPTNConductionLeft.Calculate.rU);
+   abPTNConductionRight.Par(dCycleTime:=mdCycleTime,
+                           Param:=ptnParamConduction);
+   abPTNConductionRight.Init(rU:=abPTNConductionRight.Calculate.rU);
+ELSE
+   abPTN.Par(dCycleTime:=mdCycleTime,
+          Param:=ptnParam);
+   abPTN.Init(rU:=abPTN.Calculate.rU);
+END_IF;
+
+
+@END_Body 
+
+@@@BEG_Comment@@@ 
+@TL(0)
+
+@@@END_Comment@@@ 
+@END_Body 
+
+@END_Contents 

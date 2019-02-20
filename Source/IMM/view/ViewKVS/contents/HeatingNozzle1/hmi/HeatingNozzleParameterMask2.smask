@@ -1,0 +1,67 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<base:Mask xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xmlns:base="http://www.keba.at/viewedit.model.base" widgetId="kvs.mask" name="HeatingNozzleParameterMask2">
+  <resolution width="714" height="476"/>
+  <position x="1" y="1"/>
+  <attributeValues key="Background" value="BG_Desktop:30,30,30"/>
+  <attributeValues key="Title" value="Heating parameters 2"/>
+  <attributeValues key="Icon" value="HeatingNozzle1/hmi/images/iconHeatingParam2.gif"/>
+  <widgetInstances xsi:type="base:ContainerWidgetInstance" widgetId="kvs.panel" name="panelMain" layoutConstraint="NORTH">
+    <resolution width="714" height="249"/>
+    <position/>
+    <attributeValues key="Background" value="BG_Panel:220,220,220"/>
+    <border name="TitledBorder" id="kv.border.TitledBorder">
+      <attributeValues key="TitleText" value="Heating parameter settings 2"/>
+    </border>
+    <widgetInstances xsi:type="base:ContainerWidgetInstance" widgetId="keplast.kvs.borderpanelsmall" name="borderPanelHopperCooling" layoutConstraint="LEFT">
+      <resolution width="347" height="211"/>
+      <position x="6" y="33"/>
+      <attributeValues key="Title" value="Material entrance"/>
+      <dynamicAttributes key="Create">
+        <value function="doesVariableExist : UserFunctions" equal="true" unequal="false">
+          <parameter key="1" value="variableasstring; PlastFunctionUtils.createVariableString(&quot;HeatingNozzle1.do_HopperCooler&quot;)"/>
+        </value>
+      </dynamicAttributes>
+      <widgetInstances widgetId="keplast.kvs.actnumfieldtext" name="actNumFieldMaterialTemperature" layoutConstraint="null">
+        <resolution width="341" height="29"/>
+        <position x="3" y="33"/>
+        <attributeValues key="Variable" value="HeatingNozzle1.ti_HopperTemp"/>
+        <attributeValues key="VariableMaximum" value="HeatingNozzle1.sv_rAlarmTemp"/>
+      </widgetInstances>
+      <widgetInstances widgetId="keplast.kvs.numfieldtext" name="numFieldStartCooling" layoutConstraint="null">
+        <resolution width="341" height="29"/>
+        <position x="3" y="62"/>
+        <attributeValues key="Variable" value="HeatingNozzle1.sv_rTempStartCooling"/>
+      </widgetInstances>
+      <widgetInstances widgetId="keplast.kvs.numfieldtext" name="numFieldStopCooling" layoutConstraint="null">
+        <resolution width="341" height="29"/>
+        <position x="3" y="91"/>
+        <attributeValues key="Variable" value="HeatingNozzle1.sv_rTempStopCooling"/>
+      </widgetInstances>
+      <widgetInstances widgetId="keplast.kvs.numfieldtext" name="numFieldWarnTemperature" layoutConstraint="null">
+        <resolution width="341" height="29"/>
+        <position x="3" y="120"/>
+        <attributeValues key="Variable" value="HeatingNozzle1.sv_rWarnTemp"/>
+      </widgetInstances>
+      <widgetInstances widgetId="keplast.kvs.numfieldtext" name="numFieldAlarmTemperature" layoutConstraint="null">
+        <resolution width="341" height="29"/>
+        <position x="3" y="149"/>
+        <attributeValues key="Variable" value="HeatingNozzle1.sv_rAlarmTemp"/>
+      </widgetInstances>
+      <widgetInstances widgetId="keplast.kvs.comboboxtext" name="comboboxSensorType" layoutConstraint="null">
+        <resolution width="341" height="29"/>
+        <position x="3" y="178"/>
+        <attributeValues key="Variable" value="HeatingNozzle1.sv_HopperTempSensorType"/>
+      </widgetInstances>
+      <layout layoutID="kvs.layout.GridLayout" name="GridLayout">
+        <attributeValues key="Rows" value="6"/>
+        <attributeValues key="Columns" value="1"/>
+      </layout>
+    </widgetInstances>
+    <widgetInstances widgetId="keplast.kvs.separator" name="separator1" layoutConstraint="SEPARATOR">
+      <resolution width="2" height="211"/>
+      <position x="356" y="33"/>
+    </widgetInstances>
+    <layout layoutID="keplast.kvs.layout.horizontalsplitlayout" name="HorizontalSplitLayout"/>
+  </widgetInstances>
+  <layout layoutID="kvs.layout.BorderLayout" name="BorderLayout"/>
+</base:Mask>

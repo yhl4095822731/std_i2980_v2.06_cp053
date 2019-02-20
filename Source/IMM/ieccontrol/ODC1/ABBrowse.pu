@@ -1,0 +1,1744 @@
+(*
+@h    ! WARNING !
+@h    The Kemro K2 system (including software) only meets category B according to EN 954-1,
+@h    thus it is not intended for usage in safety-relevant control applications in the field 
+@h    of personal safety (e.g. emergency stop).
+@h    To implement potentially necessary safety-relevant control tasks, always use additional 
+@h    external safety devices that are intended for the particular purpose, and meet the necessary 
+@h    functional safety.
+@h    For further information see EN 954-1 (EN ISO 13849-1) and/or the K2-x00 user manual, chapter 
+@h    "CE conformity, directives and standards".
+
+Browse functions, to scan through the whole ODC sequence array, beginning with a reference 
+step, scanning forward or backward, between direction changes the call of aSetRefStep is 
+necessary, the algorithms aBwd and aFwd deliver additional information like safety relevance,
+activation a.s.o.
+*)
+
+IMPORT_OVER_LISTFILE
+ cCompODC
+, cMoveBeginSequence
+, cMoveEndSequence
+, cMoveStartParallel
+, cMoveEndParallel
+, cMoveIf
+, cMoveElse
+, cMoveEndIf
+, tyMovementRegisterList
+, tsTraceLevel
+, tyODCSequenceInternal
+, tsODCStepPos
+, tsODCStepInfo
+, tCompId
+, tnODCDependency
+
+END_IMPORT
+
+ALGORITHM_BLOCK ABBrowse #DUMMY_EDIT_BLOCK
+
+SYSTEM_VAR_IN
+ sv_MovementsAvailable : tyMovementRegisterList;
+ sv_TraceLevel : tsTraceLevel;
+ sv_ODCSequenceInt : tyODCSequenceInternal;
+END_VAR
+
+VAR
+ RefStepPos : tsODCStepPos;
+ LocalStepPos : tsODCStepPos;
+ iMinBranchStartRow : DINT;
+ iMinColumn : DINT;
+ iBranchFwdScanCnt : DINT;
+ iBranchBwdScanCnt : DINT;
+ bLocalOwnBranchFin : BOOL;
+ bLocalAllBranchFin : BOOL;
+ sTraceString : STRING(255);
+ dPrint : DINT;
+ bBeginStepAll : BOOL;
+ bEndStepAll : BOOL;
+ iIfElseCount : DINT;
+END_VAR
+
+ALGORITHM aSetRef
+
+
+VAR_INPUT
+ StepPos : tsODCStepPos (* position of reference step *);
+END_VAR
+
+VAR_OUTPUT
+ StepInfo : tsODCStepInfo (* step information *);
+ bBeginStepSequ : BOOL (* start sequence step *);
+ bEndStepSequ : BOOL (* end sequence step *);
+ bHelpStep : BOOL (* help step flag *);
+ bBranchStart : BOOL (* start branch step *);
+ bBranchEnd : BOOL (* end branch step *);
+ bError : BOOL (* error browsing sequence *);
+END_VAR
+
+VAR
+ CompId : tCompId;
+END_VAR
+#BEGIN_EDIT_BLOCK
+(**************************************** WARNING ********************************************
+ *** The KEBA Kemro K2 System including software is not intended for safety control tasks! ***
+ ***                       For further information see Comment tab!                        ***
+ *********************************************************************************************)
+
+// init
+bError := FALSE;
+
+// write step positions to local variable
+RefStepPos := StepPos;
+LocalStepPos := StepPos;   
+
+StepInfo.iMoveNr := sv_ODCSequenceInt[RefStepPos.iColumn][RefStepPos.iRow].iMoveNumber;
+
+// check plausibility of movement number
+IF (StepInfo.iMoveNr < 1 OR StepInfo.iMoveNr > cMaxMoveRegistered) THEN
+   bError := TRUE;
+   RETURN;   
+END_IF;
+
+// get step informations
+StepInfo.iMoveCount := sv_ODCSequenceInt[RefStepPos.iColumn][RefStepPos.iRow].iCount;
+StepInfo.iFuIndex := sv_MovementsAvailable[StepInfo.iMoveNr].iFuIndex;
+StepInfo.MoveId := sv_MovementsAvailable[StepInfo.iMoveNr].pMovementData^.MoveId;
+CompId := sv_MovementsAvailable[StepInfo.iMoveNr].DeviceId.CompId;
+
+// init member variables
+iMinBranchStartRow := RefStepPos.iRow;
+iMinColumn := RefStepPos.iColumn;
+
+bBeginStepAll := (CompId = cCompODC) AND (StepInfo.MoveId = cMoveBeginSequence);
+bBeginStepSequ := (CompId <> cCompODC) AND (StepInfo.MoveId = cMoveBeginSequence);
+bEndStepAll := (CompId = cCompODC) AND (StepInfo.MoveId = cMoveEndSequence);                      
+bEndStepSequ := (CompId <> cCompODC) AND (StepInfo.MoveId = cMoveEndSequence);
+bBranchStart := (StepInfo.MoveId = cMoveStartParallel);
+bBranchEnd := (StepInfo.MoveId = cMoveEndParallel);
+bLocalOwnBranchFin := FALSE;
+bLocalAllBranchFin := FALSE;
+bHelpStep := bBeginStepAll OR bBeginStepSequ OR bEndStepAll OR bEndStepSequ OR bBranchStart OR bBranchEnd;
+
+// arrange counters
+iBranchFwdScanCnt := 1;
+iBranchBwdScanCnt := 1;
+iIfElseCount := 0;
+
+IF (bBranchEnd) THEN
+   iBranchFwdScanCnt := 0;
+ELSIF (bBranchStart) THEN   
+   iBranchBwdScanCnt := 0;
+END_IF;
+
+
+// debug output to trace
+IF sv_TraceLevel.bODCBrowseTrace THEN
+
+   sTraceString := CONCAT('SetRefStep;',
+                          DINT_TO_STRING(LocalStepPos.iColumn), ';',
+                          DINT_TO_STRING(LocalStepPos.iRow), ';',
+                          DINT_TO_STRING(StepInfo.iMoveNr), ';',
+                          sv_MovementsAvailable[StepInfo.iMoveNr].pMovementData^.sMoveId, ';');                          
+   
+   IF (bHelpStep) THEN
+      IF (bBeginStepSequ) THEN
+         sTraceString := CONCAT (sTraceString, 'BeginSequ;');  // Begin Sequence
+      ELSIF (bBeginStepAll) THEN
+         sTraceString := CONCAT (sTraceString, 'BeginAll;');  // Begin All
+      ELSIF (bEndStepSequ) THEN
+         sTraceString := CONCAT (sTraceString, 'EndSequ;');  // End Sequence
+      ELSIF (bEndStepAll) THEN
+         sTraceString := CONCAT (sTraceString, 'EndAll;');  // End All
+      ELSIF (bBranchStart) THEN   
+         sTraceString := CONCAT (sTraceString, 'StartBranch;');  // Start Branch
+      ELSIF (bBranchEnd) THEN
+         sTraceString := CONCAT (sTraceString, 'EndBranch;');  // End Branch
+      END_IF;
+   END_IF;
+      
+   dPrint := Print(sTraceString);   
+   
+END_IF;
+
+
+;#END_EDIT_BLOCK END_ALGORITHM
+
+(*
+Algorithm to get next step in sequence including following informations:
+- dependence according to reference step
+- safety relevance
+- help step identification, (help steps are start/end branch, start/end sequence, start/end all)
+- start/end sequence/branch informations
+- ownBranchFin and allBranchFin signalisation
+*)
+
+ALGORITHM aFwd
+
+
+VAR_OUTPUT
+ StepPos : tsODCStepPos (* position of next step *);
+ StepInfo : tsODCStepInfo (* step information *);
+ iDependence : tnODCDependency (* dependency to reference step *);
+ bBeginStepSequ : BOOL (* begin sequence step *);
+ bEndStepSequ : BOOL (* end sequence step *);
+ bEndStepAll : BOOL (* last end sequence step *);
+ bHelpStep : BOOL (* help step flag *);
+ bSafetyRelevant : BOOL (* safety relevant flag, value = 1 *);
+ bBranchStart : BOOL (* start branch step *);
+ bBranchEnd : BOOL (* end branch step *);
+ bOwnBranchFin : BOOL (* own branch finished *);
+ bAllBranchFin : BOOL (* branch block finished, end branch AND column of next step <= reference column *);
+ bError : BOOL (* error browsing sequence *);
+END_VAR
+
+VAR_TEMP
+ OldPos : tsODCStepPos;
+END_VAR
+
+VAR
+ CompId : tCompId;
+ bForceFollowing : BOOL;
+END_VAR
+
+(* IecGraph-Code *)
+
+(* init step *)
+INITIAL_STEP FWD:
+aNextStep (N);
+END_STEP
+
+
+(* steps *)
+STEP Step2:
+aInitFwd (N);
+aTraceFwd (N);
+END_STEP
+
+
+(* transitions *)
+GO_ON_TRANSITION TError (* Trans1 *) FROM FWD TO Step2 :=  #BEGIN_EDIT_BLOCK
+NOT bError
+;#END_EDIT_BLOCK
+END_TRANSITION
+
+TRANSITION TTrue (* Trans2 *) FROM Step2 TO FWD :=  #BEGIN_EDIT_BLOCK
+TRUE
+;#END_EDIT_BLOCK
+END_TRANSITION
+
+(* end IecGraph-Code *)
+(* sfc-code *)
+
+(* stand alone actions *)
+ACTION aNextStep: #BEGIN_EDIT_BLOCK
+(**************************************** WARNING ********************************************
+ *** The KEBA Kemro K2 System including software is not intended for safety control tasks! ***
+ ***                       For further information see Comment tab!                        ***
+ *********************************************************************************************)
+
+bError := FALSE;
+
+REPEAT
+   // backup old pos
+   OldPos := LocalStepPos;
+   
+   // write step positions, get next steps position
+   LocalStepPos := sv_ODCSequenceInt[LocalStepPos.iColumn][LocalStepPos.iRow].PosNextStep;
+   
+   // check last step, next step pos [-1,-1]
+   IF (LocalStepPos.iColumn < 1 OR LocalStepPos.iRow < 1) THEN
+      StepPos := OldPos;
+      LocalStepPos := OldPos;
+      bSafetyRelevant := (sv_MovementsAvailable[StepInfo.iMoveNr].pMovementData^.iSafetyIdentifier MOD 2 = 1); 
+      bAllBranchFin := TRUE;
+      bOwnBranchFin := TRUE;
+      bError := TRUE;
+      RETURN;
+   END_IF;
+   
+   StepInfo.iMoveNr := sv_ODCSequenceInt[LocalStepPos.iColumn][LocalStepPos.iRow].iMoveNumber;
+   
+   // check plausibility of movement number
+   IF (StepInfo.iMoveNr < 1 OR StepInfo.iMoveNr > cMaxMoveRegistered) THEN
+      bError := TRUE;
+      RETURN;   
+   END_IF;
+   
+UNTIL (sv_MovementsAvailable[StepInfo.iMoveNr].pMovementData^.pbActivated^)
+END_REPEAT;   
+
+;#END_EDIT_BLOCK END_ACTION (*aNextStep*)
+ACTION aInitFwd: #BEGIN_EDIT_BLOCK
+(**************************************** WARNING ********************************************
+ *** The KEBA Kemro K2 System including software is not intended for safety control tasks! ***
+ ***                       For further information see Comment tab!                        ***
+ *********************************************************************************************)
+
+// get step informations
+StepInfo.iMoveCount := sv_ODCSequenceInt[LocalStepPos.iColumn][LocalStepPos.iRow].iCount;
+StepInfo.iFuIndex := sv_MovementsAvailable[StepInfo.iMoveNr].iFuIndex;
+StepInfo.MoveId := sv_MovementsAvailable[StepInfo.iMoveNr].pMovementData^.MoveId;
+CompId := sv_MovementsAvailable[StepInfo.iMoveNr].DeviceId.CompId;
+
+bBeginStepSequ := (CompId <> cCompODC) AND (StepInfo.MoveId = cMoveBeginSequence);
+bEndStepAll := (CompId = cCompODC) AND (StepInfo.MoveId = cMoveEndSequence);                      
+bEndStepSequ := (CompId <> cCompODC) AND (StepInfo.MoveId = cMoveEndSequence);
+bBranchStart := (StepInfo.MoveId = cMoveStartParallel);
+bBranchEnd := (StepInfo.MoveId = cMoveEndParallel);
+bHelpStep := bBeginStepSequ OR bEndStepAll OR bEndStepSequ OR bBranchStart OR bBranchEnd;
+
+// decrement branch fwd counter at end branch step
+IF (bBranchEnd) THEN
+   iBranchFwdScanCnt := iBranchFwdScanCnt - 1;
+ELSIF (bBranchStart) THEN
+   iBranchFwdScanCnt := iBranchFwdScanCnt + 1;
+ELSIF StepInfo.MoveId = cMoveIf OR StepInfo.MoveId = cMoveElse THEN
+   iIfElseCount := iIfElseCount + 1; 
+   IF iBranchFwdScanCnt = iIfElseCount THEN
+      bForceFollowing := TRUE;
+   END_IF;  
+ELSIF StepInfo.MoveId = cMoveEndIf THEN
+   iIfElseCount := iIfElseCount - 1; 
+   bForceFollowing := FALSE; 
+END_IF;
+
+// set safety relevance information
+bSafetyRelevant := (sv_MovementsAvailable[StepInfo.iMoveNr].pMovementData^.iSafetyIdentifier MOD 2 = 1);
+
+// set own branch fin at the end of own branch (branchCnt = 0) or by end of all sequence
+bLocalOwnBranchFin := bLocalOwnBranchFin OR bEndStepAll OR (iBranchFwdScanCnt = 0);
+// set own branch fin at the end of branch blocks (ownBranchFin=1 AND nexts steps column <= refColumn) 
+//  or by end of all sequence
+bLocalAllBranchFin :=  bLocalAllBranchFin OR bEndStepAll OR 
+                      (bLocalOwnBranchFin AND bBranchEnd AND (sv_ODCSequenceInt[LocalStepPos.iColumn,LocalStepPos.iRow].PosNextStep.iColumn <= RefStepPos.iColumn));
+
+// set iMinBranchStartRow
+//   - step is start branch step & act row less than old min branch start row
+//   - act column less than or equal to reference column
+IF (bBranchStart AND LocalStepPos.iRow < iMinBranchStartRow) THEN
+   iMinBranchStartRow := LocalStepPos.iRow;
+ELSIF (LocalStepPos.iColumn <= RefStepPos.iColumn) THEN
+   iMinBranchStartRow := LocalStepPos.iRow;
+END_IF;
+
+// set iMinColumn
+IF (LocalStepPos.iColumn < iMinColumn) THEN
+   iMinColumn := LocalStepPos.iColumn;
+END_IF;  
+
+// set other outputs
+StepPos := LocalStepPos;
+bOwnBranchFin := bLocalOwnBranchFin;
+bAllBranchFin := bLocalAllBranchFin;
+
+// calc step dependency, according to the reference step:
+IF bForceFollowing THEN
+   iDependence := nFollowing;
+ELSE
+   IF (NOT bOwnBranchFin AND LocalStepPos.iRow > RefStepPos.iRow) THEN
+      iDependence := nFollowing;
+   ELSIF (bOwnBranchFin AND iMinBranchStartRow > RefStepPos.iRow) THEN   
+      iDependence := nFollowing;
+   ELSE
+      iDependence := nParallel;   
+   END_IF;
+END_IF;
+
+;#END_EDIT_BLOCK END_ACTION (*aInitFwd*)
+ACTION aTraceFwd: #BEGIN_EDIT_BLOCK
+(**************************************** WARNING ********************************************
+ *** The KEBA Kemro K2 System including software is not intended for safety control tasks! ***
+ ***                       For further information see Comment tab!                        ***
+ *********************************************************************************************)
+
+// debug output to trace
+IF sv_TraceLevel.bODCBrowseTrace THEN
+   sTraceString := CONCAT('Browse FWD;',
+                          DINT_TO_STRING(LocalStepPos.iColumn), ';',
+                          DINT_TO_STRING(LocalStepPos.iRow), ';');
+   IF (iDependence = nFollowing) THEN
+      sTraceString := CONCAT(sTraceString, '->');
+   ELSIF (iDependence = nPreceding) THEN
+      sTraceString := CONCAT(sTraceString, '<-');
+   ELSIF (iDependence = nParallel) THEN
+      sTraceString := CONCAT(sTraceString, '||');
+   ELSE
+      sTraceString := CONCAT(sTraceString, 'unknown dependency');
+   END_IF;
+   sTraceString := CONCAT(sTraceString, ';',
+                          DINT_TO_STRING(StepInfo.iMoveNr), ';',
+                          sv_MovementsAvailable[StepInfo.iMoveNr].pMovementData^.sMoveId, ';',                          
+                          BOOL_TO_STRING(bSafetyRelevant), ';');
+   
+   IF (bHelpStep) THEN
+      IF (bBeginStepSequ) THEN
+         sTraceString := CONCAT (sTraceString, 'BeginSequ;');  // Begin Sequence
+      ELSIF (bEndStepSequ) THEN
+         sTraceString := CONCAT (sTraceString, 'EndSequ;');  // End Sequence
+      ELSIF (bEndStepAll) THEN
+         sTraceString := CONCAT (sTraceString, 'EndAll;');  // End All
+      ELSIF (bBranchStart) THEN   
+         sTraceString := CONCAT (sTraceString, 'StartBranch;');  // Start Branch
+      ELSIF (bBranchEnd) THEN
+         sTraceString := CONCAT (sTraceString, 'EndBranch;');  // End Branch
+      END_IF;
+   END_IF;
+
+   dPrint := Print(sTraceString);   
+   
+END_IF;
+
+;#END_EDIT_BLOCK END_ACTION (*aTraceFwd*)
+(* end sfc-code *)
+
+
+END_ALGORITHM
+
+(*
+Algorithm to get previous step in sequence including following informations:
+- dependence according to reference step
+- safety relevance
+- help step identification, (help steps are start/end branch, start/end sequence, start/end all)
+- start/end sequence/branch informations
+- ownBranchFin and allBranchFin signalisation
+*)
+
+ALGORITHM aBwd
+
+
+VAR_OUTPUT
+ StepPos : tsODCStepPos (* position of previous step *);
+ StepInfo : tsODCStepInfo (* step information *);
+ iDependence : tnODCDependency (* dependency to reference step *);
+ bBeginStepSequ : BOOL (* end sequence step *);
+ bBeginStepAll : BOOL (* last end sequence step *);
+ bEndStepSequ : BOOL (* end sequence step *);
+ bHelpStep : BOOL (* help step flag *);
+ bSafetyRelevant : BOOL (* safety relevant flag, value = 1 *);
+ bBranchStart : BOOL (* start branch step *);
+ bBranchEnd : BOOL (* end branch step *);
+ bOwnBranchFin : BOOL (* own branch finished *);
+ bAllBranchFin : BOOL (* branch block finished, end branch AND column of next step <= reference column *);
+ bError : BOOL (* error browsing sequence *);
+END_VAR
+
+VAR_TEMP
+ OldPos : tsODCStepPos;
+END_VAR
+
+VAR
+ CompId : tCompId;
+ bForcePreceding : BOOL;
+END_VAR
+
+(* IecGraph-Code *)
+
+(* init step *)
+INITIAL_STEP Step1:
+aPrevStep (N);
+END_STEP
+
+
+(* steps *)
+STEP OUT:
+aInitBwd (N);
+aTraceBwd (N);
+END_STEP
+
+
+(* transitions *)
+GO_ON_TRANSITION TError (* Trans1 *) FROM Step1 TO OUT :=  #BEGIN_EDIT_BLOCK
+NOT bError
+;#END_EDIT_BLOCK
+END_TRANSITION
+
+TRANSITION TTrue (* Trans2 *) FROM OUT TO Step1 :=  #BEGIN_EDIT_BLOCK
+TRUE
+;#END_EDIT_BLOCK
+END_TRANSITION
+
+(* end IecGraph-Code *)
+(* sfc-code *)
+
+(* stand alone actions *)
+ACTION aPrevStep: #BEGIN_EDIT_BLOCK
+(**************************************** WARNING ********************************************
+ *** The KEBA Kemro K2 System including software is not intended for safety control tasks! ***
+ ***                       For further information see Comment tab!                        ***
+ *********************************************************************************************)
+
+bError := FALSE;
+
+REPEAT
+   // backup old pos
+   OldPos := LocalStepPos;
+   
+   // write step positions, get previous step position
+   LocalStepPos := sv_ODCSequenceInt[LocalStepPos.iColumn][LocalStepPos.iRow].PosPrevStep;
+   
+   // check first step, previous step pos [-1,-1]
+   IF (LocalStepPos.iColumn < 1 OR LocalStepPos.iRow < 1) THEN
+      StepPos := OldPos;
+      LocalStepPos := OldPos;
+      bSafetyRelevant := (sv_MovementsAvailable[StepInfo.iMoveNr].pMovementData^.iSafetyIdentifier MOD 2 = 1); 
+      bAllBranchFin := TRUE;
+      bOwnBranchFin := TRUE;
+      bError := TRUE;
+      RETURN;
+   END_IF;
+   
+   StepInfo.iMoveNr := sv_ODCSequenceInt[LocalStepPos.iColumn][LocalStepPos.iRow].iMoveNumber;
+   
+   // check plausibility of movement number
+   IF (StepInfo.iMoveNr < 1 OR StepInfo.iMoveNr > cMaxMoveRegistered) THEN
+      bError := TRUE;
+      RETURN;   
+   END_IF;
+   
+UNTIL (sv_MovementsAvailable[StepInfo.iMoveNr].pMovementData^.pbActivated^)
+END_REPEAT;
+
+;#END_EDIT_BLOCK END_ACTION (*aPrevStep*)
+ACTION aInitBwd: #BEGIN_EDIT_BLOCK
+(**************************************** WARNING ********************************************
+ *** The KEBA Kemro K2 System including software is not intended for safety control tasks! ***
+ ***                       For further information see Comment tab!                        ***
+ *********************************************************************************************)
+
+// get step informations
+StepInfo.iMoveCount := sv_ODCSequenceInt[LocalStepPos.iColumn][LocalStepPos.iRow].iCount;
+StepInfo.iFuIndex := sv_MovementsAvailable[StepInfo.iMoveNr].iFuIndex;
+StepInfo.MoveId := sv_MovementsAvailable[StepInfo.iMoveNr].pMovementData^.MoveId;
+CompId := sv_MovementsAvailable[StepInfo.iMoveNr].DeviceId.CompId;
+
+bBeginStepAll := (CompId = cCompODC) AND (StepInfo.MoveId = cMoveBeginSequence);
+bBeginStepSequ := (CompId <> cCompODC) AND (StepInfo.MoveId = cMoveBeginSequence);                  
+bEndStepSequ := (CompId <> cCompODC) AND (StepInfo.MoveId = cMoveEndSequence);
+bBranchStart := (StepInfo.MoveId = cMoveStartParallel);
+bBranchEnd := (StepInfo.MoveId = cMoveEndParallel);
+bHelpStep := bBeginStepAll OR bBeginStepSequ OR bEndStepSequ OR bBranchStart OR bBranchEnd;
+
+
+IF (bBranchEnd) THEN
+   // increment branch bwd counter at end branch step
+   iBranchBwdScanCnt := iBranchBwdScanCnt + 1;
+ELSIF (bBranchStart) THEN   
+   // decrement branch bwd counter at start branch step
+   iBranchBwdScanCnt := iBranchBwdScanCnt - 1;
+ELSIF StepInfo.MoveId = cMoveEndIf THEN
+   IF iBranchBwdScanCnt = 1 THEN
+      bForcePreceding := TRUE;
+   END_IF;
+ELSIF StepInfo.MoveId = cMoveIf OR StepInfo.MoveId = cMoveElse THEN
+   bForcePreceding := FALSE;
+END_IF;
+
+// set safety relevance information
+bSafetyRelevant := (sv_MovementsAvailable[StepInfo.iMoveNr].pMovementData^.iSafetyIdentifier MOD 2 = 1);
+
+// set own branch fin at the end of own branch (branchCnt = 0) or by begin of all sequence
+bLocalOwnBranchFin := bLocalOwnBranchFin OR bBeginStepAll OR (iBranchBwdScanCnt = 0);
+// set own branch fin at the begin of branch blocks (ownBranchFin=1 AND next steps row <= act row) 
+//  or by begin of all sequence
+bLocalAllBranchFin :=  bLocalAllBranchFin OR bBeginStepAll OR 
+                       (bLocalOwnBranchFin AND bBranchStart AND (sv_ODCSequenceInt[LocalStepPos.iColumn,LocalStepPos.iRow].PosPrevStep.iRow <= LocalStepPos.iRow));
+
+// set iMinBranchStartRow                    
+//   - step is start branch step
+//     & act row less than old min branch start row
+//     & act column less or equal than min column
+IF (bBranchStart AND LocalStepPos.iRow < iMinBranchStartRow AND LocalStepPos.iColumn <= iMinColumn) THEN
+   iMinBranchStartRow := LocalStepPos.iRow;
+END_IF;
+
+// set iMinColumn
+IF (LocalStepPos.iColumn < iMinColumn) THEN
+   iMinColumn := LocalStepPos.iColumn;
+END_IF;  
+
+// set other outputs
+StepPos := LocalStepPos;
+bOwnBranchFin := bLocalOwnBranchFin;
+bAllBranchFin := bLocalAllBranchFin;
+
+// calc step dependency, according to the reference step:
+//   - preceding: own branch and row < reference row
+//              other branch and row < minBranchStartRow
+//   - parallel: all other cases
+IF bForcePreceding THEN
+   iDependence := nPreceding;
+ELSE
+   IF ((NOT bOwnBranchFin AND LocalStepPos.iRow < RefStepPos.iRow) OR
+      (bOwnBranchFin AND LocalStepPos.iRow < iMinBranchStartRow)) THEN
+      iDependence := nPreceding;
+   ELSE
+      iDependence := nParallel;   
+   END_IF;
+END_IF;
+
+
+
+;#END_EDIT_BLOCK END_ACTION (*aInitBwd*)
+ACTION aTraceBwd: #BEGIN_EDIT_BLOCK
+(**************************************** WARNING ********************************************
+ *** The KEBA Kemro K2 System including software is not intended for safety control tasks! ***
+ ***                       For further information see Comment tab!                        ***
+ *********************************************************************************************)
+
+// debug output to trace
+IF sv_TraceLevel.bODCBrowseTrace THEN
+   sTraceString := CONCAT('Browse BWD;',
+                          DINT_TO_STRING(LocalStepPos.iColumn), ';',
+                          DINT_TO_STRING(LocalStepPos.iRow), ';');
+   IF (iDependence = nFollowing) THEN
+      sTraceString := CONCAT(sTraceString, '->');
+   ELSIF (iDependence = nPreceding) THEN
+      sTraceString := CONCAT(sTraceString, '<-');
+   ELSE
+      sTraceString := CONCAT(sTraceString, '||');      
+   END_IF;
+   sTraceString := CONCAT(sTraceString, ';',
+                          DINT_TO_STRING(StepInfo.iMoveNr), ';',
+                          sv_MovementsAvailable[StepInfo.iMoveNr].pMovementData^.sMoveId, ';',                          
+                          BOOL_TO_STRING(bSafetyRelevant), ';');
+   
+   IF (bHelpStep) THEN
+      IF (bBeginStepSequ) THEN
+         sTraceString := CONCAT (sTraceString, 'BeginSequ;');  // Begin Sequence
+      ELSIF (bBeginStepAll) THEN
+         sTraceString := CONCAT (sTraceString, 'BeginAll;');  // Begin All
+      ELSIF (bEndStepSequ) THEN
+         sTraceString := CONCAT (sTraceString, 'EndSequ;');  // End Sequence
+      ELSIF (bBranchStart) THEN
+         sTraceString := CONCAT (sTraceString, 'StartBranch;');  // Start Branch
+      ELSIF (bBranchEnd) THEN
+         sTraceString := CONCAT (sTraceString, 'EndBranch;');  // End Branch
+      END_IF;
+   END_IF;
+
+   dPrint := Print(sTraceString);   
+   
+END_IF;
+
+;#END_EDIT_BLOCK END_ACTION (*aTraceBwd*)
+(* end sfc-code *)
+
+
+END_ALGORITHM
+
+
+
+END_ALGORITHM_BLOCK
+
+
+
+#END_OF_IEC_PART
+
+@Puma @IecEditor 6 96 @Pou 25 
+@@@BEG_Comment@@@
+@h    ! WARNING !
+@h    The Kemro K2 system (including software) only meets category B according to EN 954-1,
+@h    thus it is not intended for usage in safety-relevant control applications in the field 
+@h    of personal safety (e.g. emergency stop).
+@h    To implement potentially necessary safety-relevant control tasks, always use additional 
+@h    external safety devices that are intended for the particular purpose, and meet the necessary 
+@h    functional safety.
+@h    For further information see EN 954-1 (EN ISO 13849-1) and/or the K2-x00 user manual, chapter 
+@h    "CE conformity, directives and standards".
+
+Browse functions, to scan through the whole ODC sequence array, beginning with a reference 
+step, scanning forward or backward, between direction changes the call of aSetRefStep is 
+necessary, the algorithms aBwd and aFwd deliver additional information like safety relevance,
+activation a.s.o.
+@@@END_Comment@@@
+
+@BEG_Contents 
+
+@BEG_Func 
+@RT(17)FuncTreeContainer 
+0 
+@END_Func 
+
+@BEG_Const 
+@RT(18)ConstTreeContainer 
+8 
+@Var @RT(8)cCompODC @RT(0) @T @F @DT @RT(4)DINT @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+0 @RT(3)136 @RT(13)Component ODC 
+@END_Attrib 
+1 1 @F @F @F @F 
+
+@Var @RT(18)cMoveBeginSequence @RT(0) @T @F @DT @RT(4)DINT @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+0 @RT(2)43 @RT(38)dummy movement for begin of a sequence 
+@END_Attrib 
+1 1 @F @F @F @F 
+
+@Var @RT(16)cMoveEndSequence @RT(0) @T @F @DT @RT(4)DINT @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+0 @RT(2)44 @RT(36)dummy movement for end of a sequence 
+@END_Attrib 
+1 1 @F @F @F @F 
+
+@Var @RT(18)cMoveStartParallel @RT(0) @T @F @DT @RT(4)DINT @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+0 @RT(2)45 @RT(34)dummy movement for "StartParallel" 
+@END_Attrib 
+1 1 @F @F @F @F 
+
+@Var @RT(16)cMoveEndParallel @RT(0) @T @F @DT @RT(4)DINT @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+0 @RT(2)46 @RT(32)dummy movement for "EndParallel" 
+@END_Attrib 
+1 1 @F @F @F @F 
+
+@Var @RT(7)cMoveIf @RT(0) @T @F @DT @RT(4)DINT @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+0 @RT(1)2 @RT(2)IF 
+@END_Attrib 
+1 1 @F @F @F @F 
+
+@Var @RT(9)cMoveElse @RT(0) @T @F @DT @RT(4)DINT @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+0 @RT(1)3 @RT(4)ELSE 
+@END_Attrib 
+1 1 @F @F @F @F 
+
+@Var @RT(10)cMoveEndIf @RT(0) @T @F @DT @RT(4)DINT @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+0 @RT(1)4 @RT(6)END_IF 
+@END_Attrib 
+1 1 @F @F @F @F 
+
+@END_Const 
+
+@BEG_Export 
+
+@BEG_Kind 
+@ALGORITHM_BLOCK @RT(8)ABBrowse @STRUCTURED_TEXT 
+@RT(0) @RT(0) @RT(0) 
+@END_Kind 
+
+@BEG_Dcl 
+@RT(16)DclTreeContainer 
+16 
+@Var @RT(21)sv_MovementsAvailable @RT(0) @T @T @DERIVED 0 @T @T @DT @RT(22)tyMovementRegisterList @RT(0) @T @T @UNKNOWN 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 9 @F @F @F @F 
+
+@Var @RT(13)sv_TraceLevel @RT(0) @T @T @DERIVED 0 @T @T @DT @RT(12)tsTraceLevel @RT(0) @T @T @UNKNOWN 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 9 @F @F @F @F 
+
+@Var @RT(17)sv_ODCSequenceInt @RT(0) @T @T @DERIVED 0 @T @T @DT @RT(21)tyODCSequenceInternal @RT(0) @T @T @UNKNOWN 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 9 @F @F @F @F 
+
+@Var @RT(10)RefStepPos @RT(0) @T @T @DERIVED 0 @T @T @DT @RT(12)tsODCStepPos @RT(0) @T @T @UNKNOWN 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(12)LocalStepPos @RT(0) @T @T @DERIVED 0 @T @T @DT @RT(12)tsODCStepPos @RT(0) @T @T @UNKNOWN 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(18)iMinBranchStartRow @RT(0) @T @F @DT @RT(4)DINT @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(10)iMinColumn @RT(0) @T @F @DT @RT(4)DINT @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(17)iBranchFwdScanCnt @RT(0) @T @F @DT @RT(4)DINT @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(17)iBranchBwdScanCnt @RT(0) @T @F @DT @RT(4)DINT @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(18)bLocalOwnBranchFin @RT(0) @T @F @DT @RT(4)BOOL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(18)bLocalAllBranchFin @RT(0) @T @F @DT @RT(4)BOOL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(12)sTraceString @RT(0) @T @F @DT @RT(11)STRING(255) @RT(0) @T @T @STRING 0 @F @RT(3)255 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(6)dPrint @RT(0) @T @F @DT @RT(4)DINT @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(13)bBeginStepAll @RT(0) @T @F @DT @RT(4)BOOL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(11)bEndStepAll @RT(0) @T @F @DT @RT(4)BOOL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(12)iIfElseCount @RT(0) @T @F @DT @RT(4)DINT @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@END_Dcl 
+
+@END_Export 
+
+@BEG_Body 
+
+3 
+
+@BEG_Export 
+
+@BEG_Algo 
+@ALGORITHM @RT(7)aSetRef @STRUCTURED_TEXT 
+@RT(0) @RT(0) @RT(0) @F @F 
+@END_Algo 
+
+@BEG_Dcl 
+@RT(16)DclTreeContainer 
+9 
+@Var @RT(7)StepPos @RT(0) @T @T @DERIVED 0 @T @T @DT @RT(12)tsODCStepPos @RT(0) @T @T @UNKNOWN 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(26)position of reference step @RT(0) 
+@END_Attrib 
+1 1 @F @F @F @F 
+
+@Var @RT(8)StepInfo @RT(0) @T @T @DERIVED 0 @T @T @DT @RT(13)tsODCStepInfo @RT(0) @T @T @UNKNOWN 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(16)step information @RT(0) 
+@END_Attrib 
+1 3 @F @F @F @F 
+
+@Var @RT(14)bBeginStepSequ @RT(0) @T @F @DT @RT(4)BOOL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(19)start sequence step @RT(0) 
+@END_Attrib 
+1 3 @F @F @F @F 
+
+@Var @RT(12)bEndStepSequ @RT(0) @T @F @DT @RT(4)BOOL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(17)end sequence step @RT(0) 
+@END_Attrib 
+1 3 @F @F @F @F 
+
+@Var @RT(9)bHelpStep @RT(0) @T @F @DT @RT(4)BOOL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(14)help step flag @RT(0) 
+@END_Attrib 
+1 3 @F @F @F @F 
+
+@Var @RT(12)bBranchStart @RT(0) @T @F @DT @RT(4)BOOL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(17)start branch step @RT(0) 
+@END_Attrib 
+1 3 @F @F @F @F 
+
+@Var @RT(10)bBranchEnd @RT(0) @T @F @DT @RT(4)BOOL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(15)end branch step @RT(0) 
+@END_Attrib 
+1 3 @F @F @F @F 
+
+@Var @RT(6)bError @RT(0) @T @F @DT @RT(4)BOOL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(23)error browsing sequence @RT(0) 
+@END_Attrib 
+1 3 @F @F @F @F 
+
+@Var @RT(6)CompId @RT(0) @T @T @DERIVED 0 @T @T @DT @RT(7)tCompId @RT(0) @T @T @UNKNOWN 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@END_Dcl 
+
+@END_Export 
+
+@BEG_Export 
+
+@BEG_Algo 
+@ALGORITHM @RT(4)aFwd @SEQUENTIAL_FLOW_CHART 
+@RT(0) @RT(0) @RT(0) @F @F 
+@END_Algo 
+
+@BEG_Dcl 
+@RT(16)DclTreeContainer 
+16 
+@Var @RT(7)StepPos @RT(0) @T @T @DERIVED 0 @T @T @DT @RT(12)tsODCStepPos @RT(0) @T @T @UNKNOWN 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(21)position of next step @RT(0) 
+@END_Attrib 
+1 3 @F @F @F @F 
+
+@Var @RT(8)StepInfo @RT(0) @T @T @DERIVED 0 @T @T @DT @RT(13)tsODCStepInfo @RT(0) @T @T @UNKNOWN 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(16)step information @RT(0) 
+@END_Attrib 
+1 3 @F @F @F @F 
+
+@Var @RT(11)iDependence @RT(0) @T @T @DERIVED 0 @T @T @DT @RT(15)tnODCDependency @RT(0) @T @T @UNKNOWN 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(28)dependency to reference step @RT(0) 
+@END_Attrib 
+1 3 @F @F @F @F 
+
+@Var @RT(14)bBeginStepSequ @RT(0) @T @F @DT @RT(4)BOOL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(19)begin sequence step @RT(0) 
+@END_Attrib 
+1 3 @F @F @F @F 
+
+@Var @RT(12)bEndStepSequ @RT(0) @T @F @DT @RT(4)BOOL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(17)end sequence step @RT(0) 
+@END_Attrib 
+1 3 @F @F @F @F 
+
+@Var @RT(11)bEndStepAll @RT(0) @T @F @DT @RT(4)BOOL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(22)last end sequence step @RT(0) 
+@END_Attrib 
+1 3 @F @F @F @F 
+
+@Var @RT(9)bHelpStep @RT(0) @T @F @DT @RT(4)BOOL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(14)help step flag @RT(0) 
+@END_Attrib 
+1 3 @F @F @F @F 
+
+@Var @RT(15)bSafetyRelevant @RT(0) @T @F @DT @RT(4)BOOL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(31)safety relevant flag, value = 1 @RT(0) 
+@END_Attrib 
+1 3 @F @F @F @F 
+
+@Var @RT(12)bBranchStart @RT(0) @T @F @DT @RT(4)BOOL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(17)start branch step @RT(0) 
+@END_Attrib 
+1 3 @F @F @F @F 
+
+@Var @RT(10)bBranchEnd @RT(0) @T @F @DT @RT(4)BOOL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(15)end branch step @RT(0) 
+@END_Attrib 
+1 3 @F @F @F @F 
+
+@Var @RT(13)bOwnBranchFin @RT(0) @T @F @DT @RT(4)BOOL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(19)own branch finished @RT(0) 
+@END_Attrib 
+1 3 @F @F @F @F 
+
+@Var @RT(13)bAllBranchFin @RT(0) @T @F @DT @RT(4)BOOL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(77)branch block finished, end branch AND column of next step <= reference column @RT(0) 
+@END_Attrib 
+1 3 @F @F @F @F 
+
+@Var @RT(6)bError @RT(0) @T @F @DT @RT(4)BOOL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(23)error browsing sequence @RT(0) 
+@END_Attrib 
+1 3 @F @F @F @F 
+
+@Var @RT(6)OldPos @RT(0) @T @T @DERIVED 0 @T @T @DT @RT(12)tsODCStepPos @RT(0) @T @T @UNKNOWN 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 4 @F @F @F @F 
+
+@Var @RT(6)CompId @RT(0) @T @T @DERIVED 0 @T @T @DT @RT(7)tCompId @RT(0) @T @T @UNKNOWN 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(15)bForceFollowing @RT(0) @T @F @DT @RT(4)BOOL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@END_Dcl 
+
+@END_Export 
+
+@BEG_Export 
+
+@BEG_Algo 
+@ALGORITHM @RT(4)aBwd @SEQUENTIAL_FLOW_CHART 
+@RT(0) @RT(0) @RT(0) @F @F 
+@END_Algo 
+
+@BEG_Dcl 
+@RT(16)DclTreeContainer 
+16 
+@Var @RT(7)StepPos @RT(0) @T @T @DERIVED 0 @T @T @DT @RT(12)tsODCStepPos @RT(0) @T @T @UNKNOWN 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(25)position of previous step @RT(0) 
+@END_Attrib 
+1 3 @F @F @F @F 
+
+@Var @RT(8)StepInfo @RT(0) @T @T @DERIVED 0 @T @T @DT @RT(13)tsODCStepInfo @RT(0) @T @T @UNKNOWN 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(16)step information @RT(0) 
+@END_Attrib 
+1 3 @F @F @F @F 
+
+@Var @RT(11)iDependence @RT(0) @T @T @DERIVED 0 @T @T @DT @RT(15)tnODCDependency @RT(0) @T @T @UNKNOWN 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(28)dependency to reference step @RT(0) 
+@END_Attrib 
+1 3 @F @F @F @F 
+
+@Var @RT(14)bBeginStepSequ @RT(0) @T @F @DT @RT(4)BOOL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(17)end sequence step @RT(0) 
+@END_Attrib 
+1 3 @F @F @F @F 
+
+@Var @RT(13)bBeginStepAll @RT(0) @T @F @DT @RT(4)BOOL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(22)last end sequence step @RT(0) 
+@END_Attrib 
+1 3 @F @F @F @F 
+
+@Var @RT(12)bEndStepSequ @RT(0) @T @F @DT @RT(4)BOOL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(17)end sequence step @RT(0) 
+@END_Attrib 
+1 3 @F @F @F @F 
+
+@Var @RT(9)bHelpStep @RT(0) @T @F @DT @RT(4)BOOL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(14)help step flag @RT(0) 
+@END_Attrib 
+1 3 @F @F @F @F 
+
+@Var @RT(15)bSafetyRelevant @RT(0) @T @F @DT @RT(4)BOOL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(31)safety relevant flag, value = 1 @RT(0) 
+@END_Attrib 
+1 3 @F @F @F @F 
+
+@Var @RT(12)bBranchStart @RT(0) @T @F @DT @RT(4)BOOL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(17)start branch step @RT(0) 
+@END_Attrib 
+1 3 @F @F @F @F 
+
+@Var @RT(10)bBranchEnd @RT(0) @T @F @DT @RT(4)BOOL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(15)end branch step @RT(0) 
+@END_Attrib 
+1 3 @F @F @F @F 
+
+@Var @RT(13)bOwnBranchFin @RT(0) @T @F @DT @RT(4)BOOL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(19)own branch finished @RT(0) 
+@END_Attrib 
+1 3 @F @F @F @F 
+
+@Var @RT(13)bAllBranchFin @RT(0) @T @F @DT @RT(4)BOOL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(77)branch block finished, end branch AND column of next step <= reference column @RT(0) 
+@END_Attrib 
+1 3 @F @F @F @F 
+
+@Var @RT(6)bError @RT(0) @T @F @DT @RT(4)BOOL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(23)error browsing sequence @RT(0) 
+@END_Attrib 
+1 3 @F @F @F @F 
+
+@Var @RT(6)OldPos @RT(0) @T @T @DERIVED 0 @T @T @DT @RT(12)tsODCStepPos @RT(0) @T @T @UNKNOWN 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 4 @F @F @F @F 
+
+@Var @RT(6)CompId @RT(0) @T @T @DERIVED 0 @T @T @DT @RT(7)tCompId @RT(0) @T @T @UNKNOWN 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(15)bForcePreceding @RT(0) @T @F @DT @RT(4)BOOL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@END_Dcl 
+
+@END_Export 
+
+@BEG_Body 
+@TL(81)
+(**************************************** WARNING ********************************************
+ *** The KEBA Kemro K2 System including software is not intended for safety control tasks! ***
+ ***                       For further information see Comment tab!                        ***
+ *********************************************************************************************)
+
+// init
+bError := FALSE;
+
+// write step positions to local variable
+RefStepPos := StepPos;
+LocalStepPos := StepPos;   
+
+StepInfo.iMoveNr := sv_ODCSequenceInt[RefStepPos.iColumn][RefStepPos.iRow].iMoveNumber;
+
+// check plausibility of movement number
+IF (StepInfo.iMoveNr < 1 OR StepInfo.iMoveNr > cMaxMoveRegistered) THEN
+   bError := TRUE;
+   RETURN;   
+END_IF;
+
+// get step informations
+StepInfo.iMoveCount := sv_ODCSequenceInt[RefStepPos.iColumn][RefStepPos.iRow].iCount;
+StepInfo.iFuIndex := sv_MovementsAvailable[StepInfo.iMoveNr].iFuIndex;
+StepInfo.MoveId := sv_MovementsAvailable[StepInfo.iMoveNr].pMovementData^.MoveId;
+CompId := sv_MovementsAvailable[StepInfo.iMoveNr].DeviceId.CompId;
+
+// init member variables
+iMinBranchStartRow := RefStepPos.iRow;
+iMinColumn := RefStepPos.iColumn;
+
+bBeginStepAll := (CompId = cCompODC) AND (StepInfo.MoveId = cMoveBeginSequence);
+bBeginStepSequ := (CompId <> cCompODC) AND (StepInfo.MoveId = cMoveBeginSequence);
+bEndStepAll := (CompId = cCompODC) AND (StepInfo.MoveId = cMoveEndSequence);                      
+bEndStepSequ := (CompId <> cCompODC) AND (StepInfo.MoveId = cMoveEndSequence);
+bBranchStart := (StepInfo.MoveId = cMoveStartParallel);
+bBranchEnd := (StepInfo.MoveId = cMoveEndParallel);
+bLocalOwnBranchFin := FALSE;
+bLocalAllBranchFin := FALSE;
+bHelpStep := bBeginStepAll OR bBeginStepSequ OR bEndStepAll OR bEndStepSequ OR bBranchStart OR bBranchEnd;
+
+// arrange counters
+iBranchFwdScanCnt := 1;
+iBranchBwdScanCnt := 1;
+iIfElseCount := 0;
+
+IF (bBranchEnd) THEN
+   iBranchFwdScanCnt := 0;
+ELSIF (bBranchStart) THEN   
+   iBranchBwdScanCnt := 0;
+END_IF;
+
+
+// debug output to trace
+IF sv_TraceLevel.bODCBrowseTrace THEN
+
+   sTraceString := CONCAT('SetRefStep;',
+                          DINT_TO_STRING(LocalStepPos.iColumn), ';',
+                          DINT_TO_STRING(LocalStepPos.iRow), ';',
+                          DINT_TO_STRING(StepInfo.iMoveNr), ';',
+                          sv_MovementsAvailable[StepInfo.iMoveNr].pMovementData^.sMoveId, ';');                          
+   
+   IF (bHelpStep) THEN
+      IF (bBeginStepSequ) THEN
+         sTraceString := CONCAT (sTraceString, 'BeginSequ;');  // Begin Sequence
+      ELSIF (bBeginStepAll) THEN
+         sTraceString := CONCAT (sTraceString, 'BeginAll;');  // Begin All
+      ELSIF (bEndStepSequ) THEN
+         sTraceString := CONCAT (sTraceString, 'EndSequ;');  // End Sequence
+      ELSIF (bEndStepAll) THEN
+         sTraceString := CONCAT (sTraceString, 'EndAll;');  // End All
+      ELSIF (bBranchStart) THEN   
+         sTraceString := CONCAT (sTraceString, 'StartBranch;');  // Start Branch
+      ELSIF (bBranchEnd) THEN
+         sTraceString := CONCAT (sTraceString, 'EndBranch;');  // End Branch
+      END_IF;
+   END_IF;
+      
+   dPrint := Print(sTraceString);   
+   
+END_IF;
+
+@END_Body 
+
+@@@BEG_Comment@@@ 
+@TL(0)
+
+@@@END_Comment@@@ 
+
+@BEG_SfcBody 
+7 3 3 
+
+@BEG_SfcData 2 
+@StepSeq @RT(4)sseq @F 1 
+@Loop @RT(4)loop @F 2 
+@StepSeq @RT(3)seq @F 3 
+@Step @RT(3)FWD @F @T @F @F @RT(0) @F 
+@AcbCont @RT(7)unnamed @F 1 
+@Acb @RT(9)aNextStep @F @F @RT(1)N @RT(0) @F @F @T @F 
+
+@Trans @RT(6)TError @F @T @F @F @T @F @TL(2)
+NOT bError
+
+@RT(6)Trans1 @F 
+@Step @RT(5)Step2 @F @F @F @F @RT(0) @F 
+@AcbCont @RT(7)unnamed @F 2 
+@Acb @RT(8)aInitFwd @F @F @RT(1)N @RT(0) @F @F @T @F 
+@Acb @RT(9)aTraceFwd @F @F @RT(1)N @RT(0) @F @F @T @F 
+
+
+@Trans @RT(5)TTrue @F @T @T @T @T @T @TL(2)
+TRUE
+
+@RT(6)Trans2 @F 
+
+@END_SfcData 
+@SaActions 3 
+@SaText @RT(9)aNextStep 1 @TL(36)
+(**************************************** WARNING ********************************************
+ *** The KEBA Kemro K2 System including software is not intended for safety control tasks! ***
+ ***                       For further information see Comment tab!                        ***
+ *********************************************************************************************)
+
+bError := FALSE;
+
+REPEAT
+   // backup old pos
+   OldPos := LocalStepPos;
+   
+   // write step positions, get next steps position
+   LocalStepPos := sv_ODCSequenceInt[LocalStepPos.iColumn][LocalStepPos.iRow].PosNextStep;
+   
+   // check last step, next step pos [-1,-1]
+   IF (LocalStepPos.iColumn < 1 OR LocalStepPos.iRow < 1) THEN
+      StepPos := OldPos;
+      LocalStepPos := OldPos;
+      bSafetyRelevant := (sv_MovementsAvailable[StepInfo.iMoveNr].pMovementData^.iSafetyIdentifier MOD 2 = 1); 
+      bAllBranchFin := TRUE;
+      bOwnBranchFin := TRUE;
+      bError := TRUE;
+      RETURN;
+   END_IF;
+   
+   StepInfo.iMoveNr := sv_ODCSequenceInt[LocalStepPos.iColumn][LocalStepPos.iRow].iMoveNumber;
+   
+   // check plausibility of movement number
+   IF (StepInfo.iMoveNr < 1 OR StepInfo.iMoveNr > cMaxMoveRegistered) THEN
+      bError := TRUE;
+      RETURN;   
+   END_IF;
+   
+UNTIL (sv_MovementsAvailable[StepInfo.iMoveNr].pMovementData^.pbActivated^)
+END_REPEAT;   
+
+
+@SaText @RT(8)aInitFwd 1 @TL(75)
+(**************************************** WARNING ********************************************
+ *** The KEBA Kemro K2 System including software is not intended for safety control tasks! ***
+ ***                       For further information see Comment tab!                        ***
+ *********************************************************************************************)
+
+// get step informations
+StepInfo.iMoveCount := sv_ODCSequenceInt[LocalStepPos.iColumn][LocalStepPos.iRow].iCount;
+StepInfo.iFuIndex := sv_MovementsAvailable[StepInfo.iMoveNr].iFuIndex;
+StepInfo.MoveId := sv_MovementsAvailable[StepInfo.iMoveNr].pMovementData^.MoveId;
+CompId := sv_MovementsAvailable[StepInfo.iMoveNr].DeviceId.CompId;
+
+bBeginStepSequ := (CompId <> cCompODC) AND (StepInfo.MoveId = cMoveBeginSequence);
+bEndStepAll := (CompId = cCompODC) AND (StepInfo.MoveId = cMoveEndSequence);                      
+bEndStepSequ := (CompId <> cCompODC) AND (StepInfo.MoveId = cMoveEndSequence);
+bBranchStart := (StepInfo.MoveId = cMoveStartParallel);
+bBranchEnd := (StepInfo.MoveId = cMoveEndParallel);
+bHelpStep := bBeginStepSequ OR bEndStepAll OR bEndStepSequ OR bBranchStart OR bBranchEnd;
+
+// decrement branch fwd counter at end branch step
+IF (bBranchEnd) THEN
+   iBranchFwdScanCnt := iBranchFwdScanCnt - 1;
+ELSIF (bBranchStart) THEN
+   iBranchFwdScanCnt := iBranchFwdScanCnt + 1;
+ELSIF StepInfo.MoveId = cMoveIf OR StepInfo.MoveId = cMoveElse THEN
+   iIfElseCount := iIfElseCount + 1; 
+   IF iBranchFwdScanCnt = iIfElseCount THEN
+      bForceFollowing := TRUE;
+   END_IF;  
+ELSIF StepInfo.MoveId = cMoveEndIf THEN
+   iIfElseCount := iIfElseCount - 1; 
+   bForceFollowing := FALSE; 
+END_IF;
+
+// set safety relevance information
+bSafetyRelevant := (sv_MovementsAvailable[StepInfo.iMoveNr].pMovementData^.iSafetyIdentifier MOD 2 = 1);
+
+// set own branch fin at the end of own branch (branchCnt = 0) or by end of all sequence
+bLocalOwnBranchFin := bLocalOwnBranchFin OR bEndStepAll OR (iBranchFwdScanCnt = 0);
+// set own branch fin at the end of branch blocks (ownBranchFin=1 AND nexts steps column <= refColumn) 
+//  or by end of all sequence
+bLocalAllBranchFin :=  bLocalAllBranchFin OR bEndStepAll OR 
+                      (bLocalOwnBranchFin AND bBranchEnd AND (sv_ODCSequenceInt[LocalStepPos.iColumn,LocalStepPos.iRow].PosNextStep.iColumn <= RefStepPos.iColumn));
+
+// set iMinBranchStartRow
+//   - step is start branch step & act row less than old min branch start row
+//   - act column less than or equal to reference column
+IF (bBranchStart AND LocalStepPos.iRow < iMinBranchStartRow) THEN
+   iMinBranchStartRow := LocalStepPos.iRow;
+ELSIF (LocalStepPos.iColumn <= RefStepPos.iColumn) THEN
+   iMinBranchStartRow := LocalStepPos.iRow;
+END_IF;
+
+// set iMinColumn
+IF (LocalStepPos.iColumn < iMinColumn) THEN
+   iMinColumn := LocalStepPos.iColumn;
+END_IF;  
+
+// set other outputs
+StepPos := LocalStepPos;
+bOwnBranchFin := bLocalOwnBranchFin;
+bAllBranchFin := bLocalAllBranchFin;
+
+// calc step dependency, according to the reference step:
+IF bForceFollowing THEN
+   iDependence := nFollowing;
+ELSE
+   IF (NOT bOwnBranchFin AND LocalStepPos.iRow > RefStepPos.iRow) THEN
+      iDependence := nFollowing;
+   ELSIF (bOwnBranchFin AND iMinBranchStartRow > RefStepPos.iRow) THEN   
+      iDependence := nFollowing;
+   ELSE
+      iDependence := nParallel;   
+   END_IF;
+END_IF;
+
+
+@SaText @RT(9)aTraceFwd 1 @TL(42)
+(**************************************** WARNING ********************************************
+ *** The KEBA Kemro K2 System including software is not intended for safety control tasks! ***
+ ***                       For further information see Comment tab!                        ***
+ *********************************************************************************************)
+
+// debug output to trace
+IF sv_TraceLevel.bODCBrowseTrace THEN
+   sTraceString := CONCAT('Browse FWD;',
+                          DINT_TO_STRING(LocalStepPos.iColumn), ';',
+                          DINT_TO_STRING(LocalStepPos.iRow), ';');
+   IF (iDependence = nFollowing) THEN
+      sTraceString := CONCAT(sTraceString, '->');
+   ELSIF (iDependence = nPreceding) THEN
+      sTraceString := CONCAT(sTraceString, '<-');
+   ELSIF (iDependence = nParallel) THEN
+      sTraceString := CONCAT(sTraceString, '||');
+   ELSE
+      sTraceString := CONCAT(sTraceString, 'unknown dependency');
+   END_IF;
+   sTraceString := CONCAT(sTraceString, ';',
+                          DINT_TO_STRING(StepInfo.iMoveNr), ';',
+                          sv_MovementsAvailable[StepInfo.iMoveNr].pMovementData^.sMoveId, ';',                          
+                          BOOL_TO_STRING(bSafetyRelevant), ';');
+   
+   IF (bHelpStep) THEN
+      IF (bBeginStepSequ) THEN
+         sTraceString := CONCAT (sTraceString, 'BeginSequ;');  // Begin Sequence
+      ELSIF (bEndStepSequ) THEN
+         sTraceString := CONCAT (sTraceString, 'EndSequ;');  // End Sequence
+      ELSIF (bEndStepAll) THEN
+         sTraceString := CONCAT (sTraceString, 'EndAll;');  // End All
+      ELSIF (bBranchStart) THEN   
+         sTraceString := CONCAT (sTraceString, 'StartBranch;');  // Start Branch
+      ELSIF (bBranchEnd) THEN
+         sTraceString := CONCAT (sTraceString, 'EndBranch;');  // End Branch
+      END_IF;
+   END_IF;
+
+   dPrint := Print(sTraceString);   
+   
+END_IF;
+
+
+@SaTrans 0 
+@SaExits 0 
+@END_SfcBody 
+
+@@@BEG_Comment@@@ 
+@TL(6)
+Algorithm to get next step in sequence including following informations:
+- dependence according to reference step
+- safety relevance
+- help step identification, (help steps are start/end branch, start/end sequence, start/end all)
+- start/end sequence/branch informations
+- ownBranchFin and allBranchFin signalisation
+@@@END_Comment@@@ 
+
+@BEG_SfcBody 
+7 3 3 
+
+@BEG_SfcData 2 
+@StepSeq @RT(4)sseq @F 1 
+@Loop @RT(4)loop @F 2 
+@StepSeq @RT(3)seq @F 3 
+@Step @RT(5)Step1 @F @T @F @F @RT(0) @F 
+@AcbCont @RT(7)unnamed @F 1 
+@Acb @RT(9)aPrevStep @F @F @RT(1)N @RT(0) @F @F @T @F 
+
+@Trans @RT(6)TError @F @T @F @F @T @F @TL(2)
+NOT bError
+
+@RT(6)Trans1 @F 
+@Step @RT(3)OUT @F @F @F @F @RT(0) @F 
+@AcbCont @RT(7)unnamed @F 2 
+@Acb @RT(8)aInitBwd @F @F @RT(1)N @RT(0) @F @F @T @F 
+@Acb @RT(9)aTraceBwd @F @F @RT(1)N @RT(0) @F @F @T @F 
+
+
+@Trans @RT(5)TTrue @F @T @T @T @T @T @TL(2)
+TRUE
+
+@RT(6)Trans2 @F 
+
+@END_SfcData 
+@SaActions 3 
+@SaText @RT(9)aPrevStep 1 @TL(36)
+(**************************************** WARNING ********************************************
+ *** The KEBA Kemro K2 System including software is not intended for safety control tasks! ***
+ ***                       For further information see Comment tab!                        ***
+ *********************************************************************************************)
+
+bError := FALSE;
+
+REPEAT
+   // backup old pos
+   OldPos := LocalStepPos;
+   
+   // write step positions, get previous step position
+   LocalStepPos := sv_ODCSequenceInt[LocalStepPos.iColumn][LocalStepPos.iRow].PosPrevStep;
+   
+   // check first step, previous step pos [-1,-1]
+   IF (LocalStepPos.iColumn < 1 OR LocalStepPos.iRow < 1) THEN
+      StepPos := OldPos;
+      LocalStepPos := OldPos;
+      bSafetyRelevant := (sv_MovementsAvailable[StepInfo.iMoveNr].pMovementData^.iSafetyIdentifier MOD 2 = 1); 
+      bAllBranchFin := TRUE;
+      bOwnBranchFin := TRUE;
+      bError := TRUE;
+      RETURN;
+   END_IF;
+   
+   StepInfo.iMoveNr := sv_ODCSequenceInt[LocalStepPos.iColumn][LocalStepPos.iRow].iMoveNumber;
+   
+   // check plausibility of movement number
+   IF (StepInfo.iMoveNr < 1 OR StepInfo.iMoveNr > cMaxMoveRegistered) THEN
+      bError := TRUE;
+      RETURN;   
+   END_IF;
+   
+UNTIL (sv_MovementsAvailable[StepInfo.iMoveNr].pMovementData^.pbActivated^)
+END_REPEAT;
+
+
+@SaText @RT(8)aInitBwd 1 @TL(78)
+(**************************************** WARNING ********************************************
+ *** The KEBA Kemro K2 System including software is not intended for safety control tasks! ***
+ ***                       For further information see Comment tab!                        ***
+ *********************************************************************************************)
+
+// get step informations
+StepInfo.iMoveCount := sv_ODCSequenceInt[LocalStepPos.iColumn][LocalStepPos.iRow].iCount;
+StepInfo.iFuIndex := sv_MovementsAvailable[StepInfo.iMoveNr].iFuIndex;
+StepInfo.MoveId := sv_MovementsAvailable[StepInfo.iMoveNr].pMovementData^.MoveId;
+CompId := sv_MovementsAvailable[StepInfo.iMoveNr].DeviceId.CompId;
+
+bBeginStepAll := (CompId = cCompODC) AND (StepInfo.MoveId = cMoveBeginSequence);
+bBeginStepSequ := (CompId <> cCompODC) AND (StepInfo.MoveId = cMoveBeginSequence);                  
+bEndStepSequ := (CompId <> cCompODC) AND (StepInfo.MoveId = cMoveEndSequence);
+bBranchStart := (StepInfo.MoveId = cMoveStartParallel);
+bBranchEnd := (StepInfo.MoveId = cMoveEndParallel);
+bHelpStep := bBeginStepAll OR bBeginStepSequ OR bEndStepSequ OR bBranchStart OR bBranchEnd;
+
+
+IF (bBranchEnd) THEN
+   // increment branch bwd counter at end branch step
+   iBranchBwdScanCnt := iBranchBwdScanCnt + 1;
+ELSIF (bBranchStart) THEN   
+   // decrement branch bwd counter at start branch step
+   iBranchBwdScanCnt := iBranchBwdScanCnt - 1;
+ELSIF StepInfo.MoveId = cMoveEndIf THEN
+   IF iBranchBwdScanCnt = 1 THEN
+      bForcePreceding := TRUE;
+   END_IF;
+ELSIF StepInfo.MoveId = cMoveIf OR StepInfo.MoveId = cMoveElse THEN
+   bForcePreceding := FALSE;
+END_IF;
+
+// set safety relevance information
+bSafetyRelevant := (sv_MovementsAvailable[StepInfo.iMoveNr].pMovementData^.iSafetyIdentifier MOD 2 = 1);
+
+// set own branch fin at the end of own branch (branchCnt = 0) or by begin of all sequence
+bLocalOwnBranchFin := bLocalOwnBranchFin OR bBeginStepAll OR (iBranchBwdScanCnt = 0);
+// set own branch fin at the begin of branch blocks (ownBranchFin=1 AND next steps row <= act row) 
+//  or by begin of all sequence
+bLocalAllBranchFin :=  bLocalAllBranchFin OR bBeginStepAll OR 
+                       (bLocalOwnBranchFin AND bBranchStart AND (sv_ODCSequenceInt[LocalStepPos.iColumn,LocalStepPos.iRow].PosPrevStep.iRow <= LocalStepPos.iRow));
+
+// set iMinBranchStartRow                    
+//   - step is start branch step
+//     & act row less than old min branch start row
+//     & act column less or equal than min column
+IF (bBranchStart AND LocalStepPos.iRow < iMinBranchStartRow AND LocalStepPos.iColumn <= iMinColumn) THEN
+   iMinBranchStartRow := LocalStepPos.iRow;
+END_IF;
+
+// set iMinColumn
+IF (LocalStepPos.iColumn < iMinColumn) THEN
+   iMinColumn := LocalStepPos.iColumn;
+END_IF;  
+
+// set other outputs
+StepPos := LocalStepPos;
+bOwnBranchFin := bLocalOwnBranchFin;
+bAllBranchFin := bLocalAllBranchFin;
+
+// calc step dependency, according to the reference step:
+//   - preceding: own branch and row < reference row
+//              other branch and row < minBranchStartRow
+//   - parallel: all other cases
+IF bForcePreceding THEN
+   iDependence := nPreceding;
+ELSE
+   IF ((NOT bOwnBranchFin AND LocalStepPos.iRow < RefStepPos.iRow) OR
+      (bOwnBranchFin AND LocalStepPos.iRow < iMinBranchStartRow)) THEN
+      iDependence := nPreceding;
+   ELSE
+      iDependence := nParallel;   
+   END_IF;
+END_IF;
+
+
+
+
+@SaText @RT(9)aTraceBwd 1 @TL(40)
+(**************************************** WARNING ********************************************
+ *** The KEBA Kemro K2 System including software is not intended for safety control tasks! ***
+ ***                       For further information see Comment tab!                        ***
+ *********************************************************************************************)
+
+// debug output to trace
+IF sv_TraceLevel.bODCBrowseTrace THEN
+   sTraceString := CONCAT('Browse BWD;',
+                          DINT_TO_STRING(LocalStepPos.iColumn), ';',
+                          DINT_TO_STRING(LocalStepPos.iRow), ';');
+   IF (iDependence = nFollowing) THEN
+      sTraceString := CONCAT(sTraceString, '->');
+   ELSIF (iDependence = nPreceding) THEN
+      sTraceString := CONCAT(sTraceString, '<-');
+   ELSE
+      sTraceString := CONCAT(sTraceString, '||');      
+   END_IF;
+   sTraceString := CONCAT(sTraceString, ';',
+                          DINT_TO_STRING(StepInfo.iMoveNr), ';',
+                          sv_MovementsAvailable[StepInfo.iMoveNr].pMovementData^.sMoveId, ';',                          
+                          BOOL_TO_STRING(bSafetyRelevant), ';');
+   
+   IF (bHelpStep) THEN
+      IF (bBeginStepSequ) THEN
+         sTraceString := CONCAT (sTraceString, 'BeginSequ;');  // Begin Sequence
+      ELSIF (bBeginStepAll) THEN
+         sTraceString := CONCAT (sTraceString, 'BeginAll;');  // Begin All
+      ELSIF (bEndStepSequ) THEN
+         sTraceString := CONCAT (sTraceString, 'EndSequ;');  // End Sequence
+      ELSIF (bBranchStart) THEN
+         sTraceString := CONCAT (sTraceString, 'StartBranch;');  // Start Branch
+      ELSIF (bBranchEnd) THEN
+         sTraceString := CONCAT (sTraceString, 'EndBranch;');  // End Branch
+      END_IF;
+   END_IF;
+
+   dPrint := Print(sTraceString);   
+   
+END_IF;
+
+
+@SaTrans 0 
+@SaExits 0 
+@END_SfcBody 
+
+@@@BEG_Comment@@@ 
+@TL(6)
+Algorithm to get previous step in sequence including following informations:
+- dependence according to reference step
+- safety relevance
+- help step identification, (help steps are start/end branch, start/end sequence, start/end all)
+- start/end sequence/branch informations
+- ownBranchFin and allBranchFin signalisation
+@@@END_Comment@@@ 
+@END_Body 
+
+@END_Contents 
+@@@BEG_Password@@@
+NGhzZm9kYzQ=
+@@@END_Password@@@

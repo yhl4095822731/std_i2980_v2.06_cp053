@@ -1,0 +1,371 @@
+(*
+/*-------------------------------------------------------------------------
+ *                   (c) 2002 by KEBA Ges.m.b.H & Co
+ *                            Linz/AUSTRIA
+ *                         All rights reserved
+ *--------------------------------------------------------------------------
+ *    Projekt   : moldmachine - demoapplication
+ *    Erstautor : fal
+ *    Datum     : 27.03.2003
+ *    $Author: Fal $
+ *    $Revision: 1 $
+ *    $Modtime: 28.11.06 17:13 $
+ *    $Archive: /ApplicationFrames/KePlast/APPL/ApplMoldMachineIECBase/FBStandStill.pu $
+ *--------------------------------------------------------------------------*/
+*)
+
+IMPORT_OVER_LISTFILE
+ TON
+
+END_IMPORT
+
+FUNCTION_BLOCK FBStandStill #DUMMY_EDIT_BLOCK
+
+VAR_INPUT
+ rActVoltage : REAL;
+END_VAR
+
+VAR_OUTPUT
+ bStandStill : BOOL;
+END_VAR
+
+VAR_INPUT
+ bDoCalib : BOOL;
+ dCalibTime : TIME;
+ rMaxVoltageDiff : REAL;
+ dDelayTime : TIME;
+END_VAR
+
+VAR
+ rVoltageTemp : REAL;
+ rVoltageDifference : REAL;
+ fbTON_Calib : TON;
+ fbTON_Delay : TON;
+END_VAR
+
+(* IecGraph-Code *)
+
+(* init step *)
+INITIAL_STEP S_Init:
+AInit (P);
+END_STEP
+
+ACTION AInit: #BEGIN_EDIT_BLOCK
+fbTON_Calib(IN := FALSE, PT := dCalibTime);
+fbTON_Delay(IN := FALSE, PT := dDelayTime);
+bStandStill := FALSE;
+
+;#END_EDIT_BLOCK END_ACTION (*AInit*)
+
+(* steps *)
+STEP S_Wait_PumpDelay:
+ATimerDelay (N);
+END_STEP
+
+ACTION ATimerDelay: #BEGIN_EDIT_BLOCK
+fbTON_Delay(IN := TRUE, PT := dDelayTime);
+
+;#END_EDIT_BLOCK END_ACTION (*ATimerDelay*)
+STEP S_SaveVoltage:
+ATimer (N);
+ASaveVoltage (P);
+END_STEP
+
+ACTION ATimer: #BEGIN_EDIT_BLOCK
+fbTON_Calib(IN := TRUE, PT := dCalibTime);
+
+;#END_EDIT_BLOCK END_ACTION (*ATimer*)
+ACTION ASaveVoltage: #BEGIN_EDIT_BLOCK
+rVoltageTemp := rActVoltage;
+
+;#END_EDIT_BLOCK END_ACTION (*ASaveVoltage*)
+STEP S_CalcDiff:
+ACalcDiff (P);
+END_STEP
+
+ACTION ACalcDiff: #BEGIN_EDIT_BLOCK
+rVoltageDifference := (ABS(rVoltageTemp - rActVoltage));
+fbTON_Calib(IN := FALSE, PT := dCalibTime);
+
+;#END_EDIT_BLOCK END_ACTION (*ACalcDiff*)
+STEP S_StandStill:
+AStandStill (P);
+END_STEP
+
+ACTION AStandStill: #BEGIN_EDIT_BLOCK
+bStandStill := TRUE;
+
+;#END_EDIT_BLOCK END_ACTION (*AStandStill*)
+
+(* transitions *)
+TRANSITION TStartCalib (* TStartCalib *) FROM S_Init TO S_Wait_PumpDelay :=  #BEGIN_EDIT_BLOCK
+bDoCalib
+;#END_EDIT_BLOCK
+END_TRANSITION
+
+TRANSITION Trans11 (* Trans11 *) FROM S_Wait_PumpDelay TO S_SaveVoltage :=  #BEGIN_EDIT_BLOCK
+fbTON_Delay.Q
+;#END_EDIT_BLOCK
+END_TRANSITION
+
+TRANSITION TCalcDifference (* TCalcDifference *) FROM S_SaveVoltage TO S_CalcDiff :=  #BEGIN_EDIT_BLOCK
+fbTON_Calib.Q
+;#END_EDIT_BLOCK
+END_TRANSITION
+
+TRANSITION TContinue (* TContinue *) FROM S_CalcDiff TO S_SaveVoltage :=  #BEGIN_EDIT_BLOCK
+rVoltageDifference > rMaxVoltageDiff
+;#END_EDIT_BLOCK
+END_TRANSITION
+
+TRANSITION TStandStillDetected (* TStandStillDetected *) FROM S_CalcDiff TO S_StandStill :=  #BEGIN_EDIT_BLOCK
+rVoltageDifference <= rMaxVoltageDiff
+;#END_EDIT_BLOCK
+END_TRANSITION
+
+TRANSITION TTrue (* TTrue *) FROM S_StandStill TO S_Init :=  #BEGIN_EDIT_BLOCK
+TRUE
+;#END_EDIT_BLOCK
+END_TRANSITION
+
+(* end IecGraph-Code *)
+(* sfc-code *)
+
+(* exits *)
+
+EXIT_TRANSITION S_Stop := #BEGIN_EDIT_BLOCK
+NOT bDoCalib
+;#END_EDIT_BLOCK
+PRIORITY 1 WITH  INITIAL_STEP S_Init: END_STEP
+END_TRANSITION
+(* end sfc-code *)
+
+
+END_FUNCTION_BLOCK
+
+
+
+#END_OF_IEC_PART
+
+@Puma @IecEditor 6 113 @Pou 25 
+@@@BEG_Comment@@@
+/*-------------------------------------------------------------------------
+ *                   (c) 2002 by KEBA Ges.m.b.H & Co
+ *                            Linz/AUSTRIA
+ *                         All rights reserved
+ *--------------------------------------------------------------------------
+ *    Projekt   : moldmachine - demoapplication
+ *    Erstautor : fal
+ *    Datum     : 27.03.2003
+ *    $Author: Fal $
+ *    $Revision: 1 $
+ *    $Modtime: 28.11.06 17:13 $
+ *    $Archive: /ApplicationFrames/KePlast/APPL/ApplMoldMachineIECBase/FBStandStill.pu $
+ *--------------------------------------------------------------------------*/
+@@@END_Comment@@@
+
+@BEG_Contents 
+
+@BEG_Func 
+@RT(17)FuncTreeContainer 
+0 
+@END_Func 
+
+@BEG_Const 
+@RT(18)ConstTreeContainer 
+0 
+@END_Const 
+
+@BEG_Export 
+
+@BEG_Kind 
+@FUNCTION_BLOCK @RT(12)FBStandStill @SEQUENTIAL_FLOW_CHART 
+@RT(0) @RT(0) @RT(0) 
+@END_Kind 
+
+@BEG_Dcl 
+@RT(16)DclTreeContainer 
+10 
+@Var @RT(11)rActVoltage @RT(0) @T @F @DT @RT(4)REAL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 1 @F @F @F @F 
+
+@Var @RT(11)bStandStill @RT(0) @T @F @DT @RT(4)BOOL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 3 @F @F @F @F 
+
+@Var @RT(8)bDoCalib @RT(0) @T @F @DT @RT(4)BOOL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 1 @F @F @F @F 
+
+@Var @RT(10)dCalibTime @RT(0) @T @F @DT @RT(4)TIME @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 1 @F @F @F @F 
+
+@Var @RT(15)rMaxVoltageDiff @RT(0) @T @F @DT @RT(4)REAL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 1 @F @F @F @F 
+
+@Var @RT(10)dDelayTime @RT(0) @T @F @DT @RT(4)TIME @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 1 @F @F @F @F 
+
+@Var @RT(12)rVoltageTemp @RT(0) @T @F @DT @RT(4)REAL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(18)rVoltageDifference @RT(0) @T @F @DT @RT(4)REAL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(11)fbTON_Calib @RT(0) @T @T @DERIVED 0 @T @T @DT @RT(3)TON @RT(0) @T @T @UNKNOWN 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(11)fbTON_Delay @RT(0) @T @T @DERIVED 0 @T @T @DT @RT(3)TON @RT(0) @T @T @UNKNOWN 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@END_Dcl 
+
+@END_Export 
+
+@BEG_SfcBody 
+7 7 7 
+
+@BEG_SfcData 2 
+@StepSeq @RT(4)sseq @F 9 
+@Step @RT(6)S_Init @F @T @T @F @RT(0) @F 
+@AcbCont @RT(7)unnamed @F 1 
+@Acb @RT(5)AInit @F @T @RT(1)P @RT(0) @F @F @T @TL(4)
+fbTON_Calib(IN := FALSE, PT := dCalibTime);
+fbTON_Delay(IN := FALSE, PT := dDelayTime);
+bStandStill := FALSE;
+
+@F 
+
+@Trans @RT(11)TStartCalib @F @T @F @F @T @T @TL(2)
+bDoCalib
+
+@RT(11)TStartCalib @F 
+@Step @RT(16)S_Wait_PumpDelay @F @F @F @F @RT(0) @F 
+@AcbCont @RT(7)unnamed @F 1 
+@Acb @RT(11)ATimerDelay @F @T @RT(1)N @RT(0) @F @F @T @TL(2)
+fbTON_Delay(IN := TRUE, PT := dDelayTime);
+
+@F 
+
+@Trans @RT(7)Trans11 @F @T @F @F @T @T @TL(2)
+fbTON_Delay.Q
+
+@RT(7)Trans11 @F 
+@Loop @RT(4)loop @F 2 
+@StepSeq @RT(4)sseq @F 3 
+@Step @RT(13)S_SaveVoltage @F @F @F @F @RT(0) @F 
+@AcbCont @RT(7)unnamed @F 2 
+@Acb @RT(6)ATimer @F @T @RT(1)N @RT(0) @F @F @T @TL(2)
+fbTON_Calib(IN := TRUE, PT := dCalibTime);
+
+@F 
+@Acb @RT(12)ASaveVoltage @F @T @RT(1)P @RT(0) @F @F @T @TL(2)
+rVoltageTemp := rActVoltage;
+
+@F 
+
+@Trans @RT(15)TCalcDifference @F @T @F @F @T @T @TL(2)
+fbTON_Calib.Q
+
+@RT(15)TCalcDifference @F 
+@Step @RT(10)S_CalcDiff @F @F @F @F @RT(0) @F 
+@AcbCont @RT(7)unnamed @F 1 
+@Acb @RT(9)ACalcDiff @F @T @RT(1)P @RT(0) @F @F @T @TL(3)
+rVoltageDifference := (ABS(rVoltageTemp - rActVoltage));
+fbTON_Calib(IN := FALSE, PT := dCalibTime);
+
+@F 
+
+
+@Trans @RT(9)TContinue @F @T @F @T @T @T @TL(2)
+rVoltageDifference > rMaxVoltageDiff
+
+@RT(9)TContinue @F 
+
+@Trans @RT(19)TStandStillDetected @F @T @F @F @T @T @TL(2)
+rVoltageDifference <= rMaxVoltageDiff
+
+@RT(19)TStandStillDetected @F 
+@Step @RT(12)S_StandStill @F @F @F @F @RT(0) @F 
+@AcbCont @RT(7)unnamed @F 1 
+@Acb @RT(11)AStandStill @F @T @RT(1)P @RT(0) @F @F @T @TL(2)
+bStandStill := TRUE;
+
+@F 
+
+@Trans @RT(5)TTrue @F @T @F @F @T @T @TL(2)
+TRUE
+
+@RT(5)TTrue @F 
+@Goto @RT(6)S_Init @F @F 
+@END_SfcData 
+@SaActions 0 
+@SaTrans 0 
+@SaExits 1 
+@SaExit @SaText @RT(6)S_Stop 1 @TL(2)
+NOT bDoCalib
+
+@RT(6)S_Init @RT(1)1 @F @F @SaSfc @RT(6)S_Stop 5 @RT(5)DUMMY 
+@BEG_SfcData 2 
+@ExitSeq @RT(4)sseq @F 3 
+@Step @RT(8)unnamed1 @F @T @F @F @RT(0) @F 
+@AcbCont @RT(7)unnamed @F 0 
+
+@Trans @RT(8)unnamed3 @F @T @F @F @T @T @TL(2)
+
+
+@RT(8)unnamed3 @F 
+@Goto @RT(9)unlabeled @F @F 
+@END_SfcData 
+
+@END_SfcBody 
+
+@END_Contents 

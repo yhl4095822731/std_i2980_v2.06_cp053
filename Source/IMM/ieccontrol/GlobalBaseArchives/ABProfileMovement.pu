@@ -1,0 +1,3714 @@
+(*
+@h    ! WARNING !
+@h    The Kemro K2 system (including software) only meets category B according to EN 954-1,
+@h    thus it is not intended for usage in safety-relevant control applications in the field 
+@h    of personal safety (e.g. emergency stop).
+@h    To implement potentially necessary safety-relevant control tasks, always use additional 
+@h    external safety devices that are intended for the particular purpose, and meet the necessary 
+@h    functional safety.
+@h    For further information see EN 954-1 (EN ISO 13849-1) and/or the K2-x00 user manual, chapter 
+@h    "CE conformity, directives and standards".
+
+This AB can be used for a standard profile movement.
+It includes the following funcionalities:
+- profile calculation (including error detection of the input profile) 
+- automatic reparam of all necessary blocks after change in the profile
+  Attention: reparam will be done after the movement is stopped and not during the movement is active
+- profile output
+- calculation of the actual profile stage
+- timeout detection (including automatic stop after timeout)
+
+@FunctionID: S_KPIEC_ALAMOVE_02
+@FunctionID: S_KPIEC_ALAMOVE_03
+
+*)
+
+IMPORT_OVER_LISTFILE
+ SET_ALARM
+, RESET_ALARM
+, FCalcDuration
+, CHECK_REF
+, cApplPlasticsNoError
+, cMaxIntermediateConditions
+, tsDeviceId
+, KAPPL_VisProfile
+, KAPPL_ProfileData
+, tyInstanceListArray
+, tMoveIdent
+, KAPPL_Plastics_ProfileOutput
+, TON
+, R_TRIG
+, TOF
+, KAPPL_Plastics_ProfileCalc
+
+END_IMPORT
+
+ALGORITHM_BLOCK ABProfileMovement #DUMMY_EDIT_BLOCK
+
+SYSTEM_VAR
+ sv_bUseStartPosProfiles : BOOL;
+ sv_DeviceId : tsDeviceId;
+ sv_bProfileEditorActive : BOOL (* "profile dirty" flag (will be set / reset by HMI) *);
+END_VAR
+
+SYSTEM_OBJECT
+ PU_Task_7 : TASK;
+ TaskSlow : TASK;
+ erProfileSequence : ALARM;
+ erMoveTimeout : ALARM;
+ erPresProfDamaged : ALARM;
+ erVelProfDamaged : ALARM;
+ erInvalidProfileReference : ALARM;
+ erPressureOutput : ALARM;
+ erVelocityOutput : ALARM;
+END_OBJECT
+
+VAR
+ mpProfile : REFTO KAPPL_VisProfile;
+ mpdCalcedDuration : REFTO TIME;
+ VelocityProfile : KAPPL_ProfileData;
+ PressureProfile : KAPPL_ProfileData;
+ mbReParam : BOOL;
+ mbDirection : BOOL;
+ mbMovementActive : BOOL (* info if movement is active *);
+ mpInstanceDataInterPos : REFTO tyInstanceListArray;
+ mMoveDir : tMoveIdent;
+ mbProfileError : BOOL (* error during profile calc detected *);
+ mbRefInstanceDataInterPosValid : BOOL (* reference to array with data of interpos movements is valid *);
+ mprCalcDurationStartPosition : REFTO REAL;
+ mbRefCalcDurationStartPosValid : BOOL (* reference to start position is valid *);
+ mbRefCalcedDurationValid : BOOL (* reference to calculated duration is valid *);
+ mbReferenceValid : BOOL (* info if reference is valid *);
+ mprMaxSpeed : REFTO REAL;
+ mbReCalcDurations : BOOL (* Recalculate durations *);
+ mInstanceDataInterPos : tyInstanceListArray (* array with instance data of interpos movements *);
+ mrCalcDurationStartPos : REAL (* start position for calculation of duration *);
+ mpbStopOutputPresUsed : REFTO BOOL;
+ mpbStopOutputVelUsed : REFTO BOOL;
+ mbStopOutputPresUsed : BOOL;
+ mbStopOutputVelUsed : BOOL;
+ mprProfileEndPos : REFTO REAL;
+ mrProfileEndPos : REAL;
+ mbMaxSpeedLinked : BOOL := FALSE;
+ mprMaxAbsAccelStart : REFTO REAL;
+ mprMaxAbsAccelEnd : REFTO REAL;
+ mprPosAccelStart : REFTO REAL;
+ mprPosAccelEnd : REFTO REAL;
+ mbMaxRampsLinked : BOOL;
+ rLinearFactor : REAL := 0.0;
+ rConstantTerm : REAL := 1.0;
+ rLinearValPos : REAL := 0.0;
+ mrStopAccelCalced : REAL := 0.0;
+END_VAR
+
+(*
+This algorithm copies the input values to local variables and starts
+the process algorithm for initialization of the profile.
+*)
+
+ALGORITHM aInit
+
+
+VAR_INPUT
+ pProfile : REFTO KAPPL_VisProfile (* pointer to systemvariable that contains the vis profile *);
+ MoveDir : tMoveIdent (* move direction *);
+ pdCalcedDuration : REFTO TIME (* pointer to calculated duration *);
+ prCalcDurationStartPosition : REFTO REAL (* pointer to startposition to calculate duration *);
+ pInstanceDataInterPos : REFTO tyInstanceListArray (* pointer to array with data of interpos movements *);
+ pbStopOutputPresUsed : REFTO BOOL;
+ pbStopOutputVelUsed : REFTO BOOL;
+ prProfileEndPos : REFTO REAL;
+ prMaxSpeed : REFTO REAL (* move direction *);
+END_VAR
+
+VAR
+ bInitDone : BOOL;
+END_VAR
+#BEGIN_EDIT_BLOCK
+(**************************************** WARNING ********************************************
+ *** The KEBA Kemro K2 System including software is not intended for safety control tasks! ***
+ ***                       For further information see Comment tab!                        ***
+ *********************************************************************************************)
+
+IF NOT bInitDone THEN
+    //copy reference of vis variable
+    mpProfile  := pProfile;
+    mMoveDir   := MoveDir;
+   
+    //copy references for calculation of duration
+    mpdCalcedDuration := pdCalcedDuration;
+    mpInstanceDataInterPos := pInstanceDataInterPos;
+    mprCalcDurationStartPosition := prCalcDurationStartPosition;
+    
+    mprProfileEndPos := prProfileEndPos;
+   
+    IF CHECK_REF(mpdCalcedDuration^) THEN
+        mbRefCalcedDurationValid := TRUE;
+    END_IF;
+    
+    IF CHECK_REF(mpInstanceDataInterPos^) THEN
+        mbRefInstanceDataInterPosValid := TRUE;
+        mInstanceDataInterPos := mpInstanceDataInterPos^;
+    END_IF;
+    
+    IF CHECK_REF(mprCalcDurationStartPosition^) THEN
+        mbRefCalcDurationStartPosValid := TRUE;
+        mrCalcDurationStartPos := mprCalcDurationStartPosition^;
+    END_IF;
+    
+    mpbStopOutputPresUsed := pbStopOutputPresUsed;
+    mpbStopOutputVelUsed := pbStopOutputVelUsed;
+   
+    IF CHECK_REF(prMaxSpeed^) THEN
+        mprMaxSpeed := prMaxSpeed;
+        mbMaxSpeedLinked := TRUE;
+    END_IF;
+    IF CHECK_REF(mpProfile^) THEN
+        mbReferenceValid := TRUE;
+        //start paInit only if reference is valid
+        START_PROCESS_ALGORITHM(paInit);
+    ELSE
+        SET_ALARM(Name := erInvalidProfileReference,
+                SubID1 := sv_DeviceId.CompId,
+                SubID2 := sv_DeviceId.IndexId,
+                SubID3 := mMoveDir);
+    END_IF;
+
+    bInitDone := TRUE;
+END_IF;
+
+
+
+
+
+;#END_EDIT_BLOCK END_ALGORITHM
+
+(*
+Following functions are realized in this algorithm:
+
+1) reparam of the profileoutput - blocks
+2) profile output for pressure and velocity
+   Attention: If an error was detected during profile calculation the algorithm
+   will not be executed!
+3) Calculation of the active profile stage
+4) Timeout detection if dMaxMoveTime is bigger than 0.
+   dMaxMoveTime = 0 means no timeout detection active
+   If a timeout is detected an alarm will be set and the profileoutput will be stopped automatically
+
+*)
+
+ALGORITHM aRun
+
+
+VAR_INPUT
+ bStart : BOOL (* start profileoutput *);
+ bStop : BOOL (* stop profileoutput *);
+ rActPosition : REAL (* actual position *);
+ rStartOutputPressure : REAL (* start output pressure *);
+ rStartOutputVelocity : REAL (* start output velocity *);
+ bUseInterruptPos : BOOL (* activate interrupt positioning *);
+ rInterruptPosition : REAL (* interrupt position (for example stop position for a core movement) *);
+ dMaxMoveTime : TIME (* maximum move time (max. move time = 0 means no timeout detection) *);
+ dDelayTimeOn : TIME (* Delay Time between preoutput and  constoutput *);
+ dDelayTimeOff : TIME (* Delay Time between pump stop and bActive FALSE *);
+ DeadTime : TIME (* Dead time for compensation *);
+ rAmplification : REAL (* Amplificazion at actual position *);
+ ManualDelayTime : TIME (* Delay time in manual mode *);
+ StopDeadTime : TIME (* Dead time at external stop *);
+ rInterruptAccel : REAL (* StartAcceleration after interruptposition *);
+ rInterruptDeaccel : REAL (* StopAcceleration before interruptposition *);
+ rActVelocity : REAL (* Actual velocity *);
+ rMaxPosition : REAL (* Maximum stroke *);
+ rMaxVelocity : REAL (* Maximum speed *);
+ rSmoothFactor : REAL (* % of max set value *);
+ rTolerancePosReached : REAL (* End position reached *);
+END_VAR
+
+VAR_OUTPUT
+ rPressureOutput : REAL (* calculated pressure output *);
+ rVelocityOutput : REAL (* calculated velocity output *);
+ bActive : BOOL (* profile movement is active *);
+ iActiveStage : DINT (* active profilestage *);
+ bPreOutputReached : BOOL (* preoutput reached *);
+ dActMoveTime : TIME (* actual move time *);
+ bTimeOut : BOOL (* timeout detected *);
+ bError : BOOL (* error detected *);
+ iErrorInfo : DINT (* additional error info *);
+ rPositionError : REAL (* Actual positioning error *);
+ rEndPosition : REAL (* Actual position at end of movement *);
+ bOnInterstopRamp : BOOL (* Interstop ramp ative *);
+ bOnLastRamp : BOOL (* Movement reached last ramp *);
+ bInTolerance : BOOL;
+END_VAR
+
+VAR_TEMP
+ i : UDINT;
+END_VAR
+
+VAR
+ fbPressureOutput : KAPPL_Plastics_ProfileOutput;
+ bPreOutputPressureReady : BOOL;
+ bPressureReady : BOOL;
+ fbVelocityOutput : KAPPL_Plastics_ProfileOutput;
+ bPreOutputVelocityReady : BOOL;
+ bVelocityReady : BOOL;
+ fbTimer : TON;
+ fbREdge_Start : R_TRIG;
+ fbREdge_Timeout : R_TRIG;
+ bAlarmSet : BOOL;
+ fbREdgeVelError : R_TRIG;
+ fbREdgePresError : R_TRIG;
+ bActiveInt : BOOL;
+ fbTOFActive : TOF;
+ fbTimerDelay : TON;
+ iNoOfPoints : UDINT;
+ rValveCloseVelocity : REAL := 20.0;
+ rPositionOffset : REAL := 10.0;
+ bStarted : BOOL := FALSE;
+ rDirectonFactor : REAL := 1.0;
+ bMinOutputUsed : BOOL;
+ bVelHigherMin : BOOL;
+ rMaxVal : REAL;
+ rInterAccelFactor : REAL;
+ rPosAccelFactor : REAL;
+ dir : BOOL;
+ rEndRampStart : REAL;
+ bCloseVelLimitReached : BOOL;
+ rCloseVelLimit : REAL;
+ bUsePositionCheck : BOOL;
+END_VAR
+#BEGIN_EDIT_BLOCK
+(**************************************** WARNING ********************************************
+ *** The KEBA Kemro K2 System including software is not intended for safety control tasks! ***
+ ***                       For further information see Comment tab!                        ***
+ *********************************************************************************************)
+
+bError := FALSE;
+iErrorInfo := cApplPlasticsNoError;
+
+//do not execute if profile reference is not valid
+IF NOT mbReferenceValid THEN
+    //set alarm because algorithm can be called without calling aInit before
+    IF NOT bAlarmSet THEN        
+        SET_ALARM(Name := erInvalidProfileReference,
+                  SubID1 := sv_DeviceId.CompId,
+                  SubID2 := sv_DeviceId.IndexId,
+                  SubID3 := mMoveDir);
+        bAlarmSet := TRUE;
+    END_IF;
+    
+    bError := TRUE;
+    RETURN;
+END_IF;
+
+//do not execute if profile error was detected
+IF mbProfileError THEN
+    bError := TRUE;
+    RETURN;
+END_IF;
+
+IF mbReParam THEN
+   
+    fbPressureOutput(Reset := FALSE,
+            PreRamp := mpProfile^.rPreOutputPressRamp,
+            PreOutputValue := mpProfile^.rPreOutputPress,
+            ProfilData := PressureProfile,
+            MinOutput := mpProfile^.rMinOutputPress,
+            Interrupt := bUseInterruptPos,         
+            RampType := mpProfile^.RampTypePress,
+            ResetStartTimeRamp := FALSE,
+            OpenEnd := mpProfile^.bOpenEndProfile,      
+            ReParam := TRUE, 
+            DelayTime := dDelayTimeOn);
+    
+    IF mbMaxSpeedLinked THEN
+        fbVelocityOutput.MaxYValue := mprMaxSpeed^;
+    END_IF;
+    
+    fbVelocityOutput(Reset := FALSE,
+            PreRamp := mpProfile^.rPreOutputVelRamp,
+            PreOutputValue := mpProfile^.rPreOutputVel,
+            ProfilData := VelocityProfile,
+            MinOutput := mpProfile^.rMinOutputVel,
+            Interrupt := bUseInterruptPos,
+            RampType := mpProfile^.RampTypeVel,
+            ResetStartTimeRamp := FALSE,
+            OpenEnd := mpProfile^.bOpenEndProfile,
+            DeadTime := DeadTime,         
+            ReParam := TRUE,
+            DelayTime := dDelayTimeOn,
+            Amplification:=rAmplification,
+            DeadTimeInterstop := StopDeadTime);
+    
+    IF fbPressureOutput.Error THEN
+        SET_ALARM(Name := erPressureOutput,
+                  SubID1 := sv_DeviceId.CompId,
+                  SubID2 := sv_DeviceId.IndexId,
+                  SubID3 := mMoveDir,
+                  SubID4 := fbPressureOutput.ErrorInfo);
+    END_IF;
+    
+    IF fbVelocityOutput.Error THEN
+        SET_ALARM(Name := erVelocityOutput,
+                  SubID1 := sv_DeviceId.CompId,
+                  SubID2 := sv_DeviceId.IndexId,
+                  SubID3 := mMoveDir,
+                  SubID4 := fbVelocityOutput.ErrorInfo);
+    END_IF;
+    
+    //set error info
+    IF fbPressureOutput.Error THEN
+        iErrorInfo := fbPressureOutput.ErrorInfo;
+    ELSIF fbVelocityOutput.Error THEN
+        iErrorInfo := fbVelocityOutput.ErrorInfo;
+    END_IF;
+    
+    IF fbPressureOutput.Error OR fbVelocityOutput.Error THEN
+        //don´t do movement if one of the outputblocks has an error
+        bError := TRUE;
+        RETURN;
+    END_IF;
+    
+    mbReParam := FALSE;
+    
+    IF VelocityProfile.ProfilePoints.Point[VelocityProfile.ProfilePoints.uNoOfPoints].rX < VelocityProfile.ProfilePoints.Point[1].rX THEN
+        rDirectonFactor := -1.0;
+        dir := FALSE;
+    ELSE
+        rDirectonFactor := 1.0;
+        dir := TRUE;
+    END_IF;
+    rPositionError := 0.0;
+    rEndRampStart := VelocityProfile.ProfilePoints.Point[VelocityProfile.ProfilePoints.uNoOfPoints-1].rX;  
+END_IF;
+
+//detect start
+fbREdge_Start(CLK := bStart);
+IF fbREdge_Start.Q THEN
+    //reset timer for timeout detection
+    fbTimer(IN := FALSE);
+    bTimeOut := FALSE;
+    dActMoveTime := t#0s;
+    fbREdgeVelError(CLK := FALSE);
+    fbREdgePresError(CLK := FALSE);
+   
+    // calculate rel factor for start acceleration
+    IF mbMaxRampsLinked THEN
+        rPosAccelFactor := rLinearFactor * (rActPosition - rLinearValPos) + rConstantTerm;
+        IF rPosAccelFactor < 0.0 THEN
+            rPosAccelFactor := 1.0;
+        END_IF;
+    ELSE
+        rPosAccelFactor := 1.0;
+    END_IF;    
+    
+    // use last deacceleration for acceleration after interrupt stop
+    IF rInterruptAccel = 0.0 THEN
+        VelocityProfile.Acceleration  := rPosAccelFactor * mpProfile^.Profile.Points[1].rVelRamp / 100.0 * mpProfile^.rMaxRampVel;
+    ELSE
+        VelocityProfile.Acceleration := rPosAccelFactor * rInterruptAccel / 100.0  * mpProfile^.rMaxRampVel; 
+    END_IF;    
+
+    IF mbMaxRampsLinked AND bUseInterruptPos THEN
+        rInterAccelFactor := rLinearFactor * (rInterruptPosition - rLinearValPos) + rConstantTerm;
+        IF rInterAccelFactor < 0.0 THEN
+            rInterAccelFactor := 0.0;
+        END_IF;
+        VelocityProfile.InterAcceleration := rInterAccelFactor * rInterruptDeaccel / 100.0 * mpProfile^.rMaxRampVel;
+    ELSE
+        VelocityProfile.InterAcceleration := rInterruptDeaccel / 100.0 * mpProfile^.rMaxRampVel;
+    END_IF;
+    
+    fbVelocityOutput(ProfilData := VelocityProfile,
+                     RampType := mpProfile^.RampTypeVel,
+                     ReParam    := TRUE,
+                     DeadTime   := DeadTime);
+    fbTimerDelay(IN := FALSE);
+
+    bStarted := TRUE;
+    bMinOutputUsed := FALSE;
+    bVelHigherMin := FALSE;
+    rMaxVal :=0.0;
+    bOnLastRamp := FALSE;
+    bOnInterstopRamp := FALSE;
+    
+    IF ((rSmoothFactor >= 0.0) AND (rSmoothFactor <= 100.0)) AND (rMaxVelocity > 0.0) THEN
+        bCloseVelLimitReached := FALSE;
+        IF rSmoothFactor > 99.0 THEN // use at least 1% -> detection of zero velocity
+            rCloseVelLimit := rMaxVelocity / 100.0;
+        ELSE
+            rCloseVelLimit :=  (1.0 - rSmoothFactor / 100.0) * rMaxVelocity;
+        END_IF;
+        bUsePositionCheck := mbDirection AND  (rMaxPosition > 0.0);
+    ELSE
+        bCloseVelLimitReached := TRUE;
+        bUsePositionCheck := FALSE;
+    END_IF;
+END_IF;
+
+//END_IF;
+//pressure output
+fbPressureOutput( Start := bStart,
+                  Reset := FALSE,
+                  Stop := (bStop AND NOT mbStopOutputPresUsed) OR bTimeOut,
+                  RampType := mpProfile^.RampTypePress,
+                  InputValue := rActPosition,
+                  StartOutputValue := rStartOutputPressure, 
+                  PreOutputValue := mpProfile^.rPreOutputPress,
+                  Interrupt := bUseInterruptPos,
+                  InterTargetPos := rInterruptPosition,
+                  ResetStartTimeRamp := FALSE,
+                  ReParam := FALSE, 
+                  DelayTime := dDelayTimeOn,
+                  Tolerance := rTolerancePosReached,
+                  Output => rPressureOutput,
+                  PreOutputReady => bPreOutputPressureReady,
+                  Ready => bPressureReady);
+
+//velocity output
+fbVelocityOutput( Start := bStart,
+                  Reset := FALSE,
+                  Stop := (bStop AND NOT mbStopOutputVelUsed) OR bTimeOut,
+                  RampType := mpProfile^.RampTypeVel,
+                  InputValue := rActPosition,
+                  StartOutputValue := rStartOutputVelocity, 
+                  PreOutputValue := mpProfile^.rPreOutputVel,
+                  Interrupt := bUseInterruptPos,
+                  InterTargetPos := rInterruptPosition,            
+                  ResetStartTimeRamp := FALSE, 
+                  ReParam := FALSE, 
+                  DelayTime := dDelayTimeOn,
+                  Amplification:=rAmplification,
+                  DeadTimeInterstop := StopDeadTime,
+                  Tolerance := rTolerancePosReached,
+                  Output => rVelocityOutput,
+                  PreOutputReady => bPreOutputVelocityReady,
+                  Ready => bVelocityReady);
+
+bPreOutputReached := bPreOutputPressureReady AND bPreOutputVelocityReady;
+bInTolerance := fbPressureOutput.bInTolerance OR fbVelocityOutput.bInTolerance;
+
+// check min output, detect position when velocity is to low before end of movement
+IF (ABS(rActVelocity) < rValveCloseVelocity) AND 
+   (bVelHigherMin) AND (NOT bMinOutputUsed) THEN
+    bMinOutputUsed := TRUE;
+    IF NOT bUseInterruptPos AND mbDirection THEN
+        rPositionError := (rActPosition - VelocityProfile.ProfilePoints.Point[VelocityProfile.ProfilePoints.uNoOfPoints].rX);
+    ELSE    
+        rPositionError := 0.0;
+    END_IF;    
+END_IF;
+
+//check error flags and error info
+IF fbPressureOutput.Error THEN
+    bError := TRUE;
+    iErrorInfo := fbPressureOutput.ErrorInfo;
+ELSIF fbVelocityOutput.Error THEN
+    bError := TRUE;
+    iErrorInfo := fbVelocityOutput.ErrorInfo;
+END_IF;
+
+//set alarm if error during pressure output occurs
+fbREdgePresError(CLK := fbPressureOutput.Error);
+IF fbREdgePresError.Q THEN
+    SET_ALARM(Name := erPressureOutput,
+              SubID1 := sv_DeviceId.CompId,
+              SubID2 := sv_DeviceId.IndexId,
+              SubID3 := mMoveDir,
+              SubID4 := fbPressureOutput.ErrorInfo);
+END_IF;
+
+//set alarm if error during velocity output occurs
+fbREdgeVelError(CLK := fbVelocityOutput.Error);
+IF fbREdgeVelError.Q THEN
+    SET_ALARM(Name := erVelocityOutput,
+              SubID1 := sv_DeviceId.CompId,
+              SubID2 := sv_DeviceId.IndexId,
+              SubID3 := mMoveDir,
+              SubID4 := fbVelocityOutput.ErrorInfo);
+END_IF;
+
+
+//calculate active profile stage
+//if actpos is outside the profile then iActiveStage = no of profile points
+iActiveStage := UDINT_TO_DINT(mpProfile^.Profile.iNoOfPoints);
+FOR i := 1 TO mpProfile^.Profile.iNoOfPoints DO
+    IF mbDirection THEN
+       // profile where position is getting bigger
+       IF rActPosition < mpProfile^.Profile.Points[i+1].rStartPos THEN
+          iActiveStage := UDINT_TO_DINT(i);
+          EXIT;
+       END_IF;             
+    ELSE
+       //profile where position is getting lower       
+       IF rActPosition > mpProfile^.Profile.Points[i+1].rStartPos THEN
+          iActiveStage := UDINT_TO_DINT(i);
+          EXIT;
+       END_IF;                
+    END_IF;
+END_FOR;
+
+IF (bPressureReady) THEN 
+   IF bStop THEN
+      rPressureOutput := 0.0;
+   ELSE
+      iNoOfPoints := mpProfile^.Profile.iNoOfPoints;
+      rPressureOutput := mpProfile^.Profile.Points[iNoOfPoints+1].rPressure;
+   END_IF;
+END_IF;
+
+IF (bVelocityReady) THEN
+   IF bStop THEN
+      rVelocityOutput := 0.0;
+      rEndPosition := rActPosition;       
+   ELSIF (NOT bUseInterruptPos) THEN
+       iNoOfPoints := mpProfile^.Profile.iNoOfPoints;
+       rVelocityOutput := mpProfile^.Profile.Points[iNoOfPoints+1].rVelocity;
+   END_IF;
+ELSE
+   bOnInterstopRamp := fbVelocityOutput.bOnInterstopRamp;
+   IF ((dir      AND (rActPosition >= rEndRampStart)) OR
+      ((NOT dir) AND (rActPosition <= rEndRampStart))) THEN
+      bOnLastRamp := TRUE;
+   ELSE
+      bOnLastRamp := FALSE;
+   END_IF;    
+END_IF;
+
+// check position
+IF (mbDirection AND (rActVelocity > rMaxVal)) THEN
+   rMaxVal := rActVelocity;
+   bVelHigherMin := FALSE;
+   bMinOutputUsed := FALSE;
+   rPositionError := 0.0;
+END_IF;
+IF (ABS(rActVelocity) >= mpProfile^.rMinOutputVel) THEN
+   bVelHigherMin := TRUE;
+END_IF;
+
+IF bVelocityReady AND (NOT bCloseVelLimitReached) THEN
+   // check smooth
+    IF (rActVelocity <= rCloseVelLimit) OR
+       ((bUsePositionCheck AND  (rActPosition >= rMaxPosition - rPositionOffset)))  THEN
+        bCloseVelLimitReached := TRUE;
+    END_IF;
+END_IF;
+
+//combine ready - flags
+//stop if error occurs during profileoutput
+//Pressure ready flag will not be TRUE if there is a stop with pressure endoutput
+IF ((bPressureReady OR (bStop AND mbStopOutputPresUsed)) AND 
+    (bVelocityReady OR (bStop AND mbStopOutputVelUsed))) OR bError THEN
+   IF bStop THEN
+      fbTimerDelay(IN := TRUE,
+                   PT := ManualDelayTime);
+      IF fbTimerDelay.Q THEN
+         bActiveInt := FALSE;
+         mbMovementActive := FALSE;
+         iActiveStage := 0;   
+      END_IF;
+   ELSE
+      bActiveInt := FALSE;
+      mbMovementActive := FALSE;
+      iActiveStage := 0;
+   END_IF;
+ELSE
+    bActiveInt := TRUE;
+    mbMovementActive := TRUE;
+END_IF;
+
+
+
+//Timeout detection
+IF bActiveInt THEN
+    fbTimer(IN := TRUE,
+            PT := dMaxMoveTime);
+    dActMoveTime := fbTimer.ET;
+    //dMaxTime = 0 means timeout detection is deactivated!!
+    IF dMaxMoveTime > t#0.0s THEN
+        bTimeOut := fbTimer.Q;
+    END_IF;
+END_IF;
+
+//set timeout alarm
+fbREdge_Timeout(CLK := bTimeOut);
+IF fbREdge_Timeout.Q THEN
+    SET_ALARM(Name := erMoveTimeout,
+              SubID1 := sv_DeviceId.CompId,
+              SubID2 := sv_DeviceId.IndexId,
+              SubID3 := mMoveDir);    
+END_IF;
+
+// set output bActive
+fbTOFActive(bActiveInt, dDelayTimeOff);
+bActive := fbTOFActive.Q OR (NOT bCloseVelLimitReached);
+IF (NOT bActive) AND (bStarted) THEN
+    // actualize position error at end of movement
+    IF (NOT bUseInterruptPos) AND mbDirection THEN
+        IF NOT bMinOutputUsed THEN
+           rPositionError := (rActPosition - VelocityProfile.ProfilePoints.Point[VelocityProfile.ProfilePoints.uNoOfPoints].rX);
+        END_IF;
+        rEndPosition := VelocityProfile.ProfilePoints.Point[VelocityProfile.ProfilePoints.uNoOfPoints].rX;
+    END_IF;
+    bStarted := FALSE;
+    bOnInterstopRamp := FALSE;
+    bOnLastRamp := FALSE;
+    IF (bStop OR (dActMoveTime=T#0s)) THEN
+        rEndPosition := rActPosition;
+    ELSIF (NOT bUseInterruptPos) THEN
+        rEndPosition := VelocityProfile.ProfilePoints.Point[VelocityProfile.ProfilePoints.uNoOfPoints].rX;
+    ELSE
+        rEndPosition := rInterruptPosition;
+    END_IF;
+   
+    //reset profile output blocks if profile movement ends 
+    //without waiting for ready flag of profile output blocks 
+    IF NOT bPressureReady THEN
+       fbPressureOutput(Reset := TRUE);
+    END_IF;
+    IF NOT bVelocityReady THEN
+       fbVelocityOutput(Reset := TRUE);
+    END_IF;
+END_IF;
+
+
+
+;#END_EDIT_BLOCK END_ALGORITHM
+
+(*
+This algorithm reacts on changes of the profile.
+If the profile changes the process algorithm for initialization will be started.
+*)
+
+POSTUPDATE_ALGORITHM pProfileChanged ON PU_Task_7 WITH mpProfile^,mprMaxSpeed^,mpbStopOutputPresUsed^,mpbStopOutputVelUsed^
+
+#BEGIN_EDIT_BLOCK
+(**************************************** WARNING ********************************************
+ *** The KEBA Kemro K2 System including software is not intended for safety control tasks! ***
+ ***                       For further information see Comment tab!                        ***
+ *********************************************************************************************)
+
+START_PROCESS_ALGORITHM(paInit);
+
+
+
+;#END_EDIT_BLOCK END_ALGORITHM
+
+(*
+This algorithm does the initialization for the profile movement.
+This means profile calculation of pressure and velocity profile.
+If an error is detected during profile calculation an error will be set. 
+*)
+
+PROCESS_ALGORITHM paInit ON TaskSlow
+
+
+VAR_TEMP
+ i : UDINT;
+END_VAR
+
+VAR
+ fbProfileCalc : KAPPL_Plastics_ProfileCalc;
+ iNoOfPoints : UDINT;
+ rDirectionFactor : REAL := 1.0;
+ bDirection : BOOL := TRUE;
+ rPosAccelFactor : REAL;
+ rPosCalc : REAL;
+END_VAR
+#BEGIN_EDIT_BLOCK
+(**************************************** WARNING ********************************************
+ *** The KEBA Kemro K2 System including software is not intended for safety control tasks! ***
+ ***                       For further information see Comment tab!                        ***
+ *********************************************************************************************)
+
+IF (NOT mbMovementActive) AND (NOT sv_bProfileEditorActive) THEN
+    
+    mbProfileError := FALSE; 
+ 
+    IF CHECK_REF(mpbStopOutputPresUsed^) THEN
+       mbStopOutputPresUsed := mpbStopOutputPresUsed^;
+    ELSE
+       mbStopOutputPresUsed := FALSE;
+    END_IF;
+    IF CHECK_REF(mpbStopOutputVelUsed^) THEN
+       mbStopOutputVelUsed := mpbStopOutputVelUsed^;
+    ELSE
+       mbStopOutputVelUsed := FALSE;
+    END_IF;
+    
+    IF CHECK_REF(mprProfileEndPos^) THEN
+       mrProfileEndPos := mprProfileEndPos^;
+    ELSE
+       mrProfileEndPos := 0.0;
+    END_IF;
+   
+    IF sv_bUseStartPosProfiles THEN
+        iNoOfPoints := mpProfile^.Profile.iNoOfPoints;
+    ELSE
+        iNoOfPoints := mpProfile^.Profile.iNoOfPoints + 1; 
+    END_IF;
+    
+    // calculate profiles
+    IF mpProfile^.bOpenEndProfile THEN
+        // set last point to -1000.0 
+        // e.g.: v=1000 mm/s, a=1000 mm/s² -> -v²/2a = -500.0 necessary
+        mpProfile^.Profile.Points[iNoOfPoints].rStartPos := -1000.0;
+    // If bOpenEndProfile was activated and reseted, set startposition to zero   
+    ELSIF mpProfile^.Profile.Points[1].rStartPos <> 0.0 
+        AND NOT mpProfile^.bOpenEndProfile 
+        AND mpProfile^.Profile.Points[iNoOfPoints].rStartPos < mrProfileEndPos THEN
+        mpProfile^.Profile.Points[iNoOfPoints].rStartPos := mrProfileEndPos;
+    END_IF;
+   
+    // limit profile output also with last ramp
+    fbProfileCalc.LimitEveryPointToLastRamp := mpProfile^.bLimitEveryPointToLastRamp;
+    
+
+   //set values of last point 
+   //use rEndOutputXXX value if less than last profile step
+   //ohterwise use last profil step
+   
+    IF mpProfile^.Profile.Points[iNoOfPoints-1].rPressure > mpProfile^.rEndOutputPress  THEN
+      mpProfile^.Profile.Points[iNoOfPoints].rPressure := mpProfile^.rEndOutputPress;
+    ELSE
+      mpProfile^.Profile.Points[iNoOfPoints].rPressure := mpProfile^.Profile.Points[iNoOfPoints-1].rPressure; 
+    END_IF;
+    
+    IF mpProfile^.Profile.Points[iNoOfPoints-1].rVelocity > mpProfile^.rEndOutputVel THEN
+       mpProfile^.Profile.Points[iNoOfPoints].rVelocity := mpProfile^.rEndOutputVel;
+    ELSE
+       mpProfile^.Profile.Points[iNoOfPoints].rVelocity := mpProfile^.Profile.Points[iNoOfPoints-1].rVelocity;
+    END_IF;   
+
+    // use stop deceleration for last point
+    IF mpProfile^.rStopRampPress > 0.0 THEN
+      mpProfile^.Profile.Points[iNoOfPoints].rPressRamp := mpProfile^.rStopRampPress;
+    ELSE
+      mpProfile^.Profile.Points[iNoOfPoints].rPressRamp := 100.0;
+    END_IF;
+    IF mpProfile^.rStopRampVel > 0.0 THEN
+      mpProfile^.Profile.Points[iNoOfPoints].rVelRamp := mpProfile^.rStopRampVel;
+    ELSE
+      mpProfile^.Profile.Points[iNoOfPoints].rVelRamp := 100.0;
+    END_IF;   
+   
+    // velocity
+    fbProfileCalc.RawProfilePoint.uNoOfPoints  := iNoOfPoints;
+    
+    IF mpProfile^.Profile.Points[iNoOfPoints].rStartPos < mpProfile^.Profile.Points[1].rStartPos THEN
+        rDirectionFactor := -1.0;
+        bDirection := FALSE;
+    ELSE
+        rDirectionFactor := 1.0;
+        bDirection := TRUE;
+    END_IF;
+    
+    FOR i := 1 TO iNoOfPoints DO  // velocity in %
+        
+        IF (bDirection     AND (mpProfile^.Profile.Points[i].rStartPos > mpProfile^.Profile.Points[iNoOfPoints].rStartPos - mpProfile^.rOffset)) OR
+           (NOT bDirection AND (mpProfile^.Profile.Points[i].rStartPos < mpProfile^.Profile.Points[iNoOfPoints].rStartPos + mpProfile^.rOffset)) THEN
+            rPosCalc := mpProfile^.Profile.Points[iNoOfPoints].rStartPos - rDirectionFactor * mpProfile^.rOffset;
+        ELSE
+           rPosCalc := mpProfile^.Profile.Points[i].rStartPos;
+        END_IF;
+        fbProfileCalc.RawProfilePoint.RawProfilePoints[i].XValue := rPosCalc;
+        fbProfileCalc.RawProfilePoint.RawProfilePoints[i].YValue := mpProfile^.Profile.Points[i].rVelocity;
+        IF mbMaxRampsLinked THEN
+            rPosAccelFactor := rLinearFactor * (rPosCalc - rLinearValPos) + rConstantTerm;
+            IF rPosAccelFactor <= 0.0 THEN
+               rPosAccelFactor := 1.0;
+            END_IF;
+        ELSE
+            rPosAccelFactor := 1.0;
+        END_IF;
+        fbProfileCalc.RawProfilePoint.RawProfilePoints[i].Ramp   := mpProfile^.Profile.Points[i].rVelRamp /100.0 *
+                                                                    mpProfile^.rMaxRampVel * rPosAccelFactor;
+    END_FOR;
+    fbProfileCalc.RawProfilePoint.RawProfilePoints[iNoOfPoints].XValue := mpProfile^.Profile.Points[iNoOfPoints].rStartPos - rDirectionFactor * mpProfile^.rOffset;    
+    
+    IF mbMaxSpeedLinked THEN
+       fbProfileCalc.MaxVelocity := mprMaxSpeed^;
+    ELSE
+       fbProfileCalc.MaxVelocity := 0.0;   
+    END_IF;       
+    fbProfileCalc(MaxAcceleration := mpProfile^.rMaxRampVel,
+                  MaxDeceleration := mpProfile^.rMaxRampVel,
+                  RampType := mpProfile^.RampTypeVel);
+    IF fbProfileCalc.Error THEN // profile not possible
+        IF (fbProfileCalc.ErrorOnPoint = -1) THEN
+            SET_ALARM(Name := erProfileSequence,
+                      SubID1 := sv_DeviceId.CompId,
+                      SubID2 := sv_DeviceId.IndexId,
+                      SubID3 := mMoveDir);
+        ELSE
+            SET_ALARM(Name := erVelProfDamaged,
+                      SubID1 := sv_DeviceId.CompId,
+                      SubID2 := sv_DeviceId.IndexId,
+                      SubID3 := mMoveDir,
+                      SubID4 := fbProfileCalc.ErrorOnPoint,
+                      Param1 := fbProfileCalc.MaximumPossibleValue);
+        END_IF;
+        mbProfileError := TRUE;
+    ELSE // copy data to yx - generator values
+        VelocityProfile.ProfilePoints := fbProfileCalc.CalcedProfile;
+
+        // calced profile for vis
+        IF CHECK_REF(mpProfile^.pCalculatedProfile^) THEN
+           IF mpProfile^.pCalculatedProfile^.VelocityProfile.CalculatedProfile <> fbProfileCalc.CalcedProfile THEN
+              mpProfile^.pCalculatedProfile^.VelocityProfile.CalculatedProfile := fbProfileCalc.CalcedProfile;
+              mpProfile^.pCalculatedProfile^.VelocityProfile.iProfileChangedCounter := mpProfile^.pCalculatedProfile^.VelocityProfile.iProfileChangedCounter + 1;              
+           END_IF;            
+        END_IF;
+
+        IF ABS(mpProfile^.rOffset) > 0.0 THEN
+            VelocityProfile.ProfilePoints.uNoOfPoints := fbProfileCalc.CalcedProfile.uNoOfPoints + 1;
+            VelocityProfile.ProfilePoints.Point[VelocityProfile.ProfilePoints.uNoOfPoints].rX := mpProfile^.Profile.Points[iNoOfPoints].rStartPos;
+            VelocityProfile.ProfilePoints.Point[VelocityProfile.ProfilePoints.uNoOfPoints].rY := VelocityProfile.ProfilePoints.Point[VelocityProfile.ProfilePoints.uNoOfPoints-1].rY;
+        END_IF;
+        IF mpProfile^.Profile.Points[1].rVelRamp > 0.0 THEN
+            VelocityProfile.Acceleration := mpProfile^.rMaxRampVel * mpProfile^.Profile.Points[1].rVelRamp / 100.0;
+        ELSE
+            VelocityProfile.Acceleration := mpProfile^.rMaxRampVel;
+        END_IF;
+        IF mrStopAccelCalced > 0.0 THEN
+            VelocityProfile.StopAcceleration := mrStopAccelCalced; // use calculated ramp if valid 
+        ELSE
+            VelocityProfile.StopAcceleration := mpProfile^.rMaxRampVel; // use 100% for stop with manual mode
+        END_IF;
+        
+        RESET_ALARM(Name := erProfileSequence,
+                    SubID1 := sv_DeviceId.CompId,
+                    SubID2 := sv_DeviceId.IndexId,
+                    SubID3 := mMoveDir);
+        
+        RESET_ALARM(Name := erVelProfDamaged,
+                    SubID1 := sv_DeviceId.CompId,
+                    SubID2 := sv_DeviceId.IndexId,
+                    SubID3 := mMoveDir,
+                    SubID4 := ANY);
+    END_IF;
+    
+    //Calculate duration(s)
+    mbReCalcDurations := TRUE;
+    START_PROCESS_ALGORITHM(paCalcDurations);
+
+   
+    // pressure
+    IF mpProfile^.bUsePressureRamp THEN    
+        FOR i := 1 TO iNoOfPoints DO
+            fbProfileCalc.RawProfilePoint.RawProfilePoints[i].XValue := mpProfile^.Profile.Points[i].rStartPos;
+            fbProfileCalc.RawProfilePoint.RawProfilePoints[i].YValue := mpProfile^.Profile.Points[i].rPressure;
+            fbProfileCalc.RawProfilePoint.RawProfilePoints[i].Ramp   := mpProfile^.Profile.Points[i].rPressRamp / 100.0 *
+                                                                        mpProfile^.rMaxRampPress;
+        END_FOR;
+        fbProfileCalc.MaxVelocity := 0.0;
+    
+        fbProfileCalc(MaxAcceleration := mpProfile^.rMaxRampPress,
+                    MaxDeceleration := mpProfile^.rMaxRampPress,
+                    RampType := mpProfile^.RampTypePress);
+        IF fbProfileCalc.Error THEN // profile not possible
+            
+            IF (fbProfileCalc.ErrorOnPoint = -1) THEN
+                SET_ALARM(Name := erProfileSequence,
+                        SubID1 := sv_DeviceId.CompId,
+                        SubID2 := sv_DeviceId.IndexId,
+                        SubID3 := mMoveDir);
+            ELSE
+                SET_ALARM(Name := erPresProfDamaged,
+                        SubID1 := sv_DeviceId.CompId,
+                        SubID2 := sv_DeviceId.IndexId,
+                        SubID3 := mMoveDir,
+                        SubID4 := fbProfileCalc.ErrorOnPoint,
+                        Param1 := fbProfileCalc.MaximumPossibleValue);
+            END_IF;
+            mbProfileError := TRUE;
+            
+        ELSE // copy data to yx - generator values and reset alarm
+            PressureProfile.ProfilePoints := fbProfileCalc.CalcedProfile;
+
+            // calced profile for vis
+            IF CHECK_REF(mpProfile^.pCalculatedProfile^) THEN
+               IF mpProfile^.pCalculatedProfile^.PressureProfile.CalculatedProfile <> fbProfileCalc.CalcedProfile THEN
+                  mpProfile^.pCalculatedProfile^.PressureProfile.CalculatedProfile := fbProfileCalc.CalcedProfile;
+                  mpProfile^.pCalculatedProfile^.PressureProfile.iProfileChangedCounter := mpProfile^.pCalculatedProfile^.PressureProfile.iProfileChangedCounter + 1;                  
+               END_IF;               
+            END_IF;
+            
+            IF mpProfile^.Profile.Points[1].rPressRamp > 0.0 THEN
+                PressureProfile.Acceleration := mpProfile^.rMaxRampPress * mpProfile^.Profile.Points[1].rPressRamp / 100.0;
+            ELSE
+                PressureProfile.Acceleration := mpProfile^.rMaxRampPress;
+            END_IF;
+            PressureProfile.StopAcceleration := mpProfile^.rMaxRampPress; // use 100% for stop with manual mode
+            // profile output uses Profile.Acceleration if InterAcceleration = 0.0
+            // rdl: use stop ramp or ramp in profile         
+            PressureProfile.InterAcceleration := mpProfile^.rMaxRampPress * mpProfile^.Profile.Points[iNoOfPoints].rPressRamp / 100.0;;
+            
+            RESET_ALARM(Name := erProfileSequence,
+                        SubID1 := sv_DeviceId.CompId,
+                        SubID2 := sv_DeviceId.IndexId,
+                        SubID3 := mMoveDir);
+            
+            RESET_ALARM(Name := erPresProfDamaged,
+                        SubID1 := sv_DeviceId.CompId,
+                        SubID2 := sv_DeviceId.IndexId,
+                        SubID3 := mMoveDir,
+                        SubID4 := ANY);        
+        END_IF;
+    ELSE
+    // jump at start position
+        FOR i := 1 TO iNoOfPoints-1 DO
+            PressureProfile.ProfilePoints.Point[2*i-1].rX := mpProfile^.Profile.Points[i].rStartPos;
+            PressureProfile.ProfilePoints.Point[2*i-1].rY := mpProfile^.Profile.Points[i].rPressure;
+            PressureProfile.ProfilePoints.Point[2*i].rX := mpProfile^.Profile.Points[i+1].rStartPos;
+            PressureProfile.ProfilePoints.Point[2*i].rY := mpProfile^.Profile.Points[i].rPressure;
+        END_FOR;
+        PressureProfile.ProfilePoints.Point[2*iNoOfPoints-1].rX := mpProfile^.Profile.Points[iNoOfPoints].rStartPos;
+        PressureProfile.ProfilePoints.Point[2*iNoOfPoints-1].rY := mpProfile^.Profile.Points[iNoOfPoints].rPressure;
+        PressureProfile.ProfilePoints.uNoOfPoints := 2*iNoOfPoints - 1;
+
+        // calced profile for vis
+        IF CHECK_REF(mpProfile^.pCalculatedProfile^) THEN
+           IF mpProfile^.pCalculatedProfile^.PressureProfile.CalculatedProfile <> PressureProfile.ProfilePoints THEN
+              mpProfile^.pCalculatedProfile^.PressureProfile.CalculatedProfile := PressureProfile.ProfilePoints;
+              mpProfile^.pCalculatedProfile^.PressureProfile.iProfileChangedCounter := mpProfile^.pCalculatedProfile^.PressureProfile.iProfileChangedCounter + 1;
+           END_IF;            
+        END_IF;
+    
+        PressureProfile.Acceleration := 1.0e10;
+        PressureProfile.StopAcceleration := mpProfile^.rMaxRampPress; // use 100% for stop with manual mode
+        PressureProfile.InterAcceleration := mpProfile^.rMaxRampPress * mpProfile^.Profile.Points[iNoOfPoints].rPressRamp / 100.0;
+    END_IF;
+    
+    //calculate direction of the profile
+    IF iNoOfPoints = 1 THEN  // only one point, should not occur
+        IF mpProfile^.Profile.Points[iNoOfPoints].rStartPos >= 0.0 THEN
+            mbDirection := TRUE;
+        ELSE
+            mbDirection := FALSE;
+        END_IF;
+    ELSIF iNoOfPoints < 21 THEN // max profile points = 20
+        mbDirection := mpProfile^.Profile.Points[iNoOfPoints].rStartPos > mpProfile^.Profile.Points[1].rStartPos;            
+    ELSE    
+        mbDirection := mpProfile^.Profile.Points[20].rStartPos > mpProfile^.Profile.Points[1].rStartPos;    
+    END_IF;
+    
+    mbReParam := TRUE;
+    
+    STOP_PROCESS_ALGORITHM();
+   
+END_IF;
+
+
+;#END_EDIT_BLOCK END_ALGORITHM
+
+(*
+This algorithm reacts on changes of the profile.
+If the profile changes the process algorithm for calculation of the duration is started
+*)
+
+POSTUPDATE_ALGORITHM pReCalcDurations ON PU_Task_7 WITH mprCalcDurationStartPosition^,mpInstanceDataInterPos^
+
+
+VAR_TEMP
+ i : DINT;
+END_VAR
+
+VAR
+ bStartPosChanged : BOOL;
+ bInstanceDataChanged : BOOL;
+END_VAR
+#BEGIN_EDIT_BLOCK
+(**************************************** WARNING ********************************************
+ *** The KEBA Kemro K2 System including software is not intended for safety control tasks! ***
+ ***                       For further information see Comment tab!                        ***
+ *********************************************************************************************)
+
+bStartPosChanged := FALSE;
+bInstanceDataChanged := FALSE;
+
+IF mbRefCalcDurationStartPosValid THEN
+   bStartPosChanged := mprCalcDurationStartPosition^ <> mrCalcDurationStartPos;
+   mrCalcDurationStartPos := mprCalcDurationStartPosition^;
+END_IF;
+
+IF mbRefInstanceDataInterPosValid THEN
+   //check if instance data (except duration) has changed
+   FOR i := 1 TO cMaxIntermediateConditions DO
+      IF (mpInstanceDataInterPos^[i].rTargetValue <> mInstanceDataInterPos[i].rTargetValue) OR
+         mpInstanceDataInterPos^[i].rDeceleration <> mInstanceDataInterPos[i].rDeceleration OR
+         mpInstanceDataInterPos^[i].rAcceleration <> mInstanceDataInterPos[i].rAcceleration THEN
+         bInstanceDataChanged := TRUE;
+         EXIT;   
+      END_IF; 
+   END_FOR;
+   
+   mInstanceDataInterPos := mpInstanceDataInterPos^;
+END_IF;
+
+
+//Recalculate duration(s)
+IF bStartPosChanged OR bInstanceDataChanged THEN
+   mbReCalcDurations := TRUE;
+   START_PROCESS_ALGORITHM(paCalcDurations);
+END_IF;
+
+
+
+
+
+;#END_EDIT_BLOCK END_ALGORITHM
+
+PROCESS_ALGORITHM paCalcDurations ON TaskSlow
+
+
+VAR_TEMP
+ i : DINT;
+END_VAR
+
+VAR
+ rCalcDurationStartPos : REAL (* Startposition for calculation of duration *);
+ rCalcDurationEndPos : REAL (* Endposition for calculation of duration *);
+ bInterPosMovementsAvailable : BOOL (* Interposition movement(s) are available *);
+END_VAR
+#BEGIN_EDIT_BLOCK
+(**************************************** WARNING ********************************************
+ *** The KEBA Kemro K2 System including software is not intended for safety control tasks! ***
+ ***                       For further information see Comment tab!                        ***
+ *********************************************************************************************)
+
+IF mbReCalcDurations THEN
+     
+    bInterPosMovementsAvailable := FALSE;
+    
+    //Calculate duration(s) for interposition movement(s)
+    IF mbRefInstanceDataInterPosValid AND mbRefCalcDurationStartPosValid THEN
+        FOR i := 1 TO cMaxIntermediateConditions DO
+            IF (mpInstanceDataInterPos^[i].rTargetValue <> 0.0) THEN
+                bInterPosMovementsAvailable := TRUE;             
+                IF (i = 1) THEN                   
+                    rCalcDurationStartPos := mprCalcDurationStartPosition^;                   
+                ELSE
+                    rCalcDurationStartPos := mpInstanceDataInterPos^[i - 1].rTargetValue;
+                END_IF;
+                rCalcDurationEndPos := mpInstanceDataInterPos^[i].rTargetValue;
+                                    
+                mpInstanceDataInterPos^[i].dCalculatedDuration := FCalcDuration(StartPosition := rCalcDurationStartPos,
+                                                                                StartVelocity := 0.0,   //not used
+                                                                                EndPosition := rCalcDurationEndPos,
+                                                                                Profile := VelocityProfile.ProfilePoints,
+                                                                                StartRamp := VelocityProfile.Acceleration,
+                                                                                StopRamp := 0.0,        //not used
+                                                                                ConstOutput := 0.0,     //not used
+                                                                                UseConstOutput := FALSE); 
+                    
+            ELSE              
+                //No more interposition movements -> Exit
+                EXIT;            
+            END_IF;    
+        END_FOR;
+
+    END_IF;
+        
+    //Calculate duration for "normal" movement
+    IF mbRefCalcedDurationValid AND mbRefCalcDurationStartPosValid THEN
+        IF bInterPosMovementsAvailable THEN
+            //Use endposition of last interposition movement
+            rCalcDurationStartPos := rCalcDurationEndPos;           
+        ELSE
+            //Use start position of profile
+            rCalcDurationStartPos := mprCalcDurationStartPosition^;        
+        END_IF;
+                
+        IF mpProfile^.bOpenEndProfile THEN
+            //Last point = -1000.0 -> Set endposition for calculation to 0.0 
+            rCalcDurationEndPos := 0.0;         
+        ELSE
+            rCalcDurationEndPos := mpProfile^.Profile.Points[mpProfile^.Profile.iNoOfPoints + 1].rStartPos;
+        END_IF;
+        
+        mpdCalcedDuration^ := FCalcDuration(StartPosition := rCalcDurationStartPos,
+                                            StartVelocity := 0.0,   //not used
+                                            EndPosition := rCalcDurationEndPos,
+                                            Profile := VelocityProfile.ProfilePoints,
+                                            StartRamp := VelocityProfile.Acceleration,
+                                            StopRamp := 0.0,        //not used
+                                            ConstOutput := 0.0,     //not used
+                                            UseConstOutput := FALSE);
+        
+    END_IF;
+    
+    mbReCalcDurations := FALSE;  
+END_IF;
+
+STOP_PROCESS_ALGORITHM();
+
+
+
+;#END_EDIT_BLOCK END_ALGORITHM
+
+(*
+This algorithm copies the input values to local variables and starts
+the process algorithm for initialization of the profile.
+*)
+
+ALGORITHM aInitMaxRamps
+
+
+VAR_INPUT
+ prMaxAbsAccelStart : REFTO REAL;
+ prMaxAbsAccelEnd : REFTO REAL;
+ prPosAccelStart : REFTO REAL;
+ prPosAccelEnd : REFTO REAL;
+ bUseAccelerationReduction : BOOL;
+END_VAR
+
+VAR
+ bInitDone : BOOL;
+END_VAR
+#BEGIN_EDIT_BLOCK
+(**************************************** WARNING ********************************************
+ *** The KEBA Kemro K2 System including software is not intended for safety control tasks! ***
+ ***                       For further information see Comment tab!                        ***
+ *********************************************************************************************)
+
+IF NOT bInitDone THEN
+    IF bUseAccelerationReduction THEN
+        mprMaxAbsAccelStart := prMaxAbsAccelStart;
+        mprMaxAbsAccelEnd   := prMaxAbsAccelEnd;
+        mprPosAccelStart    := prPosAccelStart;
+        mprPosAccelEnd      := prPosAccelEnd;
+        mbMaxRampsLinked    := CHECK_REF(mprPosAccelStart^) AND CHECK_REF(mprPosAccelEnd^) AND
+                            CHECK_REF(mprMaxAbsAccelStart^) AND CHECK_REF(mprMaxAbsAccelEnd^);
+    ELSE
+       mbMaxRampsLinked := FALSE; 
+    END_IF;
+    IF mbMaxRampsLinked THEN
+        START_PROCESS_ALGORITHM(paRecalcMaxRampsChanged);
+    END_IF;
+    
+    bInitDone := TRUE;
+END_IF;
+
+
+
+
+
+;#END_EDIT_BLOCK END_ALGORITHM
+
+POSTUPDATE_ALGORITHM pMaxRampsChanged ON PU_Task_7 WITH mprMaxAbsAccelStart^,mprMaxAbsAccelEnd^,mprPosAccelStart^,mprPosAccelEnd^
+
+#BEGIN_EDIT_BLOCK
+IF mbMaxRampsLinked THEN
+   //no calculation if ramps have not been assigned
+   START_PROCESS_ALGORITHM(paRecalcMaxRampsChanged);
+END_IF;
+
+
+
+
+
+;#END_EDIT_BLOCK END_ALGORITHM
+
+PROCESS_ALGORITHM paRecalcMaxRampsChanged ON TaskSlow
+
+
+VAR
+ rAccelRampStart : REAL;
+ rAccelRampEnd : REAL;
+END_VAR
+#BEGIN_EDIT_BLOCK
+// calculate k*x + d
+IF ((ABS(mprPosAccelEnd^ - mprPosAccelStart^) > 0.0) AND
+   ((mprMaxAbsAccelStart^ > 0.0) AND (mprMaxAbsAccelEnd^ > 0.0))) THEN
+    // calc linearization  
+    rAccelRampStart := mprMaxAbsAccelStart^/100.0;
+    rAccelRampEnd := mprMaxAbsAccelEnd^/100.0;    
+    rLinearValPos := mprPosAccelStart^;
+    rLinearFactor := (rAccelRampEnd - rAccelRampStart) / 
+                     (mprPosAccelEnd^ - mprPosAccelStart^);
+    rConstantTerm := rAccelRampStart;
+    IF (rAccelRampStart > rAccelRampEnd) THEN
+        rLinearFactor := rLinearFactor / rAccelRampStart;
+        rConstantTerm := rConstantTerm / rAccelRampStart;
+    ELSE
+        rLinearFactor := rLinearFactor / rAccelRampEnd;
+        rConstantTerm := rConstantTerm / rAccelRampEnd;
+    END_IF;
+    // use lower value for soft stop
+    IF (mprMaxAbsAccelEnd^ < mprMaxAbsAccelStart^) THEN
+        mrStopAccelCalced  := mprMaxAbsAccelEnd^;
+    ELSE
+        mrStopAccelCalced := mprMaxAbsAccelStart^;
+    END_IF;
+    
+    START_PROCESS_ALGORITHM(paInit);
+ELSE
+    rLinearValPos := 0.0;
+    rLinearFactor := 0.0;
+    rConstantTerm := 1.0;
+    mrStopAccelCalced := 0.0;
+END_IF;
+
+STOP_PROCESS_ALGORITHM();
+
+
+
+;#END_EDIT_BLOCK END_ALGORITHM
+
+ALGORITHM aGetVelocityProfile
+
+
+VAR_OUTPUT
+ CalcedVelocityProfile : KAPPL_ProfileData;
+END_VAR
+#BEGIN_EDIT_BLOCK
+CalcedVelocityProfile := VelocityProfile;
+
+
+;#END_EDIT_BLOCK END_ALGORITHM
+
+
+
+END_ALGORITHM_BLOCK
+
+
+
+#END_OF_IEC_PART
+
+@Puma @IecEditor 6 159 @Pou 25 
+@@@BEG_Comment@@@
+@h    ! WARNING !
+@h    The Kemro K2 system (including software) only meets category B according to EN 954-1,
+@h    thus it is not intended for usage in safety-relevant control applications in the field 
+@h    of personal safety (e.g. emergency stop).
+@h    To implement potentially necessary safety-relevant control tasks, always use additional 
+@h    external safety devices that are intended for the particular purpose, and meet the necessary 
+@h    functional safety.
+@h    For further information see EN 954-1 (EN ISO 13849-1) and/or the K2-x00 user manual, chapter 
+@h    "CE conformity, directives and standards".
+
+This AB can be used for a standard profile movement.
+It includes the following funcionalities:
+- profile calculation (including error detection of the input profile) 
+- automatic reparam of all necessary blocks after change in the profile
+  Attention: reparam will be done after the movement is stopped and not during the movement is active
+- profile output
+- calculation of the actual profile stage
+- timeout detection (including automatic stop after timeout)
+
+@FunctionID: S_KPIEC_ALAMOVE_02
+@FunctionID: S_KPIEC_ALAMOVE_03
+
+@@@END_Comment@@@
+
+@BEG_Contents 
+
+@BEG_Func 
+@RT(17)FuncTreeContainer 
+4 
+@Var @RT(9)SET_ALARM @RT(0) @T @T @DERIVED 0 @F @RT(23)KEBA_STANDARD_PROCEDURE @F 
+@T 
+@BEG_Attrib 
+0 @RT(0) @RT(0) 
+@END_Attrib 
+1 1 @F @F @F @F 
+
+@Var @RT(11)RESET_ALARM @RT(0) @T @T @DERIVED 0 @F @RT(23)KEBA_STANDARD_PROCEDURE @F 
+@T 
+@BEG_Attrib 
+0 @RT(0) @RT(0) 
+@END_Attrib 
+1 1 @F @F @F @F 
+
+@Var @RT(13)FCalcDuration @RT(0) @T @T @DERIVED 0 @F @RT(8)FUNCTION @F 
+@T 
+@BEG_Attrib 
+0 @RT(0) @RT(0) 
+@END_Attrib 
+1 1 @F @F @F @F 
+
+@Var @RT(9)CHECK_REF @RT(0) @T @T @DERIVED 0 @F @RT(23)KEBA_STANDARD_PROCEDURE @F 
+@T 
+@BEG_Attrib 
+0 @RT(0) @RT(0) 
+@END_Attrib 
+1 1 @F @F @F @F 
+
+@END_Func 
+
+@BEG_Const 
+@RT(18)ConstTreeContainer 
+2 
+@Var @RT(20)cApplPlasticsNoError @RT(0) @T @F @DT @RT(4)DINT @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+0 @RT(1)0 @RT(8)No Error 
+@END_Attrib 
+1 1 @F @F @F @F 
+
+@Var @RT(26)cMaxIntermediateConditions @RT(0) @T @F @DT @RT(4)DINT @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+0 @RT(2)10 @RT(38)max. number of intermediate conditions 
+@END_Attrib 
+1 1 @F @F @F @F 
+
+@END_Const 
+
+@BEG_Export 
+
+@BEG_Kind 
+@ALGORITHM_BLOCK @RT(17)ABProfileMovement @STRUCTURED_TEXT 
+@RT(0) @RT(0) @RT(0) 
+@END_Kind 
+
+@BEG_Dcl 
+@RT(16)DclTreeContainer 
+47 
+@Var @RT(23)sv_bUseStartPosProfiles @RT(0) @T @F @DT @RT(4)BOOL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 8 @F @F @F @F 
+
+@Var @RT(11)sv_DeviceId @RT(0) @T @T @DERIVED 0 @T @T @DT @RT(10)tsDeviceId @RT(0) @T @T @UNKNOWN 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 8 @F @F @F @F 
+
+@Var @RT(23)sv_bProfileEditorActive @RT(0) @T @F @DT @RT(4)BOOL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(49)"profile dirty" flag (will be set / reset by HMI) @RT(0) 
+@END_Attrib 
+1 8 @F @F @F @F 
+
+@Var @RT(9)PU_Task_7 @RT(0) @T @F @DT @RT(4)TASK @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 7 @F @F @F @F 
+
+@Var @RT(8)TaskSlow @RT(0) @T @F @DT @RT(4)TASK @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 7 @F @F @F @F 
+
+@Var @RT(17)erProfileSequence @RT(0) @T @F @DT @RT(5)ALARM @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 7 @F @F @F @F 
+
+@Var @RT(13)erMoveTimeout @RT(0) @T @F @DT @RT(5)ALARM @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 7 @F @F @F @F 
+
+@Var @RT(17)erPresProfDamaged @RT(0) @T @F @DT @RT(5)ALARM @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 7 @F @F @F @F 
+
+@Var @RT(16)erVelProfDamaged @RT(0) @T @F @DT @RT(5)ALARM @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 7 @F @F @F @F 
+
+@Var @RT(25)erInvalidProfileReference @RT(0) @T @F @DT @RT(5)ALARM @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 7 @F @F @F @F 
+
+@Var @RT(16)erPressureOutput @RT(0) @T @F @DT @RT(5)ALARM @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 7 @F @F @F @F 
+
+@Var @RT(16)erVelocityOutput @RT(0) @T @F @DT @RT(5)ALARM @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 7 @F @F @F @F 
+
+@Var @RT(9)mpProfile @RT(0) @T @T @REFTO 0 @F @DERIVED 0 @T @T @DT @RT(16)KAPPL_VisProfile @RT(0) @T @T @UNKNOWN 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(17)mpdCalcedDuration @RT(0) @T @T @REFTO 0 @T @DT @RT(4)TIME @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(15)VelocityProfile @RT(0) @T @T @DERIVED 0 @T @T @DT @RT(17)KAPPL_ProfileData @RT(0) @T @T @UNKNOWN 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(15)PressureProfile @RT(0) @T @T @DERIVED 0 @T @T @DT @RT(17)KAPPL_ProfileData @RT(0) @T @T @UNKNOWN 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(9)mbReParam @RT(0) @T @F @DT @RT(4)BOOL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(11)mbDirection @RT(0) @T @F @DT @RT(4)BOOL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(16)mbMovementActive @RT(0) @T @F @DT @RT(4)BOOL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(26)info if movement is active @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(22)mpInstanceDataInterPos @RT(0) @T @T @REFTO 0 @F @DERIVED 0 @T @T @DT @RT(19)tyInstanceListArray @RT(0) @T @T @UNKNOWN 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(8)mMoveDir @RT(0) @T @T @DERIVED 0 @T @T @DT @RT(10)tMoveIdent @RT(0) @T @T @UNKNOWN 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(14)mbProfileError @RT(0) @T @F @DT @RT(4)BOOL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(34)error during profile calc detected @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(30)mbRefInstanceDataInterPosValid @RT(0) @T @F @DT @RT(4)BOOL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(59)reference to array with data of interpos movements is valid @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(28)mprCalcDurationStartPosition @RT(0) @T @T @REFTO 0 @T @DT @RT(4)REAL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(30)mbRefCalcDurationStartPosValid @RT(0) @T @F @DT @RT(4)BOOL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(36)reference to start position is valid @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(24)mbRefCalcedDurationValid @RT(0) @T @F @DT @RT(4)BOOL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(41)reference to calculated duration is valid @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(16)mbReferenceValid @RT(0) @T @F @DT @RT(4)BOOL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(26)info if reference is valid @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(11)mprMaxSpeed @RT(0) @T @T @REFTO 0 @T @DT @RT(4)REAL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(17)mbReCalcDurations @RT(0) @T @F @DT @RT(4)BOOL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(21)Recalculate durations @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(21)mInstanceDataInterPos @RT(0) @T @T @DERIVED 0 @T @T @DT @RT(19)tyInstanceListArray @RT(0) @T @T @UNKNOWN 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(46)array with instance data of interpos movements @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(22)mrCalcDurationStartPos @RT(0) @T @F @DT @RT(4)REAL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(42)start position for calculation of duration @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(21)mpbStopOutputPresUsed @RT(0) @T @T @REFTO 0 @T @DT @RT(4)BOOL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(20)mpbStopOutputVelUsed @RT(0) @T @T @REFTO 0 @T @DT @RT(4)BOOL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(20)mbStopOutputPresUsed @RT(0) @T @F @DT @RT(4)BOOL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(19)mbStopOutputVelUsed @RT(0) @T @F @DT @RT(4)BOOL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(16)mprProfileEndPos @RT(0) @T @T @REFTO 0 @T @DT @RT(4)REAL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(15)mrProfileEndPos @RT(0) @T @F @DT @RT(4)REAL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(16)mbMaxSpeedLinked @RT(0) @T @F @DT @RT(4)BOOL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(5)FALSE @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(19)mprMaxAbsAccelStart @RT(0) @T @T @REFTO 0 @T @DT @RT(4)REAL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(17)mprMaxAbsAccelEnd @RT(0) @T @T @REFTO 0 @T @DT @RT(4)REAL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(16)mprPosAccelStart @RT(0) @T @T @REFTO 0 @T @DT @RT(4)REAL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(14)mprPosAccelEnd @RT(0) @T @T @REFTO 0 @T @DT @RT(4)REAL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(16)mbMaxRampsLinked @RT(0) @T @F @DT @RT(4)BOOL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(13)rLinearFactor @RT(0) @T @F @DT @RT(4)REAL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(3)0.0 @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(13)rConstantTerm @RT(0) @T @F @DT @RT(4)REAL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(3)1.0 @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(13)rLinearValPos @RT(0) @T @F @DT @RT(4)REAL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(3)0.0 @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(17)mrStopAccelCalced @RT(0) @T @F @DT @RT(4)REAL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(3)0.0 @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@END_Dcl 
+
+@END_Export 
+
+@BEG_Body 
+
+10 
+
+@BEG_Export 
+
+@BEG_Algo 
+@ALGORITHM @RT(5)aInit @STRUCTURED_TEXT 
+@RT(0) @RT(0) @RT(0) @F @F 
+@END_Algo 
+
+@BEG_Dcl 
+@RT(16)DclTreeContainer 
+10 
+@Var @RT(8)pProfile @RT(0) @T @T @REFTO 0 @F @DERIVED 0 @T @T @DT @RT(16)KAPPL_VisProfile @RT(0) @T @T @UNKNOWN 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(55)pointer to systemvariable that contains the vis profile @RT(0) 
+@END_Attrib 
+1 1 @F @F @F @F 
+
+@Var @RT(7)MoveDir @RT(0) @T @T @DERIVED 0 @T @T @DT @RT(10)tMoveIdent @RT(0) @T @T @UNKNOWN 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(14)move direction @RT(0) 
+@END_Attrib 
+1 1 @F @F @F @F 
+
+@Var @RT(16)pdCalcedDuration @RT(0) @T @T @REFTO 0 @T @DT @RT(4)TIME @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(30)pointer to calculated duration @RT(0) 
+@END_Attrib 
+1 1 @F @F @F @F 
+
+@Var @RT(27)prCalcDurationStartPosition @RT(0) @T @T @REFTO 0 @T @DT @RT(4)REAL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(46)pointer to startposition to calculate duration @RT(0) 
+@END_Attrib 
+1 1 @F @F @F @F 
+
+@Var @RT(21)pInstanceDataInterPos @RT(0) @T @T @REFTO 0 @F @DERIVED 0 @T @T @DT @RT(19)tyInstanceListArray @RT(0) @T @T @UNKNOWN 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(48)pointer to array with data of interpos movements @RT(0) 
+@END_Attrib 
+1 1 @F @F @F @F 
+
+@Var @RT(20)pbStopOutputPresUsed @RT(0) @T @T @REFTO 0 @T @DT @RT(4)BOOL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 1 @F @F @F @F 
+
+@Var @RT(19)pbStopOutputVelUsed @RT(0) @T @T @REFTO 0 @T @DT @RT(4)BOOL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 1 @F @F @F @F 
+
+@Var @RT(15)prProfileEndPos @RT(0) @T @T @REFTO 0 @T @DT @RT(4)REAL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 1 @F @F @F @F 
+
+@Var @RT(10)prMaxSpeed @RT(0) @T @T @REFTO 0 @T @DT @RT(4)REAL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(14)move direction @RT(0) 
+@END_Attrib 
+1 1 @F @F @F @F 
+
+@Var @RT(9)bInitDone @RT(0) @T @F @DT @RT(4)BOOL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@END_Dcl 
+
+@END_Export 
+
+@BEG_Export 
+
+@BEG_Algo 
+@ALGORITHM @RT(4)aRun @STRUCTURED_TEXT 
+@RT(0) @RT(0) @RT(0) @F @F 
+@END_Algo 
+
+@BEG_Dcl 
+@RT(16)DclTreeContainer 
+66 
+@Var @RT(6)bStart @RT(0) @T @F @DT @RT(4)BOOL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(19)start profileoutput @RT(0) 
+@END_Attrib 
+1 1 @F @F @F @F 
+
+@Var @RT(5)bStop @RT(0) @T @F @DT @RT(4)BOOL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(18)stop profileoutput @RT(0) 
+@END_Attrib 
+1 1 @F @F @F @F 
+
+@Var @RT(12)rActPosition @RT(0) @T @F @DT @RT(4)REAL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(15)actual position @RT(0) 
+@END_Attrib 
+1 1 @F @F @F @F 
+
+@Var @RT(20)rStartOutputPressure @RT(0) @T @F @DT @RT(4)REAL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(21)start output pressure @RT(0) 
+@END_Attrib 
+1 1 @F @F @F @F 
+
+@Var @RT(20)rStartOutputVelocity @RT(0) @T @F @DT @RT(4)REAL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(21)start output velocity @RT(0) 
+@END_Attrib 
+1 1 @F @F @F @F 
+
+@Var @RT(16)bUseInterruptPos @RT(0) @T @F @DT @RT(4)BOOL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(30)activate interrupt positioning @RT(0) 
+@END_Attrib 
+1 1 @F @F @F @F 
+
+@Var @RT(18)rInterruptPosition @RT(0) @T @F @DT @RT(4)REAL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(66)interrupt position (for example stop position for a core movement) @RT(0) 
+@END_Attrib 
+1 1 @F @F @F @F 
+
+@Var @RT(12)dMaxMoveTime @RT(0) @T @F @DT @RT(4)TIME @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(65)maximum move time (max. move time = 0 means no timeout detection) @RT(0) 
+@END_Attrib 
+1 1 @F @F @F @F 
+
+@Var @RT(12)dDelayTimeOn @RT(0) @T @F @DT @RT(4)TIME @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(45)Delay Time between preoutput and  constoutput @RT(0) 
+@END_Attrib 
+1 1 @F @F @F @F 
+
+@Var @RT(13)dDelayTimeOff @RT(0) @T @F @DT @RT(4)TIME @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(46)Delay Time between pump stop and bActive FALSE @RT(0) 
+@END_Attrib 
+1 1 @F @F @F @F 
+
+@Var @RT(8)DeadTime @RT(0) @T @F @DT @RT(4)TIME @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(26)Dead time for compensation @RT(0) 
+@END_Attrib 
+1 1 @F @F @F @F 
+
+@Var @RT(14)rAmplification @RT(0) @T @F @DT @RT(4)REAL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(32)Amplificazion at actual position @RT(0) 
+@END_Attrib 
+1 1 @F @F @F @F 
+
+@Var @RT(15)ManualDelayTime @RT(0) @T @F @DT @RT(4)TIME @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(25)Delay time in manual mode @RT(0) 
+@END_Attrib 
+1 1 @F @F @F @F 
+
+@Var @RT(12)StopDeadTime @RT(0) @T @F @DT @RT(4)TIME @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(26)Dead time at external stop @RT(0) 
+@END_Attrib 
+1 1 @F @F @F @F 
+
+@Var @RT(15)rInterruptAccel @RT(0) @T @F @DT @RT(4)REAL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(41)StartAcceleration after interruptposition @RT(0) 
+@END_Attrib 
+1 1 @F @F @F @F 
+
+@Var @RT(17)rInterruptDeaccel @RT(0) @T @F @DT @RT(4)REAL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(41)StopAcceleration before interruptposition @RT(0) 
+@END_Attrib 
+1 1 @F @F @F @F 
+
+@Var @RT(12)rActVelocity @RT(0) @T @F @DT @RT(4)REAL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(15)Actual velocity @RT(0) 
+@END_Attrib 
+1 1 @F @F @F @F 
+
+@Var @RT(12)rMaxPosition @RT(0) @T @F @DT @RT(4)REAL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(14)Maximum stroke @RT(0) 
+@END_Attrib 
+1 1 @F @F @F @F 
+
+@Var @RT(12)rMaxVelocity @RT(0) @T @F @DT @RT(4)REAL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(13)Maximum speed @RT(0) 
+@END_Attrib 
+1 1 @F @F @F @F 
+
+@Var @RT(13)rSmoothFactor @RT(0) @T @F @DT @RT(4)REAL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(18)% of max set value @RT(0) 
+@END_Attrib 
+1 1 @F @F @F @F 
+
+@Var @RT(20)rTolerancePosReached @RT(0) @T @F @DT @RT(4)REAL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(20)End position reached @RT(0) 
+@END_Attrib 
+1 1 @F @F @F @F 
+
+@Var @RT(15)rPressureOutput @RT(0) @T @F @DT @RT(4)REAL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(26)calculated pressure output @RT(0) 
+@END_Attrib 
+1 3 @F @F @F @F 
+
+@Var @RT(15)rVelocityOutput @RT(0) @T @F @DT @RT(4)REAL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(26)calculated velocity output @RT(0) 
+@END_Attrib 
+1 3 @F @F @F @F 
+
+@Var @RT(7)bActive @RT(0) @T @F @DT @RT(4)BOOL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(26)profile movement is active @RT(0) 
+@END_Attrib 
+1 3 @F @F @F @F 
+
+@Var @RT(12)iActiveStage @RT(0) @T @F @DT @RT(4)DINT @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(19)active profilestage @RT(0) 
+@END_Attrib 
+1 3 @F @F @F @F 
+
+@Var @RT(17)bPreOutputReached @RT(0) @T @F @DT @RT(4)BOOL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(17)preoutput reached @RT(0) 
+@END_Attrib 
+1 3 @F @F @F @F 
+
+@Var @RT(12)dActMoveTime @RT(0) @T @F @DT @RT(4)TIME @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(16)actual move time @RT(0) 
+@END_Attrib 
+1 3 @F @F @F @F 
+
+@Var @RT(8)bTimeOut @RT(0) @T @F @DT @RT(4)BOOL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(16)timeout detected @RT(0) 
+@END_Attrib 
+1 3 @F @F @F @F 
+
+@Var @RT(6)bError @RT(0) @T @F @DT @RT(4)BOOL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(14)error detected @RT(0) 
+@END_Attrib 
+1 3 @F @F @F @F 
+
+@Var @RT(10)iErrorInfo @RT(0) @T @F @DT @RT(4)DINT @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(21)additional error info @RT(0) 
+@END_Attrib 
+1 3 @F @F @F @F 
+
+@Var @RT(14)rPositionError @RT(0) @T @F @DT @RT(4)REAL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(24)Actual positioning error @RT(0) 
+@END_Attrib 
+1 3 @F @F @F @F 
+
+@Var @RT(12)rEndPosition @RT(0) @T @F @DT @RT(4)REAL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(34)Actual position at end of movement @RT(0) 
+@END_Attrib 
+1 3 @F @F @F @F 
+
+@Var @RT(16)bOnInterstopRamp @RT(0) @T @F @DT @RT(4)BOOL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(20)Interstop ramp ative @RT(0) 
+@END_Attrib 
+1 3 @F @F @F @F 
+
+@Var @RT(11)bOnLastRamp @RT(0) @T @F @DT @RT(4)BOOL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(26)Movement reached last ramp @RT(0) 
+@END_Attrib 
+1 3 @F @F @F @F 
+
+@Var @RT(12)bInTolerance @RT(0) @T @F @DT @RT(4)BOOL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 3 @F @F @F @F 
+
+@Var @RT(1)i @RT(0) @T @F @DT @RT(5)UDINT @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 4 @F @F @F @F 
+
+@Var @RT(16)fbPressureOutput @RT(0) @T @T @DERIVED 0 @T @T @DT @RT(28)KAPPL_Plastics_ProfileOutput @RT(0) @T @T @UNKNOWN 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(23)bPreOutputPressureReady @RT(0) @T @F @DT @RT(4)BOOL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(14)bPressureReady @RT(0) @T @F @DT @RT(4)BOOL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(16)fbVelocityOutput @RT(0) @T @T @DERIVED 0 @T @T @DT @RT(28)KAPPL_Plastics_ProfileOutput @RT(0) @T @T @UNKNOWN 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(23)bPreOutputVelocityReady @RT(0) @T @F @DT @RT(4)BOOL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(14)bVelocityReady @RT(0) @T @F @DT @RT(4)BOOL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(7)fbTimer @RT(0) @T @T @DERIVED 0 @T @T @DT @RT(3)TON @RT(0) @T @T @UNKNOWN 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(13)fbREdge_Start @RT(0) @T @T @DERIVED 0 @T @T @DT @RT(6)R_TRIG @RT(0) @T @T @UNKNOWN 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(15)fbREdge_Timeout @RT(0) @T @T @DERIVED 0 @T @T @DT @RT(6)R_TRIG @RT(0) @T @T @UNKNOWN 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(9)bAlarmSet @RT(0) @T @F @DT @RT(4)BOOL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(15)fbREdgeVelError @RT(0) @T @T @DERIVED 0 @T @T @DT @RT(6)R_TRIG @RT(0) @T @T @UNKNOWN 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(16)fbREdgePresError @RT(0) @T @T @DERIVED 0 @T @T @DT @RT(6)R_TRIG @RT(0) @T @T @UNKNOWN 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(10)bActiveInt @RT(0) @T @F @DT @RT(4)BOOL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(11)fbTOFActive @RT(0) @T @T @DERIVED 0 @T @T @DT @RT(3)TOF @RT(0) @T @T @UNKNOWN 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(12)fbTimerDelay @RT(0) @T @T @DERIVED 0 @T @T @DT @RT(3)TON @RT(0) @T @T @UNKNOWN 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(11)iNoOfPoints @RT(0) @T @F @DT @RT(5)UDINT @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(19)rValveCloseVelocity @RT(0) @T @F @DT @RT(4)REAL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(4)20.0 @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(15)rPositionOffset @RT(0) @T @F @DT @RT(4)REAL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(4)10.0 @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(8)bStarted @RT(0) @T @F @DT @RT(4)BOOL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(5)FALSE @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(15)rDirectonFactor @RT(0) @T @F @DT @RT(4)REAL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(3)1.0 @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(14)bMinOutputUsed @RT(0) @T @F @DT @RT(4)BOOL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(13)bVelHigherMin @RT(0) @T @F @DT @RT(4)BOOL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(7)rMaxVal @RT(0) @T @F @DT @RT(4)REAL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(17)rInterAccelFactor @RT(0) @T @F @DT @RT(4)REAL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(15)rPosAccelFactor @RT(0) @T @F @DT @RT(4)REAL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(3)dir @RT(0) @T @F @DT @RT(4)BOOL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(13)rEndRampStart @RT(0) @T @F @DT @RT(4)REAL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(21)bCloseVelLimitReached @RT(0) @T @F @DT @RT(4)BOOL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(14)rCloseVelLimit @RT(0) @T @F @DT @RT(4)REAL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(17)bUsePositionCheck @RT(0) @T @F @DT @RT(4)BOOL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@END_Dcl 
+
+@END_Export 
+
+@BEG_Export 
+
+@BEG_Algo 
+@POSTUPDATE_ALGORITHM @RT(15)pProfileChanged @STRUCTURED_TEXT 
+@RT(0) @RT(68)mpProfile^,mprMaxSpeed^,mpbStopOutputPresUsed^,mpbStopOutputVelUsed^ @RT(9)PU_Task_7 @F @F 
+@END_Algo 
+
+@BEG_Dcl 
+@RT(16)DclTreeContainer 
+0 
+@END_Dcl 
+
+@END_Export 
+
+@BEG_Export 
+
+@BEG_Algo 
+@PROCESS_ALGORITHM @RT(6)paInit @STRUCTURED_TEXT 
+@RT(0) @RT(0) @RT(8)TaskSlow @F @F 
+@END_Algo 
+
+@BEG_Dcl 
+@RT(16)DclTreeContainer 
+7 
+@Var @RT(1)i @RT(0) @T @F @DT @RT(5)UDINT @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 4 @F @F @F @F 
+
+@Var @RT(13)fbProfileCalc @RT(0) @T @T @DERIVED 0 @T @T @DT @RT(26)KAPPL_Plastics_ProfileCalc @RT(0) @T @T @UNKNOWN 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(11)iNoOfPoints @RT(0) @T @F @DT @RT(5)UDINT @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(16)rDirectionFactor @RT(0) @T @F @DT @RT(4)REAL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(3)1.0 @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(10)bDirection @RT(0) @T @F @DT @RT(4)BOOL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(4)TRUE @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(15)rPosAccelFactor @RT(0) @T @F @DT @RT(4)REAL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(8)rPosCalc @RT(0) @T @F @DT @RT(4)REAL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@END_Dcl 
+
+@END_Export 
+
+@BEG_Export 
+
+@BEG_Algo 
+@POSTUPDATE_ALGORITHM @RT(16)pReCalcDurations @STRUCTURED_TEXT 
+@RT(0) @RT(53)mprCalcDurationStartPosition^,mpInstanceDataInterPos^ @RT(9)PU_Task_7 @F @F 
+@END_Algo 
+
+@BEG_Dcl 
+@RT(16)DclTreeContainer 
+3 
+@Var @RT(1)i @RT(0) @T @F @DT @RT(4)DINT @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 4 @F @F @F @F 
+
+@Var @RT(16)bStartPosChanged @RT(0) @T @F @DT @RT(4)BOOL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(20)bInstanceDataChanged @RT(0) @T @F @DT @RT(4)BOOL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@END_Dcl 
+
+@END_Export 
+
+@BEG_Export 
+
+@BEG_Algo 
+@PROCESS_ALGORITHM @RT(15)paCalcDurations @STRUCTURED_TEXT 
+@RT(0) @RT(0) @RT(8)TaskSlow @F @F 
+@END_Algo 
+
+@BEG_Dcl 
+@RT(16)DclTreeContainer 
+4 
+@Var @RT(1)i @RT(0) @T @F @DT @RT(4)DINT @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 4 @F @F @F @F 
+
+@Var @RT(21)rCalcDurationStartPos @RT(0) @T @F @DT @RT(4)REAL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(41)Startposition for calculation of duration @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(19)rCalcDurationEndPos @RT(0) @T @F @DT @RT(4)REAL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(39)Endposition for calculation of duration @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(27)bInterPosMovementsAvailable @RT(0) @T @F @DT @RT(4)BOOL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(39)Interposition movement(s) are available @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@END_Dcl 
+
+@END_Export 
+
+@BEG_Export 
+
+@BEG_Algo 
+@ALGORITHM @RT(13)aInitMaxRamps @STRUCTURED_TEXT 
+@RT(0) @RT(0) @RT(0) @F @F 
+@END_Algo 
+
+@BEG_Dcl 
+@RT(16)DclTreeContainer 
+6 
+@Var @RT(18)prMaxAbsAccelStart @RT(0) @T @T @REFTO 0 @T @DT @RT(4)REAL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 1 @F @F @F @F 
+
+@Var @RT(16)prMaxAbsAccelEnd @RT(0) @T @T @REFTO 0 @T @DT @RT(4)REAL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 1 @F @F @F @F 
+
+@Var @RT(15)prPosAccelStart @RT(0) @T @T @REFTO 0 @T @DT @RT(4)REAL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 1 @F @F @F @F 
+
+@Var @RT(13)prPosAccelEnd @RT(0) @T @T @REFTO 0 @T @DT @RT(4)REAL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 1 @F @F @F @F 
+
+@Var @RT(25)bUseAccelerationReduction @RT(0) @T @F @DT @RT(4)BOOL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 1 @F @F @F @F 
+
+@Var @RT(9)bInitDone @RT(0) @T @F @DT @RT(4)BOOL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@END_Dcl 
+
+@END_Export 
+
+@BEG_Export 
+
+@BEG_Algo 
+@POSTUPDATE_ALGORITHM @RT(16)pMaxRampsChanged @STRUCTURED_TEXT 
+@RT(0) @RT(73)mprMaxAbsAccelStart^,mprMaxAbsAccelEnd^,mprPosAccelStart^,mprPosAccelEnd^ @RT(9)PU_Task_7 @F @F 
+@END_Algo 
+
+@BEG_Dcl 
+@RT(16)DclTreeContainer 
+0 
+@END_Dcl 
+
+@END_Export 
+
+@BEG_Export 
+
+@BEG_Algo 
+@PROCESS_ALGORITHM @RT(23)paRecalcMaxRampsChanged @STRUCTURED_TEXT 
+@RT(0) @RT(0) @RT(8)TaskSlow @F @F 
+@END_Algo 
+
+@BEG_Dcl 
+@RT(16)DclTreeContainer 
+2 
+@Var @RT(15)rAccelRampStart @RT(0) @T @F @DT @RT(4)REAL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(13)rAccelRampEnd @RT(0) @T @F @DT @RT(4)REAL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@END_Dcl 
+
+@END_Export 
+
+@BEG_Export 
+
+@BEG_Algo 
+@ALGORITHM @RT(19)aGetVelocityProfile @STRUCTURED_TEXT 
+@RT(0) @RT(0) @RT(0) @F @F 
+@END_Algo 
+
+@BEG_Dcl 
+@RT(16)DclTreeContainer 
+1 
+@Var @RT(21)CalcedVelocityProfile @RT(0) @T @T @DERIVED 0 @T @T @DT @RT(17)KAPPL_ProfileData @RT(0) @T @T @UNKNOWN 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 3 @F @F @F @F 
+
+@END_Dcl 
+
+@END_Export 
+
+@BEG_Body 
+@TL(55)
+(**************************************** WARNING ********************************************
+ *** The KEBA Kemro K2 System including software is not intended for safety control tasks! ***
+ ***                       For further information see Comment tab!                        ***
+ *********************************************************************************************)
+
+IF NOT bInitDone THEN
+    //copy reference of vis variable
+    mpProfile  := pProfile;
+    mMoveDir   := MoveDir;
+   
+    //copy references for calculation of duration
+    mpdCalcedDuration := pdCalcedDuration;
+    mpInstanceDataInterPos := pInstanceDataInterPos;
+    mprCalcDurationStartPosition := prCalcDurationStartPosition;
+    
+    mprProfileEndPos := prProfileEndPos;
+   
+    IF CHECK_REF(mpdCalcedDuration^) THEN
+        mbRefCalcedDurationValid := TRUE;
+    END_IF;
+    
+    IF CHECK_REF(mpInstanceDataInterPos^) THEN
+        mbRefInstanceDataInterPosValid := TRUE;
+        mInstanceDataInterPos := mpInstanceDataInterPos^;
+    END_IF;
+    
+    IF CHECK_REF(mprCalcDurationStartPosition^) THEN
+        mbRefCalcDurationStartPosValid := TRUE;
+        mrCalcDurationStartPos := mprCalcDurationStartPosition^;
+    END_IF;
+    
+    mpbStopOutputPresUsed := pbStopOutputPresUsed;
+    mpbStopOutputVelUsed := pbStopOutputVelUsed;
+   
+    IF CHECK_REF(prMaxSpeed^) THEN
+        mprMaxSpeed := prMaxSpeed;
+        mbMaxSpeedLinked := TRUE;
+    END_IF;
+    IF CHECK_REF(mpProfile^) THEN
+        mbReferenceValid := TRUE;
+        //start paInit only if reference is valid
+        START_PROCESS_ALGORITHM(paInit);
+    ELSE
+        SET_ALARM(Name := erInvalidProfileReference,
+                SubID1 := sv_DeviceId.CompId,
+                SubID2 := sv_DeviceId.IndexId,
+                SubID3 := mMoveDir);
+    END_IF;
+
+    bInitDone := TRUE;
+END_IF;
+
+
+
+
+@END_Body 
+
+@@@BEG_Comment@@@ 
+@TL(2)
+This algorithm copies the input values to local variables and starts
+the process algorithm for initialization of the profile.
+@@@END_Comment@@@ 
+
+@BEG_Body 
+@TL(394)
+(**************************************** WARNING ********************************************
+ *** The KEBA Kemro K2 System including software is not intended for safety control tasks! ***
+ ***                       For further information see Comment tab!                        ***
+ *********************************************************************************************)
+
+bError := FALSE;
+iErrorInfo := cApplPlasticsNoError;
+
+//do not execute if profile reference is not valid
+IF NOT mbReferenceValid THEN
+    //set alarm because algorithm can be called without calling aInit before
+    IF NOT bAlarmSet THEN        
+        SET_ALARM(Name := erInvalidProfileReference,
+                  SubID1 := sv_DeviceId.CompId,
+                  SubID2 := sv_DeviceId.IndexId,
+                  SubID3 := mMoveDir);
+        bAlarmSet := TRUE;
+    END_IF;
+    
+    bError := TRUE;
+    RETURN;
+END_IF;
+
+//do not execute if profile error was detected
+IF mbProfileError THEN
+    bError := TRUE;
+    RETURN;
+END_IF;
+
+IF mbReParam THEN
+   
+    fbPressureOutput(Reset := FALSE,
+            PreRamp := mpProfile^.rPreOutputPressRamp,
+            PreOutputValue := mpProfile^.rPreOutputPress,
+            ProfilData := PressureProfile,
+            MinOutput := mpProfile^.rMinOutputPress,
+            Interrupt := bUseInterruptPos,         
+            RampType := mpProfile^.RampTypePress,
+            ResetStartTimeRamp := FALSE,
+            OpenEnd := mpProfile^.bOpenEndProfile,      
+            ReParam := TRUE, 
+            DelayTime := dDelayTimeOn);
+    
+    IF mbMaxSpeedLinked THEN
+        fbVelocityOutput.MaxYValue := mprMaxSpeed^;
+    END_IF;
+    
+    fbVelocityOutput(Reset := FALSE,
+            PreRamp := mpProfile^.rPreOutputVelRamp,
+            PreOutputValue := mpProfile^.rPreOutputVel,
+            ProfilData := VelocityProfile,
+            MinOutput := mpProfile^.rMinOutputVel,
+            Interrupt := bUseInterruptPos,
+            RampType := mpProfile^.RampTypeVel,
+            ResetStartTimeRamp := FALSE,
+            OpenEnd := mpProfile^.bOpenEndProfile,
+            DeadTime := DeadTime,         
+            ReParam := TRUE,
+            DelayTime := dDelayTimeOn,
+            Amplification:=rAmplification,
+            DeadTimeInterstop := StopDeadTime);
+    
+    IF fbPressureOutput.Error THEN
+        SET_ALARM(Name := erPressureOutput,
+                  SubID1 := sv_DeviceId.CompId,
+                  SubID2 := sv_DeviceId.IndexId,
+                  SubID3 := mMoveDir,
+                  SubID4 := fbPressureOutput.ErrorInfo);
+    END_IF;
+    
+    IF fbVelocityOutput.Error THEN
+        SET_ALARM(Name := erVelocityOutput,
+                  SubID1 := sv_DeviceId.CompId,
+                  SubID2 := sv_DeviceId.IndexId,
+                  SubID3 := mMoveDir,
+                  SubID4 := fbVelocityOutput.ErrorInfo);
+    END_IF;
+    
+    //set error info
+    IF fbPressureOutput.Error THEN
+        iErrorInfo := fbPressureOutput.ErrorInfo;
+    ELSIF fbVelocityOutput.Error THEN
+        iErrorInfo := fbVelocityOutput.ErrorInfo;
+    END_IF;
+    
+    IF fbPressureOutput.Error OR fbVelocityOutput.Error THEN
+        //don´t do movement if one of the outputblocks has an error
+        bError := TRUE;
+        RETURN;
+    END_IF;
+    
+    mbReParam := FALSE;
+    
+    IF VelocityProfile.ProfilePoints.Point[VelocityProfile.ProfilePoints.uNoOfPoints].rX < VelocityProfile.ProfilePoints.Point[1].rX THEN
+        rDirectonFactor := -1.0;
+        dir := FALSE;
+    ELSE
+        rDirectonFactor := 1.0;
+        dir := TRUE;
+    END_IF;
+    rPositionError := 0.0;
+    rEndRampStart := VelocityProfile.ProfilePoints.Point[VelocityProfile.ProfilePoints.uNoOfPoints-1].rX;  
+END_IF;
+
+//detect start
+fbREdge_Start(CLK := bStart);
+IF fbREdge_Start.Q THEN
+    //reset timer for timeout detection
+    fbTimer(IN := FALSE);
+    bTimeOut := FALSE;
+    dActMoveTime := t#0s;
+    fbREdgeVelError(CLK := FALSE);
+    fbREdgePresError(CLK := FALSE);
+   
+    // calculate rel factor for start acceleration
+    IF mbMaxRampsLinked THEN
+        rPosAccelFactor := rLinearFactor * (rActPosition - rLinearValPos) + rConstantTerm;
+        IF rPosAccelFactor < 0.0 THEN
+            rPosAccelFactor := 1.0;
+        END_IF;
+    ELSE
+        rPosAccelFactor := 1.0;
+    END_IF;    
+    
+    // use last deacceleration for acceleration after interrupt stop
+    IF rInterruptAccel = 0.0 THEN
+        VelocityProfile.Acceleration  := rPosAccelFactor * mpProfile^.Profile.Points[1].rVelRamp / 100.0 * mpProfile^.rMaxRampVel;
+    ELSE
+        VelocityProfile.Acceleration := rPosAccelFactor * rInterruptAccel / 100.0  * mpProfile^.rMaxRampVel; 
+    END_IF;    
+
+    IF mbMaxRampsLinked AND bUseInterruptPos THEN
+        rInterAccelFactor := rLinearFactor * (rInterruptPosition - rLinearValPos) + rConstantTerm;
+        IF rInterAccelFactor < 0.0 THEN
+            rInterAccelFactor := 0.0;
+        END_IF;
+        VelocityProfile.InterAcceleration := rInterAccelFactor * rInterruptDeaccel / 100.0 * mpProfile^.rMaxRampVel;
+    ELSE
+        VelocityProfile.InterAcceleration := rInterruptDeaccel / 100.0 * mpProfile^.rMaxRampVel;
+    END_IF;
+    
+    fbVelocityOutput(ProfilData := VelocityProfile,
+                     RampType := mpProfile^.RampTypeVel,
+                     ReParam    := TRUE,
+                     DeadTime   := DeadTime);
+    fbTimerDelay(IN := FALSE);
+
+    bStarted := TRUE;
+    bMinOutputUsed := FALSE;
+    bVelHigherMin := FALSE;
+    rMaxVal :=0.0;
+    bOnLastRamp := FALSE;
+    bOnInterstopRamp := FALSE;
+    
+    IF ((rSmoothFactor >= 0.0) AND (rSmoothFactor <= 100.0)) AND (rMaxVelocity > 0.0) THEN
+        bCloseVelLimitReached := FALSE;
+        IF rSmoothFactor > 99.0 THEN // use at least 1% -> detection of zero velocity
+            rCloseVelLimit := rMaxVelocity / 100.0;
+        ELSE
+            rCloseVelLimit :=  (1.0 - rSmoothFactor / 100.0) * rMaxVelocity;
+        END_IF;
+        bUsePositionCheck := mbDirection AND  (rMaxPosition > 0.0);
+    ELSE
+        bCloseVelLimitReached := TRUE;
+        bUsePositionCheck := FALSE;
+    END_IF;
+END_IF;
+
+//END_IF;
+//pressure output
+fbPressureOutput( Start := bStart,
+                  Reset := FALSE,
+                  Stop := (bStop AND NOT mbStopOutputPresUsed) OR bTimeOut,
+                  RampType := mpProfile^.RampTypePress,
+                  InputValue := rActPosition,
+                  StartOutputValue := rStartOutputPressure, 
+                  PreOutputValue := mpProfile^.rPreOutputPress,
+                  Interrupt := bUseInterruptPos,
+                  InterTargetPos := rInterruptPosition,
+                  ResetStartTimeRamp := FALSE,
+                  ReParam := FALSE, 
+                  DelayTime := dDelayTimeOn,
+                  Tolerance := rTolerancePosReached,
+                  Output => rPressureOutput,
+                  PreOutputReady => bPreOutputPressureReady,
+                  Ready => bPressureReady);
+
+//velocity output
+fbVelocityOutput( Start := bStart,
+                  Reset := FALSE,
+                  Stop := (bStop AND NOT mbStopOutputVelUsed) OR bTimeOut,
+                  RampType := mpProfile^.RampTypeVel,
+                  InputValue := rActPosition,
+                  StartOutputValue := rStartOutputVelocity, 
+                  PreOutputValue := mpProfile^.rPreOutputVel,
+                  Interrupt := bUseInterruptPos,
+                  InterTargetPos := rInterruptPosition,            
+                  ResetStartTimeRamp := FALSE, 
+                  ReParam := FALSE, 
+                  DelayTime := dDelayTimeOn,
+                  Amplification:=rAmplification,
+                  DeadTimeInterstop := StopDeadTime,
+                  Tolerance := rTolerancePosReached,
+                  Output => rVelocityOutput,
+                  PreOutputReady => bPreOutputVelocityReady,
+                  Ready => bVelocityReady);
+
+bPreOutputReached := bPreOutputPressureReady AND bPreOutputVelocityReady;
+bInTolerance := fbPressureOutput.bInTolerance OR fbVelocityOutput.bInTolerance;
+
+// check min output, detect position when velocity is to low before end of movement
+IF (ABS(rActVelocity) < rValveCloseVelocity) AND 
+   (bVelHigherMin) AND (NOT bMinOutputUsed) THEN
+    bMinOutputUsed := TRUE;
+    IF NOT bUseInterruptPos AND mbDirection THEN
+        rPositionError := (rActPosition - VelocityProfile.ProfilePoints.Point[VelocityProfile.ProfilePoints.uNoOfPoints].rX);
+    ELSE    
+        rPositionError := 0.0;
+    END_IF;    
+END_IF;
+
+//check error flags and error info
+IF fbPressureOutput.Error THEN
+    bError := TRUE;
+    iErrorInfo := fbPressureOutput.ErrorInfo;
+ELSIF fbVelocityOutput.Error THEN
+    bError := TRUE;
+    iErrorInfo := fbVelocityOutput.ErrorInfo;
+END_IF;
+
+//set alarm if error during pressure output occurs
+fbREdgePresError(CLK := fbPressureOutput.Error);
+IF fbREdgePresError.Q THEN
+    SET_ALARM(Name := erPressureOutput,
+              SubID1 := sv_DeviceId.CompId,
+              SubID2 := sv_DeviceId.IndexId,
+              SubID3 := mMoveDir,
+              SubID4 := fbPressureOutput.ErrorInfo);
+END_IF;
+
+//set alarm if error during velocity output occurs
+fbREdgeVelError(CLK := fbVelocityOutput.Error);
+IF fbREdgeVelError.Q THEN
+    SET_ALARM(Name := erVelocityOutput,
+              SubID1 := sv_DeviceId.CompId,
+              SubID2 := sv_DeviceId.IndexId,
+              SubID3 := mMoveDir,
+              SubID4 := fbVelocityOutput.ErrorInfo);
+END_IF;
+
+
+//calculate active profile stage
+//if actpos is outside the profile then iActiveStage = no of profile points
+iActiveStage := UDINT_TO_DINT(mpProfile^.Profile.iNoOfPoints);
+FOR i := 1 TO mpProfile^.Profile.iNoOfPoints DO
+    IF mbDirection THEN
+       // profile where position is getting bigger
+       IF rActPosition < mpProfile^.Profile.Points[i+1].rStartPos THEN
+          iActiveStage := UDINT_TO_DINT(i);
+          EXIT;
+       END_IF;             
+    ELSE
+       //profile where position is getting lower       
+       IF rActPosition > mpProfile^.Profile.Points[i+1].rStartPos THEN
+          iActiveStage := UDINT_TO_DINT(i);
+          EXIT;
+       END_IF;                
+    END_IF;
+END_FOR;
+
+IF (bPressureReady) THEN 
+   IF bStop THEN
+      rPressureOutput := 0.0;
+   ELSE
+      iNoOfPoints := mpProfile^.Profile.iNoOfPoints;
+      rPressureOutput := mpProfile^.Profile.Points[iNoOfPoints+1].rPressure;
+   END_IF;
+END_IF;
+
+IF (bVelocityReady) THEN
+   IF bStop THEN
+      rVelocityOutput := 0.0;
+      rEndPosition := rActPosition;       
+   ELSIF (NOT bUseInterruptPos) THEN
+       iNoOfPoints := mpProfile^.Profile.iNoOfPoints;
+       rVelocityOutput := mpProfile^.Profile.Points[iNoOfPoints+1].rVelocity;
+   END_IF;
+ELSE
+   bOnInterstopRamp := fbVelocityOutput.bOnInterstopRamp;
+   IF ((dir      AND (rActPosition >= rEndRampStart)) OR
+      ((NOT dir) AND (rActPosition <= rEndRampStart))) THEN
+      bOnLastRamp := TRUE;
+   ELSE
+      bOnLastRamp := FALSE;
+   END_IF;    
+END_IF;
+
+// check position
+IF (mbDirection AND (rActVelocity > rMaxVal)) THEN
+   rMaxVal := rActVelocity;
+   bVelHigherMin := FALSE;
+   bMinOutputUsed := FALSE;
+   rPositionError := 0.0;
+END_IF;
+IF (ABS(rActVelocity) >= mpProfile^.rMinOutputVel) THEN
+   bVelHigherMin := TRUE;
+END_IF;
+
+IF bVelocityReady AND (NOT bCloseVelLimitReached) THEN
+   // check smooth
+    IF (rActVelocity <= rCloseVelLimit) OR
+       ((bUsePositionCheck AND  (rActPosition >= rMaxPosition - rPositionOffset)))  THEN
+        bCloseVelLimitReached := TRUE;
+    END_IF;
+END_IF;
+
+//combine ready - flags
+//stop if error occurs during profileoutput
+//Pressure ready flag will not be TRUE if there is a stop with pressure endoutput
+IF ((bPressureReady OR (bStop AND mbStopOutputPresUsed)) AND 
+    (bVelocityReady OR (bStop AND mbStopOutputVelUsed))) OR bError THEN
+   IF bStop THEN
+      fbTimerDelay(IN := TRUE,
+                   PT := ManualDelayTime);
+      IF fbTimerDelay.Q THEN
+         bActiveInt := FALSE;
+         mbMovementActive := FALSE;
+         iActiveStage := 0;   
+      END_IF;
+   ELSE
+      bActiveInt := FALSE;
+      mbMovementActive := FALSE;
+      iActiveStage := 0;
+   END_IF;
+ELSE
+    bActiveInt := TRUE;
+    mbMovementActive := TRUE;
+END_IF;
+
+
+
+//Timeout detection
+IF bActiveInt THEN
+    fbTimer(IN := TRUE,
+            PT := dMaxMoveTime);
+    dActMoveTime := fbTimer.ET;
+    //dMaxTime = 0 means timeout detection is deactivated!!
+    IF dMaxMoveTime > t#0.0s THEN
+        bTimeOut := fbTimer.Q;
+    END_IF;
+END_IF;
+
+//set timeout alarm
+fbREdge_Timeout(CLK := bTimeOut);
+IF fbREdge_Timeout.Q THEN
+    SET_ALARM(Name := erMoveTimeout,
+              SubID1 := sv_DeviceId.CompId,
+              SubID2 := sv_DeviceId.IndexId,
+              SubID3 := mMoveDir);    
+END_IF;
+
+// set output bActive
+fbTOFActive(bActiveInt, dDelayTimeOff);
+bActive := fbTOFActive.Q OR (NOT bCloseVelLimitReached);
+IF (NOT bActive) AND (bStarted) THEN
+    // actualize position error at end of movement
+    IF (NOT bUseInterruptPos) AND mbDirection THEN
+        IF NOT bMinOutputUsed THEN
+           rPositionError := (rActPosition - VelocityProfile.ProfilePoints.Point[VelocityProfile.ProfilePoints.uNoOfPoints].rX);
+        END_IF;
+        rEndPosition := VelocityProfile.ProfilePoints.Point[VelocityProfile.ProfilePoints.uNoOfPoints].rX;
+    END_IF;
+    bStarted := FALSE;
+    bOnInterstopRamp := FALSE;
+    bOnLastRamp := FALSE;
+    IF (bStop OR (dActMoveTime=T#0s)) THEN
+        rEndPosition := rActPosition;
+    ELSIF (NOT bUseInterruptPos) THEN
+        rEndPosition := VelocityProfile.ProfilePoints.Point[VelocityProfile.ProfilePoints.uNoOfPoints].rX;
+    ELSE
+        rEndPosition := rInterruptPosition;
+    END_IF;
+   
+    //reset profile output blocks if profile movement ends 
+    //without waiting for ready flag of profile output blocks 
+    IF NOT bPressureReady THEN
+       fbPressureOutput(Reset := TRUE);
+    END_IF;
+    IF NOT bVelocityReady THEN
+       fbVelocityOutput(Reset := TRUE);
+    END_IF;
+END_IF;
+
+
+@END_Body 
+
+@@@BEG_Comment@@@ 
+@TL(11)
+Following functions are realized in this algorithm:
+
+1) reparam of the profileoutput - blocks
+2) profile output for pressure and velocity
+   Attention: If an error was detected during profile calculation the algorithm
+   will not be executed!
+3) Calculation of the active profile stage
+4) Timeout detection if dMaxMoveTime is bigger than 0.
+   dMaxMoveTime = 0 means no timeout detection active
+   If a timeout is detected an alarm will be set and the profileoutput will be stopped automatically
+
+@@@END_Comment@@@ 
+
+@BEG_Body 
+@TL(8)
+(**************************************** WARNING ********************************************
+ *** The KEBA Kemro K2 System including software is not intended for safety control tasks! ***
+ ***                       For further information see Comment tab!                        ***
+ *********************************************************************************************)
+
+START_PROCESS_ALGORITHM(paInit);
+
+
+@END_Body 
+
+@@@BEG_Comment@@@ 
+@TL(2)
+This algorithm reacts on changes of the profile.
+If the profile changes the process algorithm for initialization will be started.
+@@@END_Comment@@@ 
+
+@BEG_Body 
+@TL(283)
+(**************************************** WARNING ********************************************
+ *** The KEBA Kemro K2 System including software is not intended for safety control tasks! ***
+ ***                       For further information see Comment tab!                        ***
+ *********************************************************************************************)
+
+IF (NOT mbMovementActive) AND (NOT sv_bProfileEditorActive) THEN
+    
+    mbProfileError := FALSE; 
+ 
+    IF CHECK_REF(mpbStopOutputPresUsed^) THEN
+       mbStopOutputPresUsed := mpbStopOutputPresUsed^;
+    ELSE
+       mbStopOutputPresUsed := FALSE;
+    END_IF;
+    IF CHECK_REF(mpbStopOutputVelUsed^) THEN
+       mbStopOutputVelUsed := mpbStopOutputVelUsed^;
+    ELSE
+       mbStopOutputVelUsed := FALSE;
+    END_IF;
+    
+    IF CHECK_REF(mprProfileEndPos^) THEN
+       mrProfileEndPos := mprProfileEndPos^;
+    ELSE
+       mrProfileEndPos := 0.0;
+    END_IF;
+   
+    IF sv_bUseStartPosProfiles THEN
+        iNoOfPoints := mpProfile^.Profile.iNoOfPoints;
+    ELSE
+        iNoOfPoints := mpProfile^.Profile.iNoOfPoints + 1; 
+    END_IF;
+    
+    // calculate profiles
+    IF mpProfile^.bOpenEndProfile THEN
+        // set last point to -1000.0 
+        // e.g.: v=1000 mm/s, a=1000 mm/s² -> -v²/2a = -500.0 necessary
+        mpProfile^.Profile.Points[iNoOfPoints].rStartPos := -1000.0;
+    // If bOpenEndProfile was activated and reseted, set startposition to zero   
+    ELSIF mpProfile^.Profile.Points[1].rStartPos <> 0.0 
+        AND NOT mpProfile^.bOpenEndProfile 
+        AND mpProfile^.Profile.Points[iNoOfPoints].rStartPos < mrProfileEndPos THEN
+        mpProfile^.Profile.Points[iNoOfPoints].rStartPos := mrProfileEndPos;
+    END_IF;
+   
+    // limit profile output also with last ramp
+    fbProfileCalc.LimitEveryPointToLastRamp := mpProfile^.bLimitEveryPointToLastRamp;
+    
+
+   //set values of last point 
+   //use rEndOutputXXX value if less than last profile step
+   //ohterwise use last profil step
+   
+    IF mpProfile^.Profile.Points[iNoOfPoints-1].rPressure > mpProfile^.rEndOutputPress  THEN
+      mpProfile^.Profile.Points[iNoOfPoints].rPressure := mpProfile^.rEndOutputPress;
+    ELSE
+      mpProfile^.Profile.Points[iNoOfPoints].rPressure := mpProfile^.Profile.Points[iNoOfPoints-1].rPressure; 
+    END_IF;
+    
+    IF mpProfile^.Profile.Points[iNoOfPoints-1].rVelocity > mpProfile^.rEndOutputVel THEN
+       mpProfile^.Profile.Points[iNoOfPoints].rVelocity := mpProfile^.rEndOutputVel;
+    ELSE
+       mpProfile^.Profile.Points[iNoOfPoints].rVelocity := mpProfile^.Profile.Points[iNoOfPoints-1].rVelocity;
+    END_IF;   
+
+    // use stop deceleration for last point
+    IF mpProfile^.rStopRampPress > 0.0 THEN
+      mpProfile^.Profile.Points[iNoOfPoints].rPressRamp := mpProfile^.rStopRampPress;
+    ELSE
+      mpProfile^.Profile.Points[iNoOfPoints].rPressRamp := 100.0;
+    END_IF;
+    IF mpProfile^.rStopRampVel > 0.0 THEN
+      mpProfile^.Profile.Points[iNoOfPoints].rVelRamp := mpProfile^.rStopRampVel;
+    ELSE
+      mpProfile^.Profile.Points[iNoOfPoints].rVelRamp := 100.0;
+    END_IF;   
+   
+    // velocity
+    fbProfileCalc.RawProfilePoint.uNoOfPoints  := iNoOfPoints;
+    
+    IF mpProfile^.Profile.Points[iNoOfPoints].rStartPos < mpProfile^.Profile.Points[1].rStartPos THEN
+        rDirectionFactor := -1.0;
+        bDirection := FALSE;
+    ELSE
+        rDirectionFactor := 1.0;
+        bDirection := TRUE;
+    END_IF;
+    
+    FOR i := 1 TO iNoOfPoints DO  // velocity in %
+        
+        IF (bDirection     AND (mpProfile^.Profile.Points[i].rStartPos > mpProfile^.Profile.Points[iNoOfPoints].rStartPos - mpProfile^.rOffset)) OR
+           (NOT bDirection AND (mpProfile^.Profile.Points[i].rStartPos < mpProfile^.Profile.Points[iNoOfPoints].rStartPos + mpProfile^.rOffset)) THEN
+            rPosCalc := mpProfile^.Profile.Points[iNoOfPoints].rStartPos - rDirectionFactor * mpProfile^.rOffset;
+        ELSE
+           rPosCalc := mpProfile^.Profile.Points[i].rStartPos;
+        END_IF;
+        fbProfileCalc.RawProfilePoint.RawProfilePoints[i].XValue := rPosCalc;
+        fbProfileCalc.RawProfilePoint.RawProfilePoints[i].YValue := mpProfile^.Profile.Points[i].rVelocity;
+        IF mbMaxRampsLinked THEN
+            rPosAccelFactor := rLinearFactor * (rPosCalc - rLinearValPos) + rConstantTerm;
+            IF rPosAccelFactor <= 0.0 THEN
+               rPosAccelFactor := 1.0;
+            END_IF;
+        ELSE
+            rPosAccelFactor := 1.0;
+        END_IF;
+        fbProfileCalc.RawProfilePoint.RawProfilePoints[i].Ramp   := mpProfile^.Profile.Points[i].rVelRamp /100.0 *
+                                                                    mpProfile^.rMaxRampVel * rPosAccelFactor;
+    END_FOR;
+    fbProfileCalc.RawProfilePoint.RawProfilePoints[iNoOfPoints].XValue := mpProfile^.Profile.Points[iNoOfPoints].rStartPos - rDirectionFactor * mpProfile^.rOffset;    
+    
+    IF mbMaxSpeedLinked THEN
+       fbProfileCalc.MaxVelocity := mprMaxSpeed^;
+    ELSE
+       fbProfileCalc.MaxVelocity := 0.0;   
+    END_IF;       
+    fbProfileCalc(MaxAcceleration := mpProfile^.rMaxRampVel,
+                  MaxDeceleration := mpProfile^.rMaxRampVel,
+                  RampType := mpProfile^.RampTypeVel);
+    IF fbProfileCalc.Error THEN // profile not possible
+        IF (fbProfileCalc.ErrorOnPoint = -1) THEN
+            SET_ALARM(Name := erProfileSequence,
+                      SubID1 := sv_DeviceId.CompId,
+                      SubID2 := sv_DeviceId.IndexId,
+                      SubID3 := mMoveDir);
+        ELSE
+            SET_ALARM(Name := erVelProfDamaged,
+                      SubID1 := sv_DeviceId.CompId,
+                      SubID2 := sv_DeviceId.IndexId,
+                      SubID3 := mMoveDir,
+                      SubID4 := fbProfileCalc.ErrorOnPoint,
+                      Param1 := fbProfileCalc.MaximumPossibleValue);
+        END_IF;
+        mbProfileError := TRUE;
+    ELSE // copy data to yx - generator values
+        VelocityProfile.ProfilePoints := fbProfileCalc.CalcedProfile;
+
+        // calced profile for vis
+        IF CHECK_REF(mpProfile^.pCalculatedProfile^) THEN
+           IF mpProfile^.pCalculatedProfile^.VelocityProfile.CalculatedProfile <> fbProfileCalc.CalcedProfile THEN
+              mpProfile^.pCalculatedProfile^.VelocityProfile.CalculatedProfile := fbProfileCalc.CalcedProfile;
+              mpProfile^.pCalculatedProfile^.VelocityProfile.iProfileChangedCounter := mpProfile^.pCalculatedProfile^.VelocityProfile.iProfileChangedCounter + 1;              
+           END_IF;            
+        END_IF;
+
+        IF ABS(mpProfile^.rOffset) > 0.0 THEN
+            VelocityProfile.ProfilePoints.uNoOfPoints := fbProfileCalc.CalcedProfile.uNoOfPoints + 1;
+            VelocityProfile.ProfilePoints.Point[VelocityProfile.ProfilePoints.uNoOfPoints].rX := mpProfile^.Profile.Points[iNoOfPoints].rStartPos;
+            VelocityProfile.ProfilePoints.Point[VelocityProfile.ProfilePoints.uNoOfPoints].rY := VelocityProfile.ProfilePoints.Point[VelocityProfile.ProfilePoints.uNoOfPoints-1].rY;
+        END_IF;
+        IF mpProfile^.Profile.Points[1].rVelRamp > 0.0 THEN
+            VelocityProfile.Acceleration := mpProfile^.rMaxRampVel * mpProfile^.Profile.Points[1].rVelRamp / 100.0;
+        ELSE
+            VelocityProfile.Acceleration := mpProfile^.rMaxRampVel;
+        END_IF;
+        IF mrStopAccelCalced > 0.0 THEN
+            VelocityProfile.StopAcceleration := mrStopAccelCalced; // use calculated ramp if valid 
+        ELSE
+            VelocityProfile.StopAcceleration := mpProfile^.rMaxRampVel; // use 100% for stop with manual mode
+        END_IF;
+        
+        RESET_ALARM(Name := erProfileSequence,
+                    SubID1 := sv_DeviceId.CompId,
+                    SubID2 := sv_DeviceId.IndexId,
+                    SubID3 := mMoveDir);
+        
+        RESET_ALARM(Name := erVelProfDamaged,
+                    SubID1 := sv_DeviceId.CompId,
+                    SubID2 := sv_DeviceId.IndexId,
+                    SubID3 := mMoveDir,
+                    SubID4 := ANY);
+    END_IF;
+    
+    //Calculate duration(s)
+    mbReCalcDurations := TRUE;
+    START_PROCESS_ALGORITHM(paCalcDurations);
+
+   
+    // pressure
+    IF mpProfile^.bUsePressureRamp THEN    
+        FOR i := 1 TO iNoOfPoints DO
+            fbProfileCalc.RawProfilePoint.RawProfilePoints[i].XValue := mpProfile^.Profile.Points[i].rStartPos;
+            fbProfileCalc.RawProfilePoint.RawProfilePoints[i].YValue := mpProfile^.Profile.Points[i].rPressure;
+            fbProfileCalc.RawProfilePoint.RawProfilePoints[i].Ramp   := mpProfile^.Profile.Points[i].rPressRamp / 100.0 *
+                                                                        mpProfile^.rMaxRampPress;
+        END_FOR;
+        fbProfileCalc.MaxVelocity := 0.0;
+    
+        fbProfileCalc(MaxAcceleration := mpProfile^.rMaxRampPress,
+                    MaxDeceleration := mpProfile^.rMaxRampPress,
+                    RampType := mpProfile^.RampTypePress);
+        IF fbProfileCalc.Error THEN // profile not possible
+            
+            IF (fbProfileCalc.ErrorOnPoint = -1) THEN
+                SET_ALARM(Name := erProfileSequence,
+                        SubID1 := sv_DeviceId.CompId,
+                        SubID2 := sv_DeviceId.IndexId,
+                        SubID3 := mMoveDir);
+            ELSE
+                SET_ALARM(Name := erPresProfDamaged,
+                        SubID1 := sv_DeviceId.CompId,
+                        SubID2 := sv_DeviceId.IndexId,
+                        SubID3 := mMoveDir,
+                        SubID4 := fbProfileCalc.ErrorOnPoint,
+                        Param1 := fbProfileCalc.MaximumPossibleValue);
+            END_IF;
+            mbProfileError := TRUE;
+            
+        ELSE // copy data to yx - generator values and reset alarm
+            PressureProfile.ProfilePoints := fbProfileCalc.CalcedProfile;
+
+            // calced profile for vis
+            IF CHECK_REF(mpProfile^.pCalculatedProfile^) THEN
+               IF mpProfile^.pCalculatedProfile^.PressureProfile.CalculatedProfile <> fbProfileCalc.CalcedProfile THEN
+                  mpProfile^.pCalculatedProfile^.PressureProfile.CalculatedProfile := fbProfileCalc.CalcedProfile;
+                  mpProfile^.pCalculatedProfile^.PressureProfile.iProfileChangedCounter := mpProfile^.pCalculatedProfile^.PressureProfile.iProfileChangedCounter + 1;                  
+               END_IF;               
+            END_IF;
+            
+            IF mpProfile^.Profile.Points[1].rPressRamp > 0.0 THEN
+                PressureProfile.Acceleration := mpProfile^.rMaxRampPress * mpProfile^.Profile.Points[1].rPressRamp / 100.0;
+            ELSE
+                PressureProfile.Acceleration := mpProfile^.rMaxRampPress;
+            END_IF;
+            PressureProfile.StopAcceleration := mpProfile^.rMaxRampPress; // use 100% for stop with manual mode
+            // profile output uses Profile.Acceleration if InterAcceleration = 0.0
+            // rdl: use stop ramp or ramp in profile         
+            PressureProfile.InterAcceleration := mpProfile^.rMaxRampPress * mpProfile^.Profile.Points[iNoOfPoints].rPressRamp / 100.0;;
+            
+            RESET_ALARM(Name := erProfileSequence,
+                        SubID1 := sv_DeviceId.CompId,
+                        SubID2 := sv_DeviceId.IndexId,
+                        SubID3 := mMoveDir);
+            
+            RESET_ALARM(Name := erPresProfDamaged,
+                        SubID1 := sv_DeviceId.CompId,
+                        SubID2 := sv_DeviceId.IndexId,
+                        SubID3 := mMoveDir,
+                        SubID4 := ANY);        
+        END_IF;
+    ELSE
+    // jump at start position
+        FOR i := 1 TO iNoOfPoints-1 DO
+            PressureProfile.ProfilePoints.Point[2*i-1].rX := mpProfile^.Profile.Points[i].rStartPos;
+            PressureProfile.ProfilePoints.Point[2*i-1].rY := mpProfile^.Profile.Points[i].rPressure;
+            PressureProfile.ProfilePoints.Point[2*i].rX := mpProfile^.Profile.Points[i+1].rStartPos;
+            PressureProfile.ProfilePoints.Point[2*i].rY := mpProfile^.Profile.Points[i].rPressure;
+        END_FOR;
+        PressureProfile.ProfilePoints.Point[2*iNoOfPoints-1].rX := mpProfile^.Profile.Points[iNoOfPoints].rStartPos;
+        PressureProfile.ProfilePoints.Point[2*iNoOfPoints-1].rY := mpProfile^.Profile.Points[iNoOfPoints].rPressure;
+        PressureProfile.ProfilePoints.uNoOfPoints := 2*iNoOfPoints - 1;
+
+        // calced profile for vis
+        IF CHECK_REF(mpProfile^.pCalculatedProfile^) THEN
+           IF mpProfile^.pCalculatedProfile^.PressureProfile.CalculatedProfile <> PressureProfile.ProfilePoints THEN
+              mpProfile^.pCalculatedProfile^.PressureProfile.CalculatedProfile := PressureProfile.ProfilePoints;
+              mpProfile^.pCalculatedProfile^.PressureProfile.iProfileChangedCounter := mpProfile^.pCalculatedProfile^.PressureProfile.iProfileChangedCounter + 1;
+           END_IF;            
+        END_IF;
+    
+        PressureProfile.Acceleration := 1.0e10;
+        PressureProfile.StopAcceleration := mpProfile^.rMaxRampPress; // use 100% for stop with manual mode
+        PressureProfile.InterAcceleration := mpProfile^.rMaxRampPress * mpProfile^.Profile.Points[iNoOfPoints].rPressRamp / 100.0;
+    END_IF;
+    
+    //calculate direction of the profile
+    IF iNoOfPoints = 1 THEN  // only one point, should not occur
+        IF mpProfile^.Profile.Points[iNoOfPoints].rStartPos >= 0.0 THEN
+            mbDirection := TRUE;
+        ELSE
+            mbDirection := FALSE;
+        END_IF;
+    ELSIF iNoOfPoints < 21 THEN // max profile points = 20
+        mbDirection := mpProfile^.Profile.Points[iNoOfPoints].rStartPos > mpProfile^.Profile.Points[1].rStartPos;            
+    ELSE    
+        mbDirection := mpProfile^.Profile.Points[20].rStartPos > mpProfile^.Profile.Points[1].rStartPos;    
+    END_IF;
+    
+    mbReParam := TRUE;
+    
+    STOP_PROCESS_ALGORITHM();
+   
+END_IF;
+
+@END_Body 
+
+@@@BEG_Comment@@@ 
+@TL(3)
+This algorithm does the initialization for the profile movement.
+This means profile calculation of pressure and velocity profile.
+If an error is detected during profile calculation an error will be set. 
+@@@END_Comment@@@ 
+
+@BEG_Body 
+@TL(37)
+(**************************************** WARNING ********************************************
+ *** The KEBA Kemro K2 System including software is not intended for safety control tasks! ***
+ ***                       For further information see Comment tab!                        ***
+ *********************************************************************************************)
+
+bStartPosChanged := FALSE;
+bInstanceDataChanged := FALSE;
+
+IF mbRefCalcDurationStartPosValid THEN
+   bStartPosChanged := mprCalcDurationStartPosition^ <> mrCalcDurationStartPos;
+   mrCalcDurationStartPos := mprCalcDurationStartPosition^;
+END_IF;
+
+IF mbRefInstanceDataInterPosValid THEN
+   //check if instance data (except duration) has changed
+   FOR i := 1 TO cMaxIntermediateConditions DO
+      IF (mpInstanceDataInterPos^[i].rTargetValue <> mInstanceDataInterPos[i].rTargetValue) OR
+         mpInstanceDataInterPos^[i].rDeceleration <> mInstanceDataInterPos[i].rDeceleration OR
+         mpInstanceDataInterPos^[i].rAcceleration <> mInstanceDataInterPos[i].rAcceleration THEN
+         bInstanceDataChanged := TRUE;
+         EXIT;   
+      END_IF; 
+   END_FOR;
+   
+   mInstanceDataInterPos := mpInstanceDataInterPos^;
+END_IF;
+
+
+//Recalculate duration(s)
+IF bStartPosChanged OR bInstanceDataChanged THEN
+   mbReCalcDurations := TRUE;
+   START_PROCESS_ALGORITHM(paCalcDurations);
+END_IF;
+
+
+
+
+@END_Body 
+
+@@@BEG_Comment@@@ 
+@TL(2)
+This algorithm reacts on changes of the profile.
+If the profile changes the process algorithm for calculation of the duration is started
+@@@END_Comment@@@ 
+
+@BEG_Body 
+@TL(72)
+(**************************************** WARNING ********************************************
+ *** The KEBA Kemro K2 System including software is not intended for safety control tasks! ***
+ ***                       For further information see Comment tab!                        ***
+ *********************************************************************************************)
+
+IF mbReCalcDurations THEN
+     
+    bInterPosMovementsAvailable := FALSE;
+    
+    //Calculate duration(s) for interposition movement(s)
+    IF mbRefInstanceDataInterPosValid AND mbRefCalcDurationStartPosValid THEN
+        FOR i := 1 TO cMaxIntermediateConditions DO
+            IF (mpInstanceDataInterPos^[i].rTargetValue <> 0.0) THEN
+                bInterPosMovementsAvailable := TRUE;             
+                IF (i = 1) THEN                   
+                    rCalcDurationStartPos := mprCalcDurationStartPosition^;                   
+                ELSE
+                    rCalcDurationStartPos := mpInstanceDataInterPos^[i - 1].rTargetValue;
+                END_IF;
+                rCalcDurationEndPos := mpInstanceDataInterPos^[i].rTargetValue;
+                                    
+                mpInstanceDataInterPos^[i].dCalculatedDuration := FCalcDuration(StartPosition := rCalcDurationStartPos,
+                                                                                StartVelocity := 0.0,   //not used
+                                                                                EndPosition := rCalcDurationEndPos,
+                                                                                Profile := VelocityProfile.ProfilePoints,
+                                                                                StartRamp := VelocityProfile.Acceleration,
+                                                                                StopRamp := 0.0,        //not used
+                                                                                ConstOutput := 0.0,     //not used
+                                                                                UseConstOutput := FALSE); 
+                    
+            ELSE              
+                //No more interposition movements -> Exit
+                EXIT;            
+            END_IF;    
+        END_FOR;
+
+    END_IF;
+        
+    //Calculate duration for "normal" movement
+    IF mbRefCalcedDurationValid AND mbRefCalcDurationStartPosValid THEN
+        IF bInterPosMovementsAvailable THEN
+            //Use endposition of last interposition movement
+            rCalcDurationStartPos := rCalcDurationEndPos;           
+        ELSE
+            //Use start position of profile
+            rCalcDurationStartPos := mprCalcDurationStartPosition^;        
+        END_IF;
+                
+        IF mpProfile^.bOpenEndProfile THEN
+            //Last point = -1000.0 -> Set endposition for calculation to 0.0 
+            rCalcDurationEndPos := 0.0;         
+        ELSE
+            rCalcDurationEndPos := mpProfile^.Profile.Points[mpProfile^.Profile.iNoOfPoints + 1].rStartPos;
+        END_IF;
+        
+        mpdCalcedDuration^ := FCalcDuration(StartPosition := rCalcDurationStartPos,
+                                            StartVelocity := 0.0,   //not used
+                                            EndPosition := rCalcDurationEndPos,
+                                            Profile := VelocityProfile.ProfilePoints,
+                                            StartRamp := VelocityProfile.Acceleration,
+                                            StopRamp := 0.0,        //not used
+                                            ConstOutput := 0.0,     //not used
+                                            UseConstOutput := FALSE);
+        
+    END_IF;
+    
+    mbReCalcDurations := FALSE;  
+END_IF;
+
+STOP_PROCESS_ALGORITHM();
+
+
+@END_Body 
+
+@@@BEG_Comment@@@ 
+@TL(0)
+
+@@@END_Comment@@@ 
+
+@BEG_Body 
+@TL(26)
+(**************************************** WARNING ********************************************
+ *** The KEBA Kemro K2 System including software is not intended for safety control tasks! ***
+ ***                       For further information see Comment tab!                        ***
+ *********************************************************************************************)
+
+IF NOT bInitDone THEN
+    IF bUseAccelerationReduction THEN
+        mprMaxAbsAccelStart := prMaxAbsAccelStart;
+        mprMaxAbsAccelEnd   := prMaxAbsAccelEnd;
+        mprPosAccelStart    := prPosAccelStart;
+        mprPosAccelEnd      := prPosAccelEnd;
+        mbMaxRampsLinked    := CHECK_REF(mprPosAccelStart^) AND CHECK_REF(mprPosAccelEnd^) AND
+                            CHECK_REF(mprMaxAbsAccelStart^) AND CHECK_REF(mprMaxAbsAccelEnd^);
+    ELSE
+       mbMaxRampsLinked := FALSE; 
+    END_IF;
+    IF mbMaxRampsLinked THEN
+        START_PROCESS_ALGORITHM(paRecalcMaxRampsChanged);
+    END_IF;
+    
+    bInitDone := TRUE;
+END_IF;
+
+
+
+
+@END_Body 
+
+@@@BEG_Comment@@@ 
+@TL(2)
+This algorithm copies the input values to local variables and starts
+the process algorithm for initialization of the profile.
+@@@END_Comment@@@ 
+
+@BEG_Body 
+@TL(8)
+IF mbMaxRampsLinked THEN
+   //no calculation if ramps have not been assigned
+   START_PROCESS_ALGORITHM(paRecalcMaxRampsChanged);
+END_IF;
+
+
+
+
+@END_Body 
+
+@@@BEG_Comment@@@ 
+@TL(0)
+
+@@@END_Comment@@@ 
+
+@BEG_Body 
+@TL(35)
+// calculate k*x + d
+IF ((ABS(mprPosAccelEnd^ - mprPosAccelStart^) > 0.0) AND
+   ((mprMaxAbsAccelStart^ > 0.0) AND (mprMaxAbsAccelEnd^ > 0.0))) THEN
+    // calc linearization  
+    rAccelRampStart := mprMaxAbsAccelStart^/100.0;
+    rAccelRampEnd := mprMaxAbsAccelEnd^/100.0;    
+    rLinearValPos := mprPosAccelStart^;
+    rLinearFactor := (rAccelRampEnd - rAccelRampStart) / 
+                     (mprPosAccelEnd^ - mprPosAccelStart^);
+    rConstantTerm := rAccelRampStart;
+    IF (rAccelRampStart > rAccelRampEnd) THEN
+        rLinearFactor := rLinearFactor / rAccelRampStart;
+        rConstantTerm := rConstantTerm / rAccelRampStart;
+    ELSE
+        rLinearFactor := rLinearFactor / rAccelRampEnd;
+        rConstantTerm := rConstantTerm / rAccelRampEnd;
+    END_IF;
+    // use lower value for soft stop
+    IF (mprMaxAbsAccelEnd^ < mprMaxAbsAccelStart^) THEN
+        mrStopAccelCalced  := mprMaxAbsAccelEnd^;
+    ELSE
+        mrStopAccelCalced := mprMaxAbsAccelStart^;
+    END_IF;
+    
+    START_PROCESS_ALGORITHM(paInit);
+ELSE
+    rLinearValPos := 0.0;
+    rLinearFactor := 0.0;
+    rConstantTerm := 1.0;
+    mrStopAccelCalced := 0.0;
+END_IF;
+
+STOP_PROCESS_ALGORITHM();
+
+
+@END_Body 
+
+@@@BEG_Comment@@@ 
+@TL(0)
+
+@@@END_Comment@@@ 
+
+@BEG_Body 
+@TL(2)
+CalcedVelocityProfile := VelocityProfile;
+
+@END_Body 
+
+@@@BEG_Comment@@@ 
+@TL(0)
+
+@@@END_Comment@@@ 
+@END_Body 
+
+@END_Contents 

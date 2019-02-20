@@ -1,0 +1,110 @@
+// =============================================================================
+// Ejector mode
+// available modes:
+// 0: not used, 1: hold, 2: normal, vibrate, 3: parallel hold, 4: parallel shake
+// 5: after mold close hold, 6: after mold close normal, vibrate
+// =============================================================================
+
+KePlast_ODC_Option
+FileFormatVersion = 1.0
+
+SelectorVar = Ejector<1>.sv_iODCSelector
+
+// -----------------------------------------------------------------------------
+// part for ejector in hold mode
+// -----------------------------------------------------------------------------
+{Sequ}
+   // movement to insert: ejector bwd
+   Ejector<1>.Bwd
+{Sequ_End}
+
+//hold
+{Insert}
+   SelectorValue  = 1
+   Insert         = Before Mold.BeginClosingSequence
+   InsertPriority = 10
+{Insert_End}
+
+//parallel hold 
+{Insert}
+   SelectorValue  = 3
+   Insert         = Before Mold.BeginClosingSequence
+   InsertPriority = 10
+{Insert_End}
+
+//after mold close hold 
+{Insert}
+   SelectorValue  = 5
+   Insert         = Before Mold.BeginClosingSequence
+   InsertPriority = 10
+{Insert_End}
+
+{Sequ}
+   // movement to insert: ejector fwd
+   Ejector<1>.Fwd
+{Sequ_End}
+
+//hold
+{Insert}
+   SelectorValue  = 1
+   Insert         = After Mold.EndOpeningSequence
+   InsertPriority = 10
+{Insert_End}
+
+//parallel hold
+{Insert}
+   SelectorValue  = 3
+   ParallelBegin  = Before Mold.Bwd
+   ParallelEnd	  = After Mold.Bwd
+   InsertPriority = 1000
+{Insert_End}
+
+//after mold close hold
+{Insert}
+   SelectorValue  = 5
+   Insert         = After Mold.EndClosingSequence
+   InsertPriority = 1
+{Insert_End}
+// -----------------------------------------------------------------------------
+
+
+// -----------------------------------------------------------------------------
+// part for ejector in normal or vibrate mode
+// -----------------------------------------------------------------------------
+{Sequ}
+   // movement to insert: ejector shake
+   Ejector<1>.Fwd
+   Ejector<1>.Shake
+   Ejector<1>.Bwd
+{Sequ_End}
+
+// ejector mode is normal or vibrate
+{Insert}
+   SelectorValue    = 2
+   Insert           = After Mold.EndOpeningSequence
+   InsertPriority   = 10
+   DominantMovement = Ejector<1>.Fwd
+{Insert_End}
+
+
+// parallel normal or vibrate
+{Insert}
+   SelectorValue    = 4
+   ParallelBegin	= Before Mold.Bwd
+   ParallelEnd 		= After Mold.Bwd
+   InsertPriority   = 1000
+   DominantMovement = Ejector<1>.Fwd
+{Insert_End}
+
+// after mold close normal or vibrate
+{Insert}
+   SelectorValue    = 6
+   Insert           = After Mold.EndClosingSequence
+   InsertPriority   = 1
+   DominantMovement = Ejector<1>.Fwd
+{Insert_End}
+// -----------------------------------------------------------------------------
+
+// signed: 29.09.2010 09:45:38
+Username = obd
+Checksum = 0xdeda58fca64c02e87708c58931e8e52b

@@ -1,0 +1,161 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<base:Mask xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xmlns:base="http://www.keba.at/viewedit.model.base" widgetId="kvs.mask" name="MoldTwoPlatenMask1">
+  <resolution width="714" height="476"/>
+  <position/>
+  <attributeValues key="Title" value="Mold"/>
+  <attributeValues key="Icon" value="Mold1/hmi/images/iconMoldMask.gif"/>
+  <attributeValues key="Background" value="BG_Desktop:30,30,30"/>
+  <layout layoutID="keplast.kvs.layout.multisplitlayout" name="MultiSplitLayout">
+    <attributeValues key="InsetsTop" value="0, 0, 0, 0"/>
+    <attributeValues key="InsetsBottom" value="0, 0, 0, 0"/>
+  </layout>
+  <widgetInstances xsi:type="base:ContainerWidgetInstance" widgetId="kvs.panel" name="container6" layoutConstraint="BOTTOM">
+    <resolution width="714" height="39"/>
+    <position y="437"/>
+    <attributeValues key="Background" value="BG_Panel:220,220,220"/>
+    <border name="TitledBorder" id="kv.border.TitledBorder"/>
+    <layout layoutID="keplast.kvs.layout.multisplitlayout" name="MultiSplitLayout"/>
+    <widgetInstances widgetId="keplast.kvs.separator" name="separator2" layoutConstraint="SEPARATOR">
+      <resolution width="2" height="29"/>
+      <position x="356" y="5"/>
+      <attributeValues key="Foreground" value="gray_mid:153,153,153"/>
+    </widgetInstances>
+    <widgetInstances widgetId="keplast.kvs.actsetnumfieldtext" name="numfieldMoldProtectTime" layoutConstraint="LEFT">
+      <resolution width="347" height="29"/>
+      <position x="6" y="5"/>
+      <attributeValues key="VariableActual" value="Mold1.sv_dMoldProtectTimeAct"/>
+      <attributeValues key="Variable" value="Mold1.sv_dMoldProtectTimeSet"/>
+      <attributeValues key="PreferredSize" value="353, 29"/>
+      <attributeValues key="PreferredColumns" value="44"/>
+      <dynamicAttributes key="Create">
+        <value function="isDeviceElectric : UserFunctions" equal="false" unequal="true">
+          <parameter key="1" value="devicename;PlastFunctionUtils.createDeviceName(&quot;Mold1&quot;)"/>
+        </value>
+      </dynamicAttributes>
+    </widgetInstances>
+    <widgetInstances widgetId="keplast.kvs.actsetnumfieldtext" name="numfieldPressureRelease" layoutConstraint="RIGHT">
+      <resolution width="347" height="29"/>
+      <position x="361" y="5"/>
+      <attributeValues key="VariableActual" value="TieBars1.sv_rActPressure"/>
+      <attributeValues key="Variable" value="TieBars1.sv_rHighPressureReleaseLimit"/>
+    </widgetInstances>
+  </widgetInstances>
+  <widgetInstances xsi:type="base:ContainerWidgetInstance" widgetId="kvs.panel" name="container1" layoutConstraint="TOP">
+    <resolution width="714" height="432"/>
+    <position/>
+    <attributeValues key="PreferredSize" value="708, 432"/>
+    <layout layoutID="kvs.layout.GridLayout" name="GridLayout">
+      <attributeValues key="Columns" value="2"/>
+    </layout>
+    <widgetInstances xsi:type="base:ContainerWidgetInstance" widgetId="keplast.kvs.borderpanelsmall" name="panelMoldClose" layoutConstraint="null">
+      <resolution width="357" height="432"/>
+      <position/>
+      <attributeValues key="Title" value="Mold close"/>
+      <layout layoutID="keplast.kvs.layout.multisplitlayout" name="MultiSplitLayout">
+        <attributeValues key="PercentLeft" value="100"/>
+        <attributeValues key="PercentRight" value="0"/>
+      </layout>
+      <widgetInstances widgetId="keplast.kvs.kprofile.nofstages" name="profileStagesField1" layoutConstraint="TITLE_RIGHT">
+        <resolution width="120" height="22"/>
+        <position x="234" y="3"/>
+        <attributeValues key="Profile" value="Mold1.sv_MoldFwdProfVisSrc"/>
+      </widgetInstances>
+      <widgetInstances xsi:type="base:ContainerWidgetInstance" widgetId="kvs.panel" name="container2" layoutConstraint="TOP">
+        <resolution width="345" height="395"/>
+        <position x="6" y="33"/>
+        <attributeValues key="PreferredSize" value="345, 399"/>
+        <layout layoutID="kvs.layout.VerticalFlowLayout" name="VerticalFlowLayout">
+          <attributeValues key="VerticalFill" value="true"/>
+          <attributeValues key="Hgap" value="0"/>
+          <attributeValues key="Vgap" value="0"/>
+        </layout>
+        <widgetInstances xsi:type="base:ContainerWidgetInstance" widgetId="kvs.panel" name="container3" layoutConstraint="null">
+          <resolution width="345" height="113"/>
+          <position/>
+          <border name="EmptyBorder" id="kv.border.EmptyBorder">
+            <attributeValues key="InnerInsets" value="5, 42, 5, 42"/>
+          </border>
+          <layout layoutID="kvs.layout.BorderLayout" name="BorderLayout"/>
+          <widgetInstances widgetId="keplast.kvs.kprofile.view" name="profileView1" layoutConstraint="NORTH">
+            <resolution width="261" height="103"/>
+            <position x="42" y="5"/>
+            <attributeValues key="Profile" value="Mold1.sv_MoldFwdProfVisSrc"/>
+          </widgetInstances>
+        </widgetInstances>
+        <widgetInstances widgetId="keplast.kvs.kprofile.table" name="profileTableMoldClose" layoutConstraint="null">
+          <resolution width="345" height="282"/>
+          <position y="113"/>
+          <attributeValues key="ProfileName" value="Mold1.sv_MoldFwdProfVisSrc"/>
+          <attributeValues key="IsLeftRightIncreasing" value="false"/>
+          <attributeValues key="IsUpDownIncreasing" value="false"/>
+          <attributeValues key="VariableActPosition" value="Mold1.sv_rMoldPosition"/>
+          <attributeValues key="VariableMaxPosition" value="Mold1.sv_rMoldStroke"/>
+          <attributeValues key="VariableIsReachedLeft" value="Mold1.sv_bMoldOpen"/>
+          <attributeValues key="VariableIsReachedRight" value="Mold1.sv_bMoldClosed"/>
+          <attributeValues key="VisiblePressure" value="false"/>
+          <attributeValues key="VisibleVelocity" value="true"/>
+          <attributeValues key="ProfileReverted" value="true"/>
+          <attributeValues key="TextOneToLastStage" value="Protect"/>
+          <attributeValues key="VisibleOneToLastPressure" value="true"/>
+          <attributeValues key="VariableProtectPressPlaus" value="Mold1.sv_rMaxPressureProtect"/>
+          <attributeValues key="VisibleLastPressure" value="false"/>
+          <attributeValues key="VisibleLastPosition" value="false"/>
+          <attributeValues key="VisibleLastVelocity" value="false"/>
+          <attributeValues key="PreferredSize" value="345, 282"/>
+        </widgetInstances>
+      </widgetInstances>
+    </widgetInstances>
+    <widgetInstances xsi:type="base:ContainerWidgetInstance" widgetId="keplast.kvs.borderpanelsmall" name="panelMoldOpen" layoutConstraint="null">
+      <resolution width="357" height="432"/>
+      <position x="357"/>
+      <attributeValues key="Title" value="Mold open"/>
+      <layout layoutID="keplast.kvs.layout.multisplitlayout" name="MultiSplitLayout">
+        <attributeValues key="PercentLeft" value="100"/>
+        <attributeValues key="PercentRight" value="0"/>
+      </layout>
+      <widgetInstances widgetId="keplast.kvs.kprofile.nofstages" name="profileStagesField2" layoutConstraint="TITLE_RIGHT">
+        <resolution width="120" height="22"/>
+        <position x="234" y="3"/>
+        <attributeValues key="Profile" value="Mold1.sv_MoldBwdProfVis"/>
+      </widgetInstances>
+      <widgetInstances xsi:type="base:ContainerWidgetInstance" widgetId="kvs.panel" name="container4" layoutConstraint="TOP">
+        <resolution width="345" height="395"/>
+        <position x="6" y="33"/>
+        <attributeValues key="PreferredSize" value="345, 395"/>
+        <layout layoutID="kvs.layout.VerticalFlowLayout" name="VerticalFlowLayout">
+          <attributeValues key="VerticalFill" value="true"/>
+          <attributeValues key="Hgap" value="0"/>
+          <attributeValues key="Vgap" value="0"/>
+        </layout>
+        <widgetInstances xsi:type="base:ContainerWidgetInstance" widgetId="kvs.panel" name="container5" layoutConstraint="null">
+          <resolution width="345" height="113"/>
+          <position/>
+          <border name="EmptyBorder" id="kv.border.EmptyBorder">
+            <attributeValues key="InnerInsets" value="5, 42, 5, 42"/>
+          </border>
+          <layout layoutID="kvs.layout.BorderLayout" name="BorderLayout"/>
+          <widgetInstances widgetId="keplast.kvs.kprofile.view" name="profileView2" layoutConstraint="NORTH">
+            <resolution width="261" height="103"/>
+            <position x="42" y="5"/>
+            <attributeValues key="Profile" value="Mold1.sv_MoldBwdProfVis"/>
+          </widgetInstances>
+        </widgetInstances>
+        <widgetInstances widgetId="keplast.kvs.kprofile.table" name="profileTableMoldOpen" layoutConstraint="null">
+          <resolution width="345" height="282"/>
+          <position y="113"/>
+          <attributeValues key="ProfileName" value="Mold1.sv_MoldBwdProfVis"/>
+          <attributeValues key="IsLeftRightIncreasing" value="false"/>
+          <attributeValues key="IsUpDownIncreasing" value="true"/>
+          <attributeValues key="VariableActPosition" value="Mold1.sv_rMoldPosition"/>
+          <attributeValues key="VariableMaxPosition" value="Mold1.sv_rMoldStroke"/>
+          <attributeValues key="VariableIsReachedLeft" value="Mold1.sv_bMoldOpen"/>
+          <attributeValues key="VariableIsReachedRight" value="Mold1.sv_bMoldClosed"/>
+          <attributeValues key="VisiblePressure" value="false"/>
+          <attributeValues key="VisibleVelocity" value="true"/>
+          <attributeValues key="TextLastStage" value="End"/>
+          <attributeValues key="PreferredSize" value="345, 282"/>
+        </widgetInstances>
+      </widgetInstances>
+    </widgetInstances>
+  </widgetInstances>
+</base:Mask>

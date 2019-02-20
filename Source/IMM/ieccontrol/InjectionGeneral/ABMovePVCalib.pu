@@ -1,0 +1,1264 @@
+(*
+@h    ! WARNING !
+@h    The Kemro K2 system (including software) only meets category B according to EN 954-1,
+@h    thus it is not intended for usage in safety-relevant control applications in the field 
+@h    of personal safety (e.g. emergency stop).
+@h    To implement potentially necessary safety-relevant control tasks, always use additional 
+@h    external safety devices that are intended for the particular purpose, and meet the necessary 
+@h    functional safety.
+@h    For further information see EN 954-1 (EN ISO 13849-1) and/or the K2-x00 user manual, chapter 
+@h    "CE conformity, directives and standards".
+
+In this AB the inject movements are realized.
+This means inject movement with cutoff detection, inject movement in setup mode,
+calibration for screw transducer (forward) and also the inject movement for auto purging
+
+@FunctionID: S_KPIEC_PRINJ_01
+@FunctionID: S_KPIEC_PRINJ_02
+@FunctionID: S_KPIEC_CALTRANS_04
+
+
+*)
+
+IMPORT_OVER_LISTFILE
+ GET_MY_FU_NAME
+, SET_ALARM
+, FCalculateCylinderSize
+, FCalcScrewSize
+, cLockGroupHeatingNozzle
+, cLockGroupSafetyGateNozzle
+, cLockGroupSafetyGateMold
+, cLockGroupMotor
+, nActive
+, nInactive
+, nSetup
+, tnCalibState_Aborted
+, tnCalibState_Error
+, cValueChangeDuringCalibTooLow
+, cMovePVCalib
+, MAX_VOLTAGE
+, cMoveBwd
+, tnOperationMode
+, tsVelPre
+, tsMoveData
+, KAPPL_LintabData3D
+, KCTRL_Stable_Param
+, tsCylinderData
+, tsTraceLevel
+, tsMoveCtrl
+, ABPumpPressureVelocityCalib
+, tsPumpCalibError
+, tyCalibDevices
+, tsDeviceId
+, tyPumpData
+, ABMovementRegister
+, FBSetMovementState
+
+END_IMPORT
+
+ALGORITHM_BLOCK ABMovePVCalib #DUMMY_EDIT_BLOCK
+
+SYSTEM_VAR
+ sv_OperationMode : tnOperationMode;
+ sv_rPressure : REAL;
+ sv_rVelocity : REAL;
+ sv_bOutputActive : BOOL (* Output is active *);
+ sv_bPreOutputReady : BOOL (* PreOutput is ready *);
+ sv_bTransducerError : BOOL;
+ sv_bDoPumpPressureCalib : BOOL;
+ sv_bDoPumpVelocityCalib : BOOL;
+ sv_ConstPumpPressureVelocCalib : tsVelPre;
+ sv_rScrewVelocity : REAL;
+ sv_MovePVCalib : tsMoveData;
+ sv_rActPressureHydr : REAL;
+ sv_TmpLintab : KAPPL_LintabData3D;
+ sv_rServoOutput : REAL;
+ sv_ConstServoPressureVelocCalib : tsVelPre;
+ sv_bPumpPreVelCalibAnotherStepN : BOOL;
+ sv_bPumpPreVelCalibDone : BOOL;
+ sv_rScrewPosition : REAL;
+ sv_PressureStableParam : KCTRL_Stable_Param;
+ sv_VelocityStableParam : KCTRL_Stable_Param;
+ sv_CylinderData : tsCylinderData;
+ sv_rScrewDiameter : REAL;
+ sv_rTmpMaxAbsFlow : REAL;
+ sv_TraceLevel : tsTraceLevel;
+ sv_rScrewVolume : REAL;
+ sv_rMaxVoltageVelocityPresCalib : REAL;
+ sv_rMaxMeasurePositionRel : REAL;
+ sv_PumpCalibError : tsPumpCalibError;
+ sv_PumpCalibDevices : tyCalibDevices (* !!! device 1 - 20 reserved !!! *);
+ sv_MoveDecompAftPlast : tsMoveData;
+ sv_MoveInject : tsMoveData;
+ sv_rScrewVelocityAbs : REAL (* screw velocity in mm/s *);
+ sv_DeviceId : tsDeviceId;
+ ai_Pressure : REAL;
+ ai_SysPressure : REAL;
+ sv_iCalibratingPump : DINT (* number of pump which is actually calibrating *);
+ sv_PumpData : tyPumpData;
+END_VAR
+
+SYSTEM_OBJECT
+ TaskInject : TASK;
+ erSetupModeRequiredForCalib : ALARM;
+END_OBJECT
+
+VAR_EXTERNAL
+ g_MoveCtrl : tsMoveCtrl;
+END_VAR
+
+VAR
+ abPumpPressureVelocityCalib : ABPumpPressureVelocityCalib;
+END_VAR
+
+(*
+This algorithm is necessary for registering the available movements
+and the according parameters (Lockgroups, icon path, delay time, ....)
+*)
+
+ALGORITHM aRegister
+
+
+VAR
+ abInjectRegister : ABMovementRegister;
+END_VAR
+#BEGIN_EDIT_BLOCK
+(**************************************** WARNING ********************************************
+ *** The KEBA Kemro K2 System including software is not intended for safety control tasks! ***
+ ***                       For further information see Comment tab!                        ***
+ *********************************************************************************************)
+
+//register inject movement
+sv_MovePVCalib.LockGroups[1] := cLockGroupHeatingNozzle;
+sv_MovePVCalib.LockGroups[2] := cLockGroupSafetyGateNozzle;
+sv_MovePVCalib.LockGroups[3] := cLockGroupSafetyGateMold;
+sv_MovePVCalib.LockGroups[4] := cLockGroupMotor;
+sv_MovePVCalib.sIconPath := CONCAT(GET_MY_FU_NAME(),"\hmi\images\movScrewFwd.gif");
+
+abInjectRegister.aRegister(@sv_MovePVCalib);
+
+
+
+;#END_EDIT_BLOCK END_ALGORITHM
+
+(*
+This algorithm is responsible for executing the movement.
+Depending on MoveId, OperationMode and activated transducer calibration the according
+movement is executed.
+The different actions contain the movement blocks and the according parameters.
+*)
+
+ALGORITHM aRun
+
+
+VAR_INPUT
+ bStop : BOOL (* flag if the movement should be stopped *);
+END_VAR
+
+VAR_OUTPUT
+ bReady : BOOL (* information if movement is ready *);
+END_VAR
+
+VAR
+ fbSetMovementState : FBSetMovementState;
+ bError : BOOL;
+ rSizeHydraulicCylinder : REAL;
+ rSizeScrewCylinder : REAL;
+ rTmpMaxAbsVel : REAL;
+ iLastCalibratedPump : DINT;
+END_VAR
+
+(* IecGraph-Code *)
+
+(* init step *)
+INITIAL_STEP START:
+AStart (P);
+END_STEP
+
+ACTION AStart: #BEGIN_EDIT_BLOCK
+bReady := FALSE;
+fbSetMovementState(MoveId   := g_MoveCtrl.pData^.MoveId,
+                   MoveDir  := g_MoveCtrl.pData^.MoveDir,
+                   State    := nActive);
+
+;#END_EDIT_BLOCK END_ACTION (*AStart*)
+
+(* steps *)
+STEP S_InitMaxVoltage:
+AInit (P);
+END_STEP
+
+STEP S_NotInSetupMode:
+ANotInSetupMode (P);
+END_STEP
+
+ACTION ANotInSetupMode: #BEGIN_EDIT_BLOCK
+SET_ALARM(erSetupModeRequiredForCalib);
+
+;#END_EDIT_BLOCK END_ACTION (*ANotInSetupMode*)
+STEP S_InjectPresVelCalib:
+AResetCalibPressureVelocity (P);
+APressureVelocityCalib (N);
+ACalc (P0);
+END_STEP
+
+STEP S_Ready:
+AReady (P);
+END_STEP
+
+ACTION AReady: #BEGIN_EDIT_BLOCK
+bReady := TRUE;
+fbSetMovementState(MoveId   := g_MoveCtrl.pData^.MoveId,
+                   MoveDir  := g_MoveCtrl.pData^.MoveDir,
+                   State    := nInactive);
+
+;#END_EDIT_BLOCK END_ACTION (*AReady*)
+
+(* transitions *)
+GO_ON_TRANSITION TSetupMode (* TSetupMode *) FROM START TO S_InitMaxVoltage :=  #BEGIN_EDIT_BLOCK
+sv_OperationMode = nSetup
+
+;#END_EDIT_BLOCK
+END_TRANSITION
+
+TRANSITION Trans6 (* Trans6 *) FROM S_InitMaxVoltage TO S_InjectPresVelCalib :=  #BEGIN_EDIT_BLOCK
+TRUE
+;#END_EDIT_BLOCK
+END_TRANSITION
+
+GO_ON_TRANSITION TNotSetupMode (* TNotSetupMode *) FROM START TO S_NotInSetupMode :=  #BEGIN_EDIT_BLOCK
+sv_OperationMode <> nSetup
+;#END_EDIT_BLOCK
+END_TRANSITION
+
+GO_ON_TRANSITION Trans35 (* Trans35 *) FROM S_NotInSetupMode TO S_Ready :=  #BEGIN_EDIT_BLOCK
+TRUE
+;#END_EDIT_BLOCK
+END_TRANSITION
+
+TRANSITION TPVCalibDone (* TPVCalibDone *) FROM S_InjectPresVelCalib TO S_Ready :=  #BEGIN_EDIT_BLOCK
+NOT abPumpPressureVelocityCalib.aRun.bActive
+;#END_EDIT_BLOCK
+END_TRANSITION
+
+TRANSITION TReady (* TReady *) FROM S_Ready TO START :=  #BEGIN_EDIT_BLOCK
+TRUE
+;#END_EDIT_BLOCK
+END_TRANSITION
+
+(* end IecGraph-Code *)
+(* sfc-code *)
+
+(* stand alone actions *)
+ACTION AResetCalibPressureVelocity: #BEGIN_EDIT_BLOCK
+(**************************************** WARNING ********************************************
+ *** The KEBA Kemro K2 System including software is not intended for safety control tasks! ***
+ ***                       For further information see Comment tab!                        ***
+ *********************************************************************************************)
+
+bError := FALSE;
+abPumpPressureVelocityCalib.aRun(bStart := FALSE);
+
+;#END_EDIT_BLOCK END_ACTION (*AResetCalibPressureVelocity*)
+ACTION ACalc: #BEGIN_EDIT_BLOCK
+(**************************************** WARNING ********************************************
+ *** The KEBA Kemro K2 System including software is not intended for safety control tasks! ***
+ ***                       For further information see Comment tab!                        ***
+ *********************************************************************************************)
+
+IF sv_bPumpPreVelCalibDone AND NOT bError THEN
+   rSizeHydraulicCylinder := FCalculateCylinderSize(CylinderData := sv_CylinderData, bSmallSize := sv_CylinderData.bUseSmallSize, bCalcHighPressSize := FALSE);                            
+   rSizeScrewCylinder := FCalcScrewSize(rDiameter := sv_rScrewDiameter);
+   
+   // convert velocity from [cm^3/s] to [mm/s]
+   rTmpMaxAbsVel := abPumpPressureVelocityCalib.aRun.rMaxVelocityAbs * 1000.0 / rSizeScrewCylinder;
+                   
+   // convert velocity from [mm/s] to [l/min] in hydraulic volume
+   sv_rTmpMaxAbsFlow := rTmpMaxAbsVel * rSizeHydraulicCylinder / 1000000.0 * 60.0;
+END_IF;
+
+
+;#END_EDIT_BLOCK END_ACTION (*ACalc*)
+ACTION APressureVelocityCalib: #BEGIN_EDIT_BLOCK
+(**************************************** WARNING ********************************************
+ *** The KEBA Kemro K2 System including software is not intended for safety control tasks! ***
+ ***                       For further information see Comment tab!                        ***
+ *********************************************************************************************)
+
+//output pressure in bar, velocity in % of Pump
+abPumpPressureVelocityCalib.aRun(bStop := bStop OR sv_bTransducerError,
+                                 bStart := TRUE,
+                                 rActPosition := sv_rScrewPosition,
+                                 rMaxPosition := sv_rScrewVolume,
+                                 rActVel := sv_rScrewVelocity,
+                                 rActPressure := sv_rActPressureHydr,
+                                 bIsPressureCalib := sv_bDoPumpPressureCalib,
+                                 bIsVelocityCalib := sv_bDoPumpVelocityCalib,
+                                 bIsServoValveCalib := FALSE,
+                                 bDirection := FALSE,
+                                 dDelayTimePump := T#200ms,
+                                 rLimitPositionFactor := sv_rMaxMeasurePositionRel,
+                                 bActive => sv_bOutputActive,
+                                 rOutputPre => sv_rPressure,
+                                 rOutputVel => sv_rVelocity,
+                                 rOutputServo => sv_rServoOutput,
+                                 bPreOutputReached => sv_bPreOutputReady,
+                                 bError => sv_PumpCalibError.bError,
+                                 iErrorInfo => sv_PumpCalibError.iErrorInfo);
+
+;#END_EDIT_BLOCK END_ACTION (*APressureVelocityCalib*)
+ACTION AInit: #BEGIN_EDIT_BLOCK
+(**************************************** WARNING ********************************************
+ *** The KEBA Kemro K2 System including software is not intended for safety control tasks! ***
+ ***                       For further information see Comment tab!                        ***
+ *********************************************************************************************)
+
+IF iLastCalibratedPump <> sv_iCalibratingPump THEN
+   //get max voltages of the pump which should be calibrated
+   abPumpPressureVelocityCalib.aInitMaxVoltages.rMaxVoltage := MAX_VOLTAGE;
+   abPumpPressureVelocityCalib.aInitMaxVoltages.rMinVoltage := 0.0;
+   abPumpPressureVelocityCalib.aInitMaxVoltages.prMaxVoltageVelocity := sv_PumpData[sv_iCalibratingPump].prMaxVoltageV;
+   abPumpPressureVelocityCalib.aInitMaxVoltages.prMaxVoltagePressure := sv_PumpData[sv_iCalibratingPump].prMaxVoltageP;
+   abPumpPressureVelocityCalib.aInitMaxVoltages.prMaxVoltageVelocityPresCalib := @sv_rMaxVoltageVelocityPresCalib;
+   abPumpPressureVelocityCalib.aInitMaxVoltages();
+   
+   iLastCalibratedPump := sv_iCalibratingPump;
+END_IF;
+
+
+
+
+;#END_EDIT_BLOCK END_ACTION (*AInit*)
+(* end sfc-code *)
+
+
+END_ALGORITHM
+
+ALGORITHM aInit
+
+
+VAR_TEMP
+ i : DINT;
+END_VAR
+#BEGIN_EDIT_BLOCK
+(**************************************** WARNING ********************************************
+ *** The KEBA Kemro K2 System including software is not intended for safety control tasks! ***
+ ***                       For further information see Comment tab!                        ***
+ *********************************************************************************************)
+
+abPumpPressureVelocityCalib.aInit(pConst := @sv_ConstPumpPressureVelocCalib,
+                                  pConstServo := @sv_ConstServoPressureVelocCalib,
+                                  MoveId := cMovePVCalib,
+                                  pTmpLintab := @sv_TmpLintab,
+                                  pbPumpPreVelCalibAnotherStepN := @sv_bPumpPreVelCalibAnotherStepN,
+                                  pbPumpPreVelCalibDone := @sv_bPumpPreVelCalibDone,                                 
+                                  pPressureStableParam := @sv_PressureStableParam,
+                                  pVelocityStableParam := @sv_VelocityStableParam,
+                                  debugInstanceName := 'PVCalib',
+                                  debugTask := TaskInject,
+                                  pbDebugCalibration := @sv_TraceLevel.bDebugCalibration);
+                                
+
+//add calib information to sv_PumpCalibDevices - list
+FOR i := 1 TO cMaxCalibDevices DO
+   IF sv_PumpCalibDevices[i].DeviceId = sv_DeviceId THEN
+      sv_PumpCalibDevices[i].pVelCalibStartPosMovement := @sv_MoveDecompAftPlast;
+      sv_PumpCalibDevices[i].pVelCalibMovement := @sv_MovePVCalib;
+      sv_PumpCalibDevices[i].pPresCalibStartPosMovement := @sv_MoveInject;
+      sv_PumpCalibDevices[i].pPresCalibMovement := @sv_MovePVCalib;
+      sv_PumpCalibDevices[i].prActVelocity := @sv_rScrewVelocityAbs;
+      IF IS_LINKED(ai_Pressure) OR IS_LINKED(ai_SysPressure) THEN
+         sv_PumpCalibDevices[i].prActPressure := @sv_rActPressureHydr;
+      END_IF;     
+      EXIT;
+   END_IF;
+END_FOR;
+                                 
+
+
+
+
+
+;#END_EDIT_BLOCK END_ALGORITHM
+
+
+
+END_ALGORITHM_BLOCK
+
+
+
+#END_OF_IEC_PART
+
+@Puma @IecEditor 6 120 @Pou 25 
+@@@BEG_Comment@@@
+@h    ! WARNING !
+@h    The Kemro K2 system (including software) only meets category B according to EN 954-1,
+@h    thus it is not intended for usage in safety-relevant control applications in the field 
+@h    of personal safety (e.g. emergency stop).
+@h    To implement potentially necessary safety-relevant control tasks, always use additional 
+@h    external safety devices that are intended for the particular purpose, and meet the necessary 
+@h    functional safety.
+@h    For further information see EN 954-1 (EN ISO 13849-1) and/or the K2-x00 user manual, chapter 
+@h    "CE conformity, directives and standards".
+
+In this AB the inject movements are realized.
+This means inject movement with cutoff detection, inject movement in setup mode,
+calibration for screw transducer (forward) and also the inject movement for auto purging
+
+@FunctionID: S_KPIEC_PRINJ_01
+@FunctionID: S_KPIEC_PRINJ_02
+@FunctionID: S_KPIEC_CALTRANS_04
+
+
+@@@END_Comment@@@
+
+@BEG_Contents 
+
+@BEG_Func 
+@RT(17)FuncTreeContainer 
+4 
+@Var @RT(14)GET_MY_FU_NAME @RT(0) @T @T @DERIVED 0 @F @RT(22)KEBA_STANDARD_FUNCTION @F 
+@T 
+@BEG_Attrib 
+0 @RT(0) @RT(0) 
+@END_Attrib 
+1 1 @F @F @F @F 
+
+@Var @RT(9)SET_ALARM @RT(0) @T @T @DERIVED 0 @F @RT(23)KEBA_STANDARD_PROCEDURE @F 
+@T 
+@BEG_Attrib 
+0 @RT(0) @RT(0) 
+@END_Attrib 
+1 1 @F @F @F @F 
+
+@Var @RT(22)FCalculateCylinderSize @RT(0) @T @T @DERIVED 0 @F @RT(8)FUNCTION @F 
+@T 
+@BEG_Attrib 
+0 @RT(0) @RT(0) 
+@END_Attrib 
+1 1 @F @F @F @F 
+
+@Var @RT(14)FCalcScrewSize @RT(0) @T @T @DERIVED 0 @F @RT(8)FUNCTION @F 
+@T 
+@BEG_Attrib 
+0 @RT(0) @RT(0) 
+@END_Attrib 
+1 1 @F @F @F @F 
+
+@END_Func 
+
+@BEG_Const 
+@RT(18)ConstTreeContainer 
+13 
+@Var @RT(23)cLockGroupHeatingNozzle @RT(0) @T @F @DT @RT(4)DINT @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+0 @RT(2)63 @RT(35)Members: Injection, Plast, Suckback 
+@END_Attrib 
+1 1 @F @F @F @F 
+
+@Var @RT(26)cLockGroupSafetyGateNozzle @RT(0) @T @F @DT @RT(4)DINT @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+0 @RT(2)62 @RT(59)Members: Nozzle Forward, Injection, Plast, Intrusion, Purge 
+@END_Attrib 
+1 1 @F @F @F @F 
+
+@Var @RT(24)cLockGroupSafetyGateMold @RT(0) @T @F @DT @RT(4)DINT @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+0 @RT(2)61 @RT(73)Members: Mold Close, Mold Hight Forward, Auto Mold Hight, Core In, Inject 
+@END_Attrib 
+1 1 @F @F @F @F 
+
+@Var @RT(15)cLockGroupMotor @RT(0) @T @F @DT @RT(4)DINT @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+0 @RT(2)69 @RT(56)Members: Mold, Ejector, Cores, Injection, Plast, Purge,  
+@END_Attrib 
+1 1 @F @F @F @F 
+
+@Var @RT(7)nActive @RT(0) @T @T @DERIVED 0 @F @RT(16)tnActiveInactive @F 
+@T 
+@BEG_Attrib 
+0 @RT(1)1 @RT(0) 
+@END_Attrib 
+1 1 @F @F @F @F 
+
+@Var @RT(9)nInactive @RT(0) @T @T @DERIVED 0 @F @RT(16)tnActiveInactive @F 
+@T 
+@BEG_Attrib 
+0 @RT(1)0 @RT(0) 
+@END_Attrib 
+1 1 @F @F @F @F 
+
+@Var @RT(6)nSetup @RT(0) @T @T @DERIVED 0 @F @RT(15)tnOperationMode @F 
+@T 
+@BEG_Attrib 
+0 @RT(1)0 @RT(36)Setup mode only for service engineer 
+@END_Attrib 
+1 1 @F @F @F @F 
+
+@Var @RT(20)tnCalibState_Aborted @RT(0) @T @T @DERIVED 0 @F @RT(12)tnCalibState @F 
+@T 
+@BEG_Attrib 
+0 @RT(1)4 @RT(19)calibration aborted 
+@END_Attrib 
+1 1 @F @F @F @F 
+
+@Var @RT(18)tnCalibState_Error @RT(0) @T @T @DERIVED 0 @F @RT(12)tnCalibState @F 
+@T 
+@BEG_Attrib 
+0 @RT(1)3 @RT(32)error occured during calibration 
+@END_Attrib 
+1 1 @F @F @F @F 
+
+@Var @RT(29)cValueChangeDuringCalibTooLow @RT(0) @T @F @DT @RT(4)DINT @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+0 @RT(4)-510 @RT(94)no or too low value change (velocity, pressure, rpm, ..) detected during calibration procedure 
+@END_Attrib 
+1 1 @F @F @F @F 
+
+@Var @RT(12)cMovePVCalib @RT(0) @T @F @DT @RT(4)DINT @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+0 @RT(2)38 @RT(38)injection movement with voltage output 
+@END_Attrib 
+1 1 @F @F @F @F 
+
+@Var @RT(11)MAX_VOLTAGE @RT(0) @T @F @DT @RT(4)REAL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+0 @RT(4)10.0 @RT(0) 
+@END_Attrib 
+1 1 @F @F @F @F 
+
+@Var @RT(8)cMoveBwd @RT(0) @T @F @DT @RT(4)DINT @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+0 @RT(2)11 @RT(17)movement backward 
+@END_Attrib 
+1 1 @F @F @F @F 
+
+@END_Const 
+
+@BEG_Export 
+
+@BEG_Kind 
+@ALGORITHM_BLOCK @RT(13)ABMovePVCalib @STRUCTURED_TEXT 
+@RT(0) @RT(0) @RT(0) 
+@END_Kind 
+
+@BEG_Dcl 
+@RT(16)DclTreeContainer 
+41 
+@Var @RT(16)sv_OperationMode @RT(0) @T @T @DERIVED 0 @T @T @DT @RT(15)tnOperationMode @RT(0) @T @T @UNKNOWN 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 8 @F @F @F @F 
+
+@Var @RT(12)sv_rPressure @RT(0) @T @F @DT @RT(4)REAL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 8 @F @F @F @F 
+
+@Var @RT(12)sv_rVelocity @RT(0) @T @F @DT @RT(4)REAL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 8 @F @F @F @F 
+
+@Var @RT(16)sv_bOutputActive @RT(0) @T @F @DT @RT(4)BOOL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(16)Output is active @RT(0) 
+@END_Attrib 
+1 8 @F @F @F @F 
+
+@Var @RT(18)sv_bPreOutputReady @RT(0) @T @F @DT @RT(4)BOOL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(18)PreOutput is ready @RT(0) 
+@END_Attrib 
+1 8 @F @F @F @F 
+
+@Var @RT(19)sv_bTransducerError @RT(0) @T @F @DT @RT(4)BOOL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 8 @F @F @F @F 
+
+@Var @RT(23)sv_bDoPumpPressureCalib @RT(0) @T @F @DT @RT(4)BOOL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 8 @F @F @F @F 
+
+@Var @RT(23)sv_bDoPumpVelocityCalib @RT(0) @T @F @DT @RT(4)BOOL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 8 @F @F @F @F 
+
+@Var @RT(30)sv_ConstPumpPressureVelocCalib @RT(0) @T @T @DERIVED 0 @T @T @DT @RT(8)tsVelPre @RT(0) @T @T @UNKNOWN 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 8 @F @F @F @F 
+
+@Var @RT(17)sv_rScrewVelocity @RT(0) @T @F @DT @RT(4)REAL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 8 @F @F @F @F 
+
+@Var @RT(14)sv_MovePVCalib @RT(0) @T @T @DERIVED 0 @T @T @DT @RT(10)tsMoveData @RT(0) @T @T @UNKNOWN 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 8 @F @F @F @F 
+
+@Var @RT(19)sv_rActPressureHydr @RT(0) @T @F @DT @RT(4)REAL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 8 @F @F @F @F 
+
+@Var @RT(12)sv_TmpLintab @RT(0) @T @T @DERIVED 0 @T @T @DT @RT(18)KAPPL_LintabData3D @RT(0) @T @T @UNKNOWN 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 8 @F @F @F @F 
+
+@Var @RT(15)sv_rServoOutput @RT(0) @T @F @DT @RT(4)REAL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 8 @F @F @F @F 
+
+@Var @RT(31)sv_ConstServoPressureVelocCalib @RT(0) @T @T @DERIVED 0 @T @T @DT @RT(8)tsVelPre @RT(0) @T @T @UNKNOWN 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 8 @F @F @F @F 
+
+@Var @RT(31)sv_bPumpPreVelCalibAnotherStepN @RT(0) @T @F @DT @RT(4)BOOL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 8 @F @F @F @F 
+
+@Var @RT(23)sv_bPumpPreVelCalibDone @RT(0) @T @F @DT @RT(4)BOOL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 8 @F @F @F @F 
+
+@Var @RT(17)sv_rScrewPosition @RT(0) @T @F @DT @RT(4)REAL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 8 @F @F @F @F 
+
+@Var @RT(22)sv_PressureStableParam @RT(0) @T @T @DERIVED 0 @T @T @DT @RT(18)KCTRL_Stable_Param @RT(0) @T @T @UNKNOWN 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 8 @F @F @F @F 
+
+@Var @RT(22)sv_VelocityStableParam @RT(0) @T @T @DERIVED 0 @T @T @DT @RT(18)KCTRL_Stable_Param @RT(0) @T @T @UNKNOWN 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 8 @F @F @F @F 
+
+@Var @RT(15)sv_CylinderData @RT(0) @T @T @DERIVED 0 @T @T @DT @RT(14)tsCylinderData @RT(0) @T @T @UNKNOWN 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 8 @F @F @F @F 
+
+@Var @RT(17)sv_rScrewDiameter @RT(0) @T @F @DT @RT(4)REAL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 8 @F @F @F @F 
+
+@Var @RT(17)sv_rTmpMaxAbsFlow @RT(0) @T @F @DT @RT(4)REAL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 8 @F @F @F @F 
+
+@Var @RT(13)sv_TraceLevel @RT(0) @T @T @DERIVED 0 @T @T @DT @RT(12)tsTraceLevel @RT(0) @T @T @UNKNOWN 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 8 @F @F @F @F 
+
+@Var @RT(15)sv_rScrewVolume @RT(0) @T @F @DT @RT(4)REAL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 8 @F @F @F @F 
+
+@Var @RT(31)sv_rMaxVoltageVelocityPresCalib @RT(0) @T @F @DT @RT(4)REAL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 8 @F @F @F @F 
+
+@Var @RT(25)sv_rMaxMeasurePositionRel @RT(0) @T @F @DT @RT(4)REAL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 8 @F @F @F @F 
+
+@Var @RT(10)TaskInject @RT(0) @T @F @DT @RT(4)TASK @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 7 @F @F @F @F 
+
+@Var @RT(27)erSetupModeRequiredForCalib @RT(0) @T @F @DT @RT(5)ALARM @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 7 @F @F @F @F 
+
+@Var @RT(10)g_MoveCtrl @RT(0) @T @T @DERIVED 0 @T @T @DT @RT(10)tsMoveCtrl @RT(0) @T @T @UNKNOWN 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 6 @F @F @F @F 
+
+@Var @RT(27)abPumpPressureVelocityCalib @RT(0) @T @T @DERIVED 0 @T @T @DT @RT(27)ABPumpPressureVelocityCalib @RT(0) @T @T @UNKNOWN 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(17)sv_PumpCalibError @RT(0) @T @T @DERIVED 0 @T @T @DT @RT(16)tsPumpCalibError @RT(0) @T @T @UNKNOWN 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 8 @F @F @F @F 
+
+@Var @RT(19)sv_PumpCalibDevices @RT(0) @T @T @DERIVED 0 @T @T @DT @RT(14)tyCalibDevices @RT(0) @T @T @UNKNOWN 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(30)!!! device 1 - 20 reserved !!! @RT(0) 
+@END_Attrib 
+1 8 @F @F @F @F 
+
+@Var @RT(21)sv_MoveDecompAftPlast @RT(0) @T @T @DERIVED 0 @T @T @DT @RT(10)tsMoveData @RT(0) @T @T @UNKNOWN 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 8 @F @F @F @F 
+
+@Var @RT(13)sv_MoveInject @RT(0) @T @T @DERIVED 0 @T @T @DT @RT(10)tsMoveData @RT(0) @T @T @UNKNOWN 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 8 @F @F @F @F 
+
+@Var @RT(20)sv_rScrewVelocityAbs @RT(0) @T @F @DT @RT(4)REAL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(22)screw velocity in mm/s @RT(0) 
+@END_Attrib 
+1 8 @F @F @F @F 
+
+@Var @RT(11)sv_DeviceId @RT(0) @T @T @DERIVED 0 @T @T @DT @RT(10)tsDeviceId @RT(0) @T @T @UNKNOWN 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 8 @F @F @F @F 
+
+@Var @RT(11)ai_Pressure @RT(0) @T @F @DT @RT(4)REAL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 8 @F @F @F @F 
+
+@Var @RT(14)ai_SysPressure @RT(0) @T @F @DT @RT(4)REAL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 8 @F @F @F @F 
+
+@Var @RT(19)sv_iCalibratingPump @RT(0) @T @F @DT @RT(4)DINT @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(44)number of pump which is actually calibrating @RT(0) 
+@END_Attrib 
+1 8 @F @F @F @F 
+
+@Var @RT(11)sv_PumpData @RT(0) @T @T @DERIVED 0 @F @RT(10)tyPumpData @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 8 @F @F @F @F 
+
+@END_Dcl 
+
+@END_Export 
+
+@BEG_Body 
+
+3 
+
+@BEG_Export 
+
+@BEG_Algo 
+@ALGORITHM @RT(9)aRegister @STRUCTURED_TEXT 
+@RT(0) @RT(0) @RT(0) @F @F 
+@END_Algo 
+
+@BEG_Dcl 
+@RT(16)DclTreeContainer 
+1 
+@Var @RT(16)abInjectRegister @RT(0) @T @T @DERIVED 0 @T @T @DT @RT(18)ABMovementRegister @RT(0) @T @T @UNKNOWN 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@END_Dcl 
+
+@END_Export 
+
+@BEG_Export 
+
+@BEG_Algo 
+@ALGORITHM @RT(4)aRun @SEQUENTIAL_FLOW_CHART 
+@RT(0) @RT(0) @RT(0) @F @F 
+@END_Algo 
+
+@BEG_Dcl 
+@RT(16)DclTreeContainer 
+8 
+@Var @RT(5)bStop @RT(0) @T @F @DT @RT(4)BOOL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(38)flag if the movement should be stopped @RT(0) 
+@END_Attrib 
+1 1 @F @F @F @F 
+
+@Var @RT(6)bReady @RT(0) @T @F @DT @RT(4)BOOL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(32)information if movement is ready @RT(0) 
+@END_Attrib 
+1 3 @F @F @F @F 
+
+@Var @RT(18)fbSetMovementState @RT(0) @T @T @DERIVED 0 @T @T @DT @RT(18)FBSetMovementState @RT(0) @T @T @UNKNOWN 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(6)bError @RT(0) @T @F @DT @RT(4)BOOL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(22)rSizeHydraulicCylinder @RT(0) @T @F @DT @RT(4)REAL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(18)rSizeScrewCylinder @RT(0) @T @F @DT @RT(4)REAL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(13)rTmpMaxAbsVel @RT(0) @T @F @DT @RT(4)REAL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(19)iLastCalibratedPump @RT(0) @T @F @DT @RT(4)DINT @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@END_Dcl 
+
+@END_Export 
+
+@BEG_Export 
+
+@BEG_Algo 
+@ALGORITHM @RT(5)aInit @STRUCTURED_TEXT 
+@RT(0) @RT(0) @RT(0) @F @F 
+@END_Algo 
+
+@BEG_Dcl 
+@RT(16)DclTreeContainer 
+1 
+@Var @RT(1)i @RT(0) @T @F @DT @RT(4)DINT @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 4 @F @F @F @F 
+
+@END_Dcl 
+
+@END_Export 
+
+@BEG_Body 
+@TL(15)
+(**************************************** WARNING ********************************************
+ *** The KEBA Kemro K2 System including software is not intended for safety control tasks! ***
+ ***                       For further information see Comment tab!                        ***
+ *********************************************************************************************)
+
+//register inject movement
+sv_MovePVCalib.LockGroups[1] := cLockGroupHeatingNozzle;
+sv_MovePVCalib.LockGroups[2] := cLockGroupSafetyGateNozzle;
+sv_MovePVCalib.LockGroups[3] := cLockGroupSafetyGateMold;
+sv_MovePVCalib.LockGroups[4] := cLockGroupMotor;
+sv_MovePVCalib.sIconPath := CONCAT(GET_MY_FU_NAME(),"\hmi\images\movScrewFwd.gif");
+
+abInjectRegister.aRegister(@sv_MovePVCalib);
+
+
+@END_Body 
+
+@@@BEG_Comment@@@ 
+@TL(2)
+This algorithm is necessary for registering the available movements
+and the according parameters (Lockgroups, icon path, delay time, ....)
+@@@END_Comment@@@ 
+
+@BEG_SfcBody 
+8 6 6 
+
+@BEG_SfcData 2 
+@StepSeq @RT(4)sseq @F 1 
+@Loop @RT(4)loop @F 2 
+@StepSeq @RT(4)sseq @F 5 
+@Step @RT(5)START @F @T @F @F @RT(0) @F 
+@AcbCont @RT(7)unnamed @F 1 
+@Acb @RT(6)AStart @F @T @RT(1)P @RT(0) @F @F @T @TL(5)
+bReady := FALSE;
+fbSetMovementState(MoveId   := g_MoveCtrl.pData^.MoveId,
+                   MoveDir  := g_MoveCtrl.pData^.MoveDir,
+                   State    := nActive);
+
+@F 
+
+@AltBranch @RT(3)alt @F 2 
+@TransSeq @RT(4)tseq @F 3 
+@Trans @RT(10)TSetupMode @F @T @F @F @T @F @TL(3)
+sv_OperationMode = nSetup
+
+
+@RT(10)TSetupMode @F 
+@Step @RT(16)S_InitMaxVoltage @F @F @F @F @RT(0) @F 
+@AcbCont @RT(7)unnamed @F 1 
+@Acb @RT(5)AInit @F @F @RT(1)P @RT(0) @F @F @F @F 
+
+@Trans @RT(6)Trans6 @F @T @F @F @T @T @TL(2)
+TRUE
+
+@RT(6)Trans6 @F 
+
+@TransSeq @RT(4)tseq @F 4 
+@Trans @RT(13)TNotSetupMode @F @T @F @F @T @F @TL(2)
+sv_OperationMode <> nSetup
+
+@RT(13)TNotSetupMode @F 
+@Step @RT(16)S_NotInSetupMode @F @F @F @F @RT(0) @F 
+@AcbCont @RT(7)unnamed @F 1 
+@Acb @RT(15)ANotInSetupMode @F @T @RT(1)P @RT(0) @F @F @T @TL(2)
+SET_ALARM(erSetupModeRequiredForCalib);
+
+@F 
+
+@Trans @RT(7)Trans35 @F @T @F @F @T @F @TL(2)
+TRUE
+
+@RT(7)Trans35 @F 
+@Goto @RT(7)S_Ready @F @F 
+
+
+@Step @RT(20)S_InjectPresVelCalib @F @F @F @F @RT(0) @F 
+@AcbCont @RT(7)unnamed @F 3 
+@Acb @RT(27)AResetCalibPressureVelocity @F @F @RT(1)P @RT(0) @F @F @F @F 
+@Acb @RT(22)APressureVelocityCalib @F @F @RT(1)N @RT(0) @F @F @F @F 
+@Acb @RT(5)ACalc @F @F @RT(2)P0 @RT(0) @F @F @F @F 
+
+@Trans @RT(12)TPVCalibDone @F @T @F @F @T @T @TL(2)
+NOT abPumpPressureVelocityCalib.aRun.bActive
+
+@RT(12)TPVCalibDone @F 
+@Step @RT(7)S_Ready @F @F @T @F @RT(0) @F 
+@AcbCont @RT(7)unnamed @F 1 
+@Acb @RT(6)AReady @F @T @RT(1)P @RT(0) @F @F @T @TL(5)
+bReady := TRUE;
+fbSetMovementState(MoveId   := g_MoveCtrl.pData^.MoveId,
+                   MoveDir  := g_MoveCtrl.pData^.MoveDir,
+                   State    := nInactive);
+
+@F 
+
+
+@Trans @RT(6)TReady @F @T @T @T @T @T @TL(2)
+TRUE
+
+@RT(6)TReady @F 
+
+@END_SfcData 
+@SaActions 4 
+@SaText @RT(27)AResetCalibPressureVelocity 1 @TL(8)
+(**************************************** WARNING ********************************************
+ *** The KEBA Kemro K2 System including software is not intended for safety control tasks! ***
+ ***                       For further information see Comment tab!                        ***
+ *********************************************************************************************)
+
+bError := FALSE;
+abPumpPressureVelocityCalib.aRun(bStart := FALSE);
+
+
+@SaText @RT(5)ACalc 1 @TL(17)
+(**************************************** WARNING ********************************************
+ *** The KEBA Kemro K2 System including software is not intended for safety control tasks! ***
+ ***                       For further information see Comment tab!                        ***
+ *********************************************************************************************)
+
+IF sv_bPumpPreVelCalibDone AND NOT bError THEN
+   rSizeHydraulicCylinder := FCalculateCylinderSize(CylinderData := sv_CylinderData, bSmallSize := sv_CylinderData.bUseSmallSize, bCalcHighPressSize := FALSE);                            
+   rSizeScrewCylinder := FCalcScrewSize(rDiameter := sv_rScrewDiameter);
+   
+   // convert velocity from [cm^3/s] to [mm/s]
+   rTmpMaxAbsVel := abPumpPressureVelocityCalib.aRun.rMaxVelocityAbs * 1000.0 / rSizeScrewCylinder;
+                   
+   // convert velocity from [mm/s] to [l/min] in hydraulic volume
+   sv_rTmpMaxAbsFlow := rTmpMaxAbsVel * rSizeHydraulicCylinder / 1000000.0 * 60.0;
+END_IF;
+
+
+
+@SaText @RT(22)APressureVelocityCalib 1 @TL(26)
+(**************************************** WARNING ********************************************
+ *** The KEBA Kemro K2 System including software is not intended for safety control tasks! ***
+ ***                       For further information see Comment tab!                        ***
+ *********************************************************************************************)
+
+//output pressure in bar, velocity in % of Pump
+abPumpPressureVelocityCalib.aRun(bStop := bStop OR sv_bTransducerError,
+                                 bStart := TRUE,
+                                 rActPosition := sv_rScrewPosition,
+                                 rMaxPosition := sv_rScrewVolume,
+                                 rActVel := sv_rScrewVelocity,
+                                 rActPressure := sv_rActPressureHydr,
+                                 bIsPressureCalib := sv_bDoPumpPressureCalib,
+                                 bIsVelocityCalib := sv_bDoPumpVelocityCalib,
+                                 bIsServoValveCalib := FALSE,
+                                 bDirection := FALSE,
+                                 dDelayTimePump := T#200ms,
+                                 rLimitPositionFactor := sv_rMaxMeasurePositionRel,
+                                 bActive => sv_bOutputActive,
+                                 rOutputPre => sv_rPressure,
+                                 rOutputVel => sv_rVelocity,
+                                 rOutputServo => sv_rServoOutput,
+                                 bPreOutputReached => sv_bPreOutputReady,
+                                 bError => sv_PumpCalibError.bError,
+                                 iErrorInfo => sv_PumpCalibError.iErrorInfo);
+
+
+@SaText @RT(5)AInit 1 @TL(20)
+(**************************************** WARNING ********************************************
+ *** The KEBA Kemro K2 System including software is not intended for safety control tasks! ***
+ ***                       For further information see Comment tab!                        ***
+ *********************************************************************************************)
+
+IF iLastCalibratedPump <> sv_iCalibratingPump THEN
+   //get max voltages of the pump which should be calibrated
+   abPumpPressureVelocityCalib.aInitMaxVoltages.rMaxVoltage := MAX_VOLTAGE;
+   abPumpPressureVelocityCalib.aInitMaxVoltages.rMinVoltage := 0.0;
+   abPumpPressureVelocityCalib.aInitMaxVoltages.prMaxVoltageVelocity := sv_PumpData[sv_iCalibratingPump].prMaxVoltageV;
+   abPumpPressureVelocityCalib.aInitMaxVoltages.prMaxVoltagePressure := sv_PumpData[sv_iCalibratingPump].prMaxVoltageP;
+   abPumpPressureVelocityCalib.aInitMaxVoltages.prMaxVoltageVelocityPresCalib := @sv_rMaxVoltageVelocityPresCalib;
+   abPumpPressureVelocityCalib.aInitMaxVoltages();
+   
+   iLastCalibratedPump := sv_iCalibratingPump;
+END_IF;
+
+
+
+
+
+@SaTrans 0 
+@SaExits 0 
+@END_SfcBody 
+
+@@@BEG_Comment@@@ 
+@TL(4)
+This algorithm is responsible for executing the movement.
+Depending on MoveId, OperationMode and activated transducer calibration the according
+movement is executed.
+The different actions contain the movement blocks and the according parameters.
+@@@END_Comment@@@ 
+
+@BEG_Body 
+@TL(37)
+(**************************************** WARNING ********************************************
+ *** The KEBA Kemro K2 System including software is not intended for safety control tasks! ***
+ ***                       For further information see Comment tab!                        ***
+ *********************************************************************************************)
+
+abPumpPressureVelocityCalib.aInit(pConst := @sv_ConstPumpPressureVelocCalib,
+                                  pConstServo := @sv_ConstServoPressureVelocCalib,
+                                  MoveId := cMovePVCalib,
+                                  pTmpLintab := @sv_TmpLintab,
+                                  pbPumpPreVelCalibAnotherStepN := @sv_bPumpPreVelCalibAnotherStepN,
+                                  pbPumpPreVelCalibDone := @sv_bPumpPreVelCalibDone,                                 
+                                  pPressureStableParam := @sv_PressureStableParam,
+                                  pVelocityStableParam := @sv_VelocityStableParam,
+                                  debugInstanceName := 'PVCalib',
+                                  debugTask := TaskInject,
+                                  pbDebugCalibration := @sv_TraceLevel.bDebugCalibration);
+                                
+
+//add calib information to sv_PumpCalibDevices - list
+FOR i := 1 TO cMaxCalibDevices DO
+   IF sv_PumpCalibDevices[i].DeviceId = sv_DeviceId THEN
+      sv_PumpCalibDevices[i].pVelCalibStartPosMovement := @sv_MoveDecompAftPlast;
+      sv_PumpCalibDevices[i].pVelCalibMovement := @sv_MovePVCalib;
+      sv_PumpCalibDevices[i].pPresCalibStartPosMovement := @sv_MoveInject;
+      sv_PumpCalibDevices[i].pPresCalibMovement := @sv_MovePVCalib;
+      sv_PumpCalibDevices[i].prActVelocity := @sv_rScrewVelocityAbs;
+      IF IS_LINKED(ai_Pressure) OR IS_LINKED(ai_SysPressure) THEN
+         sv_PumpCalibDevices[i].prActPressure := @sv_rActPressureHydr;
+      END_IF;     
+      EXIT;
+   END_IF;
+END_FOR;
+                                 
+
+
+
+
+@END_Body 
+
+@@@BEG_Comment@@@ 
+@TL(0)
+
+@@@END_Comment@@@ 
+@END_Body 
+
+@END_Contents 

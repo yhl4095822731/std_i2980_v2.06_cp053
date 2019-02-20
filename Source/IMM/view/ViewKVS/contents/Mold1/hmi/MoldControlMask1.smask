@@ -1,0 +1,152 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<base:Mask xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xmlns:base="http://www.keba.at/viewedit.model.base" widgetId="kvs.mask" name="MoldControlMask1">
+  <resolution width="714" height="476"/>
+  <position x="1" y="1"/>
+  <attributeValues key="Icon" value="Mold1/hmi/images/iconMoldControl.gif"/>
+  <attributeValues key="Title" value="Mold control"/>
+  <attributeValues key="Background" value="BG_Desktop:30,30,30"/>
+  <widgetInstances xsi:type="base:ContainerWidgetInstance" widgetId="keplast.kvs.borderpanelsmall" name="containerMoldControl" layoutConstraint="NORTH">
+    <resolution width="714" height="250"/>
+    <position/>
+    <attributeValues key="Title" value="Mold control"/>
+    <attributeValues key="PreferredSize" value="714, 250"/>
+    <widgetInstances xsi:type="base:ContainerWidgetInstance" widgetId="keplast.kvs.borderpanelsmall" name="borderPanelLeft" layoutConstraint="LEFT">
+      <resolution width="348" height="211"/>
+      <position x="6" y="33"/>
+      <attributeValues key="Title" value="Control settings"/>
+      <widgetInstances widgetId="keplast.kvs.checkboxtext" name="checkBoxUse" layoutConstraint="null">
+        <resolution width="342" height="29"/>
+        <position x="3" y="33"/>
+        <dynamicAttributes key="Variable">
+          <value function="doesVariableExist : UserFunctions" equal="Mold1.sv_ServoValveControlData.bEnable" unequal="Mold1.sv_bUseValve">
+            <parameter key="1" value="variableasstring; PlastFunctionUtils.createVariableString(&quot;Mold1.sv_ServoValveControlData.bEnable&quot;)"/>
+          </value>
+        </dynamicAttributes>
+      </widgetInstances>
+      <widgetInstances widgetId="keplast.kvs.numfieldtext" name="numfieldOpenGainP" layoutConstraint="null">
+        <resolution width="342" height="29"/>
+        <position x="3" y="62"/>
+        <attributeValues key="Variable" value="Mold1.sv_ServoValveControlData.rGainPBwd"/>
+        <dynamicAttributes key="Create">
+          <value function="doesVariableExist : UserFunctions" equal="true" unequal="false">
+            <parameter key="1" value="variableasstring; PlastFunctionUtils.createVariableString(&quot;Mold1.sv_ServoValveControlData.bEnable&quot;)"/>
+          </value>
+        </dynamicAttributes>
+      </widgetInstances>
+      <widgetInstances widgetId="keplast.kvs.numfieldtext" name="numfieldCloseGainP" layoutConstraint="null">
+        <resolution width="342" height="29"/>
+        <position x="3" y="91"/>
+        <attributeValues key="Variable" value="Mold1.sv_ServoValveControlData.rGainPFwd"/>
+        <dynamicAttributes key="Create">
+          <value function="doesVariableExist : UserFunctions" equal="true" unequal="false">
+            <parameter key="1" value="variableasstring; PlastFunctionUtils.createVariableString(&quot;Mold1.sv_ServoValveControlData.bEnable&quot;)"/>
+          </value>
+        </dynamicAttributes>
+      </widgetInstances>
+      <layout layoutID="kvs.layout.GridLayout" name="GridLayout">
+        <attributeValues key="Columns" value="1"/>
+        <attributeValues key="Rows" value="6"/>
+      </layout>
+    </widgetInstances>
+    <widgetInstances xsi:type="base:ContainerWidgetInstance" widgetId="keplast.kvs.borderpanelsmall" name="borderPanelRight" layoutConstraint="RIGHT">
+      <resolution width="348" height="211"/>
+      <position x="360" y="33"/>
+      <attributeValues key="Title" value="Valve data"/>
+      <attributeValues key="PreferredSize" value="348, 211"/>
+      <widgetInstances widgetId="keplast.kvs.numfieldtext" name="numfieldValveOffsetClose" layoutConstraint="null">
+        <resolution width="342" height="29"/>
+        <position x="3" y="33"/>
+        <attributeValues key="Variable" value="Mold1.sv_ValveData.rValveOffsetFwd"/>
+        <attributeValues key="PreferredSize" value="10, 29"/>
+        <attributeValues key="PreferredSizeNumfield" value="60, 29"/>
+      </widgetInstances>
+      <widgetInstances widgetId="keplast.kvs.numfieldtext" name="numfieldValveOffsetOpen" layoutConstraint="null">
+        <resolution width="342" height="29"/>
+        <position x="3" y="62"/>
+        <attributeValues key="Variable" value="Mold1.sv_ValveData.rValveOffsetBwd"/>
+      </widgetInstances>
+      <widgetInstances widgetId="keplast.kvs.numfieldtext" name="numfieldValvePressureNom" layoutConstraint="null">
+        <resolution width="342" height="29"/>
+        <position x="3" y="91"/>
+        <attributeValues key="Variable" value="Mold1.sv_ValveData.rDeltaPNom"/>
+        <dynamicAttributes key="Create">
+          <value function="doesVariableExist : UserFunctions" equal="true" unequal="false">
+            <parameter key="1" value="variableasstring;PlastFunctionUtils.createVariableString(&quot;Mold1.sv_ValveData.rDeltaPNom&quot;)"/>
+          </value>
+        </dynamicAttributes>
+      </widgetInstances>
+      <widgetInstances widgetId="keplast.kvs.numfieldtext" name="numfieldValveQNom" layoutConstraint="null">
+        <resolution width="342" height="29"/>
+        <position x="3" y="120"/>
+        <attributeValues key="Variable" value="Mold1.sv_ValveData.rQNom"/>
+        <dynamicAttributes key="Create">
+          <value function="doesVariableExist : UserFunctions" equal="true" unequal="false">
+            <parameter key="1" value="variableasstring;PlastFunctionUtils.createVariableString(&quot;Mold1.sv_ValveData.rQNom&quot;)"/>
+          </value>
+        </dynamicAttributes>
+      </widgetInstances>
+      <widgetInstances widgetId="keplast.kvs.numfieldtext" name="numfieldValvePressureDropClose" layoutConstraint="null">
+        <resolution width="342" height="29"/>
+        <position x="3" y="149"/>
+        <attributeValues key="Variable" value="Mold1.sv_rMoldValvePressureDropClose"/>
+        <dynamicAttributes key="Create">
+          <value function="doesVariableExist : UserFunctions" equal="true" unequal="false">
+            <parameter key="1" value="variableasstring;PlastFunctionUtils.createVariableString(&quot;Mold1.sv_rMoldValvePressureDropClose&quot;)"/>
+          </value>
+        </dynamicAttributes>
+      </widgetInstances>
+      <widgetInstances widgetId="keplast.kvs.numfieldtext" name="numfieldValvePressureDropOpen" layoutConstraint="null">
+        <resolution width="342" height="29"/>
+        <position x="3" y="178"/>
+        <attributeValues key="Variable" value="Mold1.sv_rMoldValvePressureDropOpen"/>
+        <dynamicAttributes key="Create">
+          <value function="doesVariableExist : UserFunctions" equal="true" unequal="false">
+            <parameter key="1" value="variableasstring;PlastFunctionUtils.createVariableString(&quot;Mold1.sv_rMoldValvePressureDropOpen&quot;)"/>
+          </value>
+        </dynamicAttributes>
+      </widgetInstances>
+      <layout layoutID="kvs.layout.GridLayout" name="GridLayout">
+        <attributeValues key="Columns" value="1"/>
+        <attributeValues key="Rows" value="6"/>
+      </layout>
+    </widgetInstances>
+    <layout layoutID="keplast.kvs.layout.horizontalsplitlayout" name="HorizontalSplitLayout"/>
+  </widgetInstances>
+  <widgetInstances xsi:type="base:ContainerWidgetInstance" widgetId="keplast.kvs.borderpanelsmall" name="borderPanel1" layoutConstraint="CENTER">
+    <resolution width="714" height="226"/>
+    <position y="250"/>
+    <attributeValues key="Title" value="Force control"/>
+    <dynamicAttributes key="Create">
+      <value function="doesVariableExist : UserFunctions" equal="true" unequal="false">
+        <parameter key="1" value="variableasstring;PlastFunctionUtils.createVariableString(&quot;Mold1.sv_ICMMode&quot;)"/>
+      </value>
+    </dynamicAttributes>
+    <widgetInstances xsi:type="base:ContainerWidgetInstance" widgetId="kvs.panel" name="container1" layoutConstraint="WEST">
+      <resolution width="348" height="189"/>
+      <position x="3" y="33"/>
+      <attributeValues key="PreferredSize" value="348, 249"/>
+      <widgetInstances widgetId="keplast.kvs.numfieldtext" name="numFieldForceControl_P" layoutConstraint="null">
+        <resolution width="348" height="29"/>
+        <position/>
+        <attributeValues key="Variable" value="Mold1.sv_ForceControlParam.rP"/>
+      </widgetInstances>
+      <widgetInstances widgetId="keplast.kvs.numfieldtext" name="numfieldOpenLoopGainFwd" layoutConstraint="null">
+        <resolution width="348" height="29"/>
+        <position y="29"/>
+        <attributeValues key="Variable" value="Mold1.sv_ServoValveControlData.rGainOpenLoopFwd"/>
+      </widgetInstances>
+      <widgetInstances widgetId="keplast.kvs.numfieldtext" name="numfieldOpenLoopGainBwd" layoutConstraint="null">
+        <resolution width="348" height="29"/>
+        <position y="58"/>
+        <attributeValues key="Variable" value="Mold1.sv_ServoValveControlData.rGainOpenLoopBwd"/>
+      </widgetInstances>
+      <layout layoutID="kvs.layout.VerticalFlowLayout" name="VerticalFlowLayout">
+        <attributeValues key="Hgap" value="0"/>
+        <attributeValues key="Vgap" value="0"/>
+      </layout>
+    </widgetInstances>
+    <layout layoutID="kvs.layout.BorderLayout" name="BorderLayout"/>
+  </widgetInstances>
+  <layout layoutID="kvs.layout.BorderLayout" name="BorderLayout"/>
+  <guides position="254"/>
+</base:Mask>

@@ -1,0 +1,3472 @@
+(*
+This PU is controlles the InjecGraph recorder
+*)
+
+IMPORT_OVER_LISTFILE
+ SET_ALARM
+, GET_SYNC_REFTO
+, SET_EVENT
+, GET_TASK_INTERVAL
+, KMB_Status_OK
+, cIndexFirstHistoryValue
+, cIndexMaxValue
+, cIndexMinValue
+, cSizeSwitchOverHistory
+, cIndexActualValue
+, cIndexMeanValue
+, cMaxNoOfVariables
+, nInjectGraph_Lamp
+, nInjectGraph_Reject
+, nInjectGraph_Lamp_Reject
+, nInjectGraph_StopAfterCycle
+, nInjectGraph_No_Action
+, nManual
+, KSYS_Status_OK
+, tySwitchOverHistory
+, tyVariablesUsed
+, tsDeviceId
+, tsTraceLevel
+, tnOperationMode
+, KMB_PDSC_Event
+, KMB_PDSXY_Event
+, tevPartCheck
+, tevPartCheckData
+, KMB_Status
+, KMB_MeasureBlock2
+, KMB_ProfileInfo
+, FBDebugTrace
+, TON
+, RTC
+, tsCharValues
+, tsCharVariablesUsed
+, KSYS_Status
+, tnErrorAction
+, KMB_PDSC_Data
+, KMB_PDSXY_Data
+, FBOpModeHalfAndAutoEntered
+, FBOpModeHalfAndAutoLeft
+, tsInjGraphCurveData
+, KMB_Curve
+, KMB_CurveResult
+
+END_IMPORT
+
+ALGORITHM_BLOCK ABInjectGraph #DUMMY_EDIT_BLOCK
+
+SYSTEM_VAR
+ sv_SwitchOverHistoryArray : tySwitchOverHistory;
+ sv_bActivateRecord : BOOL;
+ sv_bInitInjectGraph : BOOL (* activation of ABInjectGraph *);
+ sv_yVariablesUsed : tyVariablesUsed (* Array of variable which are actual used in inject graph *);
+ sv_rCutOffPressure : REAL;
+ sv_rCutOffPosition : REAL;
+ sv_rDurationProposal : REAL;
+ sv_rDurationHoldProposal : REAL;
+ sv_bCutOffDetected : BOOL;
+ sv_DeviceId : tsDeviceId (* unique Device Identifier *);
+ sv_TraceLevel : tsTraceLevel;
+ sv_bResetSwitchOverHistory : BOOL;
+ sv_OperationMode : tnOperationMode;
+ sv_iPreShotCounter : DINT (* shot counter for PDS (increased before ejector movement) *);
+ sv_rSampleTimeYXProposal : REAL;
+ sv_iShotCounterAct : DINT;
+ sv_iShotCounterActInjGraph : DINT (* Actual shot counter for inject graph *);
+ sv_dShotTimeActInjGraph : DATE_AND_TIME (* Actual shot time for inject graph *);
+ sv_iExportTriggerInjGraph : DINT (* Export trigger for inject graph *);
+ sv_CharVariablesUsed : tsCharVariablesUsed (* Characteristic variables which are actually used in inject graph. Signalization of change is done via ChangeCounter sub element *);
+END_VAR
+
+SYSTEM_OBJECT
+ TaskInject : TASK;
+ TaskMid : TASK;
+ TaskSlow : TASK;
+ PU_Task_13 : TASK;
+ PU_Task_7 : TASK;
+ EV_Task_3 : TASK;
+ erInjectGraphStopAfterCycle : ALARM;
+ erInjectGraphDisplayWarning : ALARM;
+ erInjectGraphAlarmLamp : ALARM;
+ evInject_Graph_XT1 : KMB_PDSC_Event;
+ evInject_Graph_XT2 : KMB_PDSC_Event;
+ evInject_Graph_YX : KMB_PDSXY_Event;
+ evPartCheck : tevPartCheck;
+END_OBJECT
+
+VAR
+ pbResetSwitchOverHistory : REFTO BOOL;
+ piPreShotCounter : REFTO DINT (* shot counter for PDS (increased before ejector movement) *);
+ pbActivateRecord : REFTO BOOL;
+ pdInjectDuration : REFTO TIME;
+ pdHoldDuration : REFTO TIME;
+ mbInitDone : BOOL := FALSE;
+ mbRestart : BOOL := TRUE;
+ mevPartCheckData : tevPartCheckData;
+ status_KMB : KMB_Status;
+ Inject_Graph_XT1 : KMB_MeasureBlock2;
+ Inject_Graph_XT2 : KMB_MeasureBlock2;
+ Inject_Graph_YX : KMB_MeasureBlock2;
+ GraphXT1_ProfileInfo : KMB_ProfileInfo;
+ GraphXT2_ProfileInfo : KMB_ProfileInfo;
+ GraphYX_ProfileInfo : KMB_ProfileInfo;
+ fbDebugTrace : FBDebugTrace;
+ SwitchOverTime : TON;
+ mevInject_Graph_XT1 : KMB_PDSC_Event;
+ mevInject_Graph_XT2 : KMB_PDSC_Event;
+ mevInject_Graph_YX : KMB_PDSXY_Event;
+ mpbInjectActive : REFTO BOOL;
+ mpbCutOffDetected : REFTO BOOL;
+ fbRtc : RTC;
+ charValuesScrewVelocity : tsCharValues := (curveName:='Injection1.sv_rScrewVelocity',nameCharVariableMean:='Injection1.sv_rScrewVelocityMean',nameCharVariableMin:='Injection1.sv_rScrewVelocityMin',nameCharVariableMax:='Injection1.sv_rScrewVelocityMax');
+END_VAR
+
+FUNCTION fReportIfKMBFailed : BOOL
+ #DUMMY_EDIT_BLOCK
+
+VAR_INPUT
+ status : KMB_Status;
+ sDescription : STRING(255);
+END_VAR
+
+VAR
+ dummy : DINT;
+END_VAR
+#BEGIN_EDIT_BLOCK
+
+IF status <> KMB_Status_OK THEN
+   dummy := Print('%s failed.', sDescription);
+
+   // Only ASSERT during development!
+   //b := ASSERT(FALSE, erAssert);
+END_IF;
+
+fReportIfKMBFailed := FALSE;
+
+
+;#END_EDIT_BLOCK END_FUNCTION
+
+ALGORITHM aInitCharVariables
+
+
+VAR_TEMP
+ i : INT;
+END_VAR
+
+VAR
+ state : KSYS_Status;
+END_VAR
+#BEGIN_EDIT_BLOCK
+(**************************************** WARNING ********************************************
+ *** The KEBA Kemro K2 System including software is not intended for safety control tasks! ***
+ ***                       For further information see Comment tab!                        ***
+ *********************************************************************************************)
+
+// Reset char. values
+charValuesScrewVelocity.prMean := EMPTY;
+charValuesScrewVelocity.prMin := EMPTY;
+charValuesScrewVelocity.prMax := EMPTY;
+charValuesScrewVelocity.bUsed := FALSE;
+
+sv_CharVariablesUsed.iNrOfVariables := 0;
+
+FOR i := 1 TO cMaxNoOfCharVariables DO
+    IF LEN(sv_CharVariablesUsed.CharVars[i]) = 0 THEN
+        // No more char. variables in use
+        EXIT;
+    END_IF;
+    
+    // Char. values of screw velocity
+    IF charValuesScrewVelocity.nameCharVariableMean = sv_CharVariablesUsed.CharVars[i] THEN
+        charValuesScrewVelocity.prMean := GET_SYNC_REFTO(SVName := charValuesScrewVelocity.nameCharVariableMean, Timeout := t#0s, Status := state);
+        charValuesScrewVelocity.bUsed := TRUE;
+    END_IF;
+    IF charValuesScrewVelocity.nameCharVariableMin = sv_CharVariablesUsed.CharVars[i] THEN
+        charValuesScrewVelocity.prMin := GET_SYNC_REFTO(SVName := charValuesScrewVelocity.nameCharVariableMin, Timeout := t#0s, Status := state);
+        charValuesScrewVelocity.bUsed := TRUE;
+    END_IF;
+    IF charValuesScrewVelocity.nameCharVariableMax = sv_CharVariablesUsed.CharVars[i] THEN
+        charValuesScrewVelocity.prMax := GET_SYNC_REFTO(SVName := charValuesScrewVelocity.nameCharVariableMax, Timeout := t#0s, Status := state);
+        charValuesScrewVelocity.bUsed := TRUE;
+    END_IF;
+        
+END_FOR;
+
+sv_CharVariablesUsed.iNrOfVariables := i - 1;
+
+
+;#END_EDIT_BLOCK END_ALGORITHM
+
+(*
+Is called at start up: Connects to and stops all recorder
+Is called when recording is deactivated in HMI: stops all recorder
+*)
+
+PROCESS_ALGORITHM paInit ON TaskMid
+
+
+VAR
+ state : KSYS_Status;
+END_VAR
+#BEGIN_EDIT_BLOCK
+(**************************************** WARNING ********************************************
+ *** The KEBA Kemro K2 System including software is not intended for safety control tasks! ***
+ ***                       For further information see Comment tab!                        ***
+ *********************************************************************************************)
+
+IF NOT mbInitDone THEN
+   // Connecting to datarecorders
+   // On KVB systems not all data recorders are used/existing!
+   status_KMB := Inject_Graph_YX.Connect ('Inject_Graph_YX');
+   GraphYX_ProfileInfo := Inject_Graph_YX.GetProfileInfo();   
+   status_KMB := Inject_Graph_XT1.Connect('Inject_Graph_XT1');
+   GraphXT1_ProfileInfo := Inject_Graph_XT1.GetProfileInfo();  
+   status_KMB := Inject_Graph_XT2.Connect('Inject_Graph_XT2');
+   GraphXT2_ProfileInfo := Inject_Graph_XT2.GetProfileInfo();  
+    
+   status_KMB:= Inject_Graph_YX.StopMeasure();
+   status_KMB:= Inject_Graph_XT1.StopMeasure();
+   status_KMB:= Inject_Graph_XT2.StopMeasure();
+    
+   SwitchOverTime(IN := FALSE, PT := t#999s);  
+   
+   pdInjectDuration := GET_SYNC_REFTO(SVName := 'Injection1.sv_dCalculatedDurationInject', Timeout := t#0s, Status := state);
+   pdHoldDuration   := GET_SYNC_REFTO(SVName := 'Injection1.sv_dCalculatedDurationHold'  , Timeout := t#0s, Status := state);
+   sv_rSampleTimeYXProposal :=  LINT_TO_REAL(TIME_TO_LINT((GET_TASK_INTERVAL(TaskInject)))) / 1000000.0;
+   sv_rDurationHoldProposal := (LINT_TO_REAL(TIME_TO_LINT(pdHoldDuration^  ))) / 1000000.0;
+   sv_rDurationProposal     := (LINT_TO_REAL(TIME_TO_LINT(pdInjectDuration^))) / 1000000.0;
+   sv_rDurationProposal     := sv_rDurationProposal + sv_rDurationHoldProposal;
+   
+   sv_CharVariablesUsed.ChangeCounter := 0;
+   aInitCharVariables();
+   
+   mbInitDone := TRUE;
+   STOP_PROCESS_ALGORITHM();  
+END_IF;
+
+IF NOT sv_bActivateRecord THEN
+   status_KMB := Inject_Graph_YX.StopMeasure();
+   status_KMB := Inject_Graph_XT1.StopMeasure();
+   status_KMB := Inject_Graph_XT2.StopMeasure(); 
+   STOP_PROCESS_ALGORITHM();
+END_IF;
+
+
+
+
+;#END_EDIT_BLOCK END_ALGORITHM
+
+(*
+Manages Cut-Off-History (Min, Mean, Max, Last and History Values)
+*)
+
+POSTUPDATE_ALGORITHM paCalcMinMaxEvCutOff ON PU_Task_13 WITH mpbCutOffDetected^
+
+
+VAR_TEMP
+ iIndex_for : INT;
+END_VAR
+
+VAR
+ iIndex : INT := cIndexFirstHistoryValue;
+ dSwitchOverTime : TIME;
+ rSwitchOverTime : REAL;
+ iValidValues : INT;
+END_VAR
+#BEGIN_EDIT_BLOCK
+(**************************************** WARNING ********************************************
+ *** The KEBA Kemro K2 System including software is not intended for safety control tasks! ***
+ ***                       For further information see Comment tab!                        ***
+ *********************************************************************************************)
+
+IF NOT sv_bActivateRecord THEN
+   RETURN;
+END_IF;
+
+IF NOT sv_bCutOffDetected THEN
+   RETURN;
+END_IF;
+
+SwitchOverTime(IN := TRUE, PT := t#999s, ET => dSwitchOverTime); // get switchovertime
+SwitchOverTime(IN := FALSE);
+
+rSwitchOverTime := LINT_TO_REAL(TIME_TO_LINT(dSwitchOverTime)) / 1000000.0;
+
+IF mbRestart THEN
+   sv_SwitchOverHistoryArray[cIndexMaxValue].rSwitchOverPosition := sv_rCutOffPosition;       
+   sv_SwitchOverHistoryArray[cIndexMinValue].rSwitchOverPosition := sv_rCutOffPosition;     
+    
+   sv_SwitchOverHistoryArray[cIndexMaxValue].rSwitchOverPressure := sv_rCutOffPressure;   
+   sv_SwitchOverHistoryArray[cIndexMinValue].rSwitchOverPressure := sv_rCutOffPressure;   
+  
+   sv_SwitchOverHistoryArray[cIndexMaxValue].rSwitchOverTime     := rSwitchOverTime;
+   sv_SwitchOverHistoryArray[cIndexMinValue].rSwitchOverTime     := rSwitchOverTime;
+   iValidValues := 0; 
+   iIndex   := cIndexFirstHistoryValue;
+   mbRestart := FALSE;
+END_IF;
+
+iValidValues := iValidValues + 1;
+iValidValues := MIN(iValidValues, cSizeSwitchOverHistory - cIndexFirstHistoryValue + 1); 
+
+// CUT-OFF-POSITION-Statistik
+
+sv_SwitchOverHistoryArray[iIndex].rSwitchOverPosition := sv_rCutOffPosition;
+sv_SwitchOverHistoryArray[cIndexActualValue].rSwitchOverPosition:= sv_rCutOffPosition;
+//actual value > stored max value?
+IF sv_rCutOffPosition > sv_SwitchOverHistoryArray[cIndexMaxValue].rSwitchOverPosition THEN
+   sv_SwitchOverHistoryArray[cIndexMaxValue].rSwitchOverPosition := sv_rCutOffPosition;
+END_IF;
+
+//actual value < stored min value?
+IF sv_rCutOffPosition < sv_SwitchOverHistoryArray[cIndexMinValue].rSwitchOverPosition THEN
+   sv_SwitchOverHistoryArray[cIndexMinValue].rSwitchOverPosition := sv_rCutOffPosition;
+END_IF;
+
+//calculate mean value
+sv_SwitchOverHistoryArray[cIndexMeanValue].rSwitchOverPosition := 0.0;
+
+FOR iIndex_for:= cIndexFirstHistoryValue TO (iValidValues + cIndexFirstHistoryValue - 1) DO 
+   sv_SwitchOverHistoryArray[cIndexMeanValue].rSwitchOverPosition := sv_SwitchOverHistoryArray[cIndexMeanValue].rSwitchOverPosition +
+                                                                      sv_SwitchOverHistoryArray[iIndex_for].rSwitchOverPosition;
+END_FOR;
+sv_SwitchOverHistoryArray[cIndexMeanValue].rSwitchOverPosition := 
+                             sv_SwitchOverHistoryArray[cIndexMeanValue].rSwitchOverPosition / 
+                             INT_TO_REAL(iValidValues);
+
+
+// CUT-OFF-Pressure-Statistik
+
+sv_SwitchOverHistoryArray[iIndex].rSwitchOverPressure := sv_rCutOffPressure;
+sv_SwitchOverHistoryArray[cIndexActualValue].rSwitchOverPressure:= sv_rCutOffPressure;
+
+//actual value > stored max value?
+IF sv_rCutOffPressure > sv_SwitchOverHistoryArray[cIndexMaxValue].rSwitchOverPressure THEN
+   sv_SwitchOverHistoryArray[cIndexMaxValue].rSwitchOverPressure := sv_rCutOffPressure;
+END_IF;
+
+//actual value < stored min value?
+IF sv_rCutOffPressure < sv_SwitchOverHistoryArray[cIndexMinValue].rSwitchOverPressure THEN
+   sv_SwitchOverHistoryArray[cIndexMinValue].rSwitchOverPressure := sv_rCutOffPressure;
+END_IF;
+
+//calculate mean value
+sv_SwitchOverHistoryArray[cIndexMeanValue].rSwitchOverPressure := 0.0;
+
+FOR iIndex_for:= cIndexFirstHistoryValue TO (iValidValues + cIndexFirstHistoryValue - 1) DO
+   sv_SwitchOverHistoryArray[cIndexMeanValue].rSwitchOverPressure := sv_SwitchOverHistoryArray[cIndexMeanValue].rSwitchOverPressure +
+                                                                      sv_SwitchOverHistoryArray[iIndex_for].rSwitchOverPressure;
+END_FOR;
+sv_SwitchOverHistoryArray[cIndexMeanValue].rSwitchOverPressure := 
+                sv_SwitchOverHistoryArray[cIndexMeanValue].rSwitchOverPressure / 
+                INT_TO_REAL(iValidValues);
+
+
+// CUT-OFF-TIME-Statistik
+
+sv_SwitchOverHistoryArray[iIndex].rSwitchOverTime            := rSwitchOverTime;
+sv_SwitchOverHistoryArray[cIndexActualValue].rSwitchOverTime := rSwitchOverTime;
+
+//actual value > stored max value?
+IF rSwitchOverTime > sv_SwitchOverHistoryArray[cIndexMaxValue].rSwitchOverTime THEN
+   sv_SwitchOverHistoryArray[cIndexMaxValue].rSwitchOverTime := rSwitchOverTime;
+END_IF;
+
+//actual value < stored min value?
+IF rSwitchOverTime < sv_SwitchOverHistoryArray[cIndexMinValue].rSwitchOverTime THEN
+   sv_SwitchOverHistoryArray[cIndexMinValue].rSwitchOverTime := rSwitchOverTime;
+END_IF;
+
+//calculate mean value
+sv_SwitchOverHistoryArray[cIndexMeanValue].rSwitchOverTime := 0.0;
+
+FOR iIndex_for:= cIndexFirstHistoryValue TO (iValidValues + cIndexFirstHistoryValue-1) DO
+   sv_SwitchOverHistoryArray[cIndexMeanValue].rSwitchOverTime := sv_SwitchOverHistoryArray[cIndexMeanValue].rSwitchOverTime +
+                                                                 sv_SwitchOverHistoryArray[iIndex_for].rSwitchOverTime;
+END_FOR;
+sv_SwitchOverHistoryArray[cIndexMeanValue].rSwitchOverTime := sv_SwitchOverHistoryArray[cIndexMeanValue].rSwitchOverTime / 
+                                                              INT_TO_REAL(iValidValues);                
+
+
+iIndex := iIndex + 1;
+IF iIndex > cSizeSwitchOverHistory THEN
+   iIndex := cIndexFirstHistoryValue;
+END_IF;
+
+
+
+;#END_EDIT_BLOCK END_ALGORITHM
+
+(*
+Starts the paInit Algo at startup and when activation changes
+*)
+
+ALGORITHM aActivationChanged
+
+#BEGIN_EDIT_BLOCK
+(**************************************** WARNING ********************************************
+ *** The KEBA Kemro K2 System including software is not intended for safety control tasks! ***
+ ***                       For further information see Comment tab!                        ***
+ *********************************************************************************************)
+
+IF NOT mbInitDone THEN
+   START_PROCESS_ALGORITHM(paInit);
+END_IF;
+
+
+
+
+;#END_EDIT_BLOCK END_ALGORITHM
+
+(*
+Starts the paInit Algo at startup and when activation changes
+*)
+
+POSTUPDATE_ALGORITHM pActivationChanged ON PU_Task_13 WITH pbActivateRecord^
+
+#BEGIN_EDIT_BLOCK
+(**************************************** WARNING ********************************************
+ *** The KEBA Kemro K2 System including software is not intended for safety control tasks! ***
+ ***                       For further information see Comment tab!                        ***
+ *********************************************************************************************)
+
+aActivationChanged();
+
+
+;#END_EDIT_BLOCK END_ALGORITHM
+
+(*
+Here the proposals for duration of hold an inject movement is calculated
+*)
+
+POSTUPDATE_ALGORITHM pCalculateProposal ON TaskSlow WITH pdInjectDuration^,pdHoldDuration^
+
+#BEGIN_EDIT_BLOCK
+(**************************************** WARNING ********************************************
+ *** The KEBA Kemro K2 System including software is not intended for safety control tasks! ***
+ ***                       For further information see Comment tab!                        ***
+ *********************************************************************************************)
+
+sv_rDurationHoldProposal := (LINT_TO_REAL(TIME_TO_LINT(pdHoldDuration^  ))) / 1000000.0;
+sv_rDurationProposal     := (LINT_TO_REAL(TIME_TO_LINT(pdInjectDuration^))) / 1000000.0;
+sv_rDurationProposal     := sv_rDurationProposal + sv_rDurationHoldProposal;
+
+
+;#END_EDIT_BLOCK END_ALGORITHM
+
+(*
+Is called by the event algorithmen evaErrorXT1, evaErrorXT2 and evaErrorYX.
+It sets the alarms depending on the setting in HMI
+*)
+
+ALGORITHM aErrorAction
+
+
+VAR_INPUT
+ sVarName : STRING(65);
+ sProfileName : STRING(32);
+END_VAR
+
+VAR_TEMP
+ i : INT;
+END_VAR
+
+VAR
+ errorAction : tnErrorAction;
+ bFound : BOOL;
+END_VAR
+#BEGIN_EDIT_BLOCK
+(**************************************** WARNING ********************************************
+ *** The KEBA Kemro K2 System including software is not intended for safety control tasks! ***
+ ***                       For further information see Comment tab!                        ***
+ *********************************************************************************************)
+
+// search for the variable that exeeded the tolerance
+bFound := FALSE;
+FOR i:=1 TO cMaxNoOfVariables DO
+   IF sv_yVariablesUsed[i].name = sVarName THEN
+      //found variable
+      bFound := TRUE;
+      EXIT;    
+   END_IF;
+END_FOR;             
+
+
+IF bFound THEN
+   CASE sv_yVariablesUsed[i].iErrorAction OF
+        1: errorAction := nInjectGraph_Lamp;
+            // display alarm and switch on alarmlamp 
+            SET_ALARM(Name := erInjectGraphAlarmLamp,
+                      Param1 := sProfileName,
+                      Param2 := sVarName);
+        
+        2: errorAction := nInjectGraph_Reject;
+            // send Reject signal and display alarm, no lamp
+            mevPartCheckData.bReject := TRUE;
+            SET_ALARM(Name := erInjectGraphDisplayWarning,
+                      Param1 := sProfileName,
+                      Param2 := sVarName);
+        
+        3: errorAction := nInjectGraph_Lamp_Reject;
+            // send Reject signal and display alarm and lamp
+            mevPartCheckData.bReject := TRUE;
+            SET_ALARM(Name := erInjectGraphAlarmLamp,
+                      Param1 := sProfileName,
+                      Param2 := sVarName);
+        
+        4: errorAction := nInjectGraph_StopAfterCycle;
+            // stop production after cycle, display alarm and lamp
+            mevPartCheckData.bReject := TRUE;    
+            SET_ALARM(Name  := erInjectGraphStopAfterCycle,
+                      Param1 := sProfileName,
+                      Param2 := sVarName);
+
+   ELSE 
+      // no error action selected
+      errorAction := nInjectGraph_No_Action;
+   END_CASE;
+    
+   IF errorAction <> nInjectGraph_No_Action THEN
+      // if any erroraction is selected: mark part as bad
+      mevPartCheckData.bBadPart := TRUE;
+   END_IF;
+END_IF;
+
+
+
+;#END_EDIT_BLOCK END_ALGORITHM
+
+(*
+When recorder XT1 sendes an error event, this algorithm is executed.
+It passes the data over to aErrorAction algorithm.
+*)
+
+EVENT_ALGORITHM evaErrorXT1 ON EV_Task_3 WITH mevInject_Graph_XT1
+
+
+VAR_INPUT
+ evData : KMB_PDSC_Data;
+END_VAR
+#BEGIN_EDIT_BLOCK
+(**************************************** WARNING ********************************************
+ *** The KEBA Kemro K2 System including software is not intended for safety control tasks! ***
+ ***                       For further information see Comment tab!                        ***
+ *********************************************************************************************)
+
+//call the erroractionhandler
+aErrorAction(evData.Variable, evData.Profile);
+
+
+;#END_EDIT_BLOCK END_ALGORITHM
+
+(*
+When recorder XT2 sendes an error event, this algorithm is executed.
+It passes the data over to aErrorAction algorithm.
+*)
+
+EVENT_ALGORITHM evaErrorXT2 ON EV_Task_3 WITH mevInject_Graph_XT2
+
+
+VAR_INPUT
+ evData : KMB_PDSC_Data;
+END_VAR
+#BEGIN_EDIT_BLOCK
+(**************************************** WARNING ********************************************
+ *** The KEBA Kemro K2 System including software is not intended for safety control tasks! ***
+ ***                       For further information see Comment tab!                        ***
+ *********************************************************************************************)
+
+//call the erroractionhandler
+aErrorAction(evData.Variable, evData.Profile);
+
+
+;#END_EDIT_BLOCK END_ALGORITHM
+
+(*
+When recorder YX sendes an error event, this algorithm is executed.
+It passes the data over to aErrorAction algorithm.
+*)
+
+EVENT_ALGORITHM evaErrorYX ON EV_Task_3 WITH mevInject_Graph_YX
+
+
+VAR_INPUT
+ evData : KMB_PDSXY_Data;
+END_VAR
+#BEGIN_EDIT_BLOCK
+(**************************************** WARNING ********************************************
+ *** The KEBA Kemro K2 System including software is not intended for safety control tasks! ***
+ ***                       For further information see Comment tab!                        ***
+ *********************************************************************************************)
+
+//call the erroractionhandler
+aErrorAction(evData.VariableY, evData.Profile);
+
+
+
+;#END_EDIT_BLOCK END_ALGORITHM
+
+(*
+In the HMI the sv_bResetSwitchOverHistory can be set to TRUE.
+Then the Cut-Off history is cleared.
+*)
+
+POSTUPDATE_ALGORITHM pResetSwitchOverHistory ON PU_Task_13 WITH pbResetSwitchOverHistory^
+
+#BEGIN_EDIT_BLOCK
+(**************************************** WARNING ********************************************
+ *** The KEBA Kemro K2 System including software is not intended for safety control tasks! ***
+ ***                       For further information see Comment tab!                        ***
+ *********************************************************************************************)
+
+IF NOT sv_bResetSwitchOverHistory THEN
+   RETURN; 
+END_IF;
+
+sv_bResetSwitchOverHistory := FALSE; //set by HMI, reset by IEC
+
+sv_SwitchOverHistoryArray[cIndexMaxValue   ].rSwitchOverPosition := 0.0;       
+sv_SwitchOverHistoryArray[cIndexMinValue   ].rSwitchOverPosition := 0.0;     
+sv_SwitchOverHistoryArray[cIndexActualValue].rSwitchOverPosition := 0.0;       
+sv_SwitchOverHistoryArray[cIndexMeanValue  ].rSwitchOverPosition := 0.0;     
+
+                              
+sv_SwitchOverHistoryArray[cIndexMaxValue   ].rSwitchOverPressure := 0.0;   
+sv_SwitchOverHistoryArray[cIndexMinValue   ].rSwitchOverPressure := 0.0;   
+sv_SwitchOverHistoryArray[cIndexActualValue].rSwitchOverPressure := 0.0;   
+sv_SwitchOverHistoryArray[cIndexMeanValue  ].rSwitchOverPressure := 0.0;
+  
+sv_SwitchOverHistoryArray[cIndexMaxValue   ].rSwitchOverTime     := 0.0;
+sv_SwitchOverHistoryArray[cIndexMinValue   ].rSwitchOverTime     := 0.0;
+sv_SwitchOverHistoryArray[cIndexActualValue].rSwitchOverTime     := 0.0;
+sv_SwitchOverHistoryArray[cIndexMeanValue  ].rSwitchOverTime     := 0.0;
+
+mbRestart := TRUE;
+
+
+;#END_EDIT_BLOCK END_ALGORITHM
+
+(*
+Inits partcheckdata when cycle is started. Because data may be set from last autocycle.
+*)
+
+POSTUPDATE_ALGORITHM pOperationMode ON PU_Task_7 WITH sv_OperationMode
+
+
+VAR_TEMP
+ b : BOOL;
+ pTmp : REFTO DINT;
+ state : KSYS_Status;
+END_VAR
+
+VAR
+ fbOpModeHalfAndAutoEntered : FBOpModeHalfAndAutoEntered;
+ fbOpModeHalfAndAutoLeft : FBOpModeHalfAndAutoLeft;
+ status : KMB_Status;
+ bInitDone : BOOL;
+ bIsKvb : BOOL;
+END_VAR
+#BEGIN_EDIT_BLOCK
+(**************************************** WARNING ********************************************
+ *** The KEBA Kemro K2 System including software is not intended for safety control tasks! ***
+ ***                       For further information see Comment tab!                        ***
+ *********************************************************************************************)
+
+IF sv_OperationMode > nManual THEN
+   // init partcheckdata when cycle is being started. Because data may be set from last autocycle
+   mevPartCheckData.bBadPart := FALSE;
+   mevPartCheckData.bReject := FALSE;
+END_IF;
+
+IF NOT bInitDone THEN
+   // Check if running on a KVB system
+   pTmp := GET_SYNC_REFTO('KVB.sv_MaskID', T#0s, state);
+   bIsKvb := state = KSYS_Status_OK;
+
+   bInitDone := TRUE;
+END_IF;
+
+IF bIsKvb THEN
+   //On KVB systems persistence is always disabled by the cfg file
+   //Do not enable/disable persistence of the profile at runtime
+   RETURN;
+END_IF;
+
+fbOpModeHalfAndAutoEntered(sv_OperationMode);
+fbOpModeHalfAndAutoLeft(sv_OperationMode);
+
+IF fbOpModeHalfAndAutoEntered.Q THEN
+   // Auto mode entered
+   status := Inject_Graph_YX.DisableProfileFlashPersistence();
+   b := fReportIfKMBFailed(status, 'Inject_Graph_YX.DisableProfileFlashPersistence()');
+   status := Inject_Graph_XT1.DisableProfileFlashPersistence();
+   b := fReportIfKMBFailed(status, 'Inject_Graph_XT1.DisableProfileFlashPersistence()');
+   status := Inject_Graph_XT2.DisableProfileFlashPersistence();
+   b := fReportIfKMBFailed(status, 'Inject_Graph_XT2.DisableProfileFlashPersistence()');
+END_IF;
+
+IF fbOpModeHalfAndAutoLeft.Q THEN
+   // Auto mode left
+   status := Inject_Graph_YX.EnableProfileFlashPersistence();
+   b := fReportIfKMBFailed(status, 'Inject_Graph_YX.EnableProfileFlashPersistence(');
+   status := Inject_Graph_XT1.EnableProfileFlashPersistence();
+   b := fReportIfKMBFailed(status, 'Inject_Graph_XT1.EnableProfileFlashPersistence(');
+   status := Inject_Graph_XT2.EnableProfileFlashPersistence();
+   b := fReportIfKMBFailed(status, 'Inject_Graph_XT2.EnableProfileFlashPersistence()');
+
+   // Explicitly save data (actual/limit curves, ...) once
+   status := Inject_Graph_YX.SaveValuesOnce();
+   b := fReportIfKMBFailed(status, 'Inject_Graph_YX.SaveValuesOnce()');
+   status := Inject_Graph_XT1.SaveValuesOnce();
+   b := fReportIfKMBFailed(status, 'Inject_Graph_XT1.SaveValuesOnce()');
+   status := Inject_Graph_XT2.SaveValuesOnce();
+   b := fReportIfKMBFailed(status, 'Inject_Graph_XT2.SaveValuesOnce()');
+END_IF;
+
+
+;#END_EDIT_BLOCK END_ALGORITHM
+
+(*
+
+sends the part check event containing data if part is ok or if it should be rejected
+*)
+
+POSTUPDATE_ALGORITHM pSendPartCheckEvent ON TaskSlow WITH piPreShotCounter^
+
+
+VAR
+ s : STRING(255);
+END_VAR
+#BEGIN_EDIT_BLOCK
+(**************************************** WARNING ********************************************
+ *** The KEBA Kemro K2 System including software is not intended for safety control tasks! ***
+ ***                       For further information see Comment tab!                        ***
+ *********************************************************************************************)
+
+mevPartCheckData.DeviceID := sv_DeviceId;
+
+IF sv_TraceLevel.bApplication THEN
+   s := CONCAT('InjectGraph: send evPartCheck badPart = ', 
+               BOOL_TO_STRING(mevPartCheckData.bBadPart), 
+               ' reject = ',             
+               BOOL_TO_STRING(mevPartCheckData.bReject));
+   fbDebugTrace(s);
+END_IF;
+
+SET_EVENT(evPartCheck, mevPartCheckData);
+
+mevPartCheckData.bBadPart := FALSE;
+mevPartCheckData.bReject := FALSE;
+
+
+;#END_EDIT_BLOCK END_ALGORITHM
+
+POSTUPDATE_ALGORITHM pInit ON TaskSlow WITH sv_bInitInjectGraph
+
+
+VAR
+ bInit : BOOL;
+ Status : KSYS_Status;
+END_VAR
+#BEGIN_EDIT_BLOCK
+(**************************************** WARNING ********************************************
+ *** The KEBA Kemro K2 System including software is not intended for safety control tasks! ***
+ ***                       For further information see Comment tab!                        ***
+ *********************************************************************************************)
+
+IF (sv_bInitInjectGraph AND (NOT bInit)) THEN
+   
+   pbActivateRecord := @sv_bActivateRecord;
+   pbResetSwitchOverHistory := @sv_bResetSwitchOverHistory;
+   piPreShotCounter := @sv_iPreShotCounter;
+   
+   mpbInjectActive := GET_SYNC_REFTO("Injection1.sv_bInjectActive", T#0s, Status);
+   mpbCutOffDetected := GET_SYNC_REFTO("Injection1.sv_bCutOffDetected", T#0s, Status);
+   
+   mevInject_Graph_XT1 := evInject_Graph_XT1;
+   mevInject_Graph_XT2 := evInject_Graph_XT2;
+   mevInject_Graph_YX := evInject_Graph_YX;
+    
+   aActivationChanged();
+    
+   bInit := TRUE;     
+END_IF;
+
+
+;#END_EDIT_BLOCK END_ALGORITHM
+
+POSTUPDATE_ALGORITHM pStartStopRecorders ON EV_Task_3 WITH mpbInjectActive^,mpbCutOffDetected^
+
+
+VAR
+ bActivated : BOOL;
+ bYXStarted : BOOL;
+ bXT1Started : BOOL;
+ bXT2Started : BOOL;
+END_VAR
+#BEGIN_EDIT_BLOCK
+(**************************************** WARNING ********************************************
+ *** The KEBA Kemro K2 System including software is not intended for safety control tasks! ***
+ ***                       For further information see Comment tab!                        ***
+ *********************************************************************************************)
+
+IF NOT sv_bActivateRecord THEN
+   RETURN;
+END_IF;
+
+IF mpbInjectActive^ THEN
+   
+   //inject active
+   IF NOT bActivated THEN
+      status_KMB := Inject_Graph_YX.StartMeasure(GraphYX_ProfileInfo.ElemCount);
+      bYXStarted := TRUE;
+      status_KMB := Inject_Graph_XT2.StartMeasure(GraphXT2_ProfileInfo.ElemCount);
+      bXT2Started := TRUE;
+      SwitchOverTime(IN := TRUE, PT := t#999s);
+      bActivated := TRUE;
+   END_IF;
+      
+   IF mpbCutOffDetected^ THEN
+      //hold phase active
+      status_KMB := Inject_Graph_YX.StopMeasure();
+      bYXStarted := FALSE;
+      status_KMB := Inject_Graph_XT1.StartMeasure(GraphXT1_ProfileInfo.ElemCount);
+      bXT1Started := TRUE;
+   END_IF;
+   
+ELSE
+   //inject ready -> stop started recorders
+   IF bYXStarted THEN
+      status_KMB := Inject_Graph_YX.StopMeasure();
+      bYXStarted := FALSE;
+   END_IF;
+   IF bXT1Started THEN
+      status_KMB := Inject_Graph_XT1.StopMeasure();
+      bXT1Started := FALSE;
+   END_IF;
+   IF bXT2Started THEN
+      status_KMB := Inject_Graph_XT2.StopMeasure();
+      bXT2Started := FALSE;
+   END_IF;
+   
+   // Inject finished -> Save shot time and counter
+   fbRtc();
+   sv_dShotTimeActInjGraph := fbRtc.CDT;
+   sv_iShotCounterActInjGraph := sv_iShotCounterAct + 1;
+ 
+   IF sv_CharVariablesUsed.iNrOfVariables > 0 THEN
+       // Start calculation of characteristic values
+       START_PROCESS_ALGORITHM(paCalcCharacteristic);
+   ELSE
+       // "Start export" signalization to HMI directly
+       sv_iExportTriggerInjGraph := sv_iExportTriggerInjGraph + 1;
+   END_IF;
+ 
+   bActivated := FALSE;
+END_IF;
+
+
+
+
+
+
+;#END_EDIT_BLOCK END_ALGORITHM
+
+POSTUPDATE_ALGORITHM pCharVariablesChanged ON PU_Task_13 WITH sv_CharVariablesUsed.ChangeCounter
+
+#BEGIN_EDIT_BLOCK
+(**************************************** WARNING ********************************************
+ *** The KEBA Kemro K2 System including software is not intended for safety control tasks! ***
+ ***                       For further information see Comment tab!                        ***
+ *********************************************************************************************)
+
+aInitCharVariables();
+
+
+
+;#END_EDIT_BLOCK END_ALGORITHM
+
+FUNCTION fCalcMean : REAL
+ #DUMMY_EDIT_BLOCK
+
+VAR_IN_OUT
+ curveData : tsInjGraphCurveData;
+END_VAR
+
+VAR
+ i : DINT;
+ rResult : REAL;
+END_VAR
+#BEGIN_EDIT_BLOCK
+(**************************************** WARNING ********************************************
+ *** The KEBA Kemro K2 System including software is not intended for safety control tasks! ***
+ ***                       For further information see Comment tab!                        ***
+ *********************************************************************************************)
+
+// Calculate average
+rResult := 0.0;
+
+FOR i := 0 TO (curveData.iDataCnt - 1) DO
+   rResult := rResult + (curveData.data[i] - rResult) / DINT_TO_REAL(i + 1);
+END_FOR;
+
+fCalcMean := rResult;
+   
+
+
+
+;#END_EDIT_BLOCK END_FUNCTION
+
+FUNCTION fCalcMin : REAL
+ #DUMMY_EDIT_BLOCK
+
+VAR_IN_OUT
+ curveData : tsInjGraphCurveData;
+END_VAR
+
+VAR
+ i : DINT;
+ rResult : REAL;
+END_VAR
+#BEGIN_EDIT_BLOCK
+(**************************************** WARNING ********************************************
+ *** The KEBA Kemro K2 System including software is not intended for safety control tasks! ***
+ ***                       For further information see Comment tab!                        ***
+ *********************************************************************************************)
+
+// Calculate minimum
+rResult := curveData.data[0];
+
+FOR i := 0 TO (curveData.iDataCnt - 1) DO
+   rResult := MIN(rResult, curveData.data[i]);
+END_FOR;
+
+fCalcMin := rResult;
+   
+
+
+
+;#END_EDIT_BLOCK END_FUNCTION
+
+FUNCTION fCalcMax : REAL
+ #DUMMY_EDIT_BLOCK
+
+VAR_IN_OUT
+ curveData : tsInjGraphCurveData;
+END_VAR
+
+VAR
+ i : DINT;
+ rResult : REAL;
+END_VAR
+#BEGIN_EDIT_BLOCK
+(**************************************** WARNING ********************************************
+ *** The KEBA Kemro K2 System including software is not intended for safety control tasks! ***
+ ***                       For further information see Comment tab!                        ***
+ *********************************************************************************************)
+
+// Calculate maximum
+rResult := curveData.data[0];
+
+FOR i := 0 TO (curveData.iDataCnt - 1) DO
+   rResult := MAX(rResult, curveData.data[i]);
+END_FOR;
+
+fCalcMax := rResult;
+   
+
+
+
+;#END_EDIT_BLOCK END_FUNCTION
+
+ALGORITHM aReadCurveDataOverTime
+
+
+VAR_INPUT
+ varName : STRING(255);
+END_VAR
+
+VAR_IN_OUT
+ yData : tsInjGraphCurveData;
+ xData : tsInjGraphCurveData;
+END_VAR
+
+VAR_TEMP
+ i : INT;
+END_VAR
+
+VAR
+ curve : KMB_Curve;
+ curveStatus : KMB_CurveResult;
+ dataCnt : DINT;
+END_VAR
+
+VAR CONSTANT
+ startIdx : DINT := 0;
+END_VAR
+#BEGIN_EDIT_BLOCK
+(**************************************** WARNING ********************************************
+ *** The KEBA Kemro K2 System including software is not intended for safety control tasks! ***
+ ***                       For further information see Comment tab!                        ***
+ *********************************************************************************************)
+
+// Read curve data of XT2 data recorder (for display mode "Time")
+curve.VariableY := varName;
+curveStatus := Inject_Graph_XT2.GetCurve(curve);
+
+// Clear data
+FOR i := 0 TO (cInjGraphMaxDataCnt - 1) DO
+   yData.data[i] := 0.0;
+END_FOR;
+
+IF (curveStatus.Status = KMB_Status_OK) THEN
+    // Get measure data from data recorder
+    status_KMB := Inject_Graph_XT2.GetMeasureDataReal(curveStatus.CurveId, startIdx, INT_TO_DINT(cInjGraphMaxDataCnt), dataCnt, yData.data, xData.data);
+    yData.iDataCnt := dataCnt;
+    xData.iDataCnt := dataCnt;
+END_IF;
+
+
+
+;#END_EDIT_BLOCK END_ALGORITHM
+
+ALGORITHM aReadCurveDataOverPosition
+
+
+VAR_INPUT
+ varName : STRING(255);
+END_VAR
+
+VAR_IN_OUT
+ yData : tsInjGraphCurveData;
+ xData : tsInjGraphCurveData;
+END_VAR
+
+VAR_TEMP
+ i : INT;
+END_VAR
+
+VAR
+ curve : KMB_Curve;
+ curveStatus : KMB_CurveResult;
+ dataCnt : DINT;
+END_VAR
+
+VAR CONSTANT
+ startIdx : DINT := 0;
+END_VAR
+#BEGIN_EDIT_BLOCK
+(**************************************** WARNING ********************************************
+ *** The KEBA Kemro K2 System including software is not intended for safety control tasks! ***
+ ***                       For further information see Comment tab!                        ***
+ *********************************************************************************************)
+
+// Read curve data of YX data recorder (for display mode "Position" and "Split")
+curve.VariableY := varName;
+curveStatus := Inject_Graph_YX.GetCurve(curve);
+
+// Clear data
+FOR i := 0 TO (cInjGraphMaxDataCnt - 1) DO
+   yData.data[i] := 0.0;
+END_FOR;
+
+IF (curveStatus.Status = KMB_Status_OK) THEN
+    // Get measure data from data recorder
+    status_KMB := Inject_Graph_YX.GetMeasureDataReal(curveStatus.CurveId, startIdx, INT_TO_DINT(cInjGraphMaxDataCnt), dataCnt, yData.data, xData.data);
+    yData.iDataCnt := dataCnt;
+    xData.iDataCnt := dataCnt;
+END_IF;
+
+
+;#END_EDIT_BLOCK END_ALGORITHM
+
+PROCESS_ALGORITHM paCalcCharacteristic ON TaskMid
+
+
+VAR_TEMP
+ b : BOOL;
+END_VAR
+
+VAR
+ xDataDummy : tsInjGraphCurveData;
+ iStep : INT := 0;
+END_VAR
+#BEGIN_EDIT_BLOCK
+(**************************************** WARNING ********************************************
+ *** The KEBA Kemro K2 System including software is not intended for safety control tasks! ***
+ ***                       For further information see Comment tab!                        ***
+ *********************************************************************************************)
+
+// NOTE: This is just a template for calculating typical characteristic values.
+// Curve data can be read also from other data recorders (YX, XT1)
+// e.g. depending on selected display mode in inject graph (sv_iDisplayModeInjGraph)
+
+// Step 0: Read curve data
+IF iStep = 0 THEN      
+   // Act. screw velocity
+   IF charValuesScrewVelocity.bUsed THEN
+      aReadCurveDataOverTime(charValuesScrewVelocity.curveName, charValuesScrewVelocity.curveData, xDataDummy);
+   END_IF;
+   
+   iStep := 10;
+   RETURN;
+END_IF;
+
+// Step 10: Calculate char. values of act. screw velocity
+IF iStep = 10 THEN   
+   IF charValuesScrewVelocity.prMean <> EMPTY THEN
+       b := WRITE_SVREAL_DIRECT(charValuesScrewVelocity.prMean^, fCalcMean(charValuesScrewVelocity.curveData));
+   END_IF;
+   IF charValuesScrewVelocity.prMin <> EMPTY THEN
+       b := WRITE_SVREAL_DIRECT(charValuesScrewVelocity.prMin^, fCalcMin(charValuesScrewVelocity.curveData));
+   END_IF;
+   IF charValuesScrewVelocity.prMax <> EMPTY THEN
+       b := WRITE_SVREAL_DIRECT(charValuesScrewVelocity.prMax^, fCalcMax(charValuesScrewVelocity.curveData));
+   END_IF;
+       
+   iStep := 99;
+   RETURN;
+END_IF;
+
+// Step 99: End
+IF iStep = 99 THEN
+   iStep := 0;
+   
+   // "Start export" signalization to HMI
+   sv_iExportTriggerInjGraph := sv_iExportTriggerInjGraph + 1;
+   
+   STOP_PROCESS_ALGORITHM();
+   RETURN;
+END_IF;
+
+
+;#END_EDIT_BLOCK END_ALGORITHM
+
+
+
+END_ALGORITHM_BLOCK
+
+
+
+#END_OF_IEC_PART
+
+@Puma @IecEditor 6 180 @Pou 25 
+@@@BEG_Comment@@@
+This PU is controlles the InjecGraph recorder
+@@@END_Comment@@@
+
+@BEG_Contents 
+
+@BEG_Func 
+@RT(17)FuncTreeContainer 
+4 
+@Var @RT(9)SET_ALARM @RT(0) @T @T @DERIVED 0 @F @RT(23)KEBA_STANDARD_PROCEDURE @F 
+@T 
+@BEG_Attrib 
+0 @RT(0) @RT(0) 
+@END_Attrib 
+1 1 @F @F @F @F 
+
+@Var @RT(14)GET_SYNC_REFTO @RT(0) @T @T @DERIVED 0 @F @RT(22)KEBA_STANDARD_FUNCTION @F 
+@T 
+@BEG_Attrib 
+0 @RT(0) @RT(0) 
+@END_Attrib 
+1 1 @F @F @F @F 
+
+@Var @RT(9)SET_EVENT @RT(0) @T @T @DERIVED 0 @F @RT(23)KEBA_STANDARD_PROCEDURE @F 
+@T 
+@BEG_Attrib 
+0 @RT(0) @RT(0) 
+@END_Attrib 
+1 1 @F @F @F @F 
+
+@Var @RT(17)GET_TASK_INTERVAL @RT(0) @T @T @DERIVED 0 @F @RT(22)KEBA_STANDARD_FUNCTION @F 
+@T 
+@BEG_Attrib 
+0 @RT(0) @RT(0) 
+@END_Attrib 
+1 1 @F @F @F @F 
+
+@END_Func 
+
+@BEG_Const 
+@RT(18)ConstTreeContainer 
+15 
+@Var @RT(13)KMB_Status_OK @RT(0) @T @T @DERIVED 0 @F @RT(10)KMB_Status @F 
+@T 
+@BEG_Attrib 
+0 @RT(1)0 @RT(2)ok 
+@END_Attrib 
+1 1 @F @F @F @F 
+
+@Var @RT(23)cIndexFirstHistoryValue @RT(0) @T @F @DT @RT(3)INT @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+0 @RT(1)5 @RT(31)index of first value of History 
+@END_Attrib 
+1 1 @F @F @F @F 
+
+@Var @RT(14)cIndexMaxValue @RT(0) @T @F @DT @RT(3)INT @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+0 @RT(1)1 @RT(18)index of max value 
+@END_Attrib 
+1 1 @F @F @F @F 
+
+@Var @RT(14)cIndexMinValue @RT(0) @T @F @DT @RT(3)INT @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+0 @RT(1)3 @RT(18)index of min value 
+@END_Attrib 
+1 1 @F @F @F @F 
+
+@Var @RT(22)cSizeSwitchOverHistory @RT(0) @T @F @DT @RT(3)INT @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+0 @RT(2)20 @RT(21)size of history Array 
+@END_Attrib 
+1 1 @F @F @F @F 
+
+@Var @RT(17)cIndexActualValue @RT(0) @T @F @DT @RT(3)INT @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+0 @RT(1)4 @RT(20)index of last Value  
+@END_Attrib 
+1 1 @F @F @F @F 
+
+@Var @RT(15)cIndexMeanValue @RT(0) @T @F @DT @RT(3)INT @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+0 @RT(1)2 @RT(19)index of mean value 
+@END_Attrib 
+1 1 @F @F @F @F 
+
+@Var @RT(17)cMaxNoOfVariables @RT(0) @T @F @DT @RT(3)INT @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+0 @RT(2)20 @RT(48)max. number of process variables in inject graph 
+@END_Attrib 
+1 1 @F @F @F @F 
+
+@Var @RT(17)nInjectGraph_Lamp @RT(0) @T @T @DERIVED 0 @F @RT(13)tnErrorAction @F 
+@T 
+@BEG_Attrib 
+0 @RT(1)1 @RT(0) 
+@END_Attrib 
+1 1 @F @F @F @F 
+
+@Var @RT(19)nInjectGraph_Reject @RT(0) @T @T @DERIVED 0 @F @RT(13)tnErrorAction @F 
+@T 
+@BEG_Attrib 
+0 @RT(1)2 @RT(0) 
+@END_Attrib 
+1 1 @F @F @F @F 
+
+@Var @RT(24)nInjectGraph_Lamp_Reject @RT(0) @T @T @DERIVED 0 @F @RT(13)tnErrorAction @F 
+@T 
+@BEG_Attrib 
+0 @RT(1)3 @RT(0) 
+@END_Attrib 
+1 1 @F @F @F @F 
+
+@Var @RT(27)nInjectGraph_StopAfterCycle @RT(0) @T @T @DERIVED 0 @F @RT(13)tnErrorAction @F 
+@T 
+@BEG_Attrib 
+0 @RT(1)4 @RT(0) 
+@END_Attrib 
+1 1 @F @F @F @F 
+
+@Var @RT(22)nInjectGraph_No_Action @RT(0) @T @T @DERIVED 0 @F @RT(13)tnErrorAction @F 
+@T 
+@BEG_Attrib 
+0 @RT(1)0 @RT(0) 
+@END_Attrib 
+1 1 @F @F @F @F 
+
+@Var @RT(7)nManual @RT(0) @T @T @DERIVED 0 @F @RT(15)tnOperationMode @F 
+@T 
+@BEG_Attrib 
+0 @RT(1)1 @RT(31)manual mode, play with switches 
+@END_Attrib 
+1 1 @F @F @F @F 
+
+@Var @RT(14)KSYS_Status_OK @RT(0) @T @T @DERIVED 0 @F @RT(11)KSYS_Status @F 
+@T 
+@BEG_Attrib 
+0 @RT(1)1 @RT(0) 
+@END_Attrib 
+1 1 @F @F @F @F 
+
+@END_Const 
+
+@BEG_Export 
+
+@BEG_Kind 
+@ALGORITHM_BLOCK @RT(13)ABInjectGraph @STRUCTURED_TEXT 
+@RT(0) @RT(0) @RT(0) 
+@END_Kind 
+
+@BEG_Dcl 
+@RT(16)DclTreeContainer 
+57 
+@Var @RT(25)sv_SwitchOverHistoryArray @RT(0) @T @T @DERIVED 0 @T @T @DT @RT(19)tySwitchOverHistory @RT(0) @T @T @UNKNOWN 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 8 @F @F @F @F 
+
+@Var @RT(18)sv_bActivateRecord @RT(0) @T @F @DT @RT(4)BOOL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 8 @F @F @F @F 
+
+@Var @RT(19)sv_bInitInjectGraph @RT(0) @T @F @DT @RT(4)BOOL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(27)activation of ABInjectGraph @RT(0) 
+@END_Attrib 
+1 8 @F @F @F @F 
+
+@Var @RT(17)sv_yVariablesUsed @RT(0) @T @T @DERIVED 0 @T @T @DT @RT(15)tyVariablesUsed @RT(0) @T @T @UNKNOWN 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(55)Array of variable which are actual used in inject graph @RT(0) 
+@END_Attrib 
+1 8 @F @F @F @F 
+
+@Var @RT(18)sv_rCutOffPressure @RT(0) @T @F @DT @RT(4)REAL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 8 @F @F @F @F 
+
+@Var @RT(18)sv_rCutOffPosition @RT(0) @T @F @DT @RT(4)REAL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 8 @F @F @F @F 
+
+@Var @RT(20)sv_rDurationProposal @RT(0) @T @F @DT @RT(4)REAL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 8 @F @F @F @F 
+
+@Var @RT(24)sv_rDurationHoldProposal @RT(0) @T @F @DT @RT(4)REAL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 8 @F @F @F @F 
+
+@Var @RT(18)sv_bCutOffDetected @RT(0) @T @F @DT @RT(4)BOOL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 8 @F @F @F @F 
+
+@Var @RT(11)sv_DeviceId @RT(0) @T @T @DERIVED 0 @T @T @DT @RT(10)tsDeviceId @RT(0) @T @T @UNKNOWN 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(24)unique Device Identifier @RT(0) 
+@END_Attrib 
+1 8 @F @F @F @F 
+
+@Var @RT(13)sv_TraceLevel @RT(0) @T @T @DERIVED 0 @T @T @DT @RT(12)tsTraceLevel @RT(0) @T @T @UNKNOWN 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 8 @F @F @F @F 
+
+@Var @RT(26)sv_bResetSwitchOverHistory @RT(0) @T @F @DT @RT(4)BOOL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 8 @F @F @F @F 
+
+@Var @RT(16)sv_OperationMode @RT(0) @T @T @DERIVED 0 @T @T @DT @RT(15)tnOperationMode @RT(0) @T @T @UNKNOWN 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 8 @F @F @F @F 
+
+@Var @RT(18)sv_iPreShotCounter @RT(0) @T @F @DT @RT(4)DINT @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(56)shot counter for PDS (increased before ejector movement) @RT(0) 
+@END_Attrib 
+1 8 @F @F @F @F 
+
+@Var @RT(24)sv_rSampleTimeYXProposal @RT(0) @T @F @DT @RT(4)REAL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 8 @F @F @F @F 
+
+@Var @RT(10)TaskInject @RT(0) @T @F @DT @RT(4)TASK @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 7 @F @F @F @F 
+
+@Var @RT(7)TaskMid @RT(0) @T @F @DT @RT(4)TASK @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 7 @F @F @F @F 
+
+@Var @RT(8)TaskSlow @RT(0) @T @F @DT @RT(4)TASK @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 7 @F @F @F @F 
+
+@Var @RT(10)PU_Task_13 @RT(0) @T @F @DT @RT(4)TASK @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 7 @F @F @F @F 
+
+@Var @RT(9)PU_Task_7 @RT(0) @T @F @DT @RT(4)TASK @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 7 @F @F @F @F 
+
+@Var @RT(9)EV_Task_3 @RT(0) @T @F @DT @RT(4)TASK @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 7 @F @F @F @F 
+
+@Var @RT(27)erInjectGraphStopAfterCycle @RT(0) @T @F @DT @RT(5)ALARM @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 7 @F @F @F @F 
+
+@Var @RT(27)erInjectGraphDisplayWarning @RT(0) @T @F @DT @RT(5)ALARM @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 7 @F @F @F @F 
+
+@Var @RT(22)erInjectGraphAlarmLamp @RT(0) @T @F @DT @RT(5)ALARM @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 7 @F @F @F @F 
+
+@Var @RT(18)evInject_Graph_XT1 @RT(0) @T @T @DERIVED 0 @T @T @DT @RT(14)KMB_PDSC_Event @RT(0) @T @T @UNKNOWN 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 7 @F @F @F @F 
+
+@Var @RT(18)evInject_Graph_XT2 @RT(0) @T @T @DERIVED 0 @T @T @DT @RT(14)KMB_PDSC_Event @RT(0) @T @T @UNKNOWN 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 7 @F @F @F @F 
+
+@Var @RT(17)evInject_Graph_YX @RT(0) @T @T @DERIVED 0 @T @T @DT @RT(15)KMB_PDSXY_Event @RT(0) @T @T @UNKNOWN 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 7 @F @F @F @F 
+
+@Var @RT(11)evPartCheck @RT(0) @T @T @DERIVED 0 @T @T @DT @RT(12)tevPartCheck @RT(0) @T @T @UNKNOWN 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 7 @F @F @F @F 
+
+@Var @RT(24)pbResetSwitchOverHistory @RT(0) @T @T @REFTO 0 @T @DT @RT(4)BOOL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(16)piPreShotCounter @RT(0) @T @T @REFTO 0 @T @DT @RT(4)DINT @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(56)shot counter for PDS (increased before ejector movement) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(16)pbActivateRecord @RT(0) @T @T @REFTO 0 @T @DT @RT(4)BOOL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(16)pdInjectDuration @RT(0) @T @T @REFTO 0 @T @DT @RT(4)TIME @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(14)pdHoldDuration @RT(0) @T @T @REFTO 0 @T @DT @RT(4)TIME @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(10)mbInitDone @RT(0) @T @F @DT @RT(4)BOOL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(5)FALSE @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(9)mbRestart @RT(0) @T @F @DT @RT(4)BOOL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(4)TRUE @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(16)mevPartCheckData @RT(0) @T @T @DERIVED 0 @T @T @DT @RT(16)tevPartCheckData @RT(0) @T @T @UNKNOWN 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(10)status_KMB @RT(0) @T @T @DERIVED 0 @T @T @DT @RT(10)KMB_Status @RT(0) @T @T @UNKNOWN 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(16)Inject_Graph_XT1 @RT(0) @T @T @DERIVED 0 @T @T @DT @RT(17)KMB_MeasureBlock2 @RT(0) @T @T @UNKNOWN 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(16)Inject_Graph_XT2 @RT(0) @T @T @DERIVED 0 @T @T @DT @RT(17)KMB_MeasureBlock2 @RT(0) @T @T @UNKNOWN 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(15)Inject_Graph_YX @RT(0) @T @T @DERIVED 0 @T @T @DT @RT(17)KMB_MeasureBlock2 @RT(0) @T @T @UNKNOWN 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(20)GraphXT1_ProfileInfo @RT(0) @T @T @DERIVED 0 @T @T @DT @RT(15)KMB_ProfileInfo @RT(0) @T @T @UNKNOWN 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(20)GraphXT2_ProfileInfo @RT(0) @T @T @DERIVED 0 @T @T @DT @RT(15)KMB_ProfileInfo @RT(0) @T @T @UNKNOWN 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(19)GraphYX_ProfileInfo @RT(0) @T @T @DERIVED 0 @T @T @DT @RT(15)KMB_ProfileInfo @RT(0) @T @T @UNKNOWN 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(12)fbDebugTrace @RT(0) @T @T @DERIVED 0 @T @T @DT @RT(12)FBDebugTrace @RT(0) @T @T @UNKNOWN 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(14)SwitchOverTime @RT(0) @T @T @DERIVED 0 @T @T @DT @RT(3)TON @RT(0) @T @T @UNKNOWN 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(19)mevInject_Graph_XT1 @RT(0) @T @T @DERIVED 0 @T @T @DT @RT(14)KMB_PDSC_Event @RT(0) @T @T @UNKNOWN 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(19)mevInject_Graph_XT2 @RT(0) @T @T @DERIVED 0 @T @T @DT @RT(14)KMB_PDSC_Event @RT(0) @T @T @UNKNOWN 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(18)mevInject_Graph_YX @RT(0) @T @T @DERIVED 0 @T @T @DT @RT(15)KMB_PDSXY_Event @RT(0) @T @T @UNKNOWN 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(15)mpbInjectActive @RT(0) @T @T @REFTO 0 @T @DT @RT(4)BOOL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(17)mpbCutOffDetected @RT(0) @T @T @REFTO 0 @T @DT @RT(4)BOOL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(5)fbRtc @RT(0) @T @T @DERIVED 0 @T @T @DT @RT(3)RTC @RT(0) @T @T @UNKNOWN 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(23)charValuesScrewVelocity @RT(0) @T @T @DERIVED 0 @F @RT(12)tsCharValues @F 
+@T 
+@BEG_Attrib 
+3 @RT(210)(curveName:='Injection1.sv_rScrewVelocity',nameCharVariableMean:='Injection1.sv_rScrewVelocityMean',nameCharVariableMin:='Injection1.sv_rScrewVelocityMin',nameCharVariableMax:='Injection1.sv_rScrewVelocityMax') @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(18)sv_iShotCounterAct @RT(0) @T @F @DT @RT(4)DINT @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 8 @F @F @F @F 
+
+@Var @RT(26)sv_iShotCounterActInjGraph @RT(0) @T @F @DT @RT(4)DINT @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(36)Actual shot counter for inject graph @RT(0) 
+@END_Attrib 
+1 8 @F @F @F @F 
+
+@Var @RT(23)sv_dShotTimeActInjGraph @RT(0) @T @F @DT @RT(13)DATE_AND_TIME @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(33)Actual shot time for inject graph @RT(0) 
+@END_Attrib 
+1 8 @F @F @F @F 
+
+@Var @RT(25)sv_iExportTriggerInjGraph @RT(0) @T @F @DT @RT(4)DINT @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(31)Export trigger for inject graph @RT(0) 
+@END_Attrib 
+1 8 @F @F @F @F 
+
+@Var @RT(20)sv_CharVariablesUsed @RT(0) @T @T @DERIVED 0 @T @T @DT @RT(19)tsCharVariablesUsed @RT(0) @T @T @UNKNOWN 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(127)Characteristic variables which are actually used in inject graph. Signalization of change is done via ChangeCounter sub element @RT(0) 
+@END_Attrib 
+1 8 @F @F @F @F 
+
+@END_Dcl 
+
+@END_Export 
+
+@BEG_Body 
+
+23 
+
+@BEG_Export 
+
+@BEG_Algo 
+@FUNCTION @RT(18)fReportIfKMBFailed @STRUCTURED_TEXT 
+@RT(4)BOOL @RT(0) @RT(0) @F @F 
+@END_Algo 
+
+@BEG_Dcl 
+@RT(16)DclTreeContainer 
+3 
+@Var @RT(6)status @RT(0) @T @T @DERIVED 0 @T @T @DT @RT(10)KMB_Status @RT(0) @T @T @UNKNOWN 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 1 @F @F @F @F 
+
+@Var @RT(12)sDescription @RT(0) @T @F @DT @RT(11)STRING(255) @RT(0) @T @T @STRING 0 @F @RT(3)255 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 1 @F @F @F @F 
+
+@Var @RT(5)dummy @RT(0) @T @F @DT @RT(4)DINT @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@END_Dcl 
+
+@END_Export 
+
+@BEG_Export 
+
+@BEG_Algo 
+@ALGORITHM @RT(18)aInitCharVariables @STRUCTURED_TEXT 
+@RT(0) @RT(0) @RT(0) @F @F 
+@END_Algo 
+
+@BEG_Dcl 
+@RT(16)DclTreeContainer 
+2 
+@Var @RT(1)i @RT(0) @T @F @DT @RT(3)INT @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 4 @F @F @F @F 
+
+@Var @RT(5)state @RT(0) @T @T @DERIVED 0 @T @T @DT @RT(11)KSYS_Status @RT(0) @T @T @UNKNOWN 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@END_Dcl 
+
+@END_Export 
+
+@BEG_Export 
+
+@BEG_Algo 
+@PROCESS_ALGORITHM @RT(6)paInit @STRUCTURED_TEXT 
+@RT(0) @RT(0) @RT(7)TaskMid @F @F 
+@END_Algo 
+
+@BEG_Dcl 
+@RT(16)DclTreeContainer 
+1 
+@Var @RT(5)state @RT(0) @T @T @DERIVED 0 @T @T @DT @RT(11)KSYS_Status @RT(0) @T @T @UNKNOWN 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@END_Dcl 
+
+@END_Export 
+
+@BEG_Export 
+
+@BEG_Algo 
+@POSTUPDATE_ALGORITHM @RT(20)paCalcMinMaxEvCutOff @STRUCTURED_TEXT 
+@RT(0) @RT(18)mpbCutOffDetected^ @RT(10)PU_Task_13 @F @F 
+@END_Algo 
+
+@BEG_Dcl 
+@RT(16)DclTreeContainer 
+5 
+@Var @RT(10)iIndex_for @RT(0) @T @F @DT @RT(3)INT @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 4 @F @F @F @F 
+
+@Var @RT(6)iIndex @RT(0) @T @F @DT @RT(3)INT @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(23)cIndexFirstHistoryValue @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(15)dSwitchOverTime @RT(0) @T @F @DT @RT(4)TIME @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(15)rSwitchOverTime @RT(0) @T @F @DT @RT(4)REAL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(12)iValidValues @RT(0) @T @F @DT @RT(3)INT @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@END_Dcl 
+
+@END_Export 
+
+@BEG_Export 
+
+@BEG_Algo 
+@ALGORITHM @RT(18)aActivationChanged @STRUCTURED_TEXT 
+@RT(0) @RT(0) @RT(0) @F @F 
+@END_Algo 
+
+@BEG_Dcl 
+@RT(16)DclTreeContainer 
+0 
+@END_Dcl 
+
+@END_Export 
+
+@BEG_Export 
+
+@BEG_Algo 
+@POSTUPDATE_ALGORITHM @RT(18)pActivationChanged @STRUCTURED_TEXT 
+@RT(0) @RT(17)pbActivateRecord^ @RT(10)PU_Task_13 @F @F 
+@END_Algo 
+
+@BEG_Dcl 
+@RT(16)DclTreeContainer 
+0 
+@END_Dcl 
+
+@END_Export 
+
+@BEG_Export 
+
+@BEG_Algo 
+@POSTUPDATE_ALGORITHM @RT(18)pCalculateProposal @STRUCTURED_TEXT 
+@RT(0) @RT(33)pdInjectDuration^,pdHoldDuration^ @RT(8)TaskSlow @F @F 
+@END_Algo 
+
+@BEG_Dcl 
+@RT(16)DclTreeContainer 
+0 
+@END_Dcl 
+
+@END_Export 
+
+@BEG_Export 
+
+@BEG_Algo 
+@ALGORITHM @RT(12)aErrorAction @STRUCTURED_TEXT 
+@RT(0) @RT(0) @RT(0) @F @F 
+@END_Algo 
+
+@BEG_Dcl 
+@RT(16)DclTreeContainer 
+5 
+@Var @RT(8)sVarName @RT(0) @T @F @DT @RT(10)STRING(65) @RT(0) @T @T @STRING 0 @F @RT(2)65 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 1 @F @F @F @F 
+
+@Var @RT(12)sProfileName @RT(0) @T @F @DT @RT(10)STRING(32) @RT(0) @T @T @STRING 0 @F @RT(2)32 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 1 @F @F @F @F 
+
+@Var @RT(1)i @RT(0) @T @F @DT @RT(3)INT @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 4 @F @F @F @F 
+
+@Var @RT(11)errorAction @RT(0) @T @T @DERIVED 0 @T @T @DT @RT(13)tnErrorAction @RT(0) @T @T @UNKNOWN 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(6)bFound @RT(0) @T @F @DT @RT(4)BOOL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@END_Dcl 
+
+@END_Export 
+
+@BEG_Export 
+
+@BEG_Algo 
+@EVENT_ALGORITHM @RT(11)evaErrorXT1 @STRUCTURED_TEXT 
+@RT(0) @RT(19)mevInject_Graph_XT1 @RT(9)EV_Task_3 @F @F 
+@END_Algo 
+
+@BEG_Dcl 
+@RT(16)DclTreeContainer 
+1 
+@Var @RT(6)evData @RT(0) @T @T @DERIVED 0 @T @T @DT @RT(13)KMB_PDSC_Data @RT(0) @T @T @UNKNOWN 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 1 @F @F @F @F 
+
+@END_Dcl 
+
+@END_Export 
+
+@BEG_Export 
+
+@BEG_Algo 
+@EVENT_ALGORITHM @RT(11)evaErrorXT2 @STRUCTURED_TEXT 
+@RT(0) @RT(19)mevInject_Graph_XT2 @RT(9)EV_Task_3 @F @F 
+@END_Algo 
+
+@BEG_Dcl 
+@RT(16)DclTreeContainer 
+1 
+@Var @RT(6)evData @RT(0) @T @T @DERIVED 0 @T @T @DT @RT(13)KMB_PDSC_Data @RT(0) @T @T @UNKNOWN 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 1 @F @F @F @F 
+
+@END_Dcl 
+
+@END_Export 
+
+@BEG_Export 
+
+@BEG_Algo 
+@EVENT_ALGORITHM @RT(10)evaErrorYX @STRUCTURED_TEXT 
+@RT(0) @RT(18)mevInject_Graph_YX @RT(9)EV_Task_3 @F @F 
+@END_Algo 
+
+@BEG_Dcl 
+@RT(16)DclTreeContainer 
+1 
+@Var @RT(6)evData @RT(0) @T @T @DERIVED 0 @T @T @DT @RT(14)KMB_PDSXY_Data @RT(0) @T @T @UNKNOWN 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 1 @F @F @F @F 
+
+@END_Dcl 
+
+@END_Export 
+
+@BEG_Export 
+
+@BEG_Algo 
+@POSTUPDATE_ALGORITHM @RT(23)pResetSwitchOverHistory @STRUCTURED_TEXT 
+@RT(0) @RT(25)pbResetSwitchOverHistory^ @RT(10)PU_Task_13 @F @F 
+@END_Algo 
+
+@BEG_Dcl 
+@RT(16)DclTreeContainer 
+0 
+@END_Dcl 
+
+@END_Export 
+
+@BEG_Export 
+
+@BEG_Algo 
+@POSTUPDATE_ALGORITHM @RT(14)pOperationMode @STRUCTURED_TEXT 
+@RT(0) @RT(16)sv_OperationMode @RT(9)PU_Task_7 @F @F 
+@END_Algo 
+
+@BEG_Dcl 
+@RT(16)DclTreeContainer 
+8 
+@Var @RT(1)b @RT(0) @T @F @DT @RT(4)BOOL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 4 @F @F @F @F 
+
+@Var @RT(4)pTmp @RT(0) @T @T @REFTO 0 @T @DT @RT(4)DINT @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 4 @F @F @F @F 
+
+@Var @RT(5)state @RT(0) @T @T @DERIVED 0 @T @T @DT @RT(11)KSYS_Status @RT(0) @T @T @UNKNOWN 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 4 @F @F @F @F 
+
+@Var @RT(26)fbOpModeHalfAndAutoEntered @RT(0) @T @T @DERIVED 0 @T @T @DT @RT(26)FBOpModeHalfAndAutoEntered @RT(0) @T @T @UNKNOWN 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(23)fbOpModeHalfAndAutoLeft @RT(0) @T @T @DERIVED 0 @T @T @DT @RT(23)FBOpModeHalfAndAutoLeft @RT(0) @T @T @UNKNOWN 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(6)status @RT(0) @T @T @DERIVED 0 @T @T @DT @RT(10)KMB_Status @RT(0) @T @T @UNKNOWN 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(9)bInitDone @RT(0) @T @F @DT @RT(4)BOOL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(6)bIsKvb @RT(0) @T @F @DT @RT(4)BOOL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@END_Dcl 
+
+@END_Export 
+
+@BEG_Export 
+
+@BEG_Algo 
+@POSTUPDATE_ALGORITHM @RT(19)pSendPartCheckEvent @STRUCTURED_TEXT 
+@RT(0) @RT(17)piPreShotCounter^ @RT(8)TaskSlow @F @F 
+@END_Algo 
+
+@BEG_Dcl 
+@RT(16)DclTreeContainer 
+1 
+@Var @RT(1)s @RT(0) @T @F @DT @RT(11)STRING(255) @RT(0) @T @T @STRING 0 @F @RT(3)255 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@END_Dcl 
+
+@END_Export 
+
+@BEG_Export 
+
+@BEG_Algo 
+@POSTUPDATE_ALGORITHM @RT(5)pInit @STRUCTURED_TEXT 
+@RT(0) @RT(19)sv_bInitInjectGraph @RT(8)TaskSlow @F @F 
+@END_Algo 
+
+@BEG_Dcl 
+@RT(16)DclTreeContainer 
+2 
+@Var @RT(5)bInit @RT(0) @T @F @DT @RT(4)BOOL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(6)Status @RT(0) @T @T @DERIVED 0 @T @T @DT @RT(11)KSYS_Status @RT(0) @T @T @UNKNOWN 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@END_Dcl 
+
+@END_Export 
+
+@BEG_Export 
+
+@BEG_Algo 
+@POSTUPDATE_ALGORITHM @RT(19)pStartStopRecorders @STRUCTURED_TEXT 
+@RT(0) @RT(35)mpbInjectActive^,mpbCutOffDetected^ @RT(9)EV_Task_3 @F @F 
+@END_Algo 
+
+@BEG_Dcl 
+@RT(16)DclTreeContainer 
+4 
+@Var @RT(10)bActivated @RT(0) @T @F @DT @RT(4)BOOL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(10)bYXStarted @RT(0) @T @F @DT @RT(4)BOOL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(11)bXT1Started @RT(0) @T @F @DT @RT(4)BOOL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(11)bXT2Started @RT(0) @T @F @DT @RT(4)BOOL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@END_Dcl 
+
+@END_Export 
+
+@BEG_Export 
+
+@BEG_Algo 
+@POSTUPDATE_ALGORITHM @RT(21)pCharVariablesChanged @STRUCTURED_TEXT 
+@RT(0) @RT(34)sv_CharVariablesUsed.ChangeCounter @RT(10)PU_Task_13 @F @F 
+@END_Algo 
+
+@BEG_Dcl 
+@RT(16)DclTreeContainer 
+0 
+@END_Dcl 
+
+@END_Export 
+
+@BEG_Export 
+
+@BEG_Algo 
+@FUNCTION @RT(9)fCalcMean @STRUCTURED_TEXT 
+@RT(4)REAL @RT(0) @RT(0) @F @F 
+@END_Algo 
+
+@BEG_Dcl 
+@RT(16)DclTreeContainer 
+3 
+@Var @RT(1)i @RT(0) @T @F @DT @RT(4)DINT @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(9)curveData @RT(0) @T @T @DERIVED 0 @T @T @DT @RT(19)tsInjGraphCurveData @RT(0) @T @T @UNKNOWN 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 2 @F @F @F @F 
+
+@Var @RT(7)rResult @RT(0) @T @F @DT @RT(4)REAL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@END_Dcl 
+
+@END_Export 
+
+@BEG_Export 
+
+@BEG_Algo 
+@FUNCTION @RT(8)fCalcMin @STRUCTURED_TEXT 
+@RT(4)REAL @RT(0) @RT(0) @F @F 
+@END_Algo 
+
+@BEG_Dcl 
+@RT(16)DclTreeContainer 
+3 
+@Var @RT(1)i @RT(0) @T @F @DT @RT(4)DINT @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(9)curveData @RT(0) @T @T @DERIVED 0 @T @T @DT @RT(19)tsInjGraphCurveData @RT(0) @T @T @UNKNOWN 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 2 @F @F @F @F 
+
+@Var @RT(7)rResult @RT(0) @T @F @DT @RT(4)REAL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@END_Dcl 
+
+@END_Export 
+
+@BEG_Export 
+
+@BEG_Algo 
+@FUNCTION @RT(8)fCalcMax @STRUCTURED_TEXT 
+@RT(4)REAL @RT(0) @RT(0) @F @F 
+@END_Algo 
+
+@BEG_Dcl 
+@RT(16)DclTreeContainer 
+3 
+@Var @RT(1)i @RT(0) @T @F @DT @RT(4)DINT @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(9)curveData @RT(0) @T @T @DERIVED 0 @T @T @DT @RT(19)tsInjGraphCurveData @RT(0) @T @T @UNKNOWN 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 2 @F @F @F @F 
+
+@Var @RT(7)rResult @RT(0) @T @F @DT @RT(4)REAL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@END_Dcl 
+
+@END_Export 
+
+@BEG_Export 
+
+@BEG_Algo 
+@ALGORITHM @RT(22)aReadCurveDataOverTime @STRUCTURED_TEXT 
+@RT(0) @RT(0) @RT(0) @F @F 
+@END_Algo 
+
+@BEG_Dcl 
+@RT(16)DclTreeContainer 
+8 
+@Var @RT(1)i @RT(0) @T @F @DT @RT(3)INT @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 4 @F @F @F @F 
+
+@Var @RT(5)curve @RT(0) @T @T @DERIVED 0 @T @T @DT @RT(9)KMB_Curve @RT(0) @T @T @UNKNOWN 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(11)curveStatus @RT(0) @T @T @DERIVED 0 @T @T @DT @RT(15)KMB_CurveResult @RT(0) @T @T @UNKNOWN 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(8)startIdx @RT(0) @T @F @DT @RT(4)DINT @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(1)0 @RT(0) @RT(0) 
+@END_Attrib 
+1 15 @F @F @F @F 
+
+@Var @RT(7)dataCnt @RT(0) @T @F @DT @RT(4)DINT @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(7)varName @RT(0) @T @F @DT @RT(11)STRING(255) @RT(0) @T @T @STRING 0 @F @RT(3)255 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 1 @F @F @F @F 
+
+@Var @RT(5)yData @RT(0) @T @T @DERIVED 0 @T @T @DT @RT(19)tsInjGraphCurveData @RT(0) @T @T @UNKNOWN 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 2 @F @F @F @F 
+
+@Var @RT(5)xData @RT(0) @T @T @DERIVED 0 @T @T @DT @RT(19)tsInjGraphCurveData @RT(0) @T @T @UNKNOWN 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 2 @F @F @F @F 
+
+@END_Dcl 
+
+@END_Export 
+
+@BEG_Export 
+
+@BEG_Algo 
+@ALGORITHM @RT(26)aReadCurveDataOverPosition @STRUCTURED_TEXT 
+@RT(0) @RT(0) @RT(0) @F @F 
+@END_Algo 
+
+@BEG_Dcl 
+@RT(16)DclTreeContainer 
+8 
+@Var @RT(1)i @RT(0) @T @F @DT @RT(3)INT @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 4 @F @F @F @F 
+
+@Var @RT(5)curve @RT(0) @T @T @DERIVED 0 @T @T @DT @RT(9)KMB_Curve @RT(0) @T @T @UNKNOWN 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(11)curveStatus @RT(0) @T @T @DERIVED 0 @T @T @DT @RT(15)KMB_CurveResult @RT(0) @T @T @UNKNOWN 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(8)startIdx @RT(0) @T @F @DT @RT(4)DINT @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(1)0 @RT(0) @RT(0) 
+@END_Attrib 
+1 15 @F @F @F @F 
+
+@Var @RT(7)dataCnt @RT(0) @T @F @DT @RT(4)DINT @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(7)varName @RT(0) @T @F @DT @RT(11)STRING(255) @RT(0) @T @T @STRING 0 @F @RT(3)255 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 1 @F @F @F @F 
+
+@Var @RT(5)yData @RT(0) @T @T @DERIVED 0 @T @T @DT @RT(19)tsInjGraphCurveData @RT(0) @T @T @UNKNOWN 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 2 @F @F @F @F 
+
+@Var @RT(5)xData @RT(0) @T @T @DERIVED 0 @T @T @DT @RT(19)tsInjGraphCurveData @RT(0) @T @T @UNKNOWN 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 2 @F @F @F @F 
+
+@END_Dcl 
+
+@END_Export 
+
+@BEG_Export 
+
+@BEG_Algo 
+@PROCESS_ALGORITHM @RT(20)paCalcCharacteristic @STRUCTURED_TEXT 
+@RT(0) @RT(0) @RT(7)TaskMid @F @F 
+@END_Algo 
+
+@BEG_Dcl 
+@RT(16)DclTreeContainer 
+3 
+@Var @RT(1)b @RT(0) @T @F @DT @RT(4)BOOL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 4 @F @F @F @F 
+
+@Var @RT(10)xDataDummy @RT(0) @T @T @DERIVED 0 @T @T @DT @RT(19)tsInjGraphCurveData @RT(0) @T @T @UNKNOWN 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(5)iStep @RT(0) @T @F @DT @RT(3)INT @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(1)0 @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@END_Dcl 
+
+@END_Export 
+
+@BEG_Body 
+@TL(10)
+
+IF status <> KMB_Status_OK THEN
+   dummy := Print('%s failed.', sDescription);
+
+   // Only ASSERT during development!
+   //b := ASSERT(FALSE, erAssert);
+END_IF;
+
+fReportIfKMBFailed := FALSE;
+
+@END_Body 
+
+@@@BEG_Comment@@@ 
+@TL(0)
+
+@@@END_Comment@@@ 
+
+@BEG_Body 
+@TL(37)
+(**************************************** WARNING ********************************************
+ *** The KEBA Kemro K2 System including software is not intended for safety control tasks! ***
+ ***                       For further information see Comment tab!                        ***
+ *********************************************************************************************)
+
+// Reset char. values
+charValuesScrewVelocity.prMean := EMPTY;
+charValuesScrewVelocity.prMin := EMPTY;
+charValuesScrewVelocity.prMax := EMPTY;
+charValuesScrewVelocity.bUsed := FALSE;
+
+sv_CharVariablesUsed.iNrOfVariables := 0;
+
+FOR i := 1 TO cMaxNoOfCharVariables DO
+    IF LEN(sv_CharVariablesUsed.CharVars[i]) = 0 THEN
+        // No more char. variables in use
+        EXIT;
+    END_IF;
+    
+    // Char. values of screw velocity
+    IF charValuesScrewVelocity.nameCharVariableMean = sv_CharVariablesUsed.CharVars[i] THEN
+        charValuesScrewVelocity.prMean := GET_SYNC_REFTO(SVName := charValuesScrewVelocity.nameCharVariableMean, Timeout := t#0s, Status := state);
+        charValuesScrewVelocity.bUsed := TRUE;
+    END_IF;
+    IF charValuesScrewVelocity.nameCharVariableMin = sv_CharVariablesUsed.CharVars[i] THEN
+        charValuesScrewVelocity.prMin := GET_SYNC_REFTO(SVName := charValuesScrewVelocity.nameCharVariableMin, Timeout := t#0s, Status := state);
+        charValuesScrewVelocity.bUsed := TRUE;
+    END_IF;
+    IF charValuesScrewVelocity.nameCharVariableMax = sv_CharVariablesUsed.CharVars[i] THEN
+        charValuesScrewVelocity.prMax := GET_SYNC_REFTO(SVName := charValuesScrewVelocity.nameCharVariableMax, Timeout := t#0s, Status := state);
+        charValuesScrewVelocity.bUsed := TRUE;
+    END_IF;
+        
+END_FOR;
+
+sv_CharVariablesUsed.iNrOfVariables := i - 1;
+
+@END_Body 
+
+@@@BEG_Comment@@@ 
+@TL(0)
+
+@@@END_Comment@@@ 
+
+@BEG_Body 
+@TL(44)
+(**************************************** WARNING ********************************************
+ *** The KEBA Kemro K2 System including software is not intended for safety control tasks! ***
+ ***                       For further information see Comment tab!                        ***
+ *********************************************************************************************)
+
+IF NOT mbInitDone THEN
+   // Connecting to datarecorders
+   // On KVB systems not all data recorders are used/existing!
+   status_KMB := Inject_Graph_YX.Connect ('Inject_Graph_YX');
+   GraphYX_ProfileInfo := Inject_Graph_YX.GetProfileInfo();   
+   status_KMB := Inject_Graph_XT1.Connect('Inject_Graph_XT1');
+   GraphXT1_ProfileInfo := Inject_Graph_XT1.GetProfileInfo();  
+   status_KMB := Inject_Graph_XT2.Connect('Inject_Graph_XT2');
+   GraphXT2_ProfileInfo := Inject_Graph_XT2.GetProfileInfo();  
+    
+   status_KMB:= Inject_Graph_YX.StopMeasure();
+   status_KMB:= Inject_Graph_XT1.StopMeasure();
+   status_KMB:= Inject_Graph_XT2.StopMeasure();
+    
+   SwitchOverTime(IN := FALSE, PT := t#999s);  
+   
+   pdInjectDuration := GET_SYNC_REFTO(SVName := 'Injection1.sv_dCalculatedDurationInject', Timeout := t#0s, Status := state);
+   pdHoldDuration   := GET_SYNC_REFTO(SVName := 'Injection1.sv_dCalculatedDurationHold'  , Timeout := t#0s, Status := state);
+   sv_rSampleTimeYXProposal :=  LINT_TO_REAL(TIME_TO_LINT((GET_TASK_INTERVAL(TaskInject)))) / 1000000.0;
+   sv_rDurationHoldProposal := (LINT_TO_REAL(TIME_TO_LINT(pdHoldDuration^  ))) / 1000000.0;
+   sv_rDurationProposal     := (LINT_TO_REAL(TIME_TO_LINT(pdInjectDuration^))) / 1000000.0;
+   sv_rDurationProposal     := sv_rDurationProposal + sv_rDurationHoldProposal;
+   
+   sv_CharVariablesUsed.ChangeCounter := 0;
+   aInitCharVariables();
+   
+   mbInitDone := TRUE;
+   STOP_PROCESS_ALGORITHM();  
+END_IF;
+
+IF NOT sv_bActivateRecord THEN
+   status_KMB := Inject_Graph_YX.StopMeasure();
+   status_KMB := Inject_Graph_XT1.StopMeasure();
+   status_KMB := Inject_Graph_XT2.StopMeasure(); 
+   STOP_PROCESS_ALGORITHM();
+END_IF;
+
+
+
+@END_Body 
+
+@@@BEG_Comment@@@ 
+@TL(2)
+Is called at start up: Connects to and stops all recorder
+Is called when recording is deactivated in HMI: stops all recorder
+@@@END_Comment@@@ 
+
+@BEG_Body 
+@TL(120)
+(**************************************** WARNING ********************************************
+ *** The KEBA Kemro K2 System including software is not intended for safety control tasks! ***
+ ***                       For further information see Comment tab!                        ***
+ *********************************************************************************************)
+
+IF NOT sv_bActivateRecord THEN
+   RETURN;
+END_IF;
+
+IF NOT sv_bCutOffDetected THEN
+   RETURN;
+END_IF;
+
+SwitchOverTime(IN := TRUE, PT := t#999s, ET => dSwitchOverTime); // get switchovertime
+SwitchOverTime(IN := FALSE);
+
+rSwitchOverTime := LINT_TO_REAL(TIME_TO_LINT(dSwitchOverTime)) / 1000000.0;
+
+IF mbRestart THEN
+   sv_SwitchOverHistoryArray[cIndexMaxValue].rSwitchOverPosition := sv_rCutOffPosition;       
+   sv_SwitchOverHistoryArray[cIndexMinValue].rSwitchOverPosition := sv_rCutOffPosition;     
+    
+   sv_SwitchOverHistoryArray[cIndexMaxValue].rSwitchOverPressure := sv_rCutOffPressure;   
+   sv_SwitchOverHistoryArray[cIndexMinValue].rSwitchOverPressure := sv_rCutOffPressure;   
+  
+   sv_SwitchOverHistoryArray[cIndexMaxValue].rSwitchOverTime     := rSwitchOverTime;
+   sv_SwitchOverHistoryArray[cIndexMinValue].rSwitchOverTime     := rSwitchOverTime;
+   iValidValues := 0; 
+   iIndex   := cIndexFirstHistoryValue;
+   mbRestart := FALSE;
+END_IF;
+
+iValidValues := iValidValues + 1;
+iValidValues := MIN(iValidValues, cSizeSwitchOverHistory - cIndexFirstHistoryValue + 1); 
+
+// CUT-OFF-POSITION-Statistik
+
+sv_SwitchOverHistoryArray[iIndex].rSwitchOverPosition := sv_rCutOffPosition;
+sv_SwitchOverHistoryArray[cIndexActualValue].rSwitchOverPosition:= sv_rCutOffPosition;
+//actual value > stored max value?
+IF sv_rCutOffPosition > sv_SwitchOverHistoryArray[cIndexMaxValue].rSwitchOverPosition THEN
+   sv_SwitchOverHistoryArray[cIndexMaxValue].rSwitchOverPosition := sv_rCutOffPosition;
+END_IF;
+
+//actual value < stored min value?
+IF sv_rCutOffPosition < sv_SwitchOverHistoryArray[cIndexMinValue].rSwitchOverPosition THEN
+   sv_SwitchOverHistoryArray[cIndexMinValue].rSwitchOverPosition := sv_rCutOffPosition;
+END_IF;
+
+//calculate mean value
+sv_SwitchOverHistoryArray[cIndexMeanValue].rSwitchOverPosition := 0.0;
+
+FOR iIndex_for:= cIndexFirstHistoryValue TO (iValidValues + cIndexFirstHistoryValue - 1) DO 
+   sv_SwitchOverHistoryArray[cIndexMeanValue].rSwitchOverPosition := sv_SwitchOverHistoryArray[cIndexMeanValue].rSwitchOverPosition +
+                                                                      sv_SwitchOverHistoryArray[iIndex_for].rSwitchOverPosition;
+END_FOR;
+sv_SwitchOverHistoryArray[cIndexMeanValue].rSwitchOverPosition := 
+                             sv_SwitchOverHistoryArray[cIndexMeanValue].rSwitchOverPosition / 
+                             INT_TO_REAL(iValidValues);
+
+
+// CUT-OFF-Pressure-Statistik
+
+sv_SwitchOverHistoryArray[iIndex].rSwitchOverPressure := sv_rCutOffPressure;
+sv_SwitchOverHistoryArray[cIndexActualValue].rSwitchOverPressure:= sv_rCutOffPressure;
+
+//actual value > stored max value?
+IF sv_rCutOffPressure > sv_SwitchOverHistoryArray[cIndexMaxValue].rSwitchOverPressure THEN
+   sv_SwitchOverHistoryArray[cIndexMaxValue].rSwitchOverPressure := sv_rCutOffPressure;
+END_IF;
+
+//actual value < stored min value?
+IF sv_rCutOffPressure < sv_SwitchOverHistoryArray[cIndexMinValue].rSwitchOverPressure THEN
+   sv_SwitchOverHistoryArray[cIndexMinValue].rSwitchOverPressure := sv_rCutOffPressure;
+END_IF;
+
+//calculate mean value
+sv_SwitchOverHistoryArray[cIndexMeanValue].rSwitchOverPressure := 0.0;
+
+FOR iIndex_for:= cIndexFirstHistoryValue TO (iValidValues + cIndexFirstHistoryValue - 1) DO
+   sv_SwitchOverHistoryArray[cIndexMeanValue].rSwitchOverPressure := sv_SwitchOverHistoryArray[cIndexMeanValue].rSwitchOverPressure +
+                                                                      sv_SwitchOverHistoryArray[iIndex_for].rSwitchOverPressure;
+END_FOR;
+sv_SwitchOverHistoryArray[cIndexMeanValue].rSwitchOverPressure := 
+                sv_SwitchOverHistoryArray[cIndexMeanValue].rSwitchOverPressure / 
+                INT_TO_REAL(iValidValues);
+
+
+// CUT-OFF-TIME-Statistik
+
+sv_SwitchOverHistoryArray[iIndex].rSwitchOverTime            := rSwitchOverTime;
+sv_SwitchOverHistoryArray[cIndexActualValue].rSwitchOverTime := rSwitchOverTime;
+
+//actual value > stored max value?
+IF rSwitchOverTime > sv_SwitchOverHistoryArray[cIndexMaxValue].rSwitchOverTime THEN
+   sv_SwitchOverHistoryArray[cIndexMaxValue].rSwitchOverTime := rSwitchOverTime;
+END_IF;
+
+//actual value < stored min value?
+IF rSwitchOverTime < sv_SwitchOverHistoryArray[cIndexMinValue].rSwitchOverTime THEN
+   sv_SwitchOverHistoryArray[cIndexMinValue].rSwitchOverTime := rSwitchOverTime;
+END_IF;
+
+//calculate mean value
+sv_SwitchOverHistoryArray[cIndexMeanValue].rSwitchOverTime := 0.0;
+
+FOR iIndex_for:= cIndexFirstHistoryValue TO (iValidValues + cIndexFirstHistoryValue-1) DO
+   sv_SwitchOverHistoryArray[cIndexMeanValue].rSwitchOverTime := sv_SwitchOverHistoryArray[cIndexMeanValue].rSwitchOverTime +
+                                                                 sv_SwitchOverHistoryArray[iIndex_for].rSwitchOverTime;
+END_FOR;
+sv_SwitchOverHistoryArray[cIndexMeanValue].rSwitchOverTime := sv_SwitchOverHistoryArray[cIndexMeanValue].rSwitchOverTime / 
+                                                              INT_TO_REAL(iValidValues);                
+
+
+iIndex := iIndex + 1;
+IF iIndex > cSizeSwitchOverHistory THEN
+   iIndex := cIndexFirstHistoryValue;
+END_IF;
+
+
+@END_Body 
+
+@@@BEG_Comment@@@ 
+@TL(1)
+Manages Cut-Off-History (Min, Mean, Max, Last and History Values)
+@@@END_Comment@@@ 
+
+@BEG_Body 
+@TL(11)
+(**************************************** WARNING ********************************************
+ *** The KEBA Kemro K2 System including software is not intended for safety control tasks! ***
+ ***                       For further information see Comment tab!                        ***
+ *********************************************************************************************)
+
+IF NOT mbInitDone THEN
+   START_PROCESS_ALGORITHM(paInit);
+END_IF;
+
+
+
+@END_Body 
+
+@@@BEG_Comment@@@ 
+@TL(1)
+Starts the paInit Algo at startup and when activation changes
+@@@END_Comment@@@ 
+
+@BEG_Body 
+@TL(7)
+(**************************************** WARNING ********************************************
+ *** The KEBA Kemro K2 System including software is not intended for safety control tasks! ***
+ ***                       For further information see Comment tab!                        ***
+ *********************************************************************************************)
+
+aActivationChanged();
+
+@END_Body 
+
+@@@BEG_Comment@@@ 
+@TL(1)
+Starts the paInit Algo at startup and when activation changes
+@@@END_Comment@@@ 
+
+@BEG_Body 
+@TL(9)
+(**************************************** WARNING ********************************************
+ *** The KEBA Kemro K2 System including software is not intended for safety control tasks! ***
+ ***                       For further information see Comment tab!                        ***
+ *********************************************************************************************)
+
+sv_rDurationHoldProposal := (LINT_TO_REAL(TIME_TO_LINT(pdHoldDuration^  ))) / 1000000.0;
+sv_rDurationProposal     := (LINT_TO_REAL(TIME_TO_LINT(pdInjectDuration^))) / 1000000.0;
+sv_rDurationProposal     := sv_rDurationProposal + sv_rDurationHoldProposal;
+
+@END_Body 
+
+@@@BEG_Comment@@@ 
+@TL(1)
+Here the proposals for duration of hold an inject movement is calculated
+@@@END_Comment@@@ 
+
+@BEG_Body 
+@TL(57)
+(**************************************** WARNING ********************************************
+ *** The KEBA Kemro K2 System including software is not intended for safety control tasks! ***
+ ***                       For further information see Comment tab!                        ***
+ *********************************************************************************************)
+
+// search for the variable that exeeded the tolerance
+bFound := FALSE;
+FOR i:=1 TO cMaxNoOfVariables DO
+   IF sv_yVariablesUsed[i].name = sVarName THEN
+      //found variable
+      bFound := TRUE;
+      EXIT;    
+   END_IF;
+END_FOR;             
+
+
+IF bFound THEN
+   CASE sv_yVariablesUsed[i].iErrorAction OF
+        1: errorAction := nInjectGraph_Lamp;
+            // display alarm and switch on alarmlamp 
+            SET_ALARM(Name := erInjectGraphAlarmLamp,
+                      Param1 := sProfileName,
+                      Param2 := sVarName);
+        
+        2: errorAction := nInjectGraph_Reject;
+            // send Reject signal and display alarm, no lamp
+            mevPartCheckData.bReject := TRUE;
+            SET_ALARM(Name := erInjectGraphDisplayWarning,
+                      Param1 := sProfileName,
+                      Param2 := sVarName);
+        
+        3: errorAction := nInjectGraph_Lamp_Reject;
+            // send Reject signal and display alarm and lamp
+            mevPartCheckData.bReject := TRUE;
+            SET_ALARM(Name := erInjectGraphAlarmLamp,
+                      Param1 := sProfileName,
+                      Param2 := sVarName);
+        
+        4: errorAction := nInjectGraph_StopAfterCycle;
+            // stop production after cycle, display alarm and lamp
+            mevPartCheckData.bReject := TRUE;    
+            SET_ALARM(Name  := erInjectGraphStopAfterCycle,
+                      Param1 := sProfileName,
+                      Param2 := sVarName);
+
+   ELSE 
+      // no error action selected
+      errorAction := nInjectGraph_No_Action;
+   END_CASE;
+    
+   IF errorAction <> nInjectGraph_No_Action THEN
+      // if any erroraction is selected: mark part as bad
+      mevPartCheckData.bBadPart := TRUE;
+   END_IF;
+END_IF;
+
+
+@END_Body 
+
+@@@BEG_Comment@@@ 
+@TL(2)
+Is called by the event algorithmen evaErrorXT1, evaErrorXT2 and evaErrorYX.
+It sets the alarms depending on the setting in HMI
+@@@END_Comment@@@ 
+
+@BEG_Body 
+@TL(8)
+(**************************************** WARNING ********************************************
+ *** The KEBA Kemro K2 System including software is not intended for safety control tasks! ***
+ ***                       For further information see Comment tab!                        ***
+ *********************************************************************************************)
+
+//call the erroractionhandler
+aErrorAction(evData.Variable, evData.Profile);
+
+@END_Body 
+
+@@@BEG_Comment@@@ 
+@TL(2)
+When recorder XT1 sendes an error event, this algorithm is executed.
+It passes the data over to aErrorAction algorithm.
+@@@END_Comment@@@ 
+
+@BEG_Body 
+@TL(8)
+(**************************************** WARNING ********************************************
+ *** The KEBA Kemro K2 System including software is not intended for safety control tasks! ***
+ ***                       For further information see Comment tab!                        ***
+ *********************************************************************************************)
+
+//call the erroractionhandler
+aErrorAction(evData.Variable, evData.Profile);
+
+@END_Body 
+
+@@@BEG_Comment@@@ 
+@TL(2)
+When recorder XT2 sendes an error event, this algorithm is executed.
+It passes the data over to aErrorAction algorithm.
+@@@END_Comment@@@ 
+
+@BEG_Body 
+@TL(9)
+(**************************************** WARNING ********************************************
+ *** The KEBA Kemro K2 System including software is not intended for safety control tasks! ***
+ ***                       For further information see Comment tab!                        ***
+ *********************************************************************************************)
+
+//call the erroractionhandler
+aErrorAction(evData.VariableY, evData.Profile);
+
+
+@END_Body 
+
+@@@BEG_Comment@@@ 
+@TL(2)
+When recorder YX sendes an error event, this algorithm is executed.
+It passes the data over to aErrorAction algorithm.
+@@@END_Comment@@@ 
+
+@BEG_Body 
+@TL(29)
+(**************************************** WARNING ********************************************
+ *** The KEBA Kemro K2 System including software is not intended for safety control tasks! ***
+ ***                       For further information see Comment tab!                        ***
+ *********************************************************************************************)
+
+IF NOT sv_bResetSwitchOverHistory THEN
+   RETURN; 
+END_IF;
+
+sv_bResetSwitchOverHistory := FALSE; //set by HMI, reset by IEC
+
+sv_SwitchOverHistoryArray[cIndexMaxValue   ].rSwitchOverPosition := 0.0;       
+sv_SwitchOverHistoryArray[cIndexMinValue   ].rSwitchOverPosition := 0.0;     
+sv_SwitchOverHistoryArray[cIndexActualValue].rSwitchOverPosition := 0.0;       
+sv_SwitchOverHistoryArray[cIndexMeanValue  ].rSwitchOverPosition := 0.0;     
+
+                              
+sv_SwitchOverHistoryArray[cIndexMaxValue   ].rSwitchOverPressure := 0.0;   
+sv_SwitchOverHistoryArray[cIndexMinValue   ].rSwitchOverPressure := 0.0;   
+sv_SwitchOverHistoryArray[cIndexActualValue].rSwitchOverPressure := 0.0;   
+sv_SwitchOverHistoryArray[cIndexMeanValue  ].rSwitchOverPressure := 0.0;
+  
+sv_SwitchOverHistoryArray[cIndexMaxValue   ].rSwitchOverTime     := 0.0;
+sv_SwitchOverHistoryArray[cIndexMinValue   ].rSwitchOverTime     := 0.0;
+sv_SwitchOverHistoryArray[cIndexActualValue].rSwitchOverTime     := 0.0;
+sv_SwitchOverHistoryArray[cIndexMeanValue  ].rSwitchOverTime     := 0.0;
+
+mbRestart := TRUE;
+
+@END_Body 
+
+@@@BEG_Comment@@@ 
+@TL(2)
+In the HMI the sv_bResetSwitchOverHistory can be set to TRUE.
+Then the Cut-Off history is cleared.
+@@@END_Comment@@@ 
+
+@BEG_Body 
+@TL(56)
+(**************************************** WARNING ********************************************
+ *** The KEBA Kemro K2 System including software is not intended for safety control tasks! ***
+ ***                       For further information see Comment tab!                        ***
+ *********************************************************************************************)
+
+IF sv_OperationMode > nManual THEN
+   // init partcheckdata when cycle is being started. Because data may be set from last autocycle
+   mevPartCheckData.bBadPart := FALSE;
+   mevPartCheckData.bReject := FALSE;
+END_IF;
+
+IF NOT bInitDone THEN
+   // Check if running on a KVB system
+   pTmp := GET_SYNC_REFTO('KVB.sv_MaskID', T#0s, state);
+   bIsKvb := state = KSYS_Status_OK;
+
+   bInitDone := TRUE;
+END_IF;
+
+IF bIsKvb THEN
+   //On KVB systems persistence is always disabled by the cfg file
+   //Do not enable/disable persistence of the profile at runtime
+   RETURN;
+END_IF;
+
+fbOpModeHalfAndAutoEntered(sv_OperationMode);
+fbOpModeHalfAndAutoLeft(sv_OperationMode);
+
+IF fbOpModeHalfAndAutoEntered.Q THEN
+   // Auto mode entered
+   status := Inject_Graph_YX.DisableProfileFlashPersistence();
+   b := fReportIfKMBFailed(status, 'Inject_Graph_YX.DisableProfileFlashPersistence()');
+   status := Inject_Graph_XT1.DisableProfileFlashPersistence();
+   b := fReportIfKMBFailed(status, 'Inject_Graph_XT1.DisableProfileFlashPersistence()');
+   status := Inject_Graph_XT2.DisableProfileFlashPersistence();
+   b := fReportIfKMBFailed(status, 'Inject_Graph_XT2.DisableProfileFlashPersistence()');
+END_IF;
+
+IF fbOpModeHalfAndAutoLeft.Q THEN
+   // Auto mode left
+   status := Inject_Graph_YX.EnableProfileFlashPersistence();
+   b := fReportIfKMBFailed(status, 'Inject_Graph_YX.EnableProfileFlashPersistence(');
+   status := Inject_Graph_XT1.EnableProfileFlashPersistence();
+   b := fReportIfKMBFailed(status, 'Inject_Graph_XT1.EnableProfileFlashPersistence(');
+   status := Inject_Graph_XT2.EnableProfileFlashPersistence();
+   b := fReportIfKMBFailed(status, 'Inject_Graph_XT2.EnableProfileFlashPersistence()');
+
+   // Explicitly save data (actual/limit curves, ...) once
+   status := Inject_Graph_YX.SaveValuesOnce();
+   b := fReportIfKMBFailed(status, 'Inject_Graph_YX.SaveValuesOnce()');
+   status := Inject_Graph_XT1.SaveValuesOnce();
+   b := fReportIfKMBFailed(status, 'Inject_Graph_XT1.SaveValuesOnce()');
+   status := Inject_Graph_XT2.SaveValuesOnce();
+   b := fReportIfKMBFailed(status, 'Inject_Graph_XT2.SaveValuesOnce()');
+END_IF;
+
+@END_Body 
+
+@@@BEG_Comment@@@ 
+@TL(1)
+Inits partcheckdata when cycle is started. Because data may be set from last autocycle.
+@@@END_Comment@@@ 
+
+@BEG_Body 
+@TL(20)
+(**************************************** WARNING ********************************************
+ *** The KEBA Kemro K2 System including software is not intended for safety control tasks! ***
+ ***                       For further information see Comment tab!                        ***
+ *********************************************************************************************)
+
+mevPartCheckData.DeviceID := sv_DeviceId;
+
+IF sv_TraceLevel.bApplication THEN
+   s := CONCAT('InjectGraph: send evPartCheck badPart = ', 
+               BOOL_TO_STRING(mevPartCheckData.bBadPart), 
+               ' reject = ',             
+               BOOL_TO_STRING(mevPartCheckData.bReject));
+   fbDebugTrace(s);
+END_IF;
+
+SET_EVENT(evPartCheck, mevPartCheckData);
+
+mevPartCheckData.bBadPart := FALSE;
+mevPartCheckData.bReject := FALSE;
+
+@END_Body 
+
+@@@BEG_Comment@@@ 
+@TL(2)
+
+sends the part check event containing data if part is ok or if it should be rejected
+@@@END_Comment@@@ 
+
+@BEG_Body 
+@TL(23)
+(**************************************** WARNING ********************************************
+ *** The KEBA Kemro K2 System including software is not intended for safety control tasks! ***
+ ***                       For further information see Comment tab!                        ***
+ *********************************************************************************************)
+
+IF (sv_bInitInjectGraph AND (NOT bInit)) THEN
+   
+   pbActivateRecord := @sv_bActivateRecord;
+   pbResetSwitchOverHistory := @sv_bResetSwitchOverHistory;
+   piPreShotCounter := @sv_iPreShotCounter;
+   
+   mpbInjectActive := GET_SYNC_REFTO("Injection1.sv_bInjectActive", T#0s, Status);
+   mpbCutOffDetected := GET_SYNC_REFTO("Injection1.sv_bCutOffDetected", T#0s, Status);
+   
+   mevInject_Graph_XT1 := evInject_Graph_XT1;
+   mevInject_Graph_XT2 := evInject_Graph_XT2;
+   mevInject_Graph_YX := evInject_Graph_YX;
+    
+   aActivationChanged();
+    
+   bInit := TRUE;     
+END_IF;
+
+@END_Body 
+
+@@@BEG_Comment@@@ 
+@TL(0)
+
+@@@END_Comment@@@ 
+
+@BEG_Body 
+@TL(64)
+(**************************************** WARNING ********************************************
+ *** The KEBA Kemro K2 System including software is not intended for safety control tasks! ***
+ ***                       For further information see Comment tab!                        ***
+ *********************************************************************************************)
+
+IF NOT sv_bActivateRecord THEN
+   RETURN;
+END_IF;
+
+IF mpbInjectActive^ THEN
+   
+   //inject active
+   IF NOT bActivated THEN
+      status_KMB := Inject_Graph_YX.StartMeasure(GraphYX_ProfileInfo.ElemCount);
+      bYXStarted := TRUE;
+      status_KMB := Inject_Graph_XT2.StartMeasure(GraphXT2_ProfileInfo.ElemCount);
+      bXT2Started := TRUE;
+      SwitchOverTime(IN := TRUE, PT := t#999s);
+      bActivated := TRUE;
+   END_IF;
+      
+   IF mpbCutOffDetected^ THEN
+      //hold phase active
+      status_KMB := Inject_Graph_YX.StopMeasure();
+      bYXStarted := FALSE;
+      status_KMB := Inject_Graph_XT1.StartMeasure(GraphXT1_ProfileInfo.ElemCount);
+      bXT1Started := TRUE;
+   END_IF;
+   
+ELSE
+   //inject ready -> stop started recorders
+   IF bYXStarted THEN
+      status_KMB := Inject_Graph_YX.StopMeasure();
+      bYXStarted := FALSE;
+   END_IF;
+   IF bXT1Started THEN
+      status_KMB := Inject_Graph_XT1.StopMeasure();
+      bXT1Started := FALSE;
+   END_IF;
+   IF bXT2Started THEN
+      status_KMB := Inject_Graph_XT2.StopMeasure();
+      bXT2Started := FALSE;
+   END_IF;
+   
+   // Inject finished -> Save shot time and counter
+   fbRtc();
+   sv_dShotTimeActInjGraph := fbRtc.CDT;
+   sv_iShotCounterActInjGraph := sv_iShotCounterAct + 1;
+ 
+   IF sv_CharVariablesUsed.iNrOfVariables > 0 THEN
+       // Start calculation of characteristic values
+       START_PROCESS_ALGORITHM(paCalcCharacteristic);
+   ELSE
+       // "Start export" signalization to HMI directly
+       sv_iExportTriggerInjGraph := sv_iExportTriggerInjGraph + 1;
+   END_IF;
+ 
+   bActivated := FALSE;
+END_IF;
+
+
+
+
+
+@END_Body 
+
+@@@BEG_Comment@@@ 
+@TL(0)
+
+@@@END_Comment@@@ 
+
+@BEG_Body 
+@TL(8)
+(**************************************** WARNING ********************************************
+ *** The KEBA Kemro K2 System including software is not intended for safety control tasks! ***
+ ***                       For further information see Comment tab!                        ***
+ *********************************************************************************************)
+
+aInitCharVariables();
+
+
+@END_Body 
+
+@@@BEG_Comment@@@ 
+@TL(0)
+
+@@@END_Comment@@@ 
+
+@BEG_Body 
+@TL(16)
+(**************************************** WARNING ********************************************
+ *** The KEBA Kemro K2 System including software is not intended for safety control tasks! ***
+ ***                       For further information see Comment tab!                        ***
+ *********************************************************************************************)
+
+// Calculate average
+rResult := 0.0;
+
+FOR i := 0 TO (curveData.iDataCnt - 1) DO
+   rResult := rResult + (curveData.data[i] - rResult) / DINT_TO_REAL(i + 1);
+END_FOR;
+
+fCalcMean := rResult;
+   
+
+
+@END_Body 
+
+@@@BEG_Comment@@@ 
+@TL(0)
+
+@@@END_Comment@@@ 
+
+@BEG_Body 
+@TL(16)
+(**************************************** WARNING ********************************************
+ *** The KEBA Kemro K2 System including software is not intended for safety control tasks! ***
+ ***                       For further information see Comment tab!                        ***
+ *********************************************************************************************)
+
+// Calculate minimum
+rResult := curveData.data[0];
+
+FOR i := 0 TO (curveData.iDataCnt - 1) DO
+   rResult := MIN(rResult, curveData.data[i]);
+END_FOR;
+
+fCalcMin := rResult;
+   
+
+
+@END_Body 
+
+@@@BEG_Comment@@@ 
+@TL(0)
+
+@@@END_Comment@@@ 
+
+@BEG_Body 
+@TL(16)
+(**************************************** WARNING ********************************************
+ *** The KEBA Kemro K2 System including software is not intended for safety control tasks! ***
+ ***                       For further information see Comment tab!                        ***
+ *********************************************************************************************)
+
+// Calculate maximum
+rResult := curveData.data[0];
+
+FOR i := 0 TO (curveData.iDataCnt - 1) DO
+   rResult := MAX(rResult, curveData.data[i]);
+END_FOR;
+
+fCalcMax := rResult;
+   
+
+
+@END_Body 
+
+@@@BEG_Comment@@@ 
+@TL(0)
+
+@@@END_Comment@@@ 
+
+@BEG_Body 
+@TL(22)
+(**************************************** WARNING ********************************************
+ *** The KEBA Kemro K2 System including software is not intended for safety control tasks! ***
+ ***                       For further information see Comment tab!                        ***
+ *********************************************************************************************)
+
+// Read curve data of XT2 data recorder (for display mode "Time")
+curve.VariableY := varName;
+curveStatus := Inject_Graph_XT2.GetCurve(curve);
+
+// Clear data
+FOR i := 0 TO (cInjGraphMaxDataCnt - 1) DO
+   yData.data[i] := 0.0;
+END_FOR;
+
+IF (curveStatus.Status = KMB_Status_OK) THEN
+    // Get measure data from data recorder
+    status_KMB := Inject_Graph_XT2.GetMeasureDataReal(curveStatus.CurveId, startIdx, INT_TO_DINT(cInjGraphMaxDataCnt), dataCnt, yData.data, xData.data);
+    yData.iDataCnt := dataCnt;
+    xData.iDataCnt := dataCnt;
+END_IF;
+
+
+@END_Body 
+
+@@@BEG_Comment@@@ 
+@TL(0)
+
+@@@END_Comment@@@ 
+
+@BEG_Body 
+@TL(21)
+(**************************************** WARNING ********************************************
+ *** The KEBA Kemro K2 System including software is not intended for safety control tasks! ***
+ ***                       For further information see Comment tab!                        ***
+ *********************************************************************************************)
+
+// Read curve data of YX data recorder (for display mode "Position" and "Split")
+curve.VariableY := varName;
+curveStatus := Inject_Graph_YX.GetCurve(curve);
+
+// Clear data
+FOR i := 0 TO (cInjGraphMaxDataCnt - 1) DO
+   yData.data[i] := 0.0;
+END_FOR;
+
+IF (curveStatus.Status = KMB_Status_OK) THEN
+    // Get measure data from data recorder
+    status_KMB := Inject_Graph_YX.GetMeasureDataReal(curveStatus.CurveId, startIdx, INT_TO_DINT(cInjGraphMaxDataCnt), dataCnt, yData.data, xData.data);
+    yData.iDataCnt := dataCnt;
+    xData.iDataCnt := dataCnt;
+END_IF;
+
+@END_Body 
+
+@@@BEG_Comment@@@ 
+@TL(0)
+
+@@@END_Comment@@@ 
+
+@BEG_Body 
+@TL(47)
+(**************************************** WARNING ********************************************
+ *** The KEBA Kemro K2 System including software is not intended for safety control tasks! ***
+ ***                       For further information see Comment tab!                        ***
+ *********************************************************************************************)
+
+// NOTE: This is just a template for calculating typical characteristic values.
+// Curve data can be read also from other data recorders (YX, XT1)
+// e.g. depending on selected display mode in inject graph (sv_iDisplayModeInjGraph)
+
+// Step 0: Read curve data
+IF iStep = 0 THEN      
+   // Act. screw velocity
+   IF charValuesScrewVelocity.bUsed THEN
+      aReadCurveDataOverTime(charValuesScrewVelocity.curveName, charValuesScrewVelocity.curveData, xDataDummy);
+   END_IF;
+   
+   iStep := 10;
+   RETURN;
+END_IF;
+
+// Step 10: Calculate char. values of act. screw velocity
+IF iStep = 10 THEN   
+   IF charValuesScrewVelocity.prMean <> EMPTY THEN
+       b := WRITE_SVREAL_DIRECT(charValuesScrewVelocity.prMean^, fCalcMean(charValuesScrewVelocity.curveData));
+   END_IF;
+   IF charValuesScrewVelocity.prMin <> EMPTY THEN
+       b := WRITE_SVREAL_DIRECT(charValuesScrewVelocity.prMin^, fCalcMin(charValuesScrewVelocity.curveData));
+   END_IF;
+   IF charValuesScrewVelocity.prMax <> EMPTY THEN
+       b := WRITE_SVREAL_DIRECT(charValuesScrewVelocity.prMax^, fCalcMax(charValuesScrewVelocity.curveData));
+   END_IF;
+       
+   iStep := 99;
+   RETURN;
+END_IF;
+
+// Step 99: End
+IF iStep = 99 THEN
+   iStep := 0;
+   
+   // "Start export" signalization to HMI
+   sv_iExportTriggerInjGraph := sv_iExportTriggerInjGraph + 1;
+   
+   STOP_PROCESS_ALGORITHM();
+   RETURN;
+END_IF;
+
+@END_Body 
+
+@@@BEG_Comment@@@ 
+@TL(0)
+
+@@@END_Comment@@@ 
+@END_Body 
+
+@END_Contents 

@@ -1,0 +1,103 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<base:Mask xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xmlns:base="http://www.keba.at/viewedit.model.base" widgetId="kvs.mask" name="NozzleDriveMask1">
+  <resolution width="684" height="476"/>
+  <position x="1" y="1"/>
+  <attributeValues key="Title" value="Nozzle drive"/>
+  <attributeValues key="Icon" value="Nozzle1/hmi/images/iconNozzleDrive.gif"/>
+  <widgetInstances xsi:type="base:MultiPageWidgetInstance" widgetId="keplast.kvs.tabpanelplast" name="tabPanelPlast1" layoutConstraint="CENTER">
+    <resolution width="684" height="476"/>
+    <position/>
+    <attributeValues key="SelectedPage" value="3"/>
+    <attributeValues key="Tabs" value="Nozzle fwd chart, Tab1; Nozzle bwd chart, Tab3; Drive info, Tab5; Motor cooling, Tab4"/>
+    <pages widgetId="keplast.kvs.tabpanelplast.container" name="Tab1">
+      <resolution width="684" height="446"/>
+      <position/>
+      <attributeValues key="HelpSubID" value="fwdChart"/>
+      <widgetInstances widgetId="keplast.kvs.mschart" name="msChartNozzleFwd" layoutConstraint="CENTER">
+        <resolution width="714" height="400"/>
+        <position/>
+        <attributeValues key="MsProfileData" value="DriveChartNozzle"/>
+      </widgetInstances>
+      <widgetInstances xsi:type="base:CompositeWidgetInstance" widgetId="d15380cc-a761-460c-9aa1-9d851df99905" name="chartKeyPanelNozzleFwd" layoutConstraint="SOUTH">
+        <resolution width="714" height="40"/>
+        <position y="400"/>
+      </widgetInstances>
+      <layout layoutID="kvs.layout.BorderLayout" name="BorderLayout"/>
+    </pages>
+    <pages widgetId="keplast.kvs.tabpanelplast.container" name="Tab3">
+      <resolution width="684" height="446"/>
+      <position/>
+      <attributeValues key="HelpSubID" value="bwdChart"/>
+      <widgetInstances widgetId="keplast.kvs.mschart" name="msChartNozzleBwd" layoutConstraint="CENTER">
+        <resolution width="684" height="400"/>
+        <position/>
+        <attributeValues key="MsProfileData" value="DriveChartNozzle"/>
+      </widgetInstances>
+      <widgetInstances xsi:type="base:CompositeWidgetInstance" widgetId="d15380cc-a761-460c-9aa1-9d851df99905" name="chartKeyPanelNozzleBwd" layoutConstraint="SOUTH">
+        <resolution width="684" height="40"/>
+        <position y="400"/>
+      </widgetInstances>
+      <layout layoutID="kvs.layout.BorderLayout" name="BorderLayout"/>
+    </pages>
+    <pages widgetId="keplast.kvs.tabpanelplast.container" name="Tab5">
+      <resolution width="684" height="446"/>
+      <position/>
+      <attributeValues key="HelpSubID" value="driveInfo"/>
+      <widgetInstances xsi:type="base:CompositeWidgetInstance" widgetId="00d2e7ff-2188-424a-860f-293b97dd8f5c" name="driveStatusPanel1" layoutConstraint="CENTER">
+        <resolution width="684" height="376"/>
+        <position/>
+        <attributeValues key="VariableStatusWord" value="Nozzle1.sv_iDriveStatus"/>
+        <attributeValues key="VariableFwVersion" value="Nozzle1.sv_sRevision"/>
+        <attributeValues key="VariableDriveName" value="Nozzle1.sv_sDrvID"/>
+        <attributeValues key="VariableActPosition" value="Nozzle1.sv_rNozzlePosition"/>
+        <attributeValues key="VariableActVelocity" value="Nozzle1.sv_rNozzleVelocity"/>
+        <attributeValues key="VariableActTorque" value="Nozzle1.sv_rActTorque"/>
+        <attributeValues key="VariableActDriveTemp" value="Nozzle1.sv_iAmplifierTemp"/>
+        <attributeValues key="VariableActMotorTemp" value="Nozzle1.sv_rMotorTemp"/>
+        <attributeValues key="VariablePLCVersion" value="Nozzle1.sv_sPLCVersion"/>
+        <attributeValues key="VariableActCurrent" value="Nozzle1.sv_rActCurrent"/>
+      </widgetInstances>
+      <widgetInstances xsi:type="base:CompositeWidgetInstance" widgetId="3f4be1f1-f4c0-46dd-baed-09f74828f227" name="driveReferencingPanel1" layoutConstraint="SOUTH">
+        <resolution width="684" height="64"/>
+        <position y="376"/>
+        <attributeValues key="VariableRefStartRequest" value="Nozzle1.sv_Servo.RefData.bStartRequest"/>
+        <attributeValues key="VariableRefState" value="Nozzle1.sv_Servo.RefData.State"/>
+        <dynamicAttributes key="Visible">
+          <value function="n1_GT_const : ViewEditFunctions" equal="true" unequal="false">
+            <parameter key="1" value="kvariable;Nozzle1.sv_Servo.RefData.RefPointType"/>
+            <parameter key="2" value="double;0.0"/>
+          </value>
+        </dynamicAttributes>
+      </widgetInstances>
+      <layout layoutID="kvs.layout.BorderLayout" name="BorderLayout"/>
+    </pages>
+    <pages widgetId="keplast.kvs.tabpanelplast.container" name="Tab4">
+      <resolution width="684" height="446"/>
+      <position/>
+      <attributeValues key="HelpSubID" value="motorCooling"/>
+      <dynamicAttributes key="Create">
+        <value function="doesDeviceExist : UserFunctions" equal="true" unequal="false">
+          <parameter key="1" value="devicename;PlastFunctionUtils.createDeviceName(&quot;Nozzle1.do_MotorCool&quot;)"/>
+        </value>
+      </dynamicAttributes>
+      <widgetInstances xsi:type="base:CompositeWidgetInstance" widgetId="139aee72-7f1d-4a2b-bc73-00ae7dedd12d" name="motorCoolingPanel1" layoutConstraint="NORTH">
+        <resolution width="714" height="440"/>
+        <position/>
+        <attributeValues key="VariableActTemp" value="Nozzle1.sv_rMotorTemp"/>
+        <attributeValues key="VariableCoolOnTemp" value="Nozzle1.sv_rMotorCoolOnTemp"/>
+        <attributeValues key="VariableCoolOffTemp" value="Nozzle1.sv_rMotorCoolOffTemp"/>
+        <dynamicAttributes key="Visible">
+          <value function="n1_GT_const : ViewEditFunctions" equal="true" unequal="false">
+            <parameter key="1" value="kvariable;Nozzle1.sv_Servo.ServoState.OperationState"/>
+            <parameter key="2" value="double;0.0"/>
+          </value>
+        </dynamicAttributes>
+      </widgetInstances>
+      <layout layoutID="kvs.layout.BorderLayout" name="BorderLayout"/>
+    </pages>
+    <layout layoutID="kvs.layout.xylayout" name="null"/>
+    <contentPanePosition y="30"/>
+    <contentPaneResolution width="684" height="446"/>
+  </widgetInstances>
+  <layout layoutID="kvs.layout.BorderLayout" name="BorderLayout"/>
+</base:Mask>

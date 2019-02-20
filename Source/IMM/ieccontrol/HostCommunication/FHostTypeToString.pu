@@ -1,0 +1,116 @@
+IMPORT_OVER_LISTFILE
+ cHostTypeNone
+, cHostTypeOPCGeneric
+, cHostTypeOPC_EM63
+
+END_IMPORT
+
+FUNCTION FHostTypeToString : STRING(32) #DUMMY_EDIT_BLOCK
+
+VAR_INPUT
+ iHostType : DINT;
+END_VAR
+#BEGIN_EDIT_BLOCK
+CASE (iHostType) OF
+   cHostTypeOPCGeneric:
+      FHostTypeToString := "OPC Generic";
+    
+   cHostTypeOPC_EM63:
+      FHostTypeToString := "EM63 over OPC";
+    
+   cHostTypeOPCUA_EM77:
+      FHostTypeToString := "EM77 over OPCUA";
+
+ELSE
+   FHostTypeToString := "invalid id"; 
+END_CASE;
+
+
+;#END_EDIT_BLOCK END_FUNCTION
+
+
+
+#END_OF_IEC_PART
+
+@Puma @IecEditor 6 159 @Pou 25 
+@@@BEG_Comment@@@
+
+@@@END_Comment@@@
+
+@BEG_Contents 
+
+@BEG_Func 
+@RT(17)FuncTreeContainer 
+0 
+@END_Func 
+
+@BEG_Const 
+@RT(18)ConstTreeContainer 
+3 
+@Var @RT(13)cHostTypeNone @RT(0) @T @F @DT @RT(4)DINT @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+0 @RT(1)0 @RT(0) 
+@END_Attrib 
+1 1 @F @F @F @F 
+
+@Var @RT(19)cHostTypeOPCGeneric @RT(0) @T @F @DT @RT(4)DINT @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+0 @RT(1)1 @RT(0) 
+@END_Attrib 
+1 1 @F @F @F @F 
+
+@Var @RT(17)cHostTypeOPC_EM63 @RT(0) @T @F @DT @RT(4)DINT @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+0 @RT(1)2 @RT(0) 
+@END_Attrib 
+1 1 @F @F @F @F 
+
+@END_Const 
+
+@BEG_Export 
+
+@BEG_Kind 
+@FUNCTION @RT(17)FHostTypeToString @STRUCTURED_TEXT 
+@RT(10)STRING(32) @RT(0) @RT(0) 
+@END_Kind 
+
+@BEG_Dcl 
+@RT(16)DclTreeContainer 
+1 
+@Var @RT(9)iHostType @RT(0) @T @F @DT @RT(4)DINT @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 1 @F @F @F @F 
+
+@END_Dcl 
+
+@END_Export 
+
+@BEG_Body 
+@TL(14)
+CASE (iHostType) OF
+   cHostTypeOPCGeneric:
+      FHostTypeToString := "OPC Generic";
+    
+   cHostTypeOPC_EM63:
+      FHostTypeToString := "EM63 over OPC";
+    
+   cHostTypeOPCUA_EM77:
+      FHostTypeToString := "EM77 over OPCUA";
+
+ELSE
+   FHostTypeToString := "invalid id"; 
+END_CASE;
+
+@END_Body 
+
+@END_Contents 

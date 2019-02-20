@@ -1,0 +1,2787 @@
+(*
+@h    ! WARNING !
+@h    The Kemro K2 system (including software) only meets category B according to EN 954-1,
+@h    thus it is not intended for usage in safety-relevant control applications in the field 
+@h    of personal safety (e.g. emergency stop).
+@h    To implement potentially necessary safety-relevant control tasks, always use additional 
+@h    external safety devices that are intended for the particular purpose, and meet the necessary 
+@h    functional safety.
+@h    For further information see EN 954-1 (EN ISO 13849-1) and/or the K2-x00 user manual, chapter 
+@h    "CE conformity, directives and standards".
+
+Respossible for managing list of autocalibration movements
+in sv_GlobalCalibStatus.pMovements[]
+
+Wait for start of global autocalibration
+then start chain of autocalibrations
+
+Wait for autocalib redo request (evRedoStart)
+then only star one autocalibration
+*)
+
+IMPORT_OVER_LISTFILE
+ SET_EVENT
+, SET_ALARM
+, GET_SYNC_REFTO
+, cCalibMovements
+, tnCalibState_Running
+, tnCalibState_Aborted
+, tnCalibGroup_LintabOnly
+, tnCalibGroup_NoCalib
+, tnCalibState_Done
+, tnCalibState_Error
+, cMoveBwd
+, nSetup
+, KSYS_Status_OK
+, tnCalibState_None
+, tnCalibCommand_Stop
+, tnCalibCommand_Start
+, tnCalibCommand_None
+, cSubOpSpeedpumpMaster
+, cCompMold
+, cCompEjector
+, tsGlobalCalibStatus
+, tsCalibMovement
+, tnOperationMode
+, tevRedoEvent
+, tevStopRequest
+, tevStartRequest
+, tsDeviceId
+, tnDataState
+, tevStartRequestData
+, tevStopRequestData
+, tyMovements
+, tpCalibMovement
+, FBCheckReady
+, KSYS_Status
+, tOptionId
+, tevRedoEventData
+, FBTracePendingAlarms
+, tnCalibGroup
+
+END_IMPORT
+
+ALGORITHM_BLOCK ABAutoCalibration #DUMMY_EDIT_BLOCK
+
+SYSTEM_VAR
+ sv_GlobalCalibStatus : tsGlobalCalibStatus;
+ sv_MoldCalibMovement : tsCalibMovement;
+ sv_InjectionCalibMovement : tsCalibMovement;
+ sv_ScrewRPMCalibMovement : tsCalibMovement;
+ sv_EjectorCalibMovement : tsCalibMovement;
+ sv_ScrewCalibMovement : tsCalibMovement;
+ sv_NozzleCalibMovement : tsCalibMovement;
+ sv_bCoresActive : BOOL;
+ sv_BackPressureCalibMovement : tsCalibMovement;
+ sv_ServoVelocityMovementFwd : tsCalibMovement;
+ sv_ServoPressureMovement : tsCalibMovement;
+ sv_ServoATMovement : tsCalibMovement;
+ sv_InjectPressureCalibMovement : tsCalibMovement;
+ sv_bMoveMoldUntilEnd : BOOL;
+ sv_bMoveEjectorUntilEnd : BOOL;
+ sv_OperationMode : tnOperationMode;
+ sv_iPendingAlarms : DINT;
+ sv_SysPresSensCalibMovement : tsCalibMovement;
+ sv_CavityPresSensCalibMovement1 : tsCalibMovement;
+ sv_CavityPresSensCalibMovement2 : tsCalibMovement;
+ sv_CavityPresSensCalibMovement3 : tsCalibMovement;
+ sv_CavityPresSensCalibMovement4 : tsCalibMovement;
+ sv_CavityPresSensCalibMovement5 : tsCalibMovement;
+ sv_CavityPresSensCalibMovement6 : tsCalibMovement;
+ sv_CavityPresSensCalibMovement7 : tsCalibMovement;
+ sv_CavityPresSensCalibMovement8 : tsCalibMovement;
+ sv_bAutoCalibRunning : BOOL (* auto calibration active *);
+ sv_CalibStateMoldPressure1 : tsCalibMovement;
+ sv_CalibStateMoldPressure2 : tsCalibMovement;
+ sv_SlideTableCalibMovement : tsCalibMovement;
+ sv_Lintab1 : tsCalibMovement;
+ sv_Lintab2 : tsCalibMovement;
+ sv_Lintab3 : tsCalibMovement;
+ sv_Lintab4 : tsCalibMovement;
+ sv_DataState : tnDataState;
+END_VAR
+
+SYSTEM_OBJECT
+ TaskMid : TASK;
+ PU_Task_7 : TASK;
+ EV_Task_7 : TASK;
+ evRedoStart : tevRedoEvent;
+ evStopRequest : tevStopRequest;
+ evStartRequest : tevStartRequest;
+ erSetupModeRequiredForCalib : ALARM;
+ erCalibCoresActive : ALARM;
+ erCalibrationStopped : ALARM;
+ erCalibrationCycleMissmatch : ALARM;
+ PU_Task_13 : TASK;
+END_OBJECT
+
+VAR
+ DeviceIdEjector : tsDeviceId := (CompId:=cCompEjector,IndexId:=1);
+ DeviceIdMold : tsDeviceId := (CompId:=cCompMold,IndexId:=1);
+ dummy : DINT;
+ mpMovement : REFTO tsCalibMovement;
+END_VAR
+
+(*
+Coordinate sequential start of auto calib cycle
+starts one auto calib movement after the other
+*)
+
+PROCESS_ALGORITHM paAutoCalibSequence ON TaskMid
+
+
+VAR_TEMP
+ j : DINT;
+ i : DINT;
+END_VAR
+
+VAR
+ evStartRequestData : tevStartRequestData;
+ evStopRequestData : tevStopRequestData;
+ tmpMovements : tyMovements;
+ iMaxMovements : DINT;
+ tmpM : tpCalibMovement;
+ fbCheckReady : FBCheckReady;
+ calibCounter : DINT;
+ bIgnoreMovement : BOOL;
+END_VAR
+
+(* IecGraph-Code *)
+
+(* init step *)
+INITIAL_STEP S_INIT:
+ASortCalibs (P);
+Action108 (P);
+END_STEP
+
+ACTION ASortCalibs: #BEGIN_EDIT_BLOCK
+sv_GlobalCalibStatus.Status := tnCalibState_Running;
+
+tmpMovements := sv_GlobalCalibStatus.pMovements;
+
+(* get number of movements *)
+FOR i:= 1 TO cCalibMovements DO
+    IF NOT CHECK_REF(tmpMovements[i]^)  THEN
+            EXIT;
+    END_IF;
+END_FOR;
+iMaxMovements := i -1;
+
+(* sort them by iOrder *)
+FOR i := 1 TO iMaxMovements -1 DO
+    FOR j := 1 TO iMaxMovements - 1 - i +1 DO
+        IF tmpMovements[j]^.iOrder > tmpMovements[j + 1]^.iOrder THEN
+            tmpM := tmpMovements[j];
+            tmpMovements[j] := tmpMovements[j + 1];
+            tmpMovements[j + 1] := tmpM;
+        END_IF;    
+    END_FOR;    
+END_FOR;
+
+;#END_EDIT_BLOCK END_ACTION (*ASortCalibs*)
+ACTION Action108: #BEGIN_EDIT_BLOCK
+calibCounter := 0;
+sv_GlobalCalibStatus.iCurrentStep := calibCounter;
+
+;#END_EDIT_BLOCK END_ACTION (*Action108*)
+
+(* steps *)
+STEP S_RESET:
+Action119 (P);
+AStop (N);
+AStopSelf (P);
+END_STEP
+
+ACTION Action119: #BEGIN_EDIT_BLOCK
+sv_bMoveEjectorUntilEnd := FALSE;
+sv_bMoveMoldUntilEnd := FALSE;
+sv_bAutoCalibRunning := FALSE;
+
+;#END_EDIT_BLOCK END_ACTION (*Action119*)
+ACTION AStop: #BEGIN_EDIT_BLOCK
+(* stop all calibration movements *)
+FOR i:= 1 TO cCalibMovements DO
+    IF CHECK_REF(sv_GlobalCalibStatus.pMovements[i]^) THEN
+        IF sv_GlobalCalibStatus.pMovements[i]^.Status = tnCalibState_Running OR
+           sv_GlobalCalibStatus.pMovements[i]^.bRedo THEN
+            sv_GlobalCalibStatus.pMovements[i]^.Status := tnCalibState_Aborted;
+            sv_GlobalCalibStatus.pMovements[i]^.bRedo := FALSE;//FIXME: check if needed
+            EXIT;
+        END_IF;
+    END_IF;
+END_FOR;
+
+;#END_EDIT_BLOCK END_ACTION (*AStop*)
+ACTION AStopSelf: #BEGIN_EDIT_BLOCK
+STOP_PROCESS_ALGORITHM();
+
+;#END_EDIT_BLOCK END_ACTION (*AStopSelf*)
+STEP Step19:
+ASignalStart (P);
+END_STEP
+
+ACTION ASignalStart: #BEGIN_EDIT_BLOCK
+sv_bAutoCalibRunning := TRUE;
+
+;#END_EDIT_BLOCK END_ACTION (*ASignalStart*)
+STEP Step74:
+AAnyCoreActive (N);
+END_STEP
+
+STEP S_MoveEjectorBack:
+AEjectorBack (P);
+Action116 (N);
+END_STEP
+
+ACTION Action116: #BEGIN_EDIT_BLOCK
+fbCheckReady(DeviceId := DeviceIdEjector)
+
+;#END_EDIT_BLOCK END_ACTION (*Action116*)
+STEP S_StopEjector:
+AStopEjeMovement (P);
+END_STEP
+
+STEP S_MoveMoldBack:
+AMoldBack (P);
+Action118 (N);
+END_STEP
+
+ACTION Action118: #BEGIN_EDIT_BLOCK
+fbCheckReady(DeviceId := DeviceIdMold)
+
+;#END_EDIT_BLOCK END_ACTION (*Action118*)
+STEP S_StopMold:
+AStopMoldMovement (P);
+END_STEP
+
+STEP S_CALIB:
+AResetMoldBack (P);
+ADoCalib (P);
+END_STEP
+
+ACTION ADoCalib: #BEGIN_EDIT_BLOCK
+(* start calibration *)
+calibCounter := calibCounter + 1;
+sv_GlobalCalibStatus.pUnitLintab := tmpMovements[calibCounter]^.pLintab;
+
+bIgnoreMovement := FALSE;
+IF tmpMovements[calibCounter]^.bIgnoreMovement THEN
+   bIgnoreMovement := TRUE;
+ELSIF tmpMovements[calibCounter]^.Group = tnCalibGroup_LintabOnly OR 
+   tmpMovements[calibCounter]^.Group = tnCalibGroup_NoCalib THEN
+    tmpMovements[calibCounter]^.Status := tnCalibState_Done;   
+ELSE   
+   tmpMovements[calibCounter]^.Status := tnCalibState_Running;
+   sv_GlobalCalibStatus.iCurrentMovement := calibCounter;
+   sv_GlobalCalibStatus.iCurrentStep := sv_GlobalCalibStatus.iCurrentStep + 1;
+END_IF;
+
+;#END_EDIT_BLOCK END_ACTION (*ADoCalib*)
+STEP Step69:
+Action113 (P);
+END_STEP
+
+ACTION Action113: #BEGIN_EDIT_BLOCK
+IF tmpMovements[calibCounter]^.Status = tnCalibState_Aborted THEN
+   sv_GlobalCalibStatus.Status := tnCalibState_Aborted;
+ELSE
+   sv_GlobalCalibStatus.Status := tnCalibState_Error;
+END_IF;
+
+;#END_EDIT_BLOCK END_ACTION (*Action113*)
+STEP Step67:
+END_STEP
+
+STEP Step68:
+Action112 (P);
+END_STEP
+
+ACTION Action112: #BEGIN_EDIT_BLOCK
+sv_GlobalCalibStatus.Status := tnCalibState_Done;
+
+;#END_EDIT_BLOCK END_ACTION (*Action112*)
+
+(* transitions *)
+TRANSITION Trans50 (* Trans50 *) FROM S_RESET TO S_INIT :=  #BEGIN_EDIT_BLOCK
+TRUE
+;#END_EDIT_BLOCK
+END_TRANSITION
+
+TRANSITION Trans80 (* Trans80 *) FROM S_INIT TO Step19 :=  #BEGIN_EDIT_BLOCK
+NOT sv_bCoresActive AND
+sv_iPendingAlarms = 0
+;#END_EDIT_BLOCK
+(*Comment : Start with moving ejector and 
+mold in backward position, check if any failure 
+occured. 
+After that start the calibration cycle, if no alarm is 
+pending*)
+END_TRANSITION
+
+TRANSITION Trans18 (* Trans18 *) FROM Step19 TO S_MoveEjectorBack :=  #BEGIN_EDIT_BLOCK
+TRUE
+;#END_EDIT_BLOCK
+END_TRANSITION
+
+TRANSITION Trans87 (* Trans87 *) FROM S_INIT TO Step74 :=  #BEGIN_EDIT_BLOCK
+sv_bCoresActive OR 
+sv_iPendingAlarms > 0
+;#END_EDIT_BLOCK
+END_TRANSITION
+
+TRANSITION Trans88 (* Trans88 *) FROM Step74 TO S_RESET :=  #BEGIN_EDIT_BLOCK
+TRUE
+
+;#END_EDIT_BLOCK
+END_TRANSITION
+
+TRANSITION Trans72 (* Trans72 *) FROM S_MoveEjectorBack TO S_MoveMoldBack :=  #BEGIN_EDIT_BLOCK
+fbCheckReady.bReady AND
+sv_iPendingAlarms = 0
+;#END_EDIT_BLOCK
+END_TRANSITION
+
+GO_ON_TRANSITION Trans83 (* Trans83 *) FROM S_MoveEjectorBack TO S_StopEjector :=  #BEGIN_EDIT_BLOCK
+sv_GlobalCalibStatus.Status = tnCalibState_Aborted
+OR sv_iPendingAlarms <> 0
+;#END_EDIT_BLOCK
+END_TRANSITION
+
+TRANSITION Trans84 (* Trans84 *) FROM S_StopEjector TO S_RESET :=  #BEGIN_EDIT_BLOCK
+TRUE
+
+;#END_EDIT_BLOCK
+END_TRANSITION
+
+TRANSITION Trans81 (* Trans81 *) FROM S_MoveMoldBack TO S_CALIB :=  #BEGIN_EDIT_BLOCK
+fbCheckReady.bReady AND
+sv_iPendingAlarms = 0
+;#END_EDIT_BLOCK
+END_TRANSITION
+
+GO_ON_TRANSITION Trans85 (* Trans85 *) FROM S_MoveMoldBack TO S_StopMold :=  #BEGIN_EDIT_BLOCK
+sv_GlobalCalibStatus.Status = tnCalibState_Aborted
+OR sv_iPendingAlarms <> 0
+;#END_EDIT_BLOCK
+END_TRANSITION
+
+TRANSITION Trans86 (* Trans86 *) FROM S_StopMold TO S_RESET :=  #BEGIN_EDIT_BLOCK
+TRUE
+;#END_EDIT_BLOCK
+END_TRANSITION
+
+TRANSITION TCalibDone (* TCalibDone *) FROM S_CALIB TO Step67 :=  #BEGIN_EDIT_BLOCK
+(tmpMovements[calibCounter]^.Status = tnCalibState_Done) OR 
+(tmpMovements[calibCounter]^.Status = tnCalibState_Skipped) OR 
+bIgnoreMovement
+;#END_EDIT_BLOCK
+END_TRANSITION
+
+TRANSITION TCalibError (* TCalibError *) FROM S_CALIB TO Step69 :=  #BEGIN_EDIT_BLOCK
+tmpMovements[calibCounter]^.Status <> tnCalibState_Done AND
+tmpMovements[calibCounter]^.Status <> tnCalibState_Running
+
+;#END_EDIT_BLOCK
+END_TRANSITION
+
+TRANSITION Trans79 (* Trans79 *) FROM Step69 TO S_RESET :=  #BEGIN_EDIT_BLOCK
+TRUE
+;#END_EDIT_BLOCK
+END_TRANSITION
+
+GO_ON_TRANSITION Trans82 (* Trans82 *) FROM S_CALIB TO S_RESET :=  #BEGIN_EDIT_BLOCK
+sv_GlobalCalibStatus.Status = tnCalibState_Aborted OR
+sv_GlobalCalibStatus.Status = tnCalibState_Error
+;#END_EDIT_BLOCK
+END_TRANSITION
+
+TRANSITION Trans76 (* Trans76 *) FROM Step67 TO S_CALIB :=  #BEGIN_EDIT_BLOCK
+calibCounter < iMaxMovements
+;#END_EDIT_BLOCK
+END_TRANSITION
+
+TRANSITION Trans77 (* Trans77 *) FROM Step67 TO Step68 :=  #BEGIN_EDIT_BLOCK
+calibCounter >= iMaxMovements
+;#END_EDIT_BLOCK
+END_TRANSITION
+
+TRANSITION Trans78 (* Trans78 *) FROM Step68 TO S_RESET :=  #BEGIN_EDIT_BLOCK
+TRUE
+;#END_EDIT_BLOCK
+END_TRANSITION
+
+(* end IecGraph-Code *)
+(* sfc-code *)
+
+(* stand alone actions *)
+ACTION AEjectorBack: #BEGIN_EDIT_BLOCK
+sv_bMoveEjectorUntilEnd := TRUE;
+
+evStartRequestData.DeviceId := DeviceIdEjector;
+evStartRequestData.MoveDir := cMoveBwd; 
+evStartRequestData.MoveId := cMoveBwd;
+SET_EVENT(evStartRequest, evStartRequestData);
+
+
+
+;#END_EDIT_BLOCK END_ACTION (*AEjectorBack*)
+ACTION AMoldBack: #BEGIN_EDIT_BLOCK
+sv_bMoveEjectorUntilEnd := FALSE;
+
+
+sv_bMoveMoldUntilEnd := TRUE;
+
+evStartRequestData.DeviceId := DeviceIdMold;
+evStartRequestData.MoveDir := cMoveBwd; 
+evStartRequestData.MoveId := cMoveBwd;
+SET_EVENT(evStartRequest, evStartRequestData); 
+
+
+;#END_EDIT_BLOCK END_ACTION (*AMoldBack*)
+ACTION AResetMoldBack: #BEGIN_EDIT_BLOCK
+sv_bMoveMoldUntilEnd := FALSE;
+
+;#END_EDIT_BLOCK END_ACTION (*AResetMoldBack*)
+ACTION AStopEjeMovement: #BEGIN_EDIT_BLOCK
+evStopRequestData.DeviceId := DeviceIdEjector;  
+evStopRequestData.MoveDir := cMoveBwd;  
+evStopRequestData.MoveId := cMoveBwd;      
+SET_EVENT(evStopRequest, evStopRequestData);
+sv_GlobalCalibStatus.Status := tnCalibState_Aborted;
+
+
+;#END_EDIT_BLOCK END_ACTION (*AStopEjeMovement*)
+ACTION AStopMoldMovement: #BEGIN_EDIT_BLOCK
+evStopRequestData.DeviceId := DeviceIdMold;  
+evStopRequestData.MoveDir := cMoveBwd;  
+evStopRequestData.MoveId := cMoveBwd;      
+SET_EVENT(evStopRequest, evStopRequestData);
+sv_GlobalCalibStatus.Status := tnCalibState_Aborted;
+
+;#END_EDIT_BLOCK END_ACTION (*AStopMoldMovement*)
+ACTION AAnyCoreActive: #BEGIN_EDIT_BLOCK
+IF sv_bCoresActive THEN
+   SET_ALARM(erCalibCoresActive);
+END_IF;
+sv_GlobalCalibStatus.Status := tnCalibState_Aborted;
+
+
+;#END_EDIT_BLOCK END_ACTION (*AAnyCoreActive*)
+
+(* exits *)
+
+EXIT_TRANSITION E_NotSetupMode := #BEGIN_EDIT_BLOCK
+sv_OperationMode <> nSetup
+;#END_EDIT_BLOCK
+PRIORITY 1 WITH  INITIAL_STEP S_RESET: END_STEP
+END_TRANSITION
+(* end sfc-code *)
+
+
+END_ALGORITHM
+
+(*
+Add all avaliable auto calib movements to sv_GlobalCalibStatus.pMovements
+*)
+
+PROCESS_ALGORITHM paInit ON TaskMid AUTOSTART
+
+
+VAR_TEMP
+ j : DINT;
+ k : DINT;
+END_VAR
+
+VAR
+ i : DINT;
+ Status : KSYS_Status;
+ pReal : REFTO REAL;
+ pCalibMovement : REFTO tsCalibMovement;
+ tmpM : tpCalibMovement;
+ bDirectLock : BOOL;
+ bInjectPressureSensor : BOOL;
+ bSysPressureSensor : BOOL;
+ bServoValve : BOOL;
+ pOption : REFTO tOptionId;
+ bSpeedPump : BOOL;
+ sCalibState : STRING(64);
+END_VAR
+#BEGIN_EDIT_BLOCK
+(**************************************** WARNING ********************************************
+ *** The KEBA Kemro K2 System including software is not intended for safety control tasks! ***
+ ***                       For further information see Comment tab!                        ***
+ *********************************************************************************************)
+
+i := 1;
+
+sv_GlobalCalibStatus.pMovements[i] := @sv_MoldCalibMovement;
+i := i + 1; 
+sv_GlobalCalibStatus.pMovements[i] := @sv_Lintab1;
+i := i + 1; 
+
+sv_GlobalCalibStatus.pMovements[i] := @sv_Lintab2;
+i := i + 1; 
+sv_GlobalCalibStatus.pMovements[i] := @sv_Lintab3;
+i := i + 1; 
+sv_GlobalCalibStatus.pMovements[i] := @sv_Lintab4;
+i := i + 1; 
+pReal := GET_SYNC_REFTO('Ejector1.ai_Position', T#0s, Status);
+IF Status = KSYS_Status_OK THEN
+   sv_GlobalCalibStatus.pMovements[i] := @sv_EjectorCalibMovement;
+   i := i + 1; 
+END_IF;
+
+sv_GlobalCalibStatus.pMovements[i] := @sv_ScrewCalibMovement;
+i := i + 1; 
+
+sv_GlobalCalibStatus.pMovements[i] := @sv_InjectionCalibMovement;
+i := i + 1; 
+
+sv_GlobalCalibStatus.pMovements[i] := @sv_ScrewRPMCalibMovement;
+i := i + 1; 
+
+pOption := GET_SYNC_REFTO('Pump1.sv_Options', T#0s, Status);
+bSpeedPump := ((pOption^ AND cSubOpSpeedpumpMaster) = cSubOpSpeedpumpMaster);
+
+
+// check for inject pressure sensor
+pReal := GET_SYNC_REFTO('Injection1.ai_Pressure', T#0s, Status);
+bInjectPressureSensor := (Status = KSYS_Status_OK);
+
+// check for system pressure sensor
+pReal := GET_SYNC_REFTO('Injection1.ai_SysPressure', T#0s, Status);
+bSysPressureSensor := (Status = KSYS_Status_OK);
+
+//add pump pressure and pump velocity calib movements
+FOR k := 1 TO cMaxNrOfPumps DO
+   sCalibState := CONCAT('Pump',DINT_TO_STRING(k),'.sv_CalibStatePumpVelocity');
+   pCalibMovement := GET_SYNC_REFTO(sCalibState, T#0s, Status);
+   IF Status = KSYS_Status_OK THEN
+      sv_GlobalCalibStatus.pMovements[i] := pCalibMovement;
+      i := i + 1;
+   END_IF;
+   
+   sCalibState := CONCAT('Pump',DINT_TO_STRING(k),'.sv_CalibStatePumpPressure');
+   pCalibMovement := GET_SYNC_REFTO(sCalibState, T#0s, Status);
+   IF Status = KSYS_Status_OK THEN      
+      sv_GlobalCalibStatus.pMovements[i] := pCalibMovement;
+      i := i + 1;      
+   END_IF;
+END_FOR;
+
+pReal := GET_SYNC_REFTO('ValveServoInj1.ao_Servo', T#0s, Status);
+bServoValve := (Status = KSYS_Status_OK) ;
+
+IF bServoValve AND bInjectPressureSensor AND bSysPressureSensor THEN
+   sv_GlobalCalibStatus.pMovements[i] := @sv_ServoVelocityMovementFwd;
+   i := i + 1;
+   sv_InjectionCalibMovement.bIgnoreMovement := TRUE;
+END_IF;
+
+pReal := GET_SYNC_REFTO('Nozzle1.ai_Position', T#0s, Status);
+// should be replaced by a SV
+IF Status = KSYS_Status_OK THEN
+    sv_GlobalCalibStatus.pMovements[i] := @sv_NozzleCalibMovement;
+    i := i + 1; 
+END_IF;
+
+//slide table transducer
+pReal := GET_SYNC_REFTO('SlideTable1.ai_Position', T#0s, Status);
+IF Status = KSYS_Status_OK THEN
+    sv_GlobalCalibStatus.pMovements[i] := @sv_SlideTableCalibMovement;
+    i := i + 1; 
+END_IF;
+
+IF bSysPressureSensor THEN
+   sv_GlobalCalibStatus.pMovements[i] := @sv_SysPresSensCalibMovement;
+   i := i + 1;
+END_IF;  
+
+
+// should be replaced by a SV
+IF bInjectPressureSensor THEN
+   
+    sv_GlobalCalibStatus.pMovements[i] := @sv_InjectPressureCalibMovement;
+    i := i + 1;
+        
+    IF (bServoValve AND bSysPressureSensor) THEN
+       sv_GlobalCalibStatus.pMovements[i] := @sv_ServoPressureMovement;
+       i := i + 1;
+   
+       sv_GlobalCalibStatus.pMovements[i] := @sv_ServoATMovement;
+       i := i + 1;
+    ELSIF (NOT bSpeedPump) THEN
+       sv_GlobalCalibStatus.pMovements[i] := @sv_BackPressureCalibMovement;
+       i := i + 1;
+    END_IF; 
+ELSIF bSysPressureSensor THEN
+    IF (NOT bSpeedPump) THEN   // create calibrationsequence for injection / hold with systempressuresensor
+       sv_GlobalCalibStatus.pMovements[i] := @sv_BackPressureCalibMovement;
+       i := i + 1;
+    END_IF;    
+END_IF;
+
+// check for valve back pressure 1
+pCalibMovement := GET_SYNC_REFTO('ValveBackPres1.sv_CalibState', T#0s, Status);
+IF Status = KSYS_Status_OK THEN
+    sv_GlobalCalibStatus.pMovements[i] := pCalibMovement;
+    i := i + 1;
+END_IF;
+
+// check for cavity pressure sensor
+pReal := GET_SYNC_REFTO('Mold1.ai_CavityPressure1', T#0s, Status);
+IF Status = KSYS_Status_OK THEN
+    sv_GlobalCalibStatus.pMovements[i] := @sv_CavityPresSensCalibMovement1;
+    i := i + 1;
+END_IF;
+pReal := GET_SYNC_REFTO('Mold1.ai_CavityPressure2', T#0s, Status);
+IF Status = KSYS_Status_OK THEN
+    sv_GlobalCalibStatus.pMovements[i] := @sv_CavityPresSensCalibMovement2;
+    i := i + 1;
+END_IF;
+pReal := GET_SYNC_REFTO('Mold1.ai_CavityPressure3', T#0s, Status);
+IF Status = KSYS_Status_OK THEN
+    sv_GlobalCalibStatus.pMovements[i] := @sv_CavityPresSensCalibMovement3;
+    i := i + 1;
+END_IF;
+pReal := GET_SYNC_REFTO('Mold1.ai_CavityPressure4', T#0s, Status);
+IF Status = KSYS_Status_OK THEN
+    sv_GlobalCalibStatus.pMovements[i] := @sv_CavityPresSensCalibMovement4;
+    i := i + 1;
+END_IF;
+pReal := GET_SYNC_REFTO('Mold1.ai_CavityPressure5', T#0s, Status);
+IF Status = KSYS_Status_OK THEN
+    sv_GlobalCalibStatus.pMovements[i] := @sv_CavityPresSensCalibMovement5;
+    i := i + 1;
+END_IF;
+pReal := GET_SYNC_REFTO('Mold1.ai_CavityPressure6', T#0s, Status);
+IF Status = KSYS_Status_OK THEN
+    sv_GlobalCalibStatus.pMovements[i] := @sv_CavityPresSensCalibMovement6;
+    i := i + 1;
+END_IF;
+pReal := GET_SYNC_REFTO('Mold1.ai_CavityPressure7', T#0s, Status);
+IF Status = KSYS_Status_OK THEN
+    sv_GlobalCalibStatus.pMovements[i] := @sv_CavityPresSensCalibMovement7;
+    i := i + 1;
+END_IF;
+pReal := GET_SYNC_REFTO('Mold1.ai_CavityPressure8', T#0s, Status);
+IF Status = KSYS_Status_OK THEN
+    sv_GlobalCalibStatus.pMovements[i] := @sv_CavityPresSensCalibMovement8;
+    i := i + 1;
+END_IF;
+                                    
+pReal := GET_SYNC_REFTO('Mold1.ai_ClampPress', T#0s, Status);
+IF Status = KSYS_Status_OK THEN
+    //check if direct lock machine or toggle lever machine
+    pOption := GET_SYNC_REFTO('Mold1.sv_Options', T#0s, Status);
+    bDirectLock := ((pOption^ AND cSubOptionMoldDirectLock) = cSubOptionMoldDirectLock);
+   
+    IF bDirectLock THEN
+       //direct lock
+       pCalibMovement := GET_SYNC_REFTO('Mold1.sv_CalibStateClampPres', T#0s, Status);
+    ELSE
+       //toggle lever
+       pCalibMovement := GET_SYNC_REFTO('Mold1.sv_CalibStateClampForceSensor', T#0s, Status);       
+    END_IF;
+        
+    sv_GlobalCalibStatus.pMovements[i] := pCalibMovement;
+    i := i + 1;
+END_IF;
+
+// check for mold valve pressure sensor
+pReal := GET_SYNC_REFTO('Mold1.ai_MoldPressure1', T#0s, Status);
+IF Status = KSYS_Status_OK THEN
+    sv_GlobalCalibStatus.pMovements[i] := @sv_CalibStateMoldPressure1;
+    i := i + 1;
+END_IF;
+pReal := GET_SYNC_REFTO('Mold1.ai_MoldPressure2', T#0s, Status);
+IF Status = KSYS_Status_OK THEN
+    sv_GlobalCalibStatus.pMovements[i] := @sv_CalibStateMoldPressure2;
+    i := i + 1;
+END_IF;
+
+// check for tie bars
+pCalibMovement := GET_SYNC_REFTO('TieBars1.sv_TopFrontCalibState', T#0s, Status);
+IF Status = KSYS_Status_OK THEN
+    sv_GlobalCalibStatus.pMovements[i] := pCalibMovement;
+    i := i + 1;
+END_IF;
+
+pCalibMovement := GET_SYNC_REFTO('TieBars1.sv_TopRearCalibState', T#0s, Status);
+IF Status = KSYS_Status_OK THEN
+    sv_GlobalCalibStatus.pMovements[i] := pCalibMovement;
+    i := i + 1;
+END_IF;
+
+pCalibMovement := GET_SYNC_REFTO('TieBars1.sv_BottomFrontCalibState', T#0s, Status);
+IF Status = KSYS_Status_OK THEN
+    sv_GlobalCalibStatus.pMovements[i] := pCalibMovement;
+    i := i + 1;
+END_IF;
+
+pCalibMovement := GET_SYNC_REFTO('TieBars1.sv_BottomRearCalibState', T#0s, Status);
+IF Status = KSYS_Status_OK THEN
+    sv_GlobalCalibStatus.pMovements[i] := pCalibMovement;
+    i := i + 1;
+END_IF;
+
+// tie bar pressure sensor
+pCalibMovement := GET_SYNC_REFTO('TieBars1.sv_CalibStatePressure', T#0s, Status);
+IF Status = KSYS_Status_OK THEN
+    sv_GlobalCalibStatus.pMovements[i] := pCalibMovement;
+    i := i + 1;
+END_IF;
+
+
+
+(* sort them by iOrder *)
+FOR k := 1 TO i - 2 DO
+    FOR j := 1 TO i - 1 - k DO
+        IF sv_GlobalCalibStatus.pMovements[j]^.iOrder > sv_GlobalCalibStatus.pMovements[j + 1]^.iOrder THEN
+            tmpM := sv_GlobalCalibStatus.pMovements[j];
+            sv_GlobalCalibStatus.pMovements[j] := sv_GlobalCalibStatus.pMovements[j + 1];
+            sv_GlobalCalibStatus.pMovements[j + 1] := tmpM;
+        END_IF;    
+    END_FOR;    
+END_FOR;
+// save ref to global display lintab, so each movement can write to it
+// without mapping to AutoCalibration1 FU
+sv_GlobalCalibStatus.iMaxStep := i - 1;
+FOR j := 1 TO i - 1 DO
+   IF NOT CHECK_REF(sv_GlobalCalibStatus.pMovements[j]^) THEN
+      EXIT;
+   END_IF;
+   // should actually be merged into one REFTO, but IECEdit does not seem to like circular REFTOs
+   sv_GlobalCalibStatus.pMovements[j]^.pDisplayLintab := @sv_GlobalCalibStatus.Lintab;
+   sv_GlobalCalibStatus.pMovements[j]^.prGlobalMaxX := @sv_GlobalCalibStatus.rMaxValX;
+   sv_GlobalCalibStatus.pMovements[j]^.prGlobalMaxY := @sv_GlobalCalibStatus.rMaxValY;
+   IF sv_GlobalCalibStatus.pMovements[j]^.Group = tnCalibGroup_LintabOnly OR
+       sv_GlobalCalibStatus.pMovements[j]^.Group = tnCalibGroup_NoCalib THEN
+       sv_GlobalCalibStatus.iMaxStep := sv_GlobalCalibStatus.iMaxStep - 1;
+   END_IF;
+END_FOR;
+
+sv_GlobalCalibStatus.iCurrentStep := 0;
+sv_GlobalCalibStatus.Status := tnCalibState_None;
+sv_GlobalCalibStatus.bInitDone := TRUE;
+
+STOP_PROCESS_ALGORITHM();
+
+
+
+;#END_EDIT_BLOCK END_ALGORITHM
+
+PROCESS_ALGORITHM paRedo ON TaskMid
+
+
+VAR_TEMP
+ i : DINT;
+ j : DINT;
+END_VAR
+
+VAR
+ bStart : BOOL := TRUE;
+END_VAR
+#BEGIN_EDIT_BLOCK
+(**************************************** WARNING ********************************************
+ *** The KEBA Kemro K2 System including software is not intended for safety control tasks! ***
+ ***                       For further information see Comment tab!                        ***
+ *********************************************************************************************)
+
+// For displaying which calibration is started 
+IF bStart THEN
+   
+   bStart := FALSE;
+   j := 0;
+   FOR i:= 1 TO cCalibMovements DO
+      IF CHECK_REF(sv_GlobalCalibStatus.pMovements[i]^) THEN 
+         IF sv_GlobalCalibStatus.pMovements[i] = mpMovement THEN
+            sv_GlobalCalibStatus.iCurrentStep := i - j;
+            sv_GlobalCalibStatus.iCurrentMovement := i;
+            EXIT;
+         ELSIF (sv_GlobalCalibStatus.pMovements[i]^.Group = tnCalibGroup_NoCalib OR 
+         sv_GlobalCalibStatus.pMovements[i]^.Group = tnCalibGroup_LintabOnly) THEN
+            j := j + 1;
+         ELSIF sv_GlobalCalibStatus.pMovements[i]^.Status <> tnCalibState_Done AND NOT 
+         (sv_GlobalCalibStatus.pMovements[i]^.Group = tnCalibGroup_NoCalib OR 
+         sv_GlobalCalibStatus.pMovements[i]^.Group = tnCalibGroup_LintabOnly) THEN
+            SET_ALARM(Name := erCalibrationCycleMissmatch, SubID1 := i-j);
+         END_IF;
+      END_IF;
+   END_FOR;
+END_IF;
+
+IF mpMovement^.Status <> tnCalibState_Running THEN
+   sv_GlobalCalibStatus.Status := mpMovement^.Status; 
+   bStart := TRUE;
+   STOP_PROCESS_ALGORITHM();
+END_IF;
+
+
+;#END_EDIT_BLOCK END_ALGORITHM
+
+EVENT_ALGORITHM evaRedoEvent ON EV_Task_7 WITH evRedoStart
+
+
+VAR_INPUT
+ evRedoEventData : tevRedoEventData;
+END_VAR
+
+VAR_TEMP
+ i : DINT;
+END_VAR
+#BEGIN_EDIT_BLOCK
+(**************************************** WARNING ********************************************
+ *** The KEBA Kemro K2 System including software is not intended for safety control tasks! ***
+ ***                       For further information see Comment tab!                        ***
+ *********************************************************************************************)
+
+mpMovement := evRedoEventData.pMovement;
+// Start only, if no alarm is pending, otherwise stop 
+// calibration
+IF sv_iPendingAlarms > 0 THEN
+   sv_GlobalCalibStatus.Status := tnCalibState_Aborted; 
+   sv_GlobalCalibStatus.Command := tnCalibCommand_Stop; 
+   RETURN;
+END_IF; 
+
+IF mpMovement^.bRedo THEN   
+   // set Unit lintab on redo
+   sv_GlobalCalibStatus.pUnitLintab := mpMovement^.pLintab;   
+   sv_GlobalCalibStatus.iCurrentMovement := 0;
+   
+   mpMovement^.Status := tnCalibState_Running;
+   sv_GlobalCalibStatus.Status := tnCalibState_Running;
+END_IF; 
+
+(* make sure no other calib movement is running *)
+FOR i:= 1 TO cCalibMovements DO
+    IF CHECK_REF(sv_GlobalCalibStatus.pMovements[i]^) AND sv_GlobalCalibStatus.pMovements[i] <> mpMovement THEN
+        IF sv_GlobalCalibStatus.pMovements[i]^.Status = tnCalibState_Running OR
+           sv_GlobalCalibStatus.pMovements[i]^.bRedo THEN
+            dummy := Print('other calib movement %d was running -> disabled', i);
+            sv_GlobalCalibStatus.pMovements[i]^.Status := tnCalibState_Running;
+            sv_GlobalCalibStatus.pMovements[i]^.bRedo := FALSE;
+            EXIT;
+        END_IF;
+    END_IF;
+END_FOR;
+
+START_PROCESS_ALGORITHM(paRedo);
+
+
+
+;#END_EDIT_BLOCK END_ALGORITHM
+
+POSTUPDATE_ALGORITHM pCommandListen ON PU_Task_7 WITH sv_GlobalCalibStatus.Command
+
+
+VAR_TEMP
+ i : DINT;
+END_VAR
+#BEGIN_EDIT_BLOCK
+(**************************************** WARNING ********************************************
+ *** The KEBA Kemro K2 System including software is not intended for safety control tasks! ***
+ ***                       For further information see Comment tab!                        ***
+ *********************************************************************************************)
+
+//stop all calibrations
+IF sv_GlobalCalibStatus.Command = tnCalibCommand_Stop THEN
+   FOR i:= 1 TO cCalibMovements DO
+      IF CHECK_REF(sv_GlobalCalibStatus.pMovements[i]^) THEN
+         IF sv_GlobalCalibStatus.pMovements[i]^.Status = tnCalibState_Running OR sv_GlobalCalibStatus.pMovements[i]^.bRedo THEN
+            sv_GlobalCalibStatus.pMovements[i]^.Status := tnCalibState_Aborted;
+            sv_GlobalCalibStatus.pMovements[i]^.bRedo := FALSE;//FIXME: check if needed
+            EXIT;
+         END_IF;
+      END_IF;
+   END_FOR;
+   sv_GlobalCalibStatus.Status := tnCalibState_Aborted;
+ELSIF sv_GlobalCalibStatus.Command = tnCalibCommand_Start THEN
+   IF sv_OperationMode = nSetup THEN
+      IF sv_iPendingAlarms = 0 THEN
+         //no alarms pending -> start calibration sequence
+         START_PROCESS_ALGORITHM(paAutoCalibSequence);
+      ELSE
+         SET_ALARM(erCalibrationStopped);   
+      END_IF;      
+   ELSE    
+      SET_ALARM(erSetupModeRequiredForCalib);
+   END_IF;
+END_IF;
+sv_GlobalCalibStatus.Command := tnCalibCommand_None;
+
+
+;#END_EDIT_BLOCK END_ALGORITHM
+
+POSTUPDATE_ALGORITHM pAlarmPending ON PU_Task_7 WITH sv_iPendingAlarms
+
+
+VAR
+ fbTracePendingAlarms : FBTracePendingAlarms;
+END_VAR
+#BEGIN_EDIT_BLOCK
+(**************************************** WARNING ********************************************
+ *** The KEBA Kemro K2 System including software is not intended for safety control tasks! ***
+ ***                       For further information see Comment tab!                        ***
+ *********************************************************************************************)
+
+IF sv_GlobalCalibStatus.Status = tnCalibState_Running AND sv_iPendingAlarms <> 0 THEN
+   
+   dummy := Print('auto calibration stopped because alarms of class 1/2/3 pending');
+   
+   //trace all pending alarms
+   fbTracePendingAlarms();
+   
+   sv_GlobalCalibStatus.Command := tnCalibCommand_Stop;
+   sv_GlobalCalibStatus.Status := tnCalibState_Aborted;
+   SET_ALARM(erCalibrationStopped);
+END_IF;
+
+
+;#END_EDIT_BLOCK END_ALGORITHM
+
+POSTUPDATE_ALGORITHM pDataState ON PU_Task_13 WITH sv_DataState
+
+
+VAR_TEMP
+ i : DINT;
+END_VAR
+
+VAR
+ bMDLoadingInProgress : BOOL (* loading of machine data in progress *);
+ nCalibGroup : tnCalibGroup;
+END_VAR
+#BEGIN_EDIT_BLOCK
+(**************************************** WARNING ********************************************
+ *** The KEBA Kemro K2 System including software is not intended for safety control tasks! ***
+ ***                       For further information see Comment tab!                        ***
+ *********************************************************************************************)
+
+//reset calib state after loading machine data
+
+IF sv_DataState = nReadMachineData THEN
+   //loading of machinedata in progress
+   bMDLoadingInProgress := TRUE;
+   RETURN;
+END_IF;
+
+IF sv_DataState = nReady AND bMDLoadingInProgress THEN
+   FOR i := 1 TO cCalibMovements DO
+      IF CHECK_REF(sv_GlobalCalibStatus.pMovements[i]^) THEN
+         nCalibGroup := sv_GlobalCalibStatus.pMovements[i]^.Group;
+         IF (nCalibGroup = tnCalibGroup_Transducer) OR (nCalibGroup = tnCalibGroup_Pressure) OR
+            (nCalibGroup = tnCalibGroup_Velocity) OR (nCalibGroup = tnCalibGroup_ClosedLoop) THEN
+            //set state to tnCalibState_None
+            sv_GlobalCalibStatus.pMovements[i]^.Status := tnCalibState_None;
+         END_IF;
+      ELSE
+         EXIT;
+      END_IF;         
+   END_FOR;   
+   bMDLoadingInProgress := FALSE;
+END_IF;
+
+
+
+
+;#END_EDIT_BLOCK END_ALGORITHM
+
+
+
+END_ALGORITHM_BLOCK
+
+
+
+#END_OF_IEC_PART
+
+@Puma @IecEditor 6 113 @Pou 25 
+@@@BEG_Comment@@@
+@h    ! WARNING !
+@h    The Kemro K2 system (including software) only meets category B according to EN 954-1,
+@h    thus it is not intended for usage in safety-relevant control applications in the field 
+@h    of personal safety (e.g. emergency stop).
+@h    To implement potentially necessary safety-relevant control tasks, always use additional 
+@h    external safety devices that are intended for the particular purpose, and meet the necessary 
+@h    functional safety.
+@h    For further information see EN 954-1 (EN ISO 13849-1) and/or the K2-x00 user manual, chapter 
+@h    "CE conformity, directives and standards".
+
+Respossible for managing list of autocalibration movements
+in sv_GlobalCalibStatus.pMovements[]
+
+Wait for start of global autocalibration
+then start chain of autocalibrations
+
+Wait for autocalib redo request (evRedoStart)
+then only star one autocalibration
+@@@END_Comment@@@
+
+@BEG_Contents 
+
+@BEG_Func 
+@RT(17)FuncTreeContainer 
+3 
+@Var @RT(9)SET_EVENT @RT(0) @T @T @DERIVED 0 @F @RT(23)KEBA_STANDARD_PROCEDURE @F 
+@T 
+@BEG_Attrib 
+0 @RT(0) @RT(0) 
+@END_Attrib 
+1 1 @F @F @F @F 
+
+@Var @RT(9)SET_ALARM @RT(0) @T @T @DERIVED 0 @F @RT(23)KEBA_STANDARD_PROCEDURE @F 
+@T 
+@BEG_Attrib 
+0 @RT(0) @RT(0) 
+@END_Attrib 
+1 1 @F @F @F @F 
+
+@Var @RT(14)GET_SYNC_REFTO @RT(0) @T @T @DERIVED 0 @F @RT(22)KEBA_STANDARD_FUNCTION @F 
+@T 
+@BEG_Attrib 
+0 @RT(0) @RT(0) 
+@END_Attrib 
+1 1 @F @F @F @F 
+
+@END_Func 
+
+@BEG_Const 
+@RT(18)ConstTreeContainer 
+17 
+@Var @RT(15)cCalibMovements @RT(0) @T @F @DT @RT(4)DINT @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+0 @RT(2)30 @RT(0) 
+@END_Attrib 
+1 1 @F @F @F @F 
+
+@Var @RT(20)tnCalibState_Running @RT(0) @T @T @DERIVED 0 @F @RT(12)tnCalibState @F 
+@T 
+@BEG_Attrib 
+0 @RT(1)1 @RT(23)calibration in progress 
+@END_Attrib 
+1 1 @F @F @F @F 
+
+@Var @RT(20)tnCalibState_Aborted @RT(0) @T @T @DERIVED 0 @F @RT(12)tnCalibState @F 
+@T 
+@BEG_Attrib 
+0 @RT(1)4 @RT(19)calibration aborted 
+@END_Attrib 
+1 1 @F @F @F @F 
+
+@Var @RT(23)tnCalibGroup_LintabOnly @RT(0) @T @T @DERIVED 0 @F @RT(12)tnCalibGroup @F 
+@T 
+@BEG_Attrib 
+0 @RT(1)6 @RT(0) 
+@END_Attrib 
+1 1 @F @F @F @F 
+
+@Var @RT(20)tnCalibGroup_NoCalib @RT(0) @T @T @DERIVED 0 @F @RT(12)tnCalibGroup @F 
+@T 
+@BEG_Attrib 
+0 @RT(1)0 @RT(0) 
+@END_Attrib 
+1 1 @F @F @F @F 
+
+@Var @RT(17)tnCalibState_Done @RT(0) @T @T @DERIVED 0 @F @RT(12)tnCalibState @F 
+@T 
+@BEG_Attrib 
+0 @RT(1)2 @RT(33)calibration finished successfully 
+@END_Attrib 
+1 1 @F @F @F @F 
+
+@Var @RT(18)tnCalibState_Error @RT(0) @T @T @DERIVED 0 @F @RT(12)tnCalibState @F 
+@T 
+@BEG_Attrib 
+0 @RT(1)3 @RT(32)error occured during calibration 
+@END_Attrib 
+1 1 @F @F @F @F 
+
+@Var @RT(8)cMoveBwd @RT(0) @T @F @DT @RT(4)DINT @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+0 @RT(2)11 @RT(17)movement backward 
+@END_Attrib 
+1 1 @F @F @F @F 
+
+@Var @RT(6)nSetup @RT(0) @T @T @DERIVED 0 @F @RT(15)tnOperationMode @F 
+@T 
+@BEG_Attrib 
+0 @RT(1)0 @RT(36)Setup mode only for service engineer 
+@END_Attrib 
+1 1 @F @F @F @F 
+
+@Var @RT(14)KSYS_Status_OK @RT(0) @T @T @DERIVED 0 @F @RT(11)KSYS_Status @F 
+@T 
+@BEG_Attrib 
+0 @RT(1)1 @RT(0) 
+@END_Attrib 
+1 1 @F @F @F @F 
+
+@Var @RT(17)tnCalibState_None @RT(0) @T @T @DERIVED 0 @F @RT(12)tnCalibState @F 
+@T 
+@BEG_Attrib 
+0 @RT(1)0 @RT(0) 
+@END_Attrib 
+1 1 @F @F @F @F 
+
+@Var @RT(19)tnCalibCommand_Stop @RT(0) @T @T @DERIVED 0 @F @RT(14)tnCalibCommand @F 
+@T 
+@BEG_Attrib 
+0 @RT(1)2 @RT(0) 
+@END_Attrib 
+1 1 @F @F @F @F 
+
+@Var @RT(20)tnCalibCommand_Start @RT(0) @T @T @DERIVED 0 @F @RT(14)tnCalibCommand @F 
+@T 
+@BEG_Attrib 
+0 @RT(1)1 @RT(0) 
+@END_Attrib 
+1 1 @F @F @F @F 
+
+@Var @RT(19)tnCalibCommand_None @RT(0) @T @T @DERIVED 0 @F @RT(14)tnCalibCommand @F 
+@T 
+@BEG_Attrib 
+0 @RT(1)0 @RT(0) 
+@END_Attrib 
+1 1 @F @F @F @F 
+
+@Var @RT(21)cSubOpSpeedpumpMaster @RT(0) @T @F @DT @RT(5)DWORD @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+0 @RT(6)16#100 @RT(17)Speed pump Master 
+@END_Attrib 
+1 1 @F @F @F @F 
+
+@Var @RT(9)cCompMold @RT(0) @T @F @DT @RT(4)DINT @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+0 @RT(3)101 @RT(14)Component Mold 
+@END_Attrib 
+1 1 @F @F @F @F 
+
+@Var @RT(12)cCompEjector @RT(0) @T @F @DT @RT(4)DINT @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+0 @RT(3)102 @RT(17)Component Ejector 
+@END_Attrib 
+1 1 @F @F @F @F 
+
+@END_Const 
+
+@BEG_Export 
+
+@BEG_Kind 
+@ALGORITHM_BLOCK @RT(17)ABAutoCalibration @STRUCTURED_TEXT 
+@RT(0) @RT(0) @RT(0) 
+@END_Kind 
+
+@BEG_Dcl 
+@RT(16)DclTreeContainer 
+50 
+@Var @RT(20)sv_GlobalCalibStatus @RT(0) @T @T @DERIVED 0 @T @T @DT @RT(19)tsGlobalCalibStatus @RT(0) @T @T @UNKNOWN 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 8 @F @F @F @F 
+
+@Var @RT(20)sv_MoldCalibMovement @RT(0) @T @T @DERIVED 0 @T @T @DT @RT(15)tsCalibMovement @RT(0) @T @T @UNKNOWN 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 8 @F @F @F @F 
+
+@Var @RT(25)sv_InjectionCalibMovement @RT(0) @T @T @DERIVED 0 @T @T @DT @RT(15)tsCalibMovement @RT(0) @T @T @UNKNOWN 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 8 @F @F @F @F 
+
+@Var @RT(24)sv_ScrewRPMCalibMovement @RT(0) @T @T @DERIVED 0 @T @T @DT @RT(15)tsCalibMovement @RT(0) @T @T @UNKNOWN 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 8 @F @F @F @F 
+
+@Var @RT(23)sv_EjectorCalibMovement @RT(0) @T @T @DERIVED 0 @T @T @DT @RT(15)tsCalibMovement @RT(0) @T @T @UNKNOWN 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 8 @F @F @F @F 
+
+@Var @RT(21)sv_ScrewCalibMovement @RT(0) @T @T @DERIVED 0 @T @T @DT @RT(15)tsCalibMovement @RT(0) @T @T @UNKNOWN 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 8 @F @F @F @F 
+
+@Var @RT(22)sv_NozzleCalibMovement @RT(0) @T @T @DERIVED 0 @T @T @DT @RT(15)tsCalibMovement @RT(0) @T @T @UNKNOWN 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 8 @F @F @F @F 
+
+@Var @RT(15)sv_bCoresActive @RT(0) @T @F @DT @RT(4)BOOL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 8 @F @F @F @F 
+
+@Var @RT(28)sv_BackPressureCalibMovement @RT(0) @T @T @DERIVED 0 @T @T @DT @RT(15)tsCalibMovement @RT(0) @T @T @UNKNOWN 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 8 @F @F @F @F 
+
+@Var @RT(27)sv_ServoVelocityMovementFwd @RT(0) @T @T @DERIVED 0 @T @T @DT @RT(15)tsCalibMovement @RT(0) @T @T @UNKNOWN 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 8 @F @F @F @F 
+
+@Var @RT(24)sv_ServoPressureMovement @RT(0) @T @T @DERIVED 0 @T @T @DT @RT(15)tsCalibMovement @RT(0) @T @T @UNKNOWN 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 8 @F @F @F @F 
+
+@Var @RT(18)sv_ServoATMovement @RT(0) @T @T @DERIVED 0 @T @T @DT @RT(15)tsCalibMovement @RT(0) @T @T @UNKNOWN 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 8 @F @F @F @F 
+
+@Var @RT(30)sv_InjectPressureCalibMovement @RT(0) @T @T @DERIVED 0 @T @T @DT @RT(15)tsCalibMovement @RT(0) @T @T @UNKNOWN 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 8 @F @F @F @F 
+
+@Var @RT(20)sv_bMoveMoldUntilEnd @RT(0) @T @F @DT @RT(4)BOOL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 8 @F @F @F @F 
+
+@Var @RT(23)sv_bMoveEjectorUntilEnd @RT(0) @T @F @DT @RT(4)BOOL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 8 @F @F @F @F 
+
+@Var @RT(16)sv_OperationMode @RT(0) @T @T @DERIVED 0 @T @T @DT @RT(15)tnOperationMode @RT(0) @T @T @UNKNOWN 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 8 @F @F @F @F 
+
+@Var @RT(17)sv_iPendingAlarms @RT(0) @T @F @DT @RT(4)DINT @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 8 @F @F @F @F 
+
+@Var @RT(27)sv_SysPresSensCalibMovement @RT(0) @T @T @DERIVED 0 @T @T @DT @RT(15)tsCalibMovement @RT(0) @T @T @UNKNOWN 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 8 @F @F @F @F 
+
+@Var @RT(31)sv_CavityPresSensCalibMovement1 @RT(0) @T @T @DERIVED 0 @T @T @DT @RT(15)tsCalibMovement @RT(0) @T @T @UNKNOWN 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 8 @F @F @F @F 
+
+@Var @RT(31)sv_CavityPresSensCalibMovement2 @RT(0) @T @T @DERIVED 0 @T @T @DT @RT(15)tsCalibMovement @RT(0) @T @T @UNKNOWN 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 8 @F @F @F @F 
+
+@Var @RT(31)sv_CavityPresSensCalibMovement3 @RT(0) @T @T @DERIVED 0 @T @T @DT @RT(15)tsCalibMovement @RT(0) @T @T @UNKNOWN 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 8 @F @F @F @F 
+
+@Var @RT(31)sv_CavityPresSensCalibMovement4 @RT(0) @T @T @DERIVED 0 @T @T @DT @RT(15)tsCalibMovement @RT(0) @T @T @UNKNOWN 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 8 @F @F @F @F 
+
+@Var @RT(31)sv_CavityPresSensCalibMovement5 @RT(0) @T @T @DERIVED 0 @T @T @DT @RT(15)tsCalibMovement @RT(0) @T @T @UNKNOWN 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 8 @F @F @F @F 
+
+@Var @RT(31)sv_CavityPresSensCalibMovement6 @RT(0) @T @T @DERIVED 0 @T @T @DT @RT(15)tsCalibMovement @RT(0) @T @T @UNKNOWN 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 8 @F @F @F @F 
+
+@Var @RT(31)sv_CavityPresSensCalibMovement7 @RT(0) @T @T @DERIVED 0 @T @T @DT @RT(15)tsCalibMovement @RT(0) @T @T @UNKNOWN 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 8 @F @F @F @F 
+
+@Var @RT(31)sv_CavityPresSensCalibMovement8 @RT(0) @T @T @DERIVED 0 @T @T @DT @RT(15)tsCalibMovement @RT(0) @T @T @UNKNOWN 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 8 @F @F @F @F 
+
+@Var @RT(20)sv_bAutoCalibRunning @RT(0) @T @F @DT @RT(4)BOOL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(23)auto calibration active @RT(0) 
+@END_Attrib 
+1 8 @F @F @F @F 
+
+@Var @RT(26)sv_CalibStateMoldPressure1 @RT(0) @T @T @DERIVED 0 @T @T @DT @RT(15)tsCalibMovement @RT(0) @T @T @UNKNOWN 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 8 @F @F @F @F 
+
+@Var @RT(26)sv_CalibStateMoldPressure2 @RT(0) @T @T @DERIVED 0 @T @T @DT @RT(15)tsCalibMovement @RT(0) @T @T @UNKNOWN 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 8 @F @F @F @F 
+
+@Var @RT(26)sv_SlideTableCalibMovement @RT(0) @T @T @DERIVED 0 @T @T @DT @RT(15)tsCalibMovement @RT(0) @T @T @UNKNOWN 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 8 @F @F @F @F 
+
+@Var @RT(7)TaskMid @RT(0) @T @F @DT @RT(4)TASK @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 7 @F @F @F @F 
+
+@Var @RT(9)PU_Task_7 @RT(0) @T @F @DT @RT(4)TASK @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 7 @F @F @F @F 
+
+@Var @RT(9)EV_Task_7 @RT(0) @T @F @DT @RT(4)TASK @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 7 @F @F @F @F 
+
+@Var @RT(11)evRedoStart @RT(0) @T @T @DERIVED 0 @T @T @DT @RT(12)tevRedoEvent @RT(0) @T @T @UNKNOWN 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 7 @F @F @F @F 
+
+@Var @RT(13)evStopRequest @RT(0) @T @T @DERIVED 0 @T @T @DT @RT(14)tevStopRequest @RT(0) @T @T @UNKNOWN 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 7 @F @F @F @F 
+
+@Var @RT(14)evStartRequest @RT(0) @T @T @DERIVED 0 @T @T @DT @RT(15)tevStartRequest @RT(0) @T @T @UNKNOWN 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 7 @F @F @F @F 
+
+@Var @RT(27)erSetupModeRequiredForCalib @RT(0) @T @F @DT @RT(5)ALARM @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 7 @F @F @F @F 
+
+@Var @RT(18)erCalibCoresActive @RT(0) @T @F @DT @RT(5)ALARM @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 7 @F @F @F @F 
+
+@Var @RT(20)erCalibrationStopped @RT(0) @T @F @DT @RT(5)ALARM @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 7 @F @F @F @F 
+
+@Var @RT(27)erCalibrationCycleMissmatch @RT(0) @T @F @DT @RT(5)ALARM @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 7 @F @F @F @F 
+
+@Var @RT(15)DeviceIdEjector @RT(0) @T @T @DERIVED 0 @T @T @DT @RT(10)tsDeviceId @RT(0) @T @T @UNKNOWN 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(33)(CompId:=cCompEjector,IndexId:=1) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(12)DeviceIdMold @RT(0) @T @T @DERIVED 0 @T @T @DT @RT(10)tsDeviceId @RT(0) @T @T @UNKNOWN 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(30)(CompId:=cCompMold,IndexId:=1) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(5)dummy @RT(0) @T @F @DT @RT(4)DINT @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(10)mpMovement @RT(0) @T @T @REFTO 0 @F @DERIVED 0 @T @T @DT @RT(15)tsCalibMovement @RT(0) @T @T @UNKNOWN 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(10)PU_Task_13 @RT(0) @T @T @RENAMED 0 @T @T @DT @RT(4)TASK @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 7 @F @F @F @F 
+
+@Var @RT(10)sv_Lintab1 @RT(0) @T @T @DERIVED 0 @T @T @DT @RT(15)tsCalibMovement @RT(0) @T @T @UNKNOWN 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 8 @F @F @F @F 
+
+@Var @RT(10)sv_Lintab2 @RT(0) @T @T @DERIVED 0 @T @T @DT @RT(15)tsCalibMovement @RT(0) @T @T @UNKNOWN 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 8 @F @F @F @F 
+
+@Var @RT(10)sv_Lintab3 @RT(0) @T @T @DERIVED 0 @T @T @DT @RT(15)tsCalibMovement @RT(0) @T @T @UNKNOWN 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 8 @F @F @F @F 
+
+@Var @RT(10)sv_Lintab4 @RT(0) @T @T @DERIVED 0 @T @T @DT @RT(15)tsCalibMovement @RT(0) @T @T @UNKNOWN 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 8 @F @F @F @F 
+
+@Var @RT(12)sv_DataState @RT(0) @T @T @DERIVED 0 @T @T @DT @RT(11)tnDataState @RT(0) @T @T @UNKNOWN 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 8 @F @F @F @F 
+
+@END_Dcl 
+
+@END_Export 
+
+@BEG_Body 
+
+7 
+
+@BEG_Export 
+
+@BEG_Algo 
+@PROCESS_ALGORITHM @RT(19)paAutoCalibSequence @SEQUENTIAL_FLOW_CHART 
+@RT(0) @RT(0) @RT(7)TaskMid @F @F 
+@END_Algo 
+
+@BEG_Dcl 
+@RT(16)DclTreeContainer 
+10 
+@Var @RT(1)j @RT(0) @T @F @DT @RT(4)DINT @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 4 @F @F @F @F 
+
+@Var @RT(1)i @RT(0) @T @F @DT @RT(4)DINT @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 4 @F @F @F @F 
+
+@Var @RT(18)evStartRequestData @RT(0) @T @T @DERIVED 0 @T @T @DT @RT(19)tevStartRequestData @RT(0) @T @T @UNKNOWN 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(17)evStopRequestData @RT(0) @T @T @DERIVED 0 @T @T @DT @RT(18)tevStopRequestData @RT(0) @T @T @UNKNOWN 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(12)tmpMovements @RT(0) @T @T @DERIVED 0 @T @T @DT @RT(11)tyMovements @RT(0) @T @T @UNKNOWN 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(13)iMaxMovements @RT(0) @T @F @DT @RT(4)DINT @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(4)tmpM @RT(0) @T @T @DERIVED 0 @T @T @DT @RT(15)tpCalibMovement @RT(0) @T @T @UNKNOWN 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(12)fbCheckReady @RT(0) @T @T @DERIVED 0 @T @T @DT @RT(12)FBCheckReady @RT(0) @T @T @UNKNOWN 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(12)calibCounter @RT(0) @T @F @DT @RT(4)DINT @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(15)bIgnoreMovement @RT(0) @T @F @DT @RT(4)BOOL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@END_Dcl 
+
+@END_Export 
+
+@BEG_Export 
+
+@BEG_Algo 
+@PROCESS_ALGORITHM @RT(6)paInit @STRUCTURED_TEXT 
+@RT(0) @RT(0) @RT(7)TaskMid @T @F 
+@END_Algo 
+
+@BEG_Dcl 
+@RT(16)DclTreeContainer 
+14 
+@Var @RT(1)j @RT(0) @T @F @DT @RT(4)DINT @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 4 @F @F @F @F 
+
+@Var @RT(1)k @RT(0) @T @F @DT @RT(4)DINT @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 4 @F @F @F @F 
+
+@Var @RT(1)i @RT(0) @T @F @DT @RT(4)DINT @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(6)Status @RT(0) @T @T @DERIVED 0 @T @T @DT @RT(11)KSYS_Status @RT(0) @T @T @UNKNOWN 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(5)pReal @RT(0) @T @T @REFTO 0 @T @DT @RT(4)REAL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(14)pCalibMovement @RT(0) @T @T @REFTO 0 @F @DERIVED 0 @T @T @DT @RT(15)tsCalibMovement @RT(0) @T @T @UNKNOWN 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(4)tmpM @RT(0) @T @T @DERIVED 0 @T @T @DT @RT(15)tpCalibMovement @RT(0) @T @T @UNKNOWN 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(11)bDirectLock @RT(0) @T @F @DT @RT(4)BOOL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(21)bInjectPressureSensor @RT(0) @T @F @DT @RT(4)BOOL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(18)bSysPressureSensor @RT(0) @T @F @DT @RT(4)BOOL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(11)bServoValve @RT(0) @T @F @DT @RT(4)BOOL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(7)pOption @RT(0) @T @T @REFTO 0 @F @DERIVED 0 @T @T @DT @RT(9)tOptionId @RT(0) @T @T @UNKNOWN 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(10)bSpeedPump @RT(0) @T @F @DT @RT(4)BOOL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(11)sCalibState @RT(0) @T @F @DT @RT(10)STRING(64) @RT(0) @T @T @STRING 0 @F @RT(2)64 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@END_Dcl 
+
+@END_Export 
+
+@BEG_Export 
+
+@BEG_Algo 
+@PROCESS_ALGORITHM @RT(6)paRedo @STRUCTURED_TEXT 
+@RT(0) @RT(0) @RT(7)TaskMid @F @F 
+@END_Algo 
+
+@BEG_Dcl 
+@RT(16)DclTreeContainer 
+3 
+@Var @RT(1)i @RT(0) @T @F @DT @RT(4)DINT @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 4 @F @F @F @F 
+
+@Var @RT(1)j @RT(0) @T @F @DT @RT(4)DINT @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 4 @F @F @F @F 
+
+@Var @RT(6)bStart @RT(0) @T @F @DT @RT(4)BOOL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(4)TRUE @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@END_Dcl 
+
+@END_Export 
+
+@BEG_Export 
+
+@BEG_Algo 
+@EVENT_ALGORITHM @RT(12)evaRedoEvent @STRUCTURED_TEXT 
+@RT(0) @RT(11)evRedoStart @RT(9)EV_Task_7 @F @F 
+@END_Algo 
+
+@BEG_Dcl 
+@RT(16)DclTreeContainer 
+2 
+@Var @RT(15)evRedoEventData @RT(0) @T @T @DERIVED 0 @T @T @DT @RT(16)tevRedoEventData @RT(0) @T @T @UNKNOWN 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 1 @F @F @F @F 
+
+@Var @RT(1)i @RT(0) @T @F @DT @RT(4)DINT @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 4 @F @F @F @F 
+
+@END_Dcl 
+
+@END_Export 
+
+@BEG_Export 
+
+@BEG_Algo 
+@POSTUPDATE_ALGORITHM @RT(14)pCommandListen @STRUCTURED_TEXT 
+@RT(0) @RT(28)sv_GlobalCalibStatus.Command @RT(9)PU_Task_7 @F @F 
+@END_Algo 
+
+@BEG_Dcl 
+@RT(16)DclTreeContainer 
+1 
+@Var @RT(1)i @RT(0) @T @F @DT @RT(4)DINT @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 4 @F @F @F @F 
+
+@END_Dcl 
+
+@END_Export 
+
+@BEG_Export 
+
+@BEG_Algo 
+@POSTUPDATE_ALGORITHM @RT(13)pAlarmPending @STRUCTURED_TEXT 
+@RT(0) @RT(17)sv_iPendingAlarms @RT(9)PU_Task_7 @F @F 
+@END_Algo 
+
+@BEG_Dcl 
+@RT(16)DclTreeContainer 
+1 
+@Var @RT(20)fbTracePendingAlarms @RT(0) @T @T @DERIVED 0 @T @T @DT @RT(20)FBTracePendingAlarms @RT(0) @T @T @UNKNOWN 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@END_Dcl 
+
+@END_Export 
+
+@BEG_Export 
+
+@BEG_Algo 
+@POSTUPDATE_ALGORITHM @RT(10)pDataState @STRUCTURED_TEXT 
+@RT(0) @RT(12)sv_DataState @RT(10)PU_Task_13 @F @F 
+@END_Algo 
+
+@BEG_Dcl 
+@RT(16)DclTreeContainer 
+3 
+@Var @RT(20)bMDLoadingInProgress @RT(0) @T @F @DT @RT(4)BOOL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(35)loading of machine data in progress @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(11)nCalibGroup @RT(0) @T @T @DERIVED 0 @T @T @DT @RT(12)tnCalibGroup @RT(0) @T @T @UNKNOWN 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(1)i @RT(0) @T @F @DT @RT(4)DINT @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 4 @F @F @F @F 
+
+@END_Dcl 
+
+@END_Export 
+
+@BEG_SfcBody 
+18 20 19 
+
+@BEG_SfcData 2 
+@StepSeq @RT(4)sseq @F 13 
+@Step @RT(7)S_RESET @F @F @T @F @RT(0) @F 
+@AcbCont @RT(7)unnamed @F 3 
+@Acb @RT(9)Action119 @F @T @RT(1)P @RT(0) @F @F @T @TL(4)
+sv_bMoveEjectorUntilEnd := FALSE;
+sv_bMoveMoldUntilEnd := FALSE;
+sv_bAutoCalibRunning := FALSE;
+
+@F 
+@Acb @RT(5)AStop @F @T @RT(1)N @RT(0) @F @F @T @TL(12)
+(* stop all calibration movements *)
+FOR i:= 1 TO cCalibMovements DO
+    IF CHECK_REF(sv_GlobalCalibStatus.pMovements[i]^) THEN
+        IF sv_GlobalCalibStatus.pMovements[i]^.Status = tnCalibState_Running OR
+           sv_GlobalCalibStatus.pMovements[i]^.bRedo THEN
+            sv_GlobalCalibStatus.pMovements[i]^.Status := tnCalibState_Aborted;
+            sv_GlobalCalibStatus.pMovements[i]^.bRedo := FALSE;//FIXME: check if needed
+            EXIT;
+        END_IF;
+    END_IF;
+END_FOR;
+
+@F 
+@Acb @RT(9)AStopSelf @F @T @RT(1)P @RT(0) @F @F @T @TL(2)
+STOP_PROCESS_ALGORITHM();
+
+@F 
+
+@Trans @RT(7)Trans50 @F @T @F @F @T @T @TL(2)
+TRUE
+
+@RT(7)Trans50 @F 
+@Step @RT(6)S_INIT @F @T @F @F @RT(0) @F 
+@AcbCont @RT(7)unnamed @F 2 
+@Acb @RT(11)ASortCalibs @F @T @RT(1)P @RT(0) @F @F @T @TL(23)
+sv_GlobalCalibStatus.Status := tnCalibState_Running;
+
+tmpMovements := sv_GlobalCalibStatus.pMovements;
+
+(* get number of movements *)
+FOR i:= 1 TO cCalibMovements DO
+    IF NOT CHECK_REF(tmpMovements[i]^)  THEN
+            EXIT;
+    END_IF;
+END_FOR;
+iMaxMovements := i -1;
+
+(* sort them by iOrder *)
+FOR i := 1 TO iMaxMovements -1 DO
+    FOR j := 1 TO iMaxMovements - 1 - i +1 DO
+        IF tmpMovements[j]^.iOrder > tmpMovements[j + 1]^.iOrder THEN
+            tmpM := tmpMovements[j];
+            tmpMovements[j] := tmpMovements[j + 1];
+            tmpMovements[j + 1] := tmpM;
+        END_IF;    
+    END_FOR;    
+END_FOR;
+
+@F 
+@Acb @RT(9)Action108 @F @T @RT(1)P @RT(0) @F @F @T @TL(3)
+calibCounter := 0;
+sv_GlobalCalibStatus.iCurrentStep := calibCounter;
+
+@F 
+
+@AltBranch @RT(3)alt @F 2 
+@TransSeq @RT(4)tseq @F 3 
+@Trans @RT(7)Trans80 @F @T @F @F @T @T @TL(3)
+NOT sv_bCoresActive AND
+sv_iPendingAlarms = 0
+
+@RT(7)Trans80 @T @TL(5)
+Comment : Start with moving ejector and 
+mold in backward position, check if any failure 
+occured. 
+After that start the calibration cycle, if no alarm is 
+pending
+
+@Step @RT(6)Step19 @F @F @F @F @RT(0) @F 
+@AcbCont @RT(7)unnamed @F 1 
+@Acb @RT(12)ASignalStart @F @T @RT(1)P @RT(0) @F @F @T @TL(2)
+sv_bAutoCalibRunning := TRUE;
+
+@F 
+
+@Trans @RT(7)Trans18 @F @T @F @F @T @T @TL(2)
+TRUE
+
+@RT(7)Trans18 @F 
+
+@TransSeq @RT(4)tseq @F 4 
+@Trans @RT(7)Trans87 @F @T @F @F @T @T @TL(3)
+sv_bCoresActive OR 
+sv_iPendingAlarms > 0
+
+@RT(7)Trans87 @F 
+@Step @RT(6)Step74 @F @F @F @F @RT(0) @F 
+@AcbCont @RT(7)unnamed @F 1 
+@Acb @RT(14)AAnyCoreActive @F @F @RT(1)N @RT(0) @F @F @F @F 
+
+@Trans @RT(7)Trans88 @F @T @F @F @T @T @TL(3)
+TRUE
+
+
+@RT(7)Trans88 @F 
+@Goto @RT(7)S_RESET @F @F 
+
+
+@Step @RT(17)S_MoveEjectorBack @F @F @F @F @RT(0) @F 
+@AcbCont @RT(7)unnamed @F 2 
+@Acb @RT(12)AEjectorBack @F @F @RT(1)P @RT(0) @F @F @F @F 
+@Acb @RT(9)Action116 @F @T @RT(1)N @RT(0) @F @F @T @TL(2)
+fbCheckReady(DeviceId := DeviceIdEjector)
+
+@F 
+
+@AltBranch @RT(3)alt @F 2 
+@TransSeq @RT(4)tseq @F 1 
+@Trans @RT(7)Trans72 @F @T @F @F @T @T @TL(3)
+fbCheckReady.bReady AND
+sv_iPendingAlarms = 0
+
+@RT(7)Trans72 @F 
+
+@TransSeq @RT(4)tseq @F 4 
+@Trans @RT(7)Trans83 @F @T @F @F @T @F @TL(3)
+sv_GlobalCalibStatus.Status = tnCalibState_Aborted
+OR sv_iPendingAlarms <> 0
+
+@RT(7)Trans83 @F 
+@Step @RT(13)S_StopEjector @F @F @F @F @RT(0) @F 
+@AcbCont @RT(7)unnamed @F 1 
+@Acb @RT(16)AStopEjeMovement @F @F @RT(1)P @RT(0) @F @F @F @F 
+
+@Trans @RT(7)Trans84 @F @T @F @F @T @T @TL(3)
+TRUE
+
+
+@RT(7)Trans84 @F 
+@Goto @RT(7)S_RESET @F @F 
+
+
+@Step @RT(14)S_MoveMoldBack @F @F @F @F @RT(0) @F 
+@AcbCont @RT(7)unnamed @F 2 
+@Acb @RT(9)AMoldBack @F @F @RT(1)P @RT(0) @F @F @F @F 
+@Acb @RT(9)Action118 @F @T @RT(1)N @RT(0) @F @F @T @TL(2)
+fbCheckReady(DeviceId := DeviceIdMold)
+
+@F 
+
+@AltBranch @RT(3)alt @F 2 
+@TransSeq @RT(4)tseq @F 1 
+@Trans @RT(7)Trans81 @F @T @F @F @T @T @TL(3)
+fbCheckReady.bReady AND
+sv_iPendingAlarms = 0
+
+@RT(7)Trans81 @F 
+
+@TransSeq @RT(4)tseq @F 4 
+@Trans @RT(7)Trans85 @F @T @F @F @T @F @TL(3)
+sv_GlobalCalibStatus.Status = tnCalibState_Aborted
+OR sv_iPendingAlarms <> 0
+
+@RT(7)Trans85 @F 
+@Step @RT(10)S_StopMold @F @F @F @F @RT(0) @F 
+@AcbCont @RT(7)unnamed @F 1 
+@Acb @RT(17)AStopMoldMovement @F @F @RT(1)P @RT(0) @F @F @F @F 
+
+@Trans @RT(7)Trans86 @F @T @F @F @T @T @TL(2)
+TRUE
+
+@RT(7)Trans86 @F 
+@Goto @RT(7)S_RESET @F @F 
+
+
+@Step @RT(7)S_CALIB @F @F @T @F @RT(0) @F 
+@AcbCont @RT(7)unnamed @F 2 
+@Acb @RT(14)AResetMoldBack @F @F @RT(1)P @RT(0) @F @F @F @F 
+@Acb @RT(8)ADoCalib @F @T @RT(1)P @RT(0) @F @F @T @TL(16)
+(* start calibration *)
+calibCounter := calibCounter + 1;
+sv_GlobalCalibStatus.pUnitLintab := tmpMovements[calibCounter]^.pLintab;
+
+bIgnoreMovement := FALSE;
+IF tmpMovements[calibCounter]^.bIgnoreMovement THEN
+   bIgnoreMovement := TRUE;
+ELSIF tmpMovements[calibCounter]^.Group = tnCalibGroup_LintabOnly OR 
+   tmpMovements[calibCounter]^.Group = tnCalibGroup_NoCalib THEN
+    tmpMovements[calibCounter]^.Status := tnCalibState_Done;   
+ELSE   
+   tmpMovements[calibCounter]^.Status := tnCalibState_Running;
+   sv_GlobalCalibStatus.iCurrentMovement := calibCounter;
+   sv_GlobalCalibStatus.iCurrentStep := sv_GlobalCalibStatus.iCurrentStep + 1;
+END_IF;
+
+@F 
+
+@AltBranch @RT(3)alt @F 3 
+@TransSeq @RT(4)tseq @F 1 
+@Trans @RT(10)TCalibDone @F @T @F @F @T @T @TL(4)
+(tmpMovements[calibCounter]^.Status = tnCalibState_Done) OR 
+(tmpMovements[calibCounter]^.Status = tnCalibState_Skipped) OR 
+bIgnoreMovement
+
+@RT(10)TCalibDone @F 
+
+@TransSeq @RT(4)tseq @F 4 
+@Trans @RT(11)TCalibError @F @T @F @F @T @T @TL(4)
+tmpMovements[calibCounter]^.Status <> tnCalibState_Done AND
+tmpMovements[calibCounter]^.Status <> tnCalibState_Running
+
+
+@RT(11)TCalibError @F 
+@Step @RT(6)Step69 @F @F @F @F @RT(0) @F 
+@AcbCont @RT(7)unnamed @F 1 
+@Acb @RT(9)Action113 @F @T @RT(1)P @RT(0) @F @F @T @TL(6)
+IF tmpMovements[calibCounter]^.Status = tnCalibState_Aborted THEN
+   sv_GlobalCalibStatus.Status := tnCalibState_Aborted;
+ELSE
+   sv_GlobalCalibStatus.Status := tnCalibState_Error;
+END_IF;
+
+@F 
+
+@Trans @RT(7)Trans79 @F @T @F @F @T @T @TL(2)
+TRUE
+
+@RT(7)Trans79 @F 
+@Goto @RT(7)S_RESET @F @F 
+
+@TransSeq @RT(4)tseq @F 2 
+@Trans @RT(7)Trans82 @F @T @F @F @T @F @TL(3)
+sv_GlobalCalibStatus.Status = tnCalibState_Aborted OR
+sv_GlobalCalibStatus.Status = tnCalibState_Error
+
+@RT(7)Trans82 @F 
+@Goto @RT(7)S_RESET @F @F 
+
+
+@Step @RT(6)Step67 @F @F @F @F @RT(0) @F 
+@AcbCont @RT(7)unnamed @F 0 
+
+@AltBranch @RT(3)alt @F 2 
+@TransSeq @RT(4)tseq @F 1 
+@Trans @RT(7)Trans76 @F @T @F @F @T @T @TL(2)
+calibCounter < iMaxMovements
+
+@RT(7)Trans76 @F 
+
+@TransSeq @RT(4)tseq @F 4 
+@Trans @RT(7)Trans77 @F @T @F @F @T @T @TL(2)
+calibCounter >= iMaxMovements
+
+@RT(7)Trans77 @F 
+@Step @RT(6)Step68 @F @F @F @F @RT(0) @F 
+@AcbCont @RT(7)unnamed @F 1 
+@Acb @RT(9)Action112 @F @T @RT(1)P @RT(0) @F @F @T @TL(2)
+sv_GlobalCalibStatus.Status := tnCalibState_Done;
+
+@F 
+
+@Trans @RT(7)Trans78 @F @T @F @F @T @T @TL(2)
+TRUE
+
+@RT(7)Trans78 @F 
+@Goto @RT(7)S_RESET @F @F 
+
+
+@Goto @RT(7)S_CALIB @F @F 
+@END_SfcData 
+@SaActions 6 
+@SaText @RT(12)AEjectorBack 1 @TL(9)
+sv_bMoveEjectorUntilEnd := TRUE;
+
+evStartRequestData.DeviceId := DeviceIdEjector;
+evStartRequestData.MoveDir := cMoveBwd; 
+evStartRequestData.MoveId := cMoveBwd;
+SET_EVENT(evStartRequest, evStartRequestData);
+
+
+
+
+@SaText @RT(9)AMoldBack 1 @TL(11)
+sv_bMoveEjectorUntilEnd := FALSE;
+
+
+sv_bMoveMoldUntilEnd := TRUE;
+
+evStartRequestData.DeviceId := DeviceIdMold;
+evStartRequestData.MoveDir := cMoveBwd; 
+evStartRequestData.MoveId := cMoveBwd;
+SET_EVENT(evStartRequest, evStartRequestData); 
+
+
+
+@SaText @RT(14)AResetMoldBack 1 @TL(2)
+sv_bMoveMoldUntilEnd := FALSE;
+
+
+@SaText @RT(16)AStopEjeMovement 1 @TL(7)
+evStopRequestData.DeviceId := DeviceIdEjector;  
+evStopRequestData.MoveDir := cMoveBwd;  
+evStopRequestData.MoveId := cMoveBwd;      
+SET_EVENT(evStopRequest, evStopRequestData);
+sv_GlobalCalibStatus.Status := tnCalibState_Aborted;
+
+
+
+@SaText @RT(17)AStopMoldMovement 1 @TL(6)
+evStopRequestData.DeviceId := DeviceIdMold;  
+evStopRequestData.MoveDir := cMoveBwd;  
+evStopRequestData.MoveId := cMoveBwd;      
+SET_EVENT(evStopRequest, evStopRequestData);
+sv_GlobalCalibStatus.Status := tnCalibState_Aborted;
+
+
+@SaText @RT(14)AAnyCoreActive 1 @TL(6)
+IF sv_bCoresActive THEN
+   SET_ALARM(erCalibCoresActive);
+END_IF;
+sv_GlobalCalibStatus.Status := tnCalibState_Aborted;
+
+
+
+@SaTrans 0 
+@SaExits 1 
+@SaExit @SaText @RT(14)E_NotSetupMode 1 @TL(2)
+sv_OperationMode <> nSetup
+
+@RT(7)S_RESET @RT(1)1 @F @F @SaSfc @RT(14)E_NotSetupMode 5 @RT(5)DUMMY 
+@BEG_SfcData 2 
+@ExitSeq @RT(4)sseq @F 3 
+@Step @RT(8)unnamed1 @F @T @F @F @RT(0) @F 
+@AcbCont @RT(7)unnamed @F 0 
+
+@Trans @RT(8)unnamed3 @F @T @F @F @T @T @TL(2)
+
+
+@RT(8)unnamed3 @F 
+@Goto @RT(9)unlabeled @F @F 
+@END_SfcData 
+
+@END_SfcBody 
+
+@@@BEG_Comment@@@ 
+@TL(2)
+Coordinate sequential start of auto calib cycle
+starts one auto calib movement after the other
+@@@END_Comment@@@ 
+
+@BEG_Body 
+@TL(261)
+(**************************************** WARNING ********************************************
+ *** The KEBA Kemro K2 System including software is not intended for safety control tasks! ***
+ ***                       For further information see Comment tab!                        ***
+ *********************************************************************************************)
+
+i := 1;
+
+sv_GlobalCalibStatus.pMovements[i] := @sv_MoldCalibMovement;
+i := i + 1; 
+sv_GlobalCalibStatus.pMovements[i] := @sv_Lintab1;
+i := i + 1; 
+
+sv_GlobalCalibStatus.pMovements[i] := @sv_Lintab2;
+i := i + 1; 
+sv_GlobalCalibStatus.pMovements[i] := @sv_Lintab3;
+i := i + 1; 
+sv_GlobalCalibStatus.pMovements[i] := @sv_Lintab4;
+i := i + 1; 
+pReal := GET_SYNC_REFTO('Ejector1.ai_Position', T#0s, Status);
+IF Status = KSYS_Status_OK THEN
+   sv_GlobalCalibStatus.pMovements[i] := @sv_EjectorCalibMovement;
+   i := i + 1; 
+END_IF;
+
+sv_GlobalCalibStatus.pMovements[i] := @sv_ScrewCalibMovement;
+i := i + 1; 
+
+sv_GlobalCalibStatus.pMovements[i] := @sv_InjectionCalibMovement;
+i := i + 1; 
+
+sv_GlobalCalibStatus.pMovements[i] := @sv_ScrewRPMCalibMovement;
+i := i + 1; 
+
+pOption := GET_SYNC_REFTO('Pump1.sv_Options', T#0s, Status);
+bSpeedPump := ((pOption^ AND cSubOpSpeedpumpMaster) = cSubOpSpeedpumpMaster);
+
+
+// check for inject pressure sensor
+pReal := GET_SYNC_REFTO('Injection1.ai_Pressure', T#0s, Status);
+bInjectPressureSensor := (Status = KSYS_Status_OK);
+
+// check for system pressure sensor
+pReal := GET_SYNC_REFTO('Injection1.ai_SysPressure', T#0s, Status);
+bSysPressureSensor := (Status = KSYS_Status_OK);
+
+//add pump pressure and pump velocity calib movements
+FOR k := 1 TO cMaxNrOfPumps DO
+   sCalibState := CONCAT('Pump',DINT_TO_STRING(k),'.sv_CalibStatePumpVelocity');
+   pCalibMovement := GET_SYNC_REFTO(sCalibState, T#0s, Status);
+   IF Status = KSYS_Status_OK THEN
+      sv_GlobalCalibStatus.pMovements[i] := pCalibMovement;
+      i := i + 1;
+   END_IF;
+   
+   sCalibState := CONCAT('Pump',DINT_TO_STRING(k),'.sv_CalibStatePumpPressure');
+   pCalibMovement := GET_SYNC_REFTO(sCalibState, T#0s, Status);
+   IF Status = KSYS_Status_OK THEN      
+      sv_GlobalCalibStatus.pMovements[i] := pCalibMovement;
+      i := i + 1;      
+   END_IF;
+END_FOR;
+
+pReal := GET_SYNC_REFTO('ValveServoInj1.ao_Servo', T#0s, Status);
+bServoValve := (Status = KSYS_Status_OK) ;
+
+IF bServoValve AND bInjectPressureSensor AND bSysPressureSensor THEN
+   sv_GlobalCalibStatus.pMovements[i] := @sv_ServoVelocityMovementFwd;
+   i := i + 1;
+   sv_InjectionCalibMovement.bIgnoreMovement := TRUE;
+END_IF;
+
+pReal := GET_SYNC_REFTO('Nozzle1.ai_Position', T#0s, Status);
+// should be replaced by a SV
+IF Status = KSYS_Status_OK THEN
+    sv_GlobalCalibStatus.pMovements[i] := @sv_NozzleCalibMovement;
+    i := i + 1; 
+END_IF;
+
+//slide table transducer
+pReal := GET_SYNC_REFTO('SlideTable1.ai_Position', T#0s, Status);
+IF Status = KSYS_Status_OK THEN
+    sv_GlobalCalibStatus.pMovements[i] := @sv_SlideTableCalibMovement;
+    i := i + 1; 
+END_IF;
+
+IF bSysPressureSensor THEN
+   sv_GlobalCalibStatus.pMovements[i] := @sv_SysPresSensCalibMovement;
+   i := i + 1;
+END_IF;  
+
+
+// should be replaced by a SV
+IF bInjectPressureSensor THEN
+   
+    sv_GlobalCalibStatus.pMovements[i] := @sv_InjectPressureCalibMovement;
+    i := i + 1;
+        
+    IF (bServoValve AND bSysPressureSensor) THEN
+       sv_GlobalCalibStatus.pMovements[i] := @sv_ServoPressureMovement;
+       i := i + 1;
+   
+       sv_GlobalCalibStatus.pMovements[i] := @sv_ServoATMovement;
+       i := i + 1;
+    ELSIF (NOT bSpeedPump) THEN
+       sv_GlobalCalibStatus.pMovements[i] := @sv_BackPressureCalibMovement;
+       i := i + 1;
+    END_IF; 
+ELSIF bSysPressureSensor THEN
+    IF (NOT bSpeedPump) THEN   // create calibrationsequence for injection / hold with systempressuresensor
+       sv_GlobalCalibStatus.pMovements[i] := @sv_BackPressureCalibMovement;
+       i := i + 1;
+    END_IF;    
+END_IF;
+
+// check for valve back pressure 1
+pCalibMovement := GET_SYNC_REFTO('ValveBackPres1.sv_CalibState', T#0s, Status);
+IF Status = KSYS_Status_OK THEN
+    sv_GlobalCalibStatus.pMovements[i] := pCalibMovement;
+    i := i + 1;
+END_IF;
+
+// check for cavity pressure sensor
+pReal := GET_SYNC_REFTO('Mold1.ai_CavityPressure1', T#0s, Status);
+IF Status = KSYS_Status_OK THEN
+    sv_GlobalCalibStatus.pMovements[i] := @sv_CavityPresSensCalibMovement1;
+    i := i + 1;
+END_IF;
+pReal := GET_SYNC_REFTO('Mold1.ai_CavityPressure2', T#0s, Status);
+IF Status = KSYS_Status_OK THEN
+    sv_GlobalCalibStatus.pMovements[i] := @sv_CavityPresSensCalibMovement2;
+    i := i + 1;
+END_IF;
+pReal := GET_SYNC_REFTO('Mold1.ai_CavityPressure3', T#0s, Status);
+IF Status = KSYS_Status_OK THEN
+    sv_GlobalCalibStatus.pMovements[i] := @sv_CavityPresSensCalibMovement3;
+    i := i + 1;
+END_IF;
+pReal := GET_SYNC_REFTO('Mold1.ai_CavityPressure4', T#0s, Status);
+IF Status = KSYS_Status_OK THEN
+    sv_GlobalCalibStatus.pMovements[i] := @sv_CavityPresSensCalibMovement4;
+    i := i + 1;
+END_IF;
+pReal := GET_SYNC_REFTO('Mold1.ai_CavityPressure5', T#0s, Status);
+IF Status = KSYS_Status_OK THEN
+    sv_GlobalCalibStatus.pMovements[i] := @sv_CavityPresSensCalibMovement5;
+    i := i + 1;
+END_IF;
+pReal := GET_SYNC_REFTO('Mold1.ai_CavityPressure6', T#0s, Status);
+IF Status = KSYS_Status_OK THEN
+    sv_GlobalCalibStatus.pMovements[i] := @sv_CavityPresSensCalibMovement6;
+    i := i + 1;
+END_IF;
+pReal := GET_SYNC_REFTO('Mold1.ai_CavityPressure7', T#0s, Status);
+IF Status = KSYS_Status_OK THEN
+    sv_GlobalCalibStatus.pMovements[i] := @sv_CavityPresSensCalibMovement7;
+    i := i + 1;
+END_IF;
+pReal := GET_SYNC_REFTO('Mold1.ai_CavityPressure8', T#0s, Status);
+IF Status = KSYS_Status_OK THEN
+    sv_GlobalCalibStatus.pMovements[i] := @sv_CavityPresSensCalibMovement8;
+    i := i + 1;
+END_IF;
+                                    
+pReal := GET_SYNC_REFTO('Mold1.ai_ClampPress', T#0s, Status);
+IF Status = KSYS_Status_OK THEN
+    //check if direct lock machine or toggle lever machine
+    pOption := GET_SYNC_REFTO('Mold1.sv_Options', T#0s, Status);
+    bDirectLock := ((pOption^ AND cSubOptionMoldDirectLock) = cSubOptionMoldDirectLock);
+   
+    IF bDirectLock THEN
+       //direct lock
+       pCalibMovement := GET_SYNC_REFTO('Mold1.sv_CalibStateClampPres', T#0s, Status);
+    ELSE
+       //toggle lever
+       pCalibMovement := GET_SYNC_REFTO('Mold1.sv_CalibStateClampForceSensor', T#0s, Status);       
+    END_IF;
+        
+    sv_GlobalCalibStatus.pMovements[i] := pCalibMovement;
+    i := i + 1;
+END_IF;
+
+// check for mold valve pressure sensor
+pReal := GET_SYNC_REFTO('Mold1.ai_MoldPressure1', T#0s, Status);
+IF Status = KSYS_Status_OK THEN
+    sv_GlobalCalibStatus.pMovements[i] := @sv_CalibStateMoldPressure1;
+    i := i + 1;
+END_IF;
+pReal := GET_SYNC_REFTO('Mold1.ai_MoldPressure2', T#0s, Status);
+IF Status = KSYS_Status_OK THEN
+    sv_GlobalCalibStatus.pMovements[i] := @sv_CalibStateMoldPressure2;
+    i := i + 1;
+END_IF;
+
+// check for tie bars
+pCalibMovement := GET_SYNC_REFTO('TieBars1.sv_TopFrontCalibState', T#0s, Status);
+IF Status = KSYS_Status_OK THEN
+    sv_GlobalCalibStatus.pMovements[i] := pCalibMovement;
+    i := i + 1;
+END_IF;
+
+pCalibMovement := GET_SYNC_REFTO('TieBars1.sv_TopRearCalibState', T#0s, Status);
+IF Status = KSYS_Status_OK THEN
+    sv_GlobalCalibStatus.pMovements[i] := pCalibMovement;
+    i := i + 1;
+END_IF;
+
+pCalibMovement := GET_SYNC_REFTO('TieBars1.sv_BottomFrontCalibState', T#0s, Status);
+IF Status = KSYS_Status_OK THEN
+    sv_GlobalCalibStatus.pMovements[i] := pCalibMovement;
+    i := i + 1;
+END_IF;
+
+pCalibMovement := GET_SYNC_REFTO('TieBars1.sv_BottomRearCalibState', T#0s, Status);
+IF Status = KSYS_Status_OK THEN
+    sv_GlobalCalibStatus.pMovements[i] := pCalibMovement;
+    i := i + 1;
+END_IF;
+
+// tie bar pressure sensor
+pCalibMovement := GET_SYNC_REFTO('TieBars1.sv_CalibStatePressure', T#0s, Status);
+IF Status = KSYS_Status_OK THEN
+    sv_GlobalCalibStatus.pMovements[i] := pCalibMovement;
+    i := i + 1;
+END_IF;
+
+
+
+(* sort them by iOrder *)
+FOR k := 1 TO i - 2 DO
+    FOR j := 1 TO i - 1 - k DO
+        IF sv_GlobalCalibStatus.pMovements[j]^.iOrder > sv_GlobalCalibStatus.pMovements[j + 1]^.iOrder THEN
+            tmpM := sv_GlobalCalibStatus.pMovements[j];
+            sv_GlobalCalibStatus.pMovements[j] := sv_GlobalCalibStatus.pMovements[j + 1];
+            sv_GlobalCalibStatus.pMovements[j + 1] := tmpM;
+        END_IF;    
+    END_FOR;    
+END_FOR;
+// save ref to global display lintab, so each movement can write to it
+// without mapping to AutoCalibration1 FU
+sv_GlobalCalibStatus.iMaxStep := i - 1;
+FOR j := 1 TO i - 1 DO
+   IF NOT CHECK_REF(sv_GlobalCalibStatus.pMovements[j]^) THEN
+      EXIT;
+   END_IF;
+   // should actually be merged into one REFTO, but IECEdit does not seem to like circular REFTOs
+   sv_GlobalCalibStatus.pMovements[j]^.pDisplayLintab := @sv_GlobalCalibStatus.Lintab;
+   sv_GlobalCalibStatus.pMovements[j]^.prGlobalMaxX := @sv_GlobalCalibStatus.rMaxValX;
+   sv_GlobalCalibStatus.pMovements[j]^.prGlobalMaxY := @sv_GlobalCalibStatus.rMaxValY;
+   IF sv_GlobalCalibStatus.pMovements[j]^.Group = tnCalibGroup_LintabOnly OR
+       sv_GlobalCalibStatus.pMovements[j]^.Group = tnCalibGroup_NoCalib THEN
+       sv_GlobalCalibStatus.iMaxStep := sv_GlobalCalibStatus.iMaxStep - 1;
+   END_IF;
+END_FOR;
+
+sv_GlobalCalibStatus.iCurrentStep := 0;
+sv_GlobalCalibStatus.Status := tnCalibState_None;
+sv_GlobalCalibStatus.bInitDone := TRUE;
+
+STOP_PROCESS_ALGORITHM();
+
+
+@END_Body 
+
+@@@BEG_Comment@@@ 
+@TL(1)
+Add all avaliable auto calib movements to sv_GlobalCalibStatus.pMovements
+@@@END_Comment@@@ 
+
+@BEG_Body 
+@TL(34)
+(**************************************** WARNING ********************************************
+ *** The KEBA Kemro K2 System including software is not intended for safety control tasks! ***
+ ***                       For further information see Comment tab!                        ***
+ *********************************************************************************************)
+
+// For displaying which calibration is started 
+IF bStart THEN
+   
+   bStart := FALSE;
+   j := 0;
+   FOR i:= 1 TO cCalibMovements DO
+      IF CHECK_REF(sv_GlobalCalibStatus.pMovements[i]^) THEN 
+         IF sv_GlobalCalibStatus.pMovements[i] = mpMovement THEN
+            sv_GlobalCalibStatus.iCurrentStep := i - j;
+            sv_GlobalCalibStatus.iCurrentMovement := i;
+            EXIT;
+         ELSIF (sv_GlobalCalibStatus.pMovements[i]^.Group = tnCalibGroup_NoCalib OR 
+         sv_GlobalCalibStatus.pMovements[i]^.Group = tnCalibGroup_LintabOnly) THEN
+            j := j + 1;
+         ELSIF sv_GlobalCalibStatus.pMovements[i]^.Status <> tnCalibState_Done AND NOT 
+         (sv_GlobalCalibStatus.pMovements[i]^.Group = tnCalibGroup_NoCalib OR 
+         sv_GlobalCalibStatus.pMovements[i]^.Group = tnCalibGroup_LintabOnly) THEN
+            SET_ALARM(Name := erCalibrationCycleMissmatch, SubID1 := i-j);
+         END_IF;
+      END_IF;
+   END_FOR;
+END_IF;
+
+IF mpMovement^.Status <> tnCalibState_Running THEN
+   sv_GlobalCalibStatus.Status := mpMovement^.Status; 
+   bStart := TRUE;
+   STOP_PROCESS_ALGORITHM();
+END_IF;
+
+@END_Body 
+
+@@@BEG_Comment@@@ 
+@TL(0)
+
+@@@END_Comment@@@ 
+
+@BEG_Body 
+@TL(39)
+(**************************************** WARNING ********************************************
+ *** The KEBA Kemro K2 System including software is not intended for safety control tasks! ***
+ ***                       For further information see Comment tab!                        ***
+ *********************************************************************************************)
+
+mpMovement := evRedoEventData.pMovement;
+// Start only, if no alarm is pending, otherwise stop 
+// calibration
+IF sv_iPendingAlarms > 0 THEN
+   sv_GlobalCalibStatus.Status := tnCalibState_Aborted; 
+   sv_GlobalCalibStatus.Command := tnCalibCommand_Stop; 
+   RETURN;
+END_IF; 
+
+IF mpMovement^.bRedo THEN   
+   // set Unit lintab on redo
+   sv_GlobalCalibStatus.pUnitLintab := mpMovement^.pLintab;   
+   sv_GlobalCalibStatus.iCurrentMovement := 0;
+   
+   mpMovement^.Status := tnCalibState_Running;
+   sv_GlobalCalibStatus.Status := tnCalibState_Running;
+END_IF; 
+
+(* make sure no other calib movement is running *)
+FOR i:= 1 TO cCalibMovements DO
+    IF CHECK_REF(sv_GlobalCalibStatus.pMovements[i]^) AND sv_GlobalCalibStatus.pMovements[i] <> mpMovement THEN
+        IF sv_GlobalCalibStatus.pMovements[i]^.Status = tnCalibState_Running OR
+           sv_GlobalCalibStatus.pMovements[i]^.bRedo THEN
+            dummy := Print('other calib movement %d was running -> disabled', i);
+            sv_GlobalCalibStatus.pMovements[i]^.Status := tnCalibState_Running;
+            sv_GlobalCalibStatus.pMovements[i]^.bRedo := FALSE;
+            EXIT;
+        END_IF;
+    END_IF;
+END_FOR;
+
+START_PROCESS_ALGORITHM(paRedo);
+
+
+@END_Body 
+
+@@@BEG_Comment@@@ 
+@TL(0)
+
+@@@END_Comment@@@ 
+
+@BEG_Body 
+@TL(31)
+(**************************************** WARNING ********************************************
+ *** The KEBA Kemro K2 System including software is not intended for safety control tasks! ***
+ ***                       For further information see Comment tab!                        ***
+ *********************************************************************************************)
+
+//stop all calibrations
+IF sv_GlobalCalibStatus.Command = tnCalibCommand_Stop THEN
+   FOR i:= 1 TO cCalibMovements DO
+      IF CHECK_REF(sv_GlobalCalibStatus.pMovements[i]^) THEN
+         IF sv_GlobalCalibStatus.pMovements[i]^.Status = tnCalibState_Running OR sv_GlobalCalibStatus.pMovements[i]^.bRedo THEN
+            sv_GlobalCalibStatus.pMovements[i]^.Status := tnCalibState_Aborted;
+            sv_GlobalCalibStatus.pMovements[i]^.bRedo := FALSE;//FIXME: check if needed
+            EXIT;
+         END_IF;
+      END_IF;
+   END_FOR;
+   sv_GlobalCalibStatus.Status := tnCalibState_Aborted;
+ELSIF sv_GlobalCalibStatus.Command = tnCalibCommand_Start THEN
+   IF sv_OperationMode = nSetup THEN
+      IF sv_iPendingAlarms = 0 THEN
+         //no alarms pending -> start calibration sequence
+         START_PROCESS_ALGORITHM(paAutoCalibSequence);
+      ELSE
+         SET_ALARM(erCalibrationStopped);   
+      END_IF;      
+   ELSE    
+      SET_ALARM(erSetupModeRequiredForCalib);
+   END_IF;
+END_IF;
+sv_GlobalCalibStatus.Command := tnCalibCommand_None;
+
+@END_Body 
+
+@@@BEG_Comment@@@ 
+@TL(0)
+
+@@@END_Comment@@@ 
+
+@BEG_Body 
+@TL(17)
+(**************************************** WARNING ********************************************
+ *** The KEBA Kemro K2 System including software is not intended for safety control tasks! ***
+ ***                       For further information see Comment tab!                        ***
+ *********************************************************************************************)
+
+IF sv_GlobalCalibStatus.Status = tnCalibState_Running AND sv_iPendingAlarms <> 0 THEN
+   
+   dummy := Print('auto calibration stopped because alarms of class 1/2/3 pending');
+   
+   //trace all pending alarms
+   fbTracePendingAlarms();
+   
+   sv_GlobalCalibStatus.Command := tnCalibCommand_Stop;
+   sv_GlobalCalibStatus.Status := tnCalibState_Aborted;
+   SET_ALARM(erCalibrationStopped);
+END_IF;
+
+@END_Body 
+
+@@@BEG_Comment@@@ 
+@TL(0)
+
+@@@END_Comment@@@ 
+
+@BEG_Body 
+@TL(31)
+(**************************************** WARNING ********************************************
+ *** The KEBA Kemro K2 System including software is not intended for safety control tasks! ***
+ ***                       For further information see Comment tab!                        ***
+ *********************************************************************************************)
+
+//reset calib state after loading machine data
+
+IF sv_DataState = nReadMachineData THEN
+   //loading of machinedata in progress
+   bMDLoadingInProgress := TRUE;
+   RETURN;
+END_IF;
+
+IF sv_DataState = nReady AND bMDLoadingInProgress THEN
+   FOR i := 1 TO cCalibMovements DO
+      IF CHECK_REF(sv_GlobalCalibStatus.pMovements[i]^) THEN
+         nCalibGroup := sv_GlobalCalibStatus.pMovements[i]^.Group;
+         IF (nCalibGroup = tnCalibGroup_Transducer) OR (nCalibGroup = tnCalibGroup_Pressure) OR
+            (nCalibGroup = tnCalibGroup_Velocity) OR (nCalibGroup = tnCalibGroup_ClosedLoop) THEN
+            //set state to tnCalibState_None
+            sv_GlobalCalibStatus.pMovements[i]^.Status := tnCalibState_None;
+         END_IF;
+      ELSE
+         EXIT;
+      END_IF;         
+   END_FOR;   
+   bMDLoadingInProgress := FALSE;
+END_IF;
+
+
+
+@END_Body 
+
+@@@BEG_Comment@@@ 
+@TL(0)
+
+@@@END_Comment@@@ 
+@END_Body 
+
+@END_Contents 

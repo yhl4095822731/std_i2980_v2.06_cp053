@@ -1,0 +1,201 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<base:Mask xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xmlns:base="http://www.keba.at/viewedit.model.base" widgetId="kvs.mask" name="EjectorParameterMask1">
+  <resolution width="714" height="476"/>
+  <position x="1" y="1"/>
+  <attributeValues key="Background" value="BG_Desktop:30,30,30"/>
+  <attributeValues key="Title" value="Ejector parameters"/>
+  <attributeValues key="Icon" value="Ejector1/hmi/images/iconEjectorParam.gif"/>
+  <widgetInstances xsi:type="base:ContainerWidgetInstance" widgetId="keplast.kvs.borderpanelsmall" name="brdpanelParameter" layoutConstraint="NORTH">
+    <resolution width="714" height="336"/>
+    <position/>
+    <attributeValues key="PreferredSize" value="10, 336"/>
+    <attributeValues key="Title" value="Ejector parameter settings"/>
+    <widgetInstances widgetId="keplast.kvs.actnumfieldtext" name="numfieldEjectorPosition" layoutConstraint="TITLE_RIGHT">
+      <resolution width="260" height="29"/>
+      <position x="451"/>
+      <attributeValues key="Variable" value="Ejector1.sv_rEjectorPosition"/>
+      <attributeValues key="VariableMaximum" value="Ejector1.sv_rEjectorStroke"/>
+      <attributeValues key="PreferredSize" value="260, 29"/>
+      <attributeValues key="PreferredColumns" value="32"/>
+      <attributeValues key="PreferredSizeNumField" value="60, 26"/>
+    </widgetInstances>
+    <widgetInstances xsi:type="base:ContainerWidgetInstance" widgetId="kvs.panel" name="panelParamsRight" layoutConstraint="RIGHT">
+      <resolution width="348" height="153"/>
+      <position x="363" y="33"/>
+      <widgetInstances xsi:type="base:ContainerWidgetInstance" widgetId="keplast.kvs.borderpanelsmall" name="panelParallelEject" layoutConstraint="null">
+        <resolution width="348" height="153"/>
+        <position/>
+        <attributeValues key="Title" value="Parallel eject"/>
+        <dynamicAttributes key="Create">
+          <value function="doesVariableExist : UserFunctions" equal="true" unequal="false">
+            <parameter key="1" value="variableasstring; PlastFunctionUtils.createVariableString(&quot;CentralCoordination1.sv_bEjectorFwdDuringMldOpen&quot;)"/>
+          </value>
+        </dynamicAttributes>
+        <widgetInstances widgetId="keplast.kvs.checkboxtext" name="checkboxUseParallelMovement" layoutConstraint="null">
+          <resolution width="342" height="29"/>
+          <position x="3" y="33"/>
+          <attributeValues key="Variable" value="CentralCoordination1.sv_bEjectorFwdDuringMldOpen"/>
+          <dynamicAttributes key="Enabled">
+            <value function="b1_EQ_true : ViewEditFunctions" equal="false" unequal="true">
+              <parameter key="1" value="kvariable;system.sv_bAutoCycleRunning"/>
+            </value>
+          </dynamicAttributes>
+        </widgetInstances>
+        <widgetInstances widgetId="keplast.kvs.numfieldtext" name="numfieldParallelStart" layoutConstraint="null">
+          <resolution width="342" height="29"/>
+          <position x="3" y="62"/>
+          <attributeValues key="Variable" value="CentralCoordination1.sv_rEjectorFwdStartPosition"/>
+          <dynamicAttributes key="Enabled">
+            <value function="b1_EQ_true : ViewEditFunctions" equal="true" unequal="false">
+              <parameter key="1" value="kvariable; CentralCoordination1.sv_bEjectorFwdDuringMldOpen"/>
+            </value>
+          </dynamicAttributes>
+        </widgetInstances>
+        <widgetInstances widgetId="keplast.kvs.actnumfieldtext" name="numfieldMoldPosition" layoutConstraint="null">
+          <resolution width="342" height="29"/>
+          <position x="3" y="91"/>
+          <attributeValues key="Variable" value="Mold1.sv_rMoldPosition"/>
+          <attributeValues key="VariableMaximum" value="Mold1.sv_rMoldStroke"/>
+        </widgetInstances>
+        <widgetInstances widgetId="keplast.kvs.numfieldtext" name="numfieldMoldCheckPos" layoutConstraint="null">
+          <resolution width="342" height="29"/>
+          <position x="3" y="120"/>
+          <attributeValues key="Variable" value="Ejector1.sv_rEjectorMonitorPos"/>
+          <attributeValues key="DisplayLevel" value="2"/>
+          <dynamicAttributes key="Create">
+            <value function="isODCSystem : UserFunctions" equal="true" unequal="false"/>
+          </dynamicAttributes>
+          <dynamicAttributes key="Enabled">
+            <value function="b1_EQ_true : ViewEditFunctions" equal="true" unequal="false">
+              <parameter key="1" value="kvariable; CentralCoordination1.sv_bEjectorFwdDuringMldOpen"/>
+            </value>
+          </dynamicAttributes>
+        </widgetInstances>
+        <layout layoutID="kvs.layout.GridLayout" name="GridLayout">
+          <attributeValues key="Rows" value="0"/>
+          <attributeValues key="Columns" value="1"/>
+        </layout>
+      </widgetInstances>
+      <layout layoutID="kvs.layout.GridLayout" name="GridLayout">
+        <attributeValues key="Rows" value="0"/>
+        <attributeValues key="Columns" value="1"/>
+      </layout>
+    </widgetInstances>
+    <widgetInstances xsi:type="base:ContainerWidgetInstance" widgetId="kvs.panel" name="panelParamsLeft" layoutConstraint="LEFT">
+      <resolution width="347" height="174"/>
+      <position x="6" y="33"/>
+      <widgetInstances widgetId="keplast.kvs.actsetnumfieldtext" name="numfieldEjectFwdMaxTime" layoutConstraint="null">
+        <resolution width="347" height="29"/>
+        <position/>
+        <attributeValues key="Variable" value="Ejector1.sv_EjectorFwdTimesSet.dMaxMoveTime"/>
+        <attributeValues key="VariableActual" value="Ejector1.sv_EjectorFwdTimesAct.dActMoveTime"/>
+      </widgetInstances>
+      <widgetInstances widgetId="keplast.kvs.actsetnumfieldtext" name="numfieldEjectBwdMaxTime" layoutConstraint="null">
+        <resolution width="347" height="29"/>
+        <position y="29"/>
+        <attributeValues key="Visible" value="true"/>
+        <attributeValues key="VisibleBar" value="true"/>
+        <attributeValues key="ModeBar" value="Normal"/>
+        <attributeValues key="RemoveUnit" value="false"/>
+        <attributeValues key="Variable" value="Ejector1.sv_EjectorBwdTimesSet.dMaxMoveTime"/>
+        <attributeValues key="VariableActual" value="Ejector1.sv_EjectorBwdTimesAct.dActMoveTime"/>
+      </widgetInstances>
+      <widgetInstances widgetId="keplast.kvs.numfieldtext" name="numfieldEjectorLimDist" layoutConstraint="null">
+        <resolution width="347" height="29"/>
+        <position y="58"/>
+        <attributeValues key="Variable" value="Ejector1.sv_rEjectorLimDist"/>
+        <dynamicAttributes key="Visible">
+          <value function="hasOption_OR_doesVariableExist : UserFunctions" equal="true" unequal="false">
+            <parameter key="1" value="devicename; PlastFunctionUtils.createDeviceName(&quot;Ejector1&quot;)"/>
+            <parameter key="2" value="machineoptionid; system.hmi.MachineEquipment.ELECTRIC"/>
+            <parameter key="3" value="variableasstring; PlastFunctionUtils.createVariableString(&quot;Ejector1.ai_Position&quot;)"/>
+          </value>
+        </dynamicAttributes>
+      </widgetInstances>
+      <widgetInstances widgetId="keplast.kvs.numfieldtext" name="numfieldEjectorLimOfs" layoutConstraint="null">
+        <resolution width="347" height="29"/>
+        <position y="87"/>
+        <attributeValues key="Variable" value="Ejector1.sv_rEjectorLimOfs"/>
+        <dynamicAttributes key="Visible">
+          <value function="hasOption_OR_doesVariableExist : UserFunctions" equal="true" unequal="false">
+            <parameter key="1" value="devicename; PlastFunctionUtils.createDeviceName(&quot;Ejector1&quot;)"/>
+            <parameter key="2" value="machineoptionid; system.hmi.MachineEquipment.ELECTRIC"/>
+            <parameter key="3" value="variableasstring; PlastFunctionUtils.createVariableString(&quot;Ejector1.ai_Position&quot;)"/>
+          </value>
+        </dynamicAttributes>
+      </widgetInstances>
+      <widgetInstances widgetId="keplast.kvs.startbuttonmarktext" name="startButtonSetEjectorZeroPos" layoutConstraint="null">
+        <resolution width="347" height="29"/>
+        <position y="116"/>
+        <attributeValues key="Variable" value="Ejector1.sv_bSetEjectorZeroPos"/>
+        <attributeValues key="VariableButton" value="Ejector1.sv_bSetEjectorZeroPos"/>
+        <attributeValues key="RemoveMark" value="true"/>
+        <dynamicAttributes key="Visible">
+          <value function="hasOption_OR_doesVariableExist : UserFunctions" equal="true" unequal="false">
+            <parameter key="1" value="devicename; PlastFunctionUtils.createDeviceName(&quot;Ejector1&quot;)"/>
+            <parameter key="2" value="machineoptionid; system.hmi.MachineEquipment.ELECTRIC"/>
+            <parameter key="3" value="variableasstring; PlastFunctionUtils.createVariableString(&quot;Ejector1.ai_Position&quot;)"/>
+          </value>
+        </dynamicAttributes>
+      </widgetInstances>
+      <widgetInstances xsi:type="base:ContainerWidgetInstance" widgetId="kvs.panel" name="pEjectorSafety" layoutConstraint="null">
+        <resolution width="347" height="29"/>
+        <position y="145"/>
+        <dynamicAttributes key="Create">
+          <value function="hasSafetyEditor : UserFunctions" equal="false" unequal="true"/>
+        </dynamicAttributes>
+        <widgetInstances xsi:type="base:ContainerWidgetInstance" widgetId="kvs.panel" name="pEjectorSafetyDisplay" layoutConstraint="0,0,100,100">
+          <resolution width="347" height="29"/>
+          <position/>
+          <dynamicAttributes key="Create">
+            <value function="doesVariableExist : UserFunctions" equal="true" unequal="false">
+              <parameter key="1" value="variableasstring;PlastFunctionUtils.createVariableString(&quot;OperationMode1.di_CoreEjectorSafetySwitch&quot;)"/>
+            </value>
+          </dynamicAttributes>
+          <widgetInstances widgetId="kvs.varlabel" name="lblSafetyState" layoutConstraint="0, 0, 76, 97">
+            <resolution width="263" height="28"/>
+            <position/>
+            <attributeValues key="Variable" value="system.sv_bOverrideEjectorSafety"/>
+            <attributeValues key="LabelType" value="Short Variable Label"/>
+            <attributeValues key="Alignment" value="MIDDLE/LEFT"/>
+          </widgetInstances>
+          <widgetInstances widgetId="kvs.mark" name="markSafetyState" layoutConstraint="80, 0, 11, 100">
+            <resolution width="38" height="29"/>
+            <position x="277"/>
+            <attributeValues key="Variable" value="system.sv_bOverrideEjectorSafety"/>
+            <attributeValues key="MarkColor" value="MAIN_Elements:94,151,24"/>
+          </widgetInstances>
+          <layout layoutID="kvs.layout.PercentLayout" name="PercentLayout"/>
+        </widgetInstances>
+        <widgetInstances widgetId="keplast.kvs.checkboxtext" name="chkboxOverrideEjectorSafety" layoutConstraint="0,0,100,100">
+          <resolution width="347" height="29"/>
+          <position/>
+          <attributeValues key="Variable" value="system.sv_bOverrideEjectorSafety"/>
+          <dynamicAttributes key="Enabled">
+            <value function="b1_EQ_true : ViewEditFunctions" equal="false" unequal="true">
+              <parameter key="1" value="kvariable; system.sv_bAutoCycleRunning"/>
+            </value>
+          </dynamicAttributes>
+          <dynamicAttributes key="Create">
+            <value function="doesVariableExist : UserFunctions" equal="false" unequal="true">
+              <parameter key="1" value="variableasstring;PlastFunctionUtils.createVariableString(&quot;OperationMode1.di_CoreEjectorSafetySwitch&quot;)"/>
+            </value>
+          </dynamicAttributes>
+        </widgetInstances>
+        <layout layoutID="kvs.layout.PercentLayout" name="PercentLayout"/>
+      </widgetInstances>
+      <layout layoutID="kvs.layout.GridLayout" name="GridLayout">
+        <attributeValues key="Rows" value="0"/>
+        <attributeValues key="Columns" value="1"/>
+      </layout>
+    </widgetInstances>
+    <widgetInstances widgetId="keplast.kvs.separator" name="separator1" layoutConstraint="SEPARATOR">
+      <resolution width="2" height="299"/>
+      <position x="356" y="33"/>
+    </widgetInstances>
+    <layout layoutID="keplast.kvs.layout.multisplitlayout" name="MultiSplitLayout">
+      <attributeValues key="InsetsRight" value="0, 5, 0, 0"/>
+    </layout>
+  </widgetInstances>
+  <layout layoutID="kvs.layout.BorderLayout" name="BorderLayout"/>
+</base:Mask>

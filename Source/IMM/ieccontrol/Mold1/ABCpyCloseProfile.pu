@@ -1,0 +1,423 @@
+IMPORT_OVER_LISTFILE
+ nReady
+, KAPPL_VisProfile
+, tnDataState
+, tVisProfilePoint
+, FBChangeNoOfProfileSteps
+
+END_IMPORT
+
+ALGORITHM_BLOCK ABCpyCloseProfile #DUMMY_EDIT_BLOCK
+
+SYSTEM_VAR
+ sv_MoldFwdProfVisSrc : KAPPL_VisProfile;
+ sv_MoldFwdProfVis : KAPPL_VisProfile;
+ sv_bInitStart : BOOL;
+ sv_MoldBwdProfVis : KAPPL_VisProfile;
+ sv_bUseStartPosProfiles : BOOL;
+ sv_DataState : tnDataState;
+ sv_rMoldStroke : REAL;
+ sv_rMoldOpenPosSet : REAL (* set mold open position (according to entered HMI profile) *);
+ sv_bProfileEditorActive : BOOL (* "profile dirty" flag (will be set / reset by HMI) *);
+END_VAR
+
+SYSTEM_OBJECT
+ PU_Task_7 : TASK;
+END_OBJECT
+
+POSTUPDATE_ALGORITHM pSrcProfileChanged ON PU_Task_7 WITH sv_MoldFwdProfVisSrc.Profile,sv_MoldFwdProfVis.bOpenEndProfile,sv_bInitStart,sv_rMoldStroke
+
+
+VAR_TEMP
+ i : UDINT;
+END_VAR
+
+VAR
+ iNr : UDINT;
+ tmp : tVisProfilePoint;
+ fbChangeNoOfProfileStepsClose : FBChangeNoOfProfileSteps;
+ iNoOfPointsOld : UDINT := 0;
+ rMoldStrokeOld : REAL := 0.0;
+END_VAR
+#BEGIN_EDIT_BLOCK
+(**************************************** WARNING ********************************************
+ *** The KEBA Kemro K2 System including software is not intended for safety control tasks! ***
+ ***                       For further information see Comment tab!                        ***
+ *********************************************************************************************)
+
+IF sv_rMoldStroke <> rMoldStrokeOld THEN
+   sv_MoldFwdProfVisSrc.Profile.Points[20-sv_MoldFwdProfVisSrc.Profile.iNoOfPoints].rStartPos := sv_rMoldStroke;
+   rMoldStrokeOld := sv_rMoldStroke;
+END_IF;
+iNr := (sv_MoldFwdProfVisSrc.Profile.iNoOfPoints); 
+
+//since KePlast V01.27 the mold fwd profile is no open end movement
+//-> set bOpenEndProfile to FALSE
+sv_MoldFwdProfVis.bOpenEndProfile := FALSE;
+
+// copy accelerations
+FOR i:=20-iNr+1 TO 20 DO
+   sv_MoldFwdProfVisSrc.Profile.Points[i].rVelRamp := sv_MoldFwdProfVisSrc.Profile.Points[20-iNr+1].rVelRamp;
+END_FOR;
+ 
+
+// No of profile steps changed
+IF iNoOfPointsOld <> iNr THEN
+    
+   sv_MoldFwdProfVis.Profile.iNoOfPoints := sv_MoldFwdProfVisSrc.Profile.iNoOfPoints; 
+   fbChangeNoOfProfileStepsClose(ProfileVis := sv_MoldFwdProfVis.Profile, 
+                                 bUseStartPosProfiles := sv_bUseStartPosProfiles, 
+                                 bOpenEndProfile := sv_MoldFwdProfVis.bOpenEndProfile,
+                                 bDataStateIsReady := (sv_DataState = nReady));
+   
+   IF (sv_DataState = nReady) AND (NOT sv_bProfileEditorActive) THEN
+      FOR i := 1 TO iNr+1 DO
+         sv_MoldFwdProfVisSrc.Profile.Points[19-iNr+i] := sv_MoldFwdProfVis.Profile.Points[i];
+      END_FOR;
+   END_IF;
+END_IF;
+
+sv_MoldFwdProfVis.Profile.iNoOfPoints := (iNr);                 
+
+FOR i := 1 TO iNr+1 DO
+   tmp := sv_MoldFwdProfVisSrc.Profile.Points[19-iNr+i];
+   
+   IF i = 1 THEN  // mold stroke
+      tmp.rStartPos := sv_MoldFwdProfVis.Profile.Points[i].rStartPos;
+   END_IF;
+   
+   IF i = (iNr+1) THEN      
+      tmp.rStartPos := 0.0;         
+   END_IF;
+      
+   sv_MoldFwdProfVis.Profile.Points[i] := tmp; 
+END_FOR;
+iNoOfPointsOld := iNr;
+
+
+;#END_EDIT_BLOCK END_ALGORITHM
+
+POSTUPDATE_ALGORITHM pMoldBwdProfileChanged ON PU_Task_7 WITH sv_MoldBwdProfVis,sv_bInitStart
+
+
+VAR
+ fbChangeNoOfProfileSteps : FBChangeNoOfProfileSteps;
+END_VAR
+#BEGIN_EDIT_BLOCK
+(**************************************** WARNING ********************************************
+ *** The KEBA Kemro K2 System including software is not intended for safety control tasks! ***
+ ***                       For further information see Comment tab!                        ***
+ *********************************************************************************************)
+
+fbChangeNoOfProfileSteps(ProfileVis := sv_MoldBwdProfVis.Profile, 
+                         bUseStartPosProfiles := sv_bUseStartPosProfiles, 
+                         bOpenEndProfile := sv_MoldBwdProfVis.bOpenEndProfile,
+                         bDataStateIsReady := (sv_DataState = nReady));
+
+sv_rMoldOpenPosSet := sv_MoldBwdProfVis.Profile.Points[(sv_MoldBwdProfVis.Profile.iNoOfPoints +1)].rStartPos;
+
+
+
+;#END_EDIT_BLOCK END_ALGORITHM
+
+
+
+END_ALGORITHM_BLOCK
+
+
+
+#END_OF_IEC_PART
+
+@Puma @IecEditor 6 103 @Pou 25 
+@@@BEG_Comment@@@
+
+@@@END_Comment@@@
+
+@BEG_Contents 
+
+@BEG_Func 
+@RT(17)FuncTreeContainer 
+0 
+@END_Func 
+
+@BEG_Const 
+@RT(18)ConstTreeContainer 
+1 
+@Var @RT(6)nReady @RT(0) @T @T @DERIVED 0 @F @RT(11)tnDataState @F 
+@T 
+@BEG_Attrib 
+0 @RT(1)0 @RT(0) 
+@END_Attrib 
+1 1 @F @F @F @F 
+
+@END_Const 
+
+@BEG_Export 
+
+@BEG_Kind 
+@ALGORITHM_BLOCK @RT(17)ABCpyCloseProfile @STRUCTURED_TEXT 
+@RT(0) @RT(0) @RT(0) 
+@END_Kind 
+
+@BEG_Dcl 
+@RT(16)DclTreeContainer 
+10 
+@Var @RT(20)sv_MoldFwdProfVisSrc @RT(0) @T @T @DERIVED 0 @T @T @DT @RT(16)KAPPL_VisProfile @RT(0) @T @T @UNKNOWN 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 8 @F @F @F @F 
+
+@Var @RT(17)sv_MoldFwdProfVis @RT(0) @T @T @DERIVED 0 @T @T @DT @RT(16)KAPPL_VisProfile @RT(0) @T @T @UNKNOWN 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 8 @F @F @F @F 
+
+@Var @RT(13)sv_bInitStart @RT(0) @T @F @DT @RT(4)BOOL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 8 @F @F @F @F 
+
+@Var @RT(17)sv_MoldBwdProfVis @RT(0) @T @T @DERIVED 0 @T @T @DT @RT(16)KAPPL_VisProfile @RT(0) @T @T @UNKNOWN 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 8 @F @F @F @F 
+
+@Var @RT(23)sv_bUseStartPosProfiles @RT(0) @T @F @DT @RT(4)BOOL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 8 @F @F @F @F 
+
+@Var @RT(12)sv_DataState @RT(0) @T @T @DERIVED 0 @T @T @DT @RT(11)tnDataState @RT(0) @T @T @UNKNOWN 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 8 @F @F @F @F 
+
+@Var @RT(9)PU_Task_7 @RT(0) @T @F @DT @RT(4)TASK @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 7 @F @F @F @F 
+
+@Var @RT(14)sv_rMoldStroke @RT(0) @T @T @RENAMED 0 @T @T @DT @RT(4)REAL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 8 @F @F @F @F 
+
+@Var @RT(18)sv_rMoldOpenPosSet @RT(0) @T @F @DT @RT(4)REAL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(57)set mold open position (according to entered HMI profile) @RT(0) 
+@END_Attrib 
+1 8 @F @F @F @F 
+
+@Var @RT(23)sv_bProfileEditorActive @RT(0) @T @F @DT @RT(4)BOOL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(49)"profile dirty" flag (will be set / reset by HMI) @RT(0) 
+@END_Attrib 
+1 8 @F @F @F @F 
+
+@END_Dcl 
+
+@END_Export 
+
+@BEG_Body 
+
+2 
+
+@BEG_Export 
+
+@BEG_Algo 
+@POSTUPDATE_ALGORITHM @RT(18)pSrcProfileChanged @STRUCTURED_TEXT 
+@RT(0) @RT(91)sv_MoldFwdProfVisSrc.Profile,sv_MoldFwdProfVis.bOpenEndProfile,sv_bInitStart,sv_rMoldStroke @RT(9)PU_Task_7 @F @F 
+@END_Algo 
+
+@BEG_Dcl 
+@RT(16)DclTreeContainer 
+6 
+@Var @RT(1)i @RT(0) @T @F @DT @RT(5)UDINT @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 4 @F @F @F @F 
+
+@Var @RT(3)iNr @RT(0) @T @F @DT @RT(5)UDINT @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(3)tmp @RT(0) @T @T @DERIVED 0 @T @T @DT @RT(16)tVisProfilePoint @RT(0) @T @T @UNKNOWN 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(29)fbChangeNoOfProfileStepsClose @RT(0) @T @T @DERIVED 0 @T @T @DT @RT(24)FBChangeNoOfProfileSteps @RT(0) @T @T @UNKNOWN 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(14)iNoOfPointsOld @RT(0) @T @F @DT @RT(5)UDINT @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(1)0 @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(14)rMoldStrokeOld @RT(0) @T @T @RENAMED 0 @T @T @DT @RT(4)REAL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(3)0.0 @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@END_Dcl 
+
+@END_Export 
+
+@BEG_Export 
+
+@BEG_Algo 
+@POSTUPDATE_ALGORITHM @RT(22)pMoldBwdProfileChanged @STRUCTURED_TEXT 
+@RT(0) @RT(31)sv_MoldBwdProfVis,sv_bInitStart @RT(9)PU_Task_7 @F @F 
+@END_Algo 
+
+@BEG_Dcl 
+@RT(16)DclTreeContainer 
+1 
+@Var @RT(24)fbChangeNoOfProfileSteps @RT(0) @T @T @DERIVED 0 @T @T @DT @RT(24)FBChangeNoOfProfileSteps @RT(0) @T @T @UNKNOWN 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@END_Dcl 
+
+@END_Export 
+
+@BEG_Body 
+@TL(54)
+(**************************************** WARNING ********************************************
+ *** The KEBA Kemro K2 System including software is not intended for safety control tasks! ***
+ ***                       For further information see Comment tab!                        ***
+ *********************************************************************************************)
+
+IF sv_rMoldStroke <> rMoldStrokeOld THEN
+   sv_MoldFwdProfVisSrc.Profile.Points[20-sv_MoldFwdProfVisSrc.Profile.iNoOfPoints].rStartPos := sv_rMoldStroke;
+   rMoldStrokeOld := sv_rMoldStroke;
+END_IF;
+iNr := (sv_MoldFwdProfVisSrc.Profile.iNoOfPoints); 
+
+//since KePlast V01.27 the mold fwd profile is no open end movement
+//-> set bOpenEndProfile to FALSE
+sv_MoldFwdProfVis.bOpenEndProfile := FALSE;
+
+// copy accelerations
+FOR i:=20-iNr+1 TO 20 DO
+   sv_MoldFwdProfVisSrc.Profile.Points[i].rVelRamp := sv_MoldFwdProfVisSrc.Profile.Points[20-iNr+1].rVelRamp;
+END_FOR;
+ 
+
+// No of profile steps changed
+IF iNoOfPointsOld <> iNr THEN
+    
+   sv_MoldFwdProfVis.Profile.iNoOfPoints := sv_MoldFwdProfVisSrc.Profile.iNoOfPoints; 
+   fbChangeNoOfProfileStepsClose(ProfileVis := sv_MoldFwdProfVis.Profile, 
+                                 bUseStartPosProfiles := sv_bUseStartPosProfiles, 
+                                 bOpenEndProfile := sv_MoldFwdProfVis.bOpenEndProfile,
+                                 bDataStateIsReady := (sv_DataState = nReady));
+   
+   IF (sv_DataState = nReady) AND (NOT sv_bProfileEditorActive) THEN
+      FOR i := 1 TO iNr+1 DO
+         sv_MoldFwdProfVisSrc.Profile.Points[19-iNr+i] := sv_MoldFwdProfVis.Profile.Points[i];
+      END_FOR;
+   END_IF;
+END_IF;
+
+sv_MoldFwdProfVis.Profile.iNoOfPoints := (iNr);                 
+
+FOR i := 1 TO iNr+1 DO
+   tmp := sv_MoldFwdProfVisSrc.Profile.Points[19-iNr+i];
+   
+   IF i = 1 THEN  // mold stroke
+      tmp.rStartPos := sv_MoldFwdProfVis.Profile.Points[i].rStartPos;
+   END_IF;
+   
+   IF i = (iNr+1) THEN      
+      tmp.rStartPos := 0.0;         
+   END_IF;
+      
+   sv_MoldFwdProfVis.Profile.Points[i] := tmp; 
+END_FOR;
+iNoOfPointsOld := iNr;
+
+@END_Body 
+
+@@@BEG_Comment@@@ 
+@TL(0)
+
+@@@END_Comment@@@ 
+
+@BEG_Body 
+@TL(13)
+(**************************************** WARNING ********************************************
+ *** The KEBA Kemro K2 System including software is not intended for safety control tasks! ***
+ ***                       For further information see Comment tab!                        ***
+ *********************************************************************************************)
+
+fbChangeNoOfProfileSteps(ProfileVis := sv_MoldBwdProfVis.Profile, 
+                         bUseStartPosProfiles := sv_bUseStartPosProfiles, 
+                         bOpenEndProfile := sv_MoldBwdProfVis.bOpenEndProfile,
+                         bDataStateIsReady := (sv_DataState = nReady));
+
+sv_rMoldOpenPosSet := sv_MoldBwdProfVis.Profile.Points[(sv_MoldBwdProfVis.Profile.iNoOfPoints +1)].rStartPos;
+
+
+@END_Body 
+
+@@@BEG_Comment@@@ 
+@TL(0)
+
+@@@END_Comment@@@ 
+@END_Body 
+
+@END_Contents 

@@ -1,0 +1,220 @@
+(*
+@h    ! WARNING !
+@h    The Kemro K2 system (including software) only meets category B according to EN 954-1,
+@h    thus it is not intended for usage in safety-relevant control applications in the field 
+@h    of personal safety (e.g. emergency stop).
+@h    To implement potentially necessary safety-relevant control tasks, always use additional 
+@h    external safety devices that are intended for the particular purpose, and meet the necessary 
+@h    functional safety.
+@h    For further information see EN 954-1 (EN ISO 13849-1) and/or the K2-x00 user manual, chapter 
+@h    "CE conformity, directives and standards".
+
+Increments the registration counter and calls the deviceregistation after the registrationdelay is up.
+Every instance of ABDeviceRegister gets another delaytime - to give the other FUs time to increment 
+the registration counter.
+*)
+
+IMPORT_OVER_LISTFILE
+ ABRegisterDelay
+, FBDeviceRegister
+
+END_IMPORT
+
+ALGORITHM_BLOCK ABDeviceRegister #DUMMY_EDIT_BLOCK
+
+SYSTEM_VAR
+ sv_iDevicesToRegister : DINT;
+END_VAR
+
+SYSTEM_OBJECT
+ Task10ms : TASK;
+END_OBJECT
+
+(*
+Deviceregistration
+*)
+
+PROCESS_ALGORITHM paInit ON Task10ms AUTOSTART
+
+
+VAR
+ abRegisterDelay : ABRegisterDelay;
+ fbDeviceRegister : FBDeviceRegister;
+END_VAR
+
+(* IecGraph-Code *)
+
+(* init step *)
+INITIAL_STEP DELAY:
+aGetDelayTime (P);
+END_STEP
+
+ACTION aGetDelayTime: #BEGIN_EDIT_BLOCK
+sv_iDevicesToRegister := sv_iDevicesToRegister + 1;
+abRegisterDelay.aGet();
+
+;#END_EDIT_BLOCK END_ACTION (*aGetDelayTime*)
+
+(* steps *)
+STEP DEVICE_REG:
+Action2 (P);
+END_STEP
+
+ACTION Action2: #BEGIN_EDIT_BLOCK
+fbDeviceRegister();
+STOP_PROCESS_ALGORITHM();
+
+;#END_EDIT_BLOCK END_ACTION (*Action2*)
+
+(* transitions *)
+TRANSITION Trans1 FROM DELAY TO DEVICE_REG :=  #BEGIN_EDIT_BLOCK
+DELAY.T >= abRegisterDelay.aGet.Time
+;#END_EDIT_BLOCK
+END_TRANSITION
+
+(* end IecGraph-Code *)
+(* sfc-code *)
+(* end sfc-code *)
+
+
+END_ALGORITHM
+
+
+
+END_ALGORITHM_BLOCK
+
+
+
+#END_OF_IEC_PART
+
+@Puma @IecEditor 6 10 @Pou 25 
+@@@BEG_Comment@@@
+@h    ! WARNING !
+@h    The Kemro K2 system (including software) only meets category B according to EN 954-1,
+@h    thus it is not intended for usage in safety-relevant control applications in the field 
+@h    of personal safety (e.g. emergency stop).
+@h    To implement potentially necessary safety-relevant control tasks, always use additional 
+@h    external safety devices that are intended for the particular purpose, and meet the necessary 
+@h    functional safety.
+@h    For further information see EN 954-1 (EN ISO 13849-1) and/or the K2-x00 user manual, chapter 
+@h    "CE conformity, directives and standards".
+
+Increments the registration counter and calls the deviceregistation after the registrationdelay is up.
+Every instance of ABDeviceRegister gets another delaytime - to give the other FUs time to increment 
+the registration counter.
+@@@END_Comment@@@
+
+@BEG_Contents 
+
+@BEG_Func 
+@RT(17)FuncTreeContainer 
+0 
+@END_Func 
+
+@BEG_Const 
+@RT(18)ConstTreeContainer 
+0 
+@END_Const 
+
+@BEG_Export 
+
+@BEG_Kind 
+@ALGORITHM_BLOCK @RT(16)ABDeviceRegister @STRUCTURED_TEXT 
+@RT(0) @RT(0) @RT(0) 
+@END_Kind 
+
+@BEG_Dcl 
+@RT(16)DclTreeContainer 
+2 
+@Var @RT(21)sv_iDevicesToRegister @RT(0) @T @F @DT @RT(4)DINT @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 8 @F @F @F @F 
+
+@Var @RT(8)Task10ms @RT(0) @T @T @RENAMED 0 @T @T @DT @RT(4)TASK @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 7 @F @F @F @F 
+
+@END_Dcl 
+
+@END_Export 
+
+@BEG_Body 
+
+1 
+
+@BEG_Export 
+
+@BEG_Algo 
+@PROCESS_ALGORITHM @RT(6)paInit @SEQUENTIAL_FLOW_CHART 
+@RT(0) @RT(0) @RT(8)Task10ms @T @F 
+@END_Algo 
+
+@BEG_Dcl 
+@RT(16)DclTreeContainer 
+2 
+@Var @RT(15)abRegisterDelay @RT(0) @T @T @DERIVED 0 @T @T @DT @RT(15)ABRegisterDelay @RT(0) @T @T @UNKNOWN 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(16)fbDeviceRegister @RT(0) @T @T @DERIVED 0 @T @T @DT @RT(16)FBDeviceRegister @RT(0) @T @T @UNKNOWN 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@END_Dcl 
+
+@END_Export 
+
+@BEG_SfcBody 
+5 5 4 
+
+@BEG_SfcData 2 
+@StepSeq @RT(4)sseq @F 3 
+@Step @RT(5)DELAY @F @T @F @F @RT(0) @F 
+@AcbCont @RT(7)unnamed @F 1 
+@Acb @RT(13)aGetDelayTime @F @T @RT(1)P @RT(0) @F @F @T @TL(3)
+sv_iDevicesToRegister := sv_iDevicesToRegister + 1;
+abRegisterDelay.aGet();
+
+@F 
+
+@Trans @RT(6)Trans1 @F @T @F @F @T @T @TL(2)
+DELAY.T >= abRegisterDelay.aGet.Time
+
+@RT(6)Trans1 @F 
+@Step @RT(10)DEVICE_REG @F @F @F @F @RT(0) @F 
+@AcbCont @RT(7)unnamed @F 1 
+@Acb @RT(7)Action2 @F @T @RT(1)P @RT(0) @F @F @T @TL(3)
+fbDeviceRegister();
+STOP_PROCESS_ALGORITHM();
+
+@F 
+
+@END_SfcData 
+@SaActions 0 
+@SaTrans 0 
+@SaExits 0 
+@END_SfcBody 
+
+@@@BEG_Comment@@@ 
+@TL(1)
+Deviceregistration
+@@@END_Comment@@@ 
+@END_Body 
+
+@END_Contents 

@@ -1,0 +1,692 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<base:BasicLayout xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xmlns:base="http://www.keba.at/viewedit.model.base" widgetId="kvs.basiclayout" name="basiclayout">
+  <resolution width="800" height="600"/>
+  <position x="1" y="1"/>
+  <attributeValues key="InitMask" value="system/hmi/OverviewMask.smask"/>
+  <attributeValues key="MaskButtonMode" value="Icon only"/>
+  <widgetInstances xsi:type="base:ContainerWidgetInstance" widgetId="kvs.panel" name="containerEastContent" layoutConstraint="EAST">
+    <resolution width="78" height="476"/>
+    <position x="722" y="62"/>
+    <attributeValues key="PreferredSize" value="78, 10"/>
+    <widgetInstances xsi:type="base:ContainerWidgetInstance" widgetId="kvs.panel" name="containerEastWrap" layoutConstraint="EAST">
+      <resolution width="70" height="476"/>
+      <position x="8"/>
+      <attributeValues key="PreferredSize" value="70, 10"/>
+      <attributeValues key="Background" value="BG_Desktop:30,30,30"/>
+      <widgetInstances xsi:type="base:ContainerWidgetInstance" widgetId="kvs.panel" name="containerMovementAndState" layoutConstraint="NORTH">
+        <resolution width="70" height="223"/>
+        <position/>
+        <widgetInstances widgetId="keplast.kvs.movementdisplay" name="movementDisplay1" layoutConstraint="NORTH">
+          <resolution width="70" height="108"/>
+          <position/>
+        </widgetInstances>
+        <widgetInstances xsi:type="base:ContainerWidgetInstance" widgetId="kvs.panel" name="containerState" layoutConstraint="SOUTH">
+          <resolution width="70" height="111"/>
+          <position y="112"/>
+          <attributeValues key="Background" value="BG_Panel:220,220,220"/>
+          <attributeValues key="PreferredSize" value="70, 111"/>
+          <border name="TitledBorder" id="kv.border.TitledBorder">
+            <attributeValues key="Sides" value="true, false, true, false"/>
+            <attributeValues key="InnerInsets" value="3, 3, 1, 3"/>
+          </border>
+          <widgetInstances xsi:type="base:CompositeWidgetInstance" widgetId="dc6ec7b4-5845-4521-9d0a-2453aaa99dfb" name="bmpScope" layoutConstraint="null">
+            <resolution width="30" height="30"/>
+            <position x="36" y="41"/>
+            <attributeValues key="Background" value="BG_Panel:220,220,220"/>
+            <dynamicAttributes key="Create">
+              <value function="doesVariableExist : UserFunctions" equal="true" unequal="false">
+                <parameter key="1" value="variableasstring;PlastFunctionUtils.createVariableString(&quot;Scope.sv_iMeasureState&quot;)"/>
+              </value>
+            </dynamicAttributes>
+            <dynamicAttributes key="Visible">
+              <value function="n1_GT_const : ViewEditFunctions" equal="true" unequal="false">
+                <parameter key="1" value="kvariable;Scope.sv_iMeasureState"/>
+                <parameter key="2" value="double;0.0"/>
+              </value>
+            </dynamicAttributes>
+          </widgetInstances>
+          <widgetInstances xsi:type="base:CompositeWidgetInstance" widgetId="3677fc12-5c2f-417e-a49e-c75d38f969d0" name="bmpServiceNetOrTigState" layoutConstraint="null">
+            <resolution width="30" height="30"/>
+            <position x="36" y="41"/>
+            <attributeValues key="BitmapAlignment" value="MIDDLE/CENTER"/>
+          </widgetInstances>
+          <widgetInstances widgetId="kvs.bitmap" name="bmpSimulation" layoutConstraint="null">
+            <resolution width="30" height="30"/>
+            <position x="3" y="41"/>
+            <attributeValues key="PreferredSize" value="30, 30"/>
+            <attributeValues key="Image" value="images/OpModeSimulation.gif"/>
+            <dynamicAttributes key="Create">
+              <value function="doesDeviceExist : UserFunctions" equal="true" unequal="false">
+                <parameter key="1" value="devicename; PlastFunctionUtils.createDeviceName(&quot;simulation&quot;)"/>
+              </value>
+            </dynamicAttributes>
+            <dynamicAttributes key="Visible">
+              <value function="b1_EQ_true : ViewEditFunctions" equal="true" unequal="false">
+                <parameter key="1" value="kvariable; simulation.sv_bSimulate"/>
+              </value>
+            </dynamicAttributes>
+            <dynamicAttributes key="DisplayLevel">
+              <value function="b1_EQ_true : ViewEditFunctions" equal="16" unequal="1">
+                <parameter key="1" value="kvariable; simulation.sv_bExhibitionMode"/>
+              </value>
+            </dynamicAttributes>
+          </widgetInstances>
+          <widgetInstances widgetId="kvs.symboldisplay" name="stateSymbolDisplay1" layoutConstraint="null">
+            <resolution width="24" height="24"/>
+            <position x="6" y="9"/>
+            <attributeValues key="Variable" value="HeatingNozzle1.sv_bHeatingOn"/>
+            <attributeValues key="PreferredSize" value="24, 16"/>
+          </widgetInstances>
+          <widgetInstances widgetId="kvs.symboldisplay" name="stateSymbolDisplay2" layoutConstraint="null">
+            <resolution width="24" height="24"/>
+            <position x="40" y="9"/>
+            <attributeValues key="PreferredSize" value="24, 16"/>
+            <attributeValues key="Variable" value="system.sv_bAllMotorsRunning"/>
+          </widgetInstances>
+          <widgetInstances widgetId="kvs.symboldisplay" name="stateSymbolDisplay3" layoutConstraint="null">
+            <resolution width="24" height="24"/>
+            <position x="6" y="44"/>
+            <attributeValues key="PreferredSize" value="30, 30"/>
+            <attributeValues key="Variable" value="system.sv_OperationMode"/>
+          </widgetInstances>
+          <widgetInstances widgetId="kvs.symboldisplay" name="stateSymbolDisplay5" layoutConstraint="null">
+            <resolution width="24" height="24"/>
+            <position x="6" y="80"/>
+            <attributeValues key="PreferredSize" value="24, 16"/>
+            <attributeValues key="Variable" value="Lubrication1.sv_bLubricationActive"/>
+          </widgetInstances>
+          <widgetInstances widgetId="kvs.symboldisplay" name="stateSymbolDisplay6" layoutConstraint="null">
+            <resolution width="24" height="24"/>
+            <position x="40" y="80"/>
+            <attributeValues key="PreferredSize" value="24, 16"/>
+            <attributeValues key="Variable" value="HeatingMold1.sv_bHeatingOn"/>
+            <dynamicAttributes key="Create">
+              <value function="doesDeviceExist : UserFunctions" equal="true" unequal="false">
+                <parameter key="1" value="devicename; PlastFunctionUtils.createDeviceName(&quot;HeatingMold1&quot;)"/>
+              </value>
+            </dynamicAttributes>
+          </widgetInstances>
+          <widgetInstances widgetId="keplast.kvs.separator" name="separator11" layoutConstraint="null">
+            <resolution width="2" height="30"/>
+            <position x="34" y="5"/>
+            <attributeValues key="PreferredSize" value="2, 30"/>
+          </widgetInstances>
+          <widgetInstances widgetId="keplast.kvs.separator" name="separator12" layoutConstraint="null">
+            <resolution width="2" height="30"/>
+            <position x="34" y="41"/>
+            <attributeValues key="PreferredSize" value="2, 30"/>
+          </widgetInstances>
+          <widgetInstances widgetId="keplast.kvs.separator" name="separator13" layoutConstraint="null">
+            <resolution width="2" height="30"/>
+            <position x="34" y="77"/>
+            <attributeValues key="PreferredSize" value="2, 30"/>
+          </widgetInstances>
+          <widgetInstances widgetId="keplast.kvs.separator" name="separator9" layoutConstraint="null">
+            <resolution width="64" height="2"/>
+            <position x="3" y="37"/>
+            <attributeValues key="Orientation" value="Horizontal"/>
+            <attributeValues key="PreferredSize" value="64, 2"/>
+          </widgetInstances>
+          <widgetInstances widgetId="keplast.kvs.separator" name="separator10" layoutConstraint="null">
+            <resolution width="64" height="2"/>
+            <position x="3" y="73"/>
+            <attributeValues key="Orientation" value="Horizontal"/>
+            <attributeValues key="PreferredSize" value="64, 2"/>
+          </widgetInstances>
+          <layout layoutID="kvs.layout.xylayout" name="XYLayout"/>
+        </widgetInstances>
+        <layout layoutID="kvs.layout.BorderLayout" name="BorderLayout">
+          <attributeValues key="Vgap" value="2"/>
+        </layout>
+      </widgetInstances>
+      <widgetInstances xsi:type="base:ContainerWidgetInstance" widgetId="kvs.panel" name="containerContextWrap" layoutConstraint="CENTER">
+        <resolution width="70" height="213"/>
+        <position y="223"/>
+        <widgetInstances widgetId="keplast.kvs.contextMenu" name="contextMenu1" layoutConstraint="CENTER">
+          <resolution width="70" height="205"/>
+          <position y="4"/>
+        </widgetInstances>
+        <widgetInstances xsi:type="base:ContainerWidgetInstance" widgetId="kvs.panel" name="separatorContextSouth" layoutConstraint="SOUTH">
+          <resolution width="70" height="4"/>
+          <position y="209"/>
+          <attributeValues key="PreferredSize" value="4, 4"/>
+          <layout layoutID="kvs.layout.PercentLayout" name="PercentLayout"/>
+        </widgetInstances>
+        <widgetInstances xsi:type="base:ContainerWidgetInstance" widgetId="kvs.panel" name="separatorContextNorth" layoutConstraint="NORTH">
+          <resolution width="70" height="4"/>
+          <position/>
+          <attributeValues key="PreferredSize" value="4, 4"/>
+          <layout layoutID="kvs.layout.PercentLayout" name="PercentLayout"/>
+        </widgetInstances>
+        <layout layoutID="kvs.layout.BorderLayout" name="BorderLayout"/>
+      </widgetInstances>
+      <widgetInstances xsi:type="base:ContainerWidgetInstance" widgetId="kvs.panel" name="containerStatic" layoutConstraint="SOUTH">
+        <resolution width="70" height="40"/>
+        <position y="436"/>
+        <widgetInstances widgetId="kvs.maskbutton" name="maskButton1" layoutConstraint="null">
+          <resolution width="70" height="40"/>
+          <position/>
+          <attributeValues key="MaskType" value="Predefined Standard Mask"/>
+          <attributeValues key="Mask" value="Popup: Print and Help actions"/>
+          <attributeValues key="SubMenuOrientation" value="Horizontal"/>
+          <attributeValues key="IconName" value="system/hmi/images/maskicons/iconPopupPrintHelp.gif"/>
+          <attributeValues key="UseMaskIcon" value="false"/>
+        </widgetInstances>
+        <layout layoutID="kvs.layout.GridLayout" name="GridLayout">
+          <attributeValues key="Rows" value="0"/>
+          <attributeValues key="Columns" value="1"/>
+        </layout>
+      </widgetInstances>
+      <layout layoutID="kvs.layout.BorderLayout" name="BorderLayout"/>
+    </widgetInstances>
+    <widgetInstances xsi:type="base:ContainerWidgetInstance" widgetId="kvs.panel" name="maskBorderEast" layoutConstraint="WEST">
+      <resolution width="8" height="476"/>
+      <position/>
+      <attributeValues key="PreferredSize" value="8, 8"/>
+      <attributeValues key="Background" value="BG_Desktop:30,30,30"/>
+      <layout layoutID="kvs.layout.PercentLayout" name="PercentLayout"/>
+    </widgetInstances>
+    <layout layoutID="kvs.layout.BorderLayout" name="BorderLayout"/>
+  </widgetInstances>
+  <widgetInstances xsi:type="base:ContainerWidgetInstance" widgetId="kvs.panel" name="maskBorderWest" layoutConstraint="WEST">
+    <resolution width="8" height="476"/>
+    <position y="62"/>
+    <attributeValues key="PreferredSize" value="8, 8"/>
+    <attributeValues key="Background" value="BG_Desktop:30,30,30"/>
+    <layout layoutID="kvs.layout.PercentLayout" name="PercentLayout"/>
+  </widgetInstances>
+  <widgetInstances xsi:type="base:ContainerWidgetInstance" widgetId="kvs.panel" name="containerSouthContent" layoutConstraint="SOUTH">
+    <resolution width="800" height="62"/>
+    <position y="538"/>
+    <attributeValues key="PreferredSize" value="800, 62"/>
+    <widgetInstances widgetId="kvs.maskbutton" name="backButton" layoutConstraint="CENTER">
+      <resolution width="70" height="54"/>
+      <position x="730" y="8"/>
+      <attributeValues key="SeparationLine" value="false, true, false, false"/>
+      <attributeValues key="UseMaskIcon" value="false"/>
+      <attributeValues key="IconName" value="images/back32.gif"/>
+    </widgetInstances>
+    <widgetInstances xsi:type="base:ContainerWidgetInstance" widgetId="kvs.panel" name="containerMainMenu" layoutConstraint="WEST">
+      <resolution width="730" height="54"/>
+      <position y="8"/>
+      <attributeValues key="PreferredSize" value="730, 54"/>
+      <widgetInstances widgetId="kvs.maskbutton" name="maskButtonOverview" layoutConstraint="null">
+        <resolution width="73" height="54"/>
+        <position/>
+        <attributeValues key="SeparationLine" value="false, false, false, true"/>
+        <attributeValues key="OpenMenu" value="true"/>
+        <attributeValues key="Mask" value="system/hmi/OverviewMask.smask"/>
+      </widgetInstances>
+      <widgetInstances widgetId="kvs.maskbutton" name="maskButtonMold" layoutConstraint="null">
+        <resolution width="73" height="54"/>
+        <position x="73"/>
+        <attributeValues key="SeparationLine" value="false, true, false, true"/>
+        <attributeValues key="Mask" value="Mold1/hmi/MoldMask1.smask"/>
+        <attributeValues key="OpenMenu" value="true"/>
+      </widgetInstances>
+      <widgetInstances widgetId="kvs.maskbutton" name="maskButtonEjector" layoutConstraint="null">
+        <resolution width="73" height="54"/>
+        <position x="146"/>
+        <attributeValues key="SeparationLine" value="false, true, false, true"/>
+        <attributeValues key="Mask" value="Ejector1/hmi/EjectorMask1.smask"/>
+        <attributeValues key="OpenMenu" value="true"/>
+      </widgetInstances>
+      <widgetInstances widgetId="kvs.maskbutton" name="maskButtonCore" layoutConstraint="null">
+        <resolution width="73" height="54"/>
+        <position x="219"/>
+        <attributeValues key="SeparationLine" value="false, true, false, true"/>
+        <attributeValues key="Mask" value="Core1/hmi/CoreMask12.smask"/>
+        <attributeValues key="OpenMenu" value="true"/>
+      </widgetInstances>
+      <widgetInstances widgetId="kvs.maskbutton" name="maskButtonInjection" layoutConstraint="null">
+        <resolution width="73" height="54"/>
+        <position x="292"/>
+        <attributeValues key="SeparationLine" value="false, true, false, true"/>
+        <attributeValues key="Mask" value="Injection1/hmi/InjectionMask1.smask"/>
+        <attributeValues key="OpenMenu" value="true"/>
+      </widgetInstances>
+      <widgetInstances widgetId="kvs.maskbutton" name="maskButtonPlasticize" layoutConstraint="null">
+        <resolution width="73" height="54"/>
+        <position x="365"/>
+        <attributeValues key="SeparationLine" value="false, true, false, true"/>
+        <attributeValues key="Mask" value="Injection1/hmi/PlasticizeMask1.smask"/>
+        <attributeValues key="OpenMenu" value="true"/>
+      </widgetInstances>
+      <widgetInstances widgetId="kvs.maskbutton" name="maskButtonNozzle" layoutConstraint="null">
+        <resolution width="73" height="54"/>
+        <position x="438"/>
+        <attributeValues key="SeparationLine" value="false, true, false, true"/>
+        <attributeValues key="OpenMenu" value="true"/>
+        <attributeValues key="IconName" value="Nozzle1/hmi/images/iconNozzle.gif"/>
+        <attributeValues key="UseMaskIcon" value="false"/>
+        <dynamicAttributes key="Mask">
+          <value function="hasOption : UserFunctions" equal="Nozzle1/hmi/NozzleMaskASM1.smask" unequal="Nozzle1/hmi/NozzleMaskPosition1.smask">
+            <parameter key="1" value="devicename; PlastFunctionUtils.createDeviceName(&quot;Nozzle1&quot;)"/>
+            <parameter key="2" value="machineoptionid; system.hmi.MachineEquipment.MAIN_OPTION_NOZZLE_ASM"/>
+          </value>
+        </dynamicAttributes>
+      </widgetInstances>
+      <widgetInstances widgetId="kvs.maskbutton" name="maskButtonHeating" layoutConstraint="null">
+        <resolution width="73" height="54"/>
+        <position x="511"/>
+        <attributeValues key="SeparationLine" value="false, true, false, true"/>
+        <attributeValues key="Mask" value="HeatingNozzle1/hmi/HeatingNozzleMask1.smask"/>
+        <attributeValues key="OpenMenu" value="true"/>
+      </widgetInstances>
+      <widgetInstances widgetId="kvs.maskbutton" name="maskButtonOperation" layoutConstraint="null">
+        <resolution width="73" height="54"/>
+        <position x="584"/>
+        <attributeValues key="SeparationLine" value="false, true, false, true"/>
+        <attributeValues key="Mask" value="system/hmi/OperationOptionsMask.smask"/>
+        <attributeValues key="OpenMenu" value="true"/>
+      </widgetInstances>
+      <widgetInstances widgetId="kvs.maskbutton" name="maskButtonAlarm" layoutConstraint="null">
+        <resolution width="73" height="54"/>
+        <position x="657"/>
+        <attributeValues key="SeparationLine" value="false, true, false, true"/>
+        <attributeValues key="MaskType" value="Predefined Standard Mask"/>
+        <attributeValues key="Mask" value="Alarm Mask"/>
+        <attributeValues key="OpenMenu" value="true"/>
+      </widgetInstances>
+      <layout layoutID="kvs.layout.GridLayout" name="GridLayout">
+        <attributeValues key="Rows" value="1"/>
+        <attributeValues key="Columns" value="10"/>
+      </layout>
+    </widgetInstances>
+    <widgetInstances xsi:type="base:ContainerWidgetInstance" widgetId="kvs.panel" name="maskBorderBottom" layoutConstraint="NORTH">
+      <resolution width="800" height="8"/>
+      <position/>
+      <attributeValues key="PreferredSize" value="800, 8"/>
+      <attributeValues key="Background" value="BG_Desktop:30,30,30"/>
+      <layout layoutID="kvs.layout.PercentLayout" name="PercentLayout"/>
+    </widgetInstances>
+    <layout layoutID="kvs.layout.BorderLayout" name="BorderLayout">
+      <attributeValues key="Hgap" value="0"/>
+      <attributeValues key="Vgap" value="0"/>
+    </layout>
+  </widgetInstances>
+  <widgetInstances xsi:type="base:ContainerWidgetInstance" widgetId="kvs.panel" name="containerNorthContent" layoutConstraint="NORTH">
+    <resolution width="800" height="62"/>
+    <position/>
+    <attributeValues key="PreferredSize" value="800, 62"/>
+    <widgetInstances xsi:type="base:ContainerWidgetInstance" widgetId="kvs.panel" name="headerPanel" layoutConstraint="CENTER">
+      <resolution width="800" height="54"/>
+      <position/>
+      <attributeValues key="PreferredSize" value="800, 54"/>
+      <border name="TitledBorder" id="kv.border.TitledBorder">
+        <attributeValues key="Sides" value="true, false, true, false"/>
+      </border>
+      <widgetInstances xsi:type="base:ContainerWidgetInstance" widgetId="kvs.panel" name="containerHeaderContentLeft" layoutConstraint="WEST">
+        <resolution width="694" height="44"/>
+        <position x="3" y="5"/>
+        <widgetInstances xsi:type="base:ContainerWidgetInstance" widgetId="kvs.panel" name="containeHeaderValuesLeft" layoutConstraint="null">
+          <resolution width="120" height="44"/>
+          <position/>
+          <attributeValues key="PreferredSize" value="120, 44"/>
+          <widgetInstances xsi:type="base:ContainerWidgetInstance" widgetId="kvs.panel" name="containerEjectorPosition" layoutConstraint="null">
+            <resolution width="120" height="22"/>
+            <position/>
+            <widgetInstances widgetId="keplast.kvs.numfieldtext" name="numFieldEjectorPosition" layoutConstraint="CENTER">
+              <resolution width="88" height="22"/>
+              <position x="32"/>
+              <attributeValues key="PreferredSizeNumfield" value="52, 20"/>
+              <attributeValues key="RenderAsTextField" value="true"/>
+              <attributeValues key="Variable" value="Ejector1.sv_rEjectorPositionRel"/>
+              <attributeValues key="Editable" value="false"/>
+              <attributeValues key="UnitFieldWidth" value="36"/>
+            </widgetInstances>
+            <widgetInstances widgetId="kvs.bitmap" name="bitmapEjectorPosition" layoutConstraint="WEST">
+              <resolution width="32" height="22"/>
+              <position/>
+              <attributeValues key="Image" value="Ejector1/hmi/images/iconEjectorHeader.gif"/>
+              <attributeValues key="PreferredSize" value="32, 22"/>
+            </widgetInstances>
+            <layout layoutID="kvs.layout.BorderLayout" name="BorderLayout"/>
+          </widgetInstances>
+          <widgetInstances xsi:type="base:ContainerWidgetInstance" widgetId="kvs.panel" name="containerMoldPosition" layoutConstraint="null">
+            <resolution width="120" height="22"/>
+            <position y="22"/>
+            <widgetInstances widgetId="keplast.kvs.numfieldtext" name="numFieldMoldPosition" layoutConstraint="CENTER">
+              <resolution width="88" height="22"/>
+              <position x="32"/>
+              <attributeValues key="PreferredSizeNumfield" value="52, 20"/>
+              <attributeValues key="RenderAsTextField" value="true"/>
+              <attributeValues key="Variable" value="Mold1.sv_rMoldPosition"/>
+              <attributeValues key="Editable" value="false"/>
+              <attributeValues key="UnitFieldWidth" value="36"/>
+            </widgetInstances>
+            <widgetInstances widgetId="kvs.bitmap" name="bitmapMoldPosition" layoutConstraint="WEST">
+              <resolution width="32" height="22"/>
+              <position/>
+              <attributeValues key="Image" value="Mold1/hmi/images/iconMoldHeader.gif"/>
+              <attributeValues key="PreferredSize" value="32, 22"/>
+            </widgetInstances>
+            <layout layoutID="kvs.layout.BorderLayout" name="BorderLayout"/>
+          </widgetInstances>
+          <layout layoutID="kvs.layout.GridLayout" name="GridLayout">
+            <attributeValues key="Rows" value="2"/>
+            <attributeValues key="Columns" value="1"/>
+          </layout>
+        </widgetInstances>
+        <widgetInstances widgetId="keplast.kvs.separator" name="separator1" layoutConstraint="null">
+          <resolution width="2" height="44"/>
+          <position x="120"/>
+          <attributeValues key="PreferredSize" value="2, 44"/>
+        </widgetInstances>
+        <widgetInstances xsi:type="base:ContainerWidgetInstance" widgetId="kvs.panel" name="containeHeaderValuesRight" layoutConstraint="null">
+          <resolution width="120" height="44"/>
+          <position x="122"/>
+          <attributeValues key="PreferredSize" value="120, 44"/>
+          <widgetInstances xsi:type="base:ContainerWidgetInstance" widgetId="kvs.panel" name="containerInjectPosition" layoutConstraint="null">
+            <resolution width="120" height="22"/>
+            <position/>
+            <widgetInstances widgetId="keplast.kvs.numfieldtext" name="numFieldInjectPosition" layoutConstraint="CENTER">
+              <resolution width="88" height="22"/>
+              <position x="32"/>
+              <attributeValues key="PreferredSizeNumfield" value="52, 20"/>
+              <attributeValues key="RenderAsTextField" value="true"/>
+              <attributeValues key="UnitFieldWidth" value="36"/>
+              <attributeValues key="Variable" value="Injection1.sv_rScrewPosition"/>
+              <attributeValues key="Editable" value="false"/>
+            </widgetInstances>
+            <widgetInstances widgetId="kvs.bitmap" name="bitmapInjectPosition" layoutConstraint="WEST">
+              <resolution width="32" height="22"/>
+              <position/>
+              <attributeValues key="PreferredSize" value="32, 22"/>
+              <attributeValues key="Image" value="Injection1/hmi/images/iconInjectHeader.gif"/>
+            </widgetInstances>
+            <layout layoutID="kvs.layout.BorderLayout" name="BorderLayout"/>
+          </widgetInstances>
+          <widgetInstances xsi:type="base:ContainerWidgetInstance" widgetId="kvs.panel" name="containerPlastPosition" layoutConstraint="null">
+            <resolution width="120" height="22"/>
+            <position y="22"/>
+            <widgetInstances widgetId="keplast.kvs.numfieldtext" name="numFieldPlastPosition" layoutConstraint="CENTER">
+              <resolution width="88" height="22"/>
+              <position x="32"/>
+              <attributeValues key="PreferredSizeNumfield" value="52, 20"/>
+              <attributeValues key="RenderAsTextField" value="true"/>
+              <attributeValues key="UnitFieldWidth" value="36"/>
+              <attributeValues key="Variable" value="Injection1.sv_rActScrewCircSpeed"/>
+              <attributeValues key="Editable" value="false"/>
+            </widgetInstances>
+            <widgetInstances widgetId="kvs.bitmap" name="bitmapPlastPosition" layoutConstraint="WEST">
+              <resolution width="32" height="22"/>
+              <position/>
+              <attributeValues key="Image" value="Injection1/hmi/images/iconPlastiziceHeader.gif"/>
+              <attributeValues key="PreferredSize" value="32, 22"/>
+            </widgetInstances>
+            <layout layoutID="kvs.layout.BorderLayout" name="BorderLayout"/>
+          </widgetInstances>
+          <layout layoutID="kvs.layout.GridLayout" name="GridLayout">
+            <attributeValues key="Rows" value="2"/>
+            <attributeValues key="Columns" value="1"/>
+          </layout>
+        </widgetInstances>
+        <widgetInstances widgetId="keplast.kvs.separator" name="separator2" layoutConstraint="null">
+          <resolution width="2" height="44"/>
+          <position x="242"/>
+          <attributeValues key="PreferredSize" value="2, 44"/>
+        </widgetInstances>
+        <widgetInstances xsi:type="base:ContainerWidgetInstance" widgetId="kvs.panel" name="containerHeaderCenter" layoutConstraint="null">
+          <resolution width="286" height="44"/>
+          <position x="244"/>
+          <attributeValues key="PreferredSize" value="286, 44"/>
+          <widgetInstances xsi:type="base:ContainerWidgetInstance" widgetId="kvs.panel" name="containerHeaderCenterValues" layoutConstraint="null">
+            <resolution width="286" height="21"/>
+            <position/>
+            <widgetInstances xsi:type="base:ContainerWidgetInstance" widgetId="kvs.panel" name="containerSystemPressureWrap" layoutConstraint="null">
+              <resolution width="88" height="22"/>
+              <position/>
+              <attributeValues key="PreferredSize" value="88, 22"/>
+              <widgetInstances xsi:type="base:ContainerWidgetInstance" widgetId="kvs.panel" name="containerSystemPressure" layoutConstraint="NORTH">
+                <resolution width="88" height="22"/>
+                <position/>
+                <dynamicAttributes key="Create">
+                  <value function="doesDeviceExist : UserFunctions" equal="true" unequal="false">
+                    <parameter key="1" value="devicename; PlastFunctionUtils.createDeviceName(&quot;Pump1&quot;)"/>
+                  </value>
+                </dynamicAttributes>
+                <widgetInstances widgetId="kvs.bitmap" name="bitmapSystemPressure" layoutConstraint="WEST">
+                  <resolution width="22" height="22"/>
+                  <position/>
+                  <attributeValues key="Image" value="system/hmi/images/iconPressureHeader.gif"/>
+                  <attributeValues key="PreferredSize" value="22, 22"/>
+                </widgetInstances>
+                <widgetInstances widgetId="keplast.kvs.numfieldtext" name="numFieldSystemPressure" layoutConstraint="CENTER">
+                  <resolution width="66" height="22"/>
+                  <position x="22"/>
+                  <attributeValues key="PreferredSizeNumfield" value="34, 20"/>
+                  <attributeValues key="RenderAsTextField" value="true"/>
+                  <attributeValues key="Variable" value="Pump1.sv_rPressure"/>
+                  <attributeValues key="Editable" value="false"/>
+                  <attributeValues key="UnitFieldWidth" value="32"/>
+                  <attributeValues key="PreferredSize" value="58, 22"/>
+                  <attributeValues key="PreferredColumns" value="7"/>
+                </widgetInstances>
+                <layout layoutID="kvs.layout.BorderLayout" name="BorderLayout"/>
+              </widgetInstances>
+              <layout layoutID="kvs.layout.BorderLayout" name="BorderLayout"/>
+            </widgetInstances>
+            <widgetInstances widgetId="keplast.kvs.separator" name="separator6" layoutConstraint="null">
+              <resolution width="2" height="22"/>
+              <position x="88"/>
+              <attributeValues key="PreferredSize" value="2, 22"/>
+            </widgetInstances>
+            <widgetInstances xsi:type="base:ContainerWidgetInstance" widgetId="kvs.panel" name="containerSystemVelocityWrap" layoutConstraint="null">
+              <resolution width="88" height="22"/>
+              <position x="90"/>
+              <attributeValues key="PreferredSize" value="88, 22"/>
+              <widgetInstances xsi:type="base:ContainerWidgetInstance" widgetId="kvs.panel" name="containerSystemVelocity" layoutConstraint="CENTER">
+                <resolution width="88" height="22"/>
+                <position/>
+                <attributeValues key="PreferredSize" value="10, 22"/>
+                <dynamicAttributes key="Create">
+                  <value function="doesDeviceExist : UserFunctions" equal="true" unequal="false">
+                    <parameter key="1" value="devicename; PlastFunctionUtils.createDeviceName(&quot;Pump1&quot;)"/>
+                  </value>
+                </dynamicAttributes>
+                <widgetInstances widgetId="keplast.kvs.numfieldtext" name="numFieldSystemVelocity" layoutConstraint="CENTER">
+                  <resolution width="66" height="22"/>
+                  <position x="22"/>
+                  <attributeValues key="PreferredSizeNumfield" value="34, 20"/>
+                  <attributeValues key="RenderAsTextField" value="true"/>
+                  <attributeValues key="Variable" value="Pump1.sv_rVelocity"/>
+                  <attributeValues key="Editable" value="false"/>
+                  <attributeValues key="UnitFieldWidth" value="32"/>
+                </widgetInstances>
+                <widgetInstances widgetId="kvs.bitmap" name="bitmapSystemVelocity" layoutConstraint="WEST">
+                  <resolution width="22" height="22"/>
+                  <position/>
+                  <attributeValues key="Image" value="system/hmi/images/iconVelocityHeader.gif"/>
+                  <attributeValues key="PreferredSize" value="22, 22"/>
+                </widgetInstances>
+                <layout layoutID="kvs.layout.BorderLayout" name="BorderLayout"/>
+              </widgetInstances>
+              <layout layoutID="kvs.layout.BorderLayout" name="BorderLayout"/>
+            </widgetInstances>
+            <widgetInstances widgetId="keplast.kvs.separator" name="separator5" layoutConstraint="null">
+              <resolution width="2" height="22"/>
+              <position x="178"/>
+              <attributeValues key="PreferredSize" value="2, 22"/>
+            </widgetInstances>
+            <widgetInstances xsi:type="base:ContainerWidgetInstance" widgetId="kvs.panel" name="containerBackPressureWrap" layoutConstraint="null">
+              <resolution width="106" height="22"/>
+              <position x="180"/>
+              <attributeValues key="PreferredSize" value="106, 22"/>
+              <widgetInstances xsi:type="base:ContainerWidgetInstance" widgetId="kvs.panel" name="containerBackPressure" layoutConstraint="CENTER">
+                <resolution width="106" height="22"/>
+                <position/>
+                <attributeValues key="PreferredSize" value="10, 22"/>
+                <widgetInstances widgetId="keplast.kvs.numfieldtext" name="numFieldBackPressure" layoutConstraint="CENTER">
+                  <resolution width="84" height="22"/>
+                  <position x="22"/>
+                  <attributeValues key="PreferredSizeNumfield" value="44, 20"/>
+                  <attributeValues key="RenderAsTextField" value="true"/>
+                  <attributeValues key="Variable" value="Injection1.sv_rActPressure"/>
+                  <attributeValues key="Editable" value="false"/>
+                  <attributeValues key="UnitFieldWidth" value="38"/>
+                  <attributeValues key="PreComma" value="-1"/>
+                </widgetInstances>
+                <widgetInstances widgetId="kvs.bitmap" name="bitmapBackPressure" layoutConstraint="WEST">
+                  <resolution width="22" height="22"/>
+                  <position/>
+                  <attributeValues key="Image" value="system/hmi/images/iconBackPressureHeader.gif"/>
+                  <attributeValues key="PreferredSize" value="22, 22"/>
+                </widgetInstances>
+                <layout layoutID="kvs.layout.BorderLayout" name="BorderLayout"/>
+              </widgetInstances>
+              <layout layoutID="kvs.layout.BorderLayout" name="BorderLayout"/>
+            </widgetInstances>
+            <layout layoutID="kvs.layout.FlowLayout" name="FlowLayout">
+              <attributeValues key="Vgap" value="0"/>
+              <attributeValues key="Hgap" value="0"/>
+              <attributeValues key="Alignment" value="LEFT"/>
+            </layout>
+          </widgetInstances>
+          <widgetInstances xsi:type="base:ContainerWidgetInstance" widgetId="kvs.panel" name="containerHeaderCenterAlarm" layoutConstraint="null">
+            <resolution width="286" height="21"/>
+            <position y="23"/>
+            <widgetInstances xsi:type="base:ContainerWidgetInstance" widgetId="keplast.kvs.glasspanel" name="glassPanelAlarm" layoutConstraint="0,0,100,100">
+              <resolution width="286" height="21"/>
+              <position/>
+              <attributeValues key="Link" value="com.keba.kemro.kvs.alarm.AlarmMask"/>
+              <attributeValues key="EnableLink" value="true"/>
+              <attributeValues key="EnableGlass" value="true"/>
+              <layout layoutID="kvs.layout.BorderLayout" name="BorderLayout"/>
+            </widgetInstances>
+            <widgetInstances widgetId="keplast.kvs.alarmdisplay" name="plastAlarmDisplay" layoutConstraint="0,0,100,100">
+              <resolution width="286" height="21"/>
+              <position/>
+            </widgetInstances>
+            <layout layoutID="kvs.layout.PercentLayout" name="PercentLayout"/>
+          </widgetInstances>
+          <layout layoutID="kvs.layout.GridLayout" name="GridLayout">
+            <attributeValues key="Rows" value="2"/>
+            <attributeValues key="Columns" value="1"/>
+            <attributeValues key="Vgap" value="2"/>
+          </layout>
+        </widgetInstances>
+        <widgetInstances widgetId="keplast.kvs.separator" name="separator3" layoutConstraint="null">
+          <resolution width="2" height="44"/>
+          <position x="530"/>
+          <attributeValues key="PreferredSize" value="2, 44"/>
+        </widgetInstances>
+        <widgetInstances xsi:type="base:ContainerWidgetInstance" widgetId="kvs.panel" name="containerTimeAndUser" layoutConstraint="null">
+          <resolution width="160" height="44"/>
+          <position x="532"/>
+          <attributeValues key="PreferredSize" value="160, 44"/>
+          <border name="EmptyBorder" id="kv.border.EmptyBorder">
+            <attributeValues key="InnerInsets" value="0, 3, 0, 3"/>
+          </border>
+          <widgetInstances widgetId="keplast.kvs.separator" name="separator7" layoutConstraint="CENTER">
+            <resolution width="154" height="2"/>
+            <position x="3" y="21"/>
+            <attributeValues key="Orientation" value="Horizontal"/>
+          </widgetInstances>
+          <widgetInstances xsi:type="base:ContainerWidgetInstance" widgetId="kvs.panel" name="containerUserInfo" layoutConstraint="SOUTH">
+            <resolution width="154" height="21"/>
+            <position x="3" y="23"/>
+            <attributeValues key="PreferredSize" value="10, 21"/>
+            <widgetInstances xsi:type="base:ContainerWidgetInstance" widgetId="keplast.kvs.glasspanel" name="glassPanelUserData" layoutConstraint="0,0,100,100">
+              <resolution width="154" height="21"/>
+              <position/>
+              <attributeValues key="EnableGlass" value="true"/>
+              <attributeValues key="EnableLink" value="false"/>
+              <attributeValues key="Visible" value="true"/>
+              <layout layoutID="kvs.layout.BorderLayout" name="BorderLayout"/>
+            </widgetInstances>
+            <widgetInstances xsi:type="base:ContainerWidgetInstance" widgetId="kvs.panel" name="containerUserData" layoutConstraint="0, 0, 100, 100">
+              <resolution width="154" height="21"/>
+              <position/>
+              <widgetInstances widgetId="kvs.usernamelabel" name="userNameLabel" layoutConstraint="CENTER">
+                <resolution width="132" height="21"/>
+                <position/>
+                <attributeValues key="Alignment" value="MIDDLE/LEFT"/>
+                <attributeValues key="PreferredSize" value="10, 10"/>
+              </widgetInstances>
+              <widgetInstances xsi:type="base:ContainerWidgetInstance" widgetId="kvs.panel" name="containerUserLevel" layoutConstraint="EAST">
+                <resolution width="22" height="21"/>
+                <position x="132"/>
+                <widgetInstances widgetId="keplast.kvs.separator" name="separator8" layoutConstraint="WEST">
+                  <resolution width="2" height="21"/>
+                  <position/>
+                </widgetInstances>
+                <widgetInstances widgetId="kvs.userlevellabel" name="userLevelLabel" layoutConstraint="EAST">
+                  <resolution width="20" height="21"/>
+                  <position x="2"/>
+                  <attributeValues key="PreferredSize" value="20, 0"/>
+                </widgetInstances>
+                <layout layoutID="kvs.layout.BorderLayout" name="BorderLayout"/>
+              </widgetInstances>
+              <layout layoutID="kvs.layout.BorderLayout" name="BorderLayout"/>
+            </widgetInstances>
+            <layout layoutID="kvs.layout.PercentLayout" name="PercentLayout"/>
+          </widgetInstances>
+          <widgetInstances xsi:type="base:ContainerWidgetInstance" widgetId="kvs.panel" name="containerDateTime" layoutConstraint="NORTH">
+            <resolution width="154" height="21"/>
+            <position x="3"/>
+            <attributeValues key="PreferredSize" value="10, 21"/>
+            <widgetInstances widgetId="kvs.datetimelabel" name="dateTimeLabel" layoutConstraint="CENTER">
+              <resolution width="154" height="21"/>
+              <position/>
+              <attributeValues key="DateTimeFormat" value="SHORT"/>
+              <attributeValues key="DisplayFormat" value="DATE_TIME"/>
+            </widgetInstances>
+            <layout layoutID="kvs.layout.BorderLayout" name="BorderLayout"/>
+          </widgetInstances>
+          <layout layoutID="kvs.layout.BorderLayout" name="BorderLayout"/>
+        </widgetInstances>
+        <widgetInstances widgetId="keplast.kvs.separator" name="separator4" layoutConstraint="null">
+          <resolution width="2" height="44"/>
+          <position x="692"/>
+          <attributeValues key="PreferredSize" value="2, 44"/>
+        </widgetInstances>
+        <layout layoutID="kvs.layout.FlowLayout" name="FlowLayout">
+          <attributeValues key="Hgap" value="0"/>
+          <attributeValues key="Vgap" value="0"/>
+          <attributeValues key="Alignment" value="LEFT"/>
+        </layout>
+      </widgetInstances>
+      <widgetInstances xsi:type="base:ContainerWidgetInstance" widgetId="kvs.panel" name="containerLogo" layoutConstraint="CENTER">
+        <resolution width="100" height="44"/>
+        <position x="697" y="5"/>
+        <widgetInstances xsi:type="base:ContainerWidgetInstance" widgetId="kvs.panel" name="containerTestversion" layoutConstraint="0,25,100,50">
+          <resolution width="100" height="22"/>
+          <position y="11"/>
+          <attributeValues key="Background" value="Plast_red:204,51,51"/>
+          <dynamicAttributes key="Visible">
+            <value function="b1_EQ_true : ViewEditFunctions" equal="false" unequal="true">
+              <parameter key="1" value="kvariable;simulation.sv_bExhibitionMode"/>
+            </value>
+          </dynamicAttributes>
+          <dynamicAttributes key="Create">
+            <value function="displayTestVersionWarningLabel : UserFunctions" equal="true" unequal="false"/>
+          </dynamicAttributes>
+          <widgetInstances widgetId="kvs.label" name="lblTestversion" layoutConstraint="NORTH">
+            <resolution width="100" height="21"/>
+            <position/>
+            <attributeValues key="Foreground" value="white:255,255,255"/>
+          </widgetInstances>
+          <layout layoutID="kvs.layout.BorderLayout" name="BorderLayout"/>
+        </widgetInstances>
+        <widgetInstances widgetId="kvs.bitmap" name="bitmapCustomerLogo" layoutConstraint="0,0,100,100">
+          <resolution width="100" height="44"/>
+          <position/>
+          <attributeValues key="Image" value="images/customerlogo.gif"/>
+          <attributeValues key="PreferredSize" value="100, 63"/>
+        </widgetInstances>
+        <layout layoutID="kvs.layout.PercentLayout" name="PercentLayout"/>
+      </widgetInstances>
+      <layout layoutID="kvs.layout.BorderLayout" name="BorderLayout"/>
+    </widgetInstances>
+    <widgetInstances xsi:type="base:ContainerWidgetInstance" widgetId="kvs.panel" name="maskBorderTop" layoutConstraint="SOUTH">
+      <resolution width="800" height="8"/>
+      <position y="54"/>
+      <attributeValues key="PreferredSize" value="8, 8"/>
+      <attributeValues key="Background" value="BG_Desktop:30,30,30"/>
+      <layout layoutID="kvs.layout.BorderLayout" name="BorderLayout"/>
+    </widgetInstances>
+    <layout layoutID="kvs.layout.BorderLayout" name="BorderLayout"/>
+  </widgetInstances>
+  <layout layoutID="kvs.layout.BorderLayout" name="BorderLayout"/>
+</base:BasicLayout>

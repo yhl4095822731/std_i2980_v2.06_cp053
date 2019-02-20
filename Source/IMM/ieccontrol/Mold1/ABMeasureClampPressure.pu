@@ -1,0 +1,1674 @@
+(*
+This AlgorithmBlock is used for measuring the number of impulses (starting from a origin position).
+
+It also measures some endpoints for the movement like a standstill detection and the limit switches.
+
+For performance reasons the calculation is only running when the movement is active.
+*)
+
+IMPORT_OVER_LISTFILE
+ FCalculateCylinderSize
+, GET_MY_FU_NAME
+, SET_ALARM
+, START_PROCESS_ALGORITHM
+, STOP_PROCESS_ALGORITHM
+, WRITE_SVREAL_DIRECT
+, cSubOptionMoldDirectLock
+, cCompMold
+, cMoveBwd
+, cCompInjection
+, cMoveInject
+, tsClampForces
+, KAPPL_LintabData_2P
+, tsCylinderData
+, KAPPL_VisProfile
+, tOptionId
+, tevStart
+, tevStartedStopped
+, FBStop
+, ABMeasureAI
+, tsHydrMaxValues
+, KSYS_Status
+, TON
+, tevStartData
+, tevStartedStoppedData
+, tsDeviceId
+
+END_IMPORT
+
+ALGORITHM_BLOCK ABMeasureClampPressure #DUMMY_EDIT_BLOCK
+
+SYSTEM_VAR
+ sv_ClampForce : tsClampForces (* actual clamp force *);
+ sv_bInitStart : BOOL;
+ sv_ClampPressLintab : KAPPL_LintabData_2P;
+ ai_ClampPress : REAL;
+ do_ClampPressSensorReset : BOOL (* reset of clamp pressure sensor *);
+ sv_bClampPressSensorError : BOOL;
+ sv_bMoldOpen : BOOL;
+ sv_bClampForceHigh : BOOL;
+ sv_bClampForceLow : BOOL;
+ sv_bMonitorClampPress : BOOL;
+ sv_rClampForceStored : REAL;
+ sv_bInitDone : BOOL;
+ sv_bMoldClosed : BOOL;
+ sv_bClampForceReached : BOOL;
+ sv_rLockDecompLimit : REAL;
+ sv_bLockDecompOK : BOOL;
+ sv_CylinderData : tsCylinderData;
+ sv_MoldFwdProfVisSrc : KAPPL_VisProfile;
+ sv_rClampForceTol : REAL;
+ sv_bClampForceBuildUpWithTime : BOOL;
+ sv_Options : tOptionId;
+ sv_rClampForceAct : REAL (* actual clamp force *);
+ sv_ClampForceSensorLintab : KAPPL_LintabData_2P (* lintab for converting clamp force from V to kN *);
+ sv_bClampPressSensorAvailable : BOOL;
+ sv_HydrMaxValuesClose : tsHydrMaxValues (* hydraulic max values for mold close *);
+ sv_bFALSE : BOOL (* always false, used to set a reference false *);
+END_VAR
+
+SYSTEM_OBJECT
+ TaskAnalog : TASK;
+ PU_Task_7 : TASK;
+ TaskMid : TASK;
+ EV_Task_7 : TASK;
+ evStart : tevStart;
+ evStartedStopped : tevStartedStopped;
+ erClampPressToHigh : ALARM;
+ erClampPressToLow : ALARM;
+END_OBJECT
+
+VAR_EXTERNAL
+ g_bClampPressSensorsAvailable : BOOL;
+ g_bDirectLockAvailable : BOOL;
+END_VAR
+
+VAR
+ mbClampPressSensorWithReset : BOOL (* clamp pressure sensor has a reset DO *);
+ fbStop : FBStop;
+ abMeasure : ABMeasureAI;
+ mbMeasuringRequested : BOOL;
+ mrCylinderSizeClampForce : REAL;
+ mbClampPressSensorAvailable : BOOL;
+ mbDirectLock : BOOL;
+ mpbAdjustInProduction : REFTO BOOL;
+END_VAR
+
+PROCESS_ALGORITHM paInitMeasuring ON TaskAnalog AUTOSTART
+
+
+VAR
+ sEndPointName : STRING(63);
+ Status : KSYS_Status;
+END_VAR
+
+(* IecGraph-Code *)
+
+(* init step *)
+INITIAL_STEP S_Start:
+ACheckClampPressSensorAvailable (P);
+END_STEP
+
+
+(* steps *)
+STEP S_Stop:
+AStop (P);
+END_STEP
+
+ACTION AStop: #BEGIN_EDIT_BLOCK
+sv_bLockDecompOK := TRUE;
+STOP_PROCESS_ALGORITHM();
+
+;#END_EDIT_BLOCK END_ACTION (*AStop*)
+STEP S_Init:
+AInitMeasurement (P);
+AResetClampPressSensor (P);
+END_STEP
+
+STEP S_End:
+AActivateClampPressSensor (P);
+END_STEP
+
+
+(* transitions *)
+TRANSITION TLinked (* TLinked *) FROM S_Start TO S_Init :=  #BEGIN_EDIT_BLOCK
+mbClampPressSensorAvailable
+;#END_EDIT_BLOCK
+END_TRANSITION
+
+TRANSITION TNotLinked (* TNotLinked *) FROM S_Start TO S_Stop :=  #BEGIN_EDIT_BLOCK
+NOT mbClampPressSensorAvailable
+;#END_EDIT_BLOCK
+END_TRANSITION
+
+TRANSITION TStop (* TStop *) FROM S_Stop TO S_Start :=  #BEGIN_EDIT_BLOCK
+TRUE
+;#END_EDIT_BLOCK
+END_TRANSITION
+
+TRANSITION TInitDone (* TInitDone *) FROM S_Init TO S_End :=  #BEGIN_EDIT_BLOCK
+S_Init.T > T#500ms
+;#END_EDIT_BLOCK
+END_TRANSITION
+
+TRANSITION TEndDone (* TEndDone *) FROM S_End TO S_Stop :=  #BEGIN_EDIT_BLOCK
+TRUE
+;#END_EDIT_BLOCK
+END_TRANSITION
+
+(* end IecGraph-Code *)
+(* sfc-code *)
+
+(* stand alone actions *)
+ACTION ACheckClampPressSensorAvailable: #BEGIN_EDIT_BLOCK
+mbClampPressSensorAvailable := IS_LINKED(ai_ClampPress);
+mbClampPressSensorWithReset := IS_LINKED(do_ClampPressSensorReset);
+IF NOT mbClampPressSensorAvailable THEN
+   sv_bClampForceBuildUpWithTime := TRUE;
+ELSE
+   sv_bClampForceBuildUpWithTime := FALSE;
+END_IF;
+
+//Cyclic mold height adjust in closed loop
+sv_bClampPressSensorAvailable := mbClampPressSensorAvailable;   
+mpbAdjustInProduction := GET_SYNC_REFTO('MoldHeight1.sv_MoveClosedLoop.bProgrammedInSequence', T#0s, Status);
+IF Status <> KSYS_Status_OK THEN
+   mpbAdjustInProduction := @sv_bFALSE;
+END_IF;
+
+g_bClampPressSensorsAvailable := mbClampPressSensorAvailable; 
+
+;#END_EDIT_BLOCK END_ACTION (*ACheckClampPressSensorAvailable*)
+ACTION AActivateClampPressSensor: #BEGIN_EDIT_BLOCK
+(**************************************** WARNING ********************************************
+ *** The KEBA Kemro K2 System including software is not intended for safety control tasks! ***
+ ***                       For further information see Comment tab!                        ***
+ *********************************************************************************************)
+
+IF mbClampPressSensorWithReset THEN
+   (*activate sensor*)
+   do_ClampPressSensorReset := FALSE;
+END_IF;
+
+IF mbDirectLock THEN
+   START_PROCESS_ALGORITHM(paMeasureClampPress);
+ELSE
+   START_PROCESS_ALGORITHM(paMeasureClampForce);
+   sv_bLockDecompOK := TRUE;
+END_IF;
+
+;#END_EDIT_BLOCK END_ACTION (*AActivateClampPressSensor*)
+ACTION AResetClampPressSensor: #BEGIN_EDIT_BLOCK
+(**************************************** WARNING ********************************************
+ *** The KEBA Kemro K2 System including software is not intended for safety control tasks! ***
+ ***                       For further information see Comment tab!                        ***
+ *********************************************************************************************)
+
+IF mbClampPressSensorWithReset THEN
+   (*reset clamp pressure sensor --> measurement inactive*)
+   do_ClampPressSensorReset := TRUE;
+END_IF;
+
+;#END_EDIT_BLOCK END_ACTION (*AResetClampPressSensor*)
+ACTION AInitMeasurement: #BEGIN_EDIT_BLOCK
+(**************************************** WARNING ********************************************
+ *** The KEBA Kemro K2 System including software is not intended for safety control tasks! ***
+ ***                       For further information see Comment tab!                        ***
+ *********************************************************************************************)
+
+sEndPointName := CONCAT(GET_MY_FU_NAME(),'.ai_ClampPress');
+mbDirectLock := ((sv_Options AND cSubOptionMoldDirectLock) = cSubOptionMoldDirectLock);
+
+IF mbDirectLock THEN
+   abMeasure.aInit(sRawValue := sEndPointName,
+                pLintabPointArray := @sv_ClampPressLintab.LintabPoints.Point,
+                piUsedLintabPoints := @sv_ClampPressLintab.LintabPoints.uNoOfPoints);
+ELSE
+   abMeasure.aInit(sRawValue := sEndPointName,
+                pLintabPointArray := @sv_ClampForceSensorLintab.LintabPoints.Point,
+                piUsedLintabPoints := @sv_ClampForceSensorLintab.LintabPoints.uNoOfPoints);   
+END_IF;
+
+
+;#END_EDIT_BLOCK END_ACTION (*AInitMeasurement*)
+(* end sfc-code *)
+
+
+END_ALGORITHM
+
+PROCESS_ALGORITHM paMeasureClampPress ON TaskAnalog(1000)
+
+
+VAR_TEMP
+ rClampForceAct : REAL;
+ b : BOOL;
+END_VAR
+
+VAR
+ rActClampPressHydr : REAL;
+END_VAR
+#BEGIN_EDIT_BLOCK
+(**************************************** WARNING ********************************************
+ *** The KEBA Kemro K2 System including software is not intended for safety control tasks! ***
+ ***                       For further information see Comment tab!                        ***
+ *********************************************************************************************)
+
+abMeasure.aRunLight(rValue => rActClampPressHydr);
+sv_bClampPressSensorError := abMeasure.aRunLight.bSensorError;
+
+// Actual Clamp Force in [kN]
+rClampForceAct := ((rActClampPressHydr * 1.0E5) * (mrCylinderSizeClampForce * 1.0E-6)) / 1000.0;
+b := WRITE_SVREAL_DIRECT(sv_rClampForceAct, rClampForceAct);
+
+sv_bLockDecompOK := (sv_rClampForceAct <= sv_rLockDecompLimit);
+
+
+
+;#END_EDIT_BLOCK END_ALGORITHM
+
+(*
+convert input voltage to clamp force
+*)
+
+PROCESS_ALGORITHM paMeasureClampForce ON TaskAnalog(1000)
+
+
+VAR_TEMP
+ b : BOOL;
+END_VAR
+#BEGIN_EDIT_BLOCK
+(**************************************** WARNING ********************************************
+ *** The KEBA Kemro K2 System including software is not intended for safety control tasks! ***
+ ***                       For further information see Comment tab!                        ***
+ *********************************************************************************************)
+
+abMeasure.aRunLight();
+sv_bClampPressSensorError := abMeasure.aRunLight.bSensorError;
+b := WRITE_SVREAL_DIRECT(sv_rClampForceAct, abMeasure.aRunLight.rValue);
+
+
+;#END_EDIT_BLOCK END_ALGORITHM
+
+PROCESS_ALGORITHM paStopMeasureDelayed ON TaskMid
+
+
+VAR
+ fbTon : TON;
+ mbInitDone : BOOL;
+END_VAR
+#BEGIN_EDIT_BLOCK
+(**************************************** WARNING ********************************************
+ *** The KEBA Kemro K2 System including software is not intended for safety control tasks! ***
+ ***                       For further information see Comment tab!                        ***
+ *********************************************************************************************)
+
+IF NOT mbInitDone THEN
+   fbTon(IN := TRUE, PT := T#200ms);
+   mbInitDone := TRUE;
+
+END_IF;
+
+fbTon(IN := TRUE);
+
+IF mbMeasuringRequested THEN
+   (*new measuring requested --> do not stop measuring and monitoring*)
+   fbTon(IN := FALSE);
+   mbInitDone := FALSE;
+   STOP_PROCESS_ALGORITHM();
+   RETURN;
+
+END_IF;
+
+IF fbTon.Q THEN
+      
+   IF mbClampPressSensorWithReset THEN
+      (*reset sensor*)
+      do_ClampPressSensorReset := TRUE;
+   END_IF;
+   
+   fbTon(IN := FALSE);
+   mbInitDone := FALSE;
+   STOP_PROCESS_ALGORITHM();
+
+END_IF;
+
+
+
+
+;#END_EDIT_BLOCK END_ALGORITHM
+
+POSTUPDATE_ALGORITHM pStartStopClampPressMeasuring ON PU_Task_7 WITH sv_bMoldOpen,sv_bInitDone
+
+#BEGIN_EDIT_BLOCK
+(**************************************** WARNING ********************************************
+ *** The KEBA Kemro K2 System including software is not intended for safety control tasks! ***
+ ***                       For further information see Comment tab!                        ***
+ *********************************************************************************************)
+
+IF sv_bMoldOpen THEN
+   (*stop measuring delayed*)
+   mbMeasuringRequested := FALSE;
+   START_PROCESS_ALGORITHM(paStopMeasureDelayed);
+      
+ELSE
+   (*mold not open -> start measuring of clamp pressure*)
+   mbMeasuringRequested := TRUE;
+   IF mbClampPressSensorWithReset THEN
+      (*activate sensor*)
+      do_ClampPressSensorReset := FALSE;
+   END_IF;
+   
+   
+END_IF;
+
+
+;#END_EDIT_BLOCK END_ALGORITHM
+
+EVENT_ALGORITHM evaMoldOpenStart ON EV_Task_7 WITH evStart
+
+
+VAR_INPUT
+ evStartData : tevStartData;
+END_VAR
+#BEGIN_EDIT_BLOCK
+(**************************************** WARNING ********************************************
+ *** The KEBA Kemro K2 System including software is not intended for safety control tasks! ***
+ ***                       For further information see Comment tab!                        ***
+ *********************************************************************************************)
+
+IF evStartData.DeviceId.CompId = cCompMold AND
+   evStartData.DeviceId.IndexId = 1 AND 
+   evStartData.MoveDir = cMoveBwd THEN
+        
+   (*start of any mold bwd movement --> reset "clamp force reached" flag*)
+   sv_bClampForceReached := FALSE;    
+END_IF;
+
+
+;#END_EDIT_BLOCK END_ALGORITHM
+
+EVENT_ALGORITHM evaStartedStopped ON EV_Task_7 WITH evStartedStopped
+
+
+VAR_INPUT
+ evStartedStoppedData : tevStartedStoppedData;
+END_VAR
+#BEGIN_EDIT_BLOCK
+(**************************************** WARNING ********************************************
+ *** The KEBA Kemro K2 System including software is not intended for safety control tasks! ***
+ ***                       For further information see Comment tab!                        ***
+ *********************************************************************************************)
+
+IF evStartedStoppedData.State = nStarted AND
+   evStartedStoppedData.DeviceId.CompId = cCompInjection AND
+   evStartedStoppedData.DeviceId.IndexId = 1 AND
+   evStartedStoppedData.MoveId = cMoveInject THEN
+
+   (* sample clamp force for PDP when injection starts *)
+   sv_rClampForceStored := sv_rClampForceAct;
+END_IF;
+
+
+;#END_EDIT_BLOCK END_ALGORITHM
+
+POSTUPDATE_ALGORITHM pSetClampPressChanged ON PU_Task_7 WITH sv_ClampForce.rSetClampForce,sv_MoldFwdProfVisSrc.Profile.Points,sv_CylinderData,sv_bInitStart,sv_HydrMaxValuesClose.rMaxPressure
+
+
+VAR
+ rSetClampPres : REAL;
+END_VAR
+#BEGIN_EDIT_BLOCK
+(**************************************** WARNING ********************************************
+ *** The KEBA Kemro K2 System including software is not intended for safety control tasks! ***
+ ***                       For further information see Comment tab!                        ***
+ *********************************************************************************************)
+
+//calculate needed hydraulic pressure from set clamp force
+//velocity not needed on this machine
+//FIXME also recalc after data loading
+
+mrCylinderSizeClampForce := FCalculateCylinderSize(CylinderData := sv_CylinderData,
+                                                   bSmallSize := sv_CylinderData.bUseSmallSize,
+                                                   bCalcHighPressSize := TRUE);
+
+IF mrCylinderSizeClampForce <= 0.0 THEN
+   // Errors: use default value
+   // - no division by zero
+   // - negative force not possible
+   mrCylinderSizeClampForce := 1.0;
+END_IF;
+
+IF g_bDirectLockAvailable THEN
+   //calculate max. clamp force from machine parameters (max pressure, cylinder size)
+   sv_ClampForce.rMaxClampForce := sv_HydrMaxValuesClose.rMaxPressure * 1.0E5 / 1.0E3 * (mrCylinderSizeClampForce * 1.0E-6);
+   IF mbClampPressSensorAvailable THEN
+      // Set pressure for pump should be greater than desired clamp force in [bar] to ensure
+      // that clamp forece can be reached -> only useful, if pressure sensor available
+      rSetClampPres := sv_ClampForce.rSetClampForce * 1000.0 / (MAX(mrCylinderSizeClampForce, 1.0) * 1.0E-6) * 1.0E-5;
+      sv_MoldFwdProfVisSrc.Profile.Points[19].rPressure := MIN(rSetClampPres, sv_HydrMaxValuesClose.rMaxPressure);
+   ELSE
+      //use high pressure for calculation of clamp force
+      //rSetClampPres (kN) := p (bar) * 1e5 -> (N/m^2) / 1e3 -> (kN/m^2) * A (m^2) * 1e-6 -> (kN)
+      sv_ClampForce.rSetClampForce := sv_MoldFwdProfVisSrc.Profile.Points[19].rPressure * 1.0E5 / 1.0E3 * (mrCylinderSizeClampForce * 1.0E-6);
+   END_IF;
+END_IF;
+
+
+;#END_EDIT_BLOCK END_ALGORITHM
+
+(*
+cyclic monitoring of the clamp pressure when sv_bMoldClosed is set
+uses sv_rClampPressTol as tolerance
+*)
+
+PROCESS_ALGORITHM paMonitorClampPressHighLow ON TaskMid
+
+
+VAR
+ DeviceIdInjection : tsDeviceId := (CompId:=cCompInjection,IndexId:=1);
+END_VAR
+#BEGIN_EDIT_BLOCK
+(**************************************** WARNING ********************************************
+ *** The KEBA Kemro K2 System including software is not intended for safety control tasks! ***
+ ***                       For further information see Comment tab!                        ***
+ *********************************************************************************************)
+IF sv_bMoldClosed THEN
+   (*check lower limit*)
+   IF sv_rClampForceAct < (sv_ClampForce.rSetClampForce - sv_rClampForceTol) THEN
+       
+      (*mold height adjust in production with closed loop control*)
+      sv_bClampForceLow := TRUE;      
+      
+      (*alarm is not set in case that mold height adjustment in production is activated*)
+      IF NOT mpbAdjustInProduction^ THEN
+         SET_ALARM(Name := erClampPressToLow);
+      END_IF;         
+       
+      STOP_PROCESS_ALGORITHM();
+   ELSE                                                            
+       sv_bClampForceLow := FALSE;  
+   END_IF;   
+
+   (*check higher limit*)
+   IF sv_rClampForceAct > (sv_ClampForce.rSetClampForce + sv_rClampForceTol) THEN
+      (*limit is maybe exceeded because of to much injected material --> stop inject movement and set alarm*)
+
+      (*alarm is not set in case that mold height adjustment in production is activated*)
+      IF NOT mpbAdjustInProduction^ THEN         
+         fbStop(DeviceId := DeviceIdInjection);
+         SET_ALARM(Name := erClampPressToHigh);  
+      END_IF;         
+      
+      (*mold height adjust in production with closed loop control*)
+      sv_bClampForceHigh := TRUE;
+      STOP_PROCESS_ALGORITHM();
+   ELSE                                                              
+      sv_bClampForceHigh := FALSE;
+   END_IF;   
+     
+ELSE
+   (*stop checking limits*)     
+   STOP_PROCESS_ALGORITHM();
+END_IF;
+
+
+
+;#END_EDIT_BLOCK END_ALGORITHM
+
+POSTUPDATE_ALGORITHM pStartClampPressMonHighLow ON PU_Task_7 WITH sv_bMoldClosed,sv_bMonitorClampPress
+
+#BEGIN_EDIT_BLOCK
+(**************************************** WARNING ********************************************
+ *** The KEBA Kemro K2 System including software is not intended for safety control tasks! ***
+ ***                       For further information see Comment tab!                        ***
+ *********************************************************************************************)
+
+IF sv_bInitDone AND sv_bMonitorClampPress AND sv_bMoldClosed THEN
+   IF mbClampPressSensorAvailable THEN
+      (*monitoring of clamp pressure when clamp pressure is built*)
+      START_PROCESS_ALGORITHM(paMonitorClampPressHighLow);       
+   END_IF;
+END_IF;    
+
+
+
+;#END_EDIT_BLOCK END_ALGORITHM
+
+
+
+END_ALGORITHM_BLOCK
+
+
+
+#END_OF_IEC_PART
+
+@Puma @IecEditor 6 114 @Pou 25 
+@@@BEG_Comment@@@
+This AlgorithmBlock is used for measuring the number of impulses (starting from a origin position).
+
+It also measures some endpoints for the movement like a standstill detection and the limit switches.
+
+For performance reasons the calculation is only running when the movement is active.
+@@@END_Comment@@@
+
+@BEG_Contents 
+
+@BEG_Func 
+@RT(17)FuncTreeContainer 
+6 
+@Var @RT(22)FCalculateCylinderSize @RT(0) @T @T @DERIVED 0 @F @RT(8)FUNCTION @F 
+@T 
+@BEG_Attrib 
+0 @RT(0) @RT(0) 
+@END_Attrib 
+1 1 @F @F @F @F 
+
+@Var @RT(14)GET_MY_FU_NAME @RT(0) @T @T @DERIVED 0 @F @RT(22)KEBA_STANDARD_FUNCTION @F 
+@T 
+@BEG_Attrib 
+0 @RT(0) @RT(0) 
+@END_Attrib 
+1 1 @F @F @F @F 
+
+@Var @RT(9)SET_ALARM @RT(0) @T @T @DERIVED 0 @F @RT(23)KEBA_STANDARD_PROCEDURE @F 
+@T 
+@BEG_Attrib 
+0 @RT(0) @RT(0) 
+@END_Attrib 
+1 1 @F @F @F @F 
+
+@Var @RT(23)START_PROCESS_ALGORITHM @RT(0) @T @T @DERIVED 0 @F @RT(23)KEBA_STANDARD_PROCEDURE @F 
+@T 
+@BEG_Attrib 
+0 @RT(0) @RT(0) 
+@END_Attrib 
+1 1 @F @F @F @F 
+
+@Var @RT(22)STOP_PROCESS_ALGORITHM @RT(0) @T @T @DERIVED 0 @F @RT(23)KEBA_STANDARD_PROCEDURE @F 
+@T 
+@BEG_Attrib 
+0 @RT(0) @RT(0) 
+@END_Attrib 
+1 1 @F @F @F @F 
+
+@Var @RT(19)WRITE_SVREAL_DIRECT @RT(0) @T @T @DERIVED 0 @F @RT(22)KEBA_STANDARD_FUNCTION @F 
+@T 
+@BEG_Attrib 
+0 @RT(0) @RT(0) 
+@END_Attrib 
+1 1 @F @F @F @F 
+
+@END_Func 
+
+@BEG_Const 
+@RT(18)ConstTreeContainer 
+5 
+@Var @RT(24)cSubOptionMoldDirectLock @RT(0) @T @F @DT @RT(5)DWORD @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+0 @RT(6)16#200 @RT(19)Mold is direct lock 
+@END_Attrib 
+1 1 @F @F @F @F 
+
+@Var @RT(9)cCompMold @RT(0) @T @F @DT @RT(4)DINT @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+0 @RT(3)101 @RT(14)Component Mold 
+@END_Attrib 
+1 1 @F @F @F @F 
+
+@Var @RT(8)cMoveBwd @RT(0) @T @F @DT @RT(4)DINT @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+0 @RT(2)11 @RT(17)movement backward 
+@END_Attrib 
+1 1 @F @F @F @F 
+
+@Var @RT(14)cCompInjection @RT(0) @T @F @DT @RT(4)DINT @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+0 @RT(3)104 @RT(19)Component Injection 
+@END_Attrib 
+1 1 @F @F @F @F 
+
+@Var @RT(11)cMoveInject @RT(0) @T @F @DT @RT(4)DINT @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+0 @RT(2)14 @RT(15)inject movement 
+@END_Attrib 
+1 1 @F @F @F @F 
+
+@END_Const 
+
+@BEG_Export 
+
+@BEG_Kind 
+@ALGORITHM_BLOCK @RT(22)ABMeasureClampPressure @STRUCTURED_TEXT 
+@RT(0) @RT(0) @RT(0) 
+@END_Kind 
+
+@BEG_Dcl 
+@RT(16)DclTreeContainer 
+44 
+@Var @RT(13)sv_ClampForce @RT(0) @T @T @DERIVED 0 @T @T @DT @RT(13)tsClampForces @RT(0) @T @T @UNKNOWN 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(18)actual clamp force @RT(0) 
+@END_Attrib 
+1 8 @F @F @F @F 
+
+@Var @RT(13)sv_bInitStart @RT(0) @T @F @DT @RT(4)BOOL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 8 @F @F @F @F 
+
+@Var @RT(19)sv_ClampPressLintab @RT(0) @T @T @DERIVED 0 @T @T @DT @RT(19)KAPPL_LintabData_2P @RT(0) @T @T @UNKNOWN 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 8 @F @F @F @F 
+
+@Var @RT(13)ai_ClampPress @RT(0) @T @F @DT @RT(4)REAL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 8 @F @F @F @F 
+
+@Var @RT(24)do_ClampPressSensorReset @RT(0) @T @F @DT @RT(4)BOOL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(30)reset of clamp pressure sensor @RT(0) 
+@END_Attrib 
+1 8 @F @F @F @F 
+
+@Var @RT(25)sv_bClampPressSensorError @RT(0) @T @F @DT @RT(4)BOOL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 8 @F @F @F @F 
+
+@Var @RT(12)sv_bMoldOpen @RT(0) @T @F @DT @RT(4)BOOL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 8 @F @F @F @F 
+
+@Var @RT(18)sv_bClampForceHigh @RT(0) @T @F @DT @RT(4)BOOL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 8 @F @F @F @F 
+
+@Var @RT(17)sv_bClampForceLow @RT(0) @T @F @DT @RT(4)BOOL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 8 @F @F @F @F 
+
+@Var @RT(21)sv_bMonitorClampPress @RT(0) @T @F @DT @RT(4)BOOL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 8 @F @F @F @F 
+
+@Var @RT(20)sv_rClampForceStored @RT(0) @T @F @DT @RT(4)REAL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 8 @F @F @F @F 
+
+@Var @RT(12)sv_bInitDone @RT(0) @T @F @DT @RT(4)BOOL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 8 @F @F @F @F 
+
+@Var @RT(14)sv_bMoldClosed @RT(0) @T @F @DT @RT(4)BOOL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 8 @F @F @F @F 
+
+@Var @RT(21)sv_bClampForceReached @RT(0) @T @F @DT @RT(4)BOOL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 8 @F @F @F @F 
+
+@Var @RT(19)sv_rLockDecompLimit @RT(0) @T @F @DT @RT(4)REAL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 8 @F @F @F @F 
+
+@Var @RT(16)sv_bLockDecompOK @RT(0) @T @F @DT @RT(4)BOOL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 8 @F @F @F @F 
+
+@Var @RT(15)sv_CylinderData @RT(0) @T @T @DERIVED 0 @T @T @DT @RT(14)tsCylinderData @RT(0) @T @T @UNKNOWN 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 8 @F @F @F @F 
+
+@Var @RT(20)sv_MoldFwdProfVisSrc @RT(0) @T @T @DERIVED 0 @T @T @DT @RT(16)KAPPL_VisProfile @RT(0) @T @T @UNKNOWN 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 8 @F @F @F @F 
+
+@Var @RT(17)sv_rClampForceTol @RT(0) @T @F @DT @RT(4)REAL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 8 @F @F @F @F 
+
+@Var @RT(29)sv_bClampForceBuildUpWithTime @RT(0) @T @F @DT @RT(4)BOOL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 8 @F @F @F @F 
+
+@Var @RT(10)sv_Options @RT(0) @T @T @DERIVED 0 @T @T @DT @RT(9)tOptionId @RT(0) @T @T @UNKNOWN 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 8 @F @F @F @F 
+
+@Var @RT(17)sv_rClampForceAct @RT(0) @T @F @DT @RT(4)REAL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(18)actual clamp force @RT(0) 
+@END_Attrib 
+1 8 @F @F @F @F 
+
+@Var @RT(10)TaskAnalog @RT(0) @T @F @DT @RT(4)TASK @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 7 @F @F @F @F 
+
+@Var @RT(9)PU_Task_7 @RT(0) @T @F @DT @RT(4)TASK @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 7 @F @F @F @F 
+
+@Var @RT(29)g_bClampPressSensorsAvailable @RT(0) @T @F @DT @RT(4)BOOL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 6 @F @F @F @F 
+
+@Var @RT(7)TaskMid @RT(0) @T @F @DT @RT(4)TASK @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 7 @F @F @F @F 
+
+@Var @RT(9)EV_Task_7 @RT(0) @T @F @DT @RT(4)TASK @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 7 @F @F @F @F 
+
+@Var @RT(7)evStart @RT(0) @T @T @DERIVED 0 @T @T @DT @RT(8)tevStart @RT(0) @T @T @UNKNOWN 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 7 @F @F @F @F 
+
+@Var @RT(16)evStartedStopped @RT(0) @T @T @RENAMED 0 @T @T @DT @RT(17)tevStartedStopped @RT(0) @T @T @UNKNOWN 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 7 @F @F @F @F 
+
+@Var @RT(18)erClampPressToHigh @RT(0) @T @F @DT @RT(5)ALARM @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 7 @F @F @F @F 
+
+@Var @RT(17)erClampPressToLow @RT(0) @T @F @DT @RT(5)ALARM @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 7 @F @F @F @F 
+
+@Var @RT(27)mbClampPressSensorWithReset @RT(0) @T @F @DT @RT(4)BOOL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(36)clamp pressure sensor has a reset DO @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(6)fbStop @RT(0) @T @T @DERIVED 0 @T @T @DT @RT(6)FBStop @RT(0) @T @T @UNKNOWN 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(9)abMeasure @RT(0) @T @T @DERIVED 0 @T @T @DT @RT(11)ABMeasureAI @RT(0) @T @T @UNKNOWN 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(20)mbMeasuringRequested @RT(0) @T @F @DT @RT(4)BOOL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(24)mrCylinderSizeClampForce @RT(0) @T @F @DT @RT(4)REAL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(27)mbClampPressSensorAvailable @RT(0) @T @F @DT @RT(4)BOOL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(12)mbDirectLock @RT(0) @T @F @DT @RT(4)BOOL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(22)g_bDirectLockAvailable @RT(0) @T @F @DT @RT(4)BOOL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 6 @F @F @F @F 
+
+@Var @RT(25)sv_ClampForceSensorLintab @RT(0) @T @T @DERIVED 0 @T @T @DT @RT(19)KAPPL_LintabData_2P @RT(0) @T @T @UNKNOWN 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(46)lintab for converting clamp force from V to kN @RT(0) 
+@END_Attrib 
+1 8 @F @F @F @F 
+
+@Var @RT(29)sv_bClampPressSensorAvailable @RT(0) @T @F @DT @RT(4)BOOL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 8 @F @F @F @F 
+
+@Var @RT(21)mpbAdjustInProduction @RT(0) @T @T @REFTO 0 @T @DT @RT(4)BOOL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(21)sv_HydrMaxValuesClose @RT(0) @T @T @DERIVED 0 @T @T @DT @RT(15)tsHydrMaxValues @RT(0) @T @T @UNKNOWN 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(35)hydraulic max values for mold close @RT(0) 
+@END_Attrib 
+1 8 @F @F @F @F 
+
+@Var @RT(9)sv_bFALSE @RT(0) @T @F @DT @RT(4)BOOL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(43)always false, used to set a reference false @RT(0) 
+@END_Attrib 
+1 8 @F @F @F @F 
+
+@END_Dcl 
+
+@END_Export 
+
+@BEG_Body 
+
+10 
+
+@BEG_Export 
+
+@BEG_Algo 
+@PROCESS_ALGORITHM @RT(15)paInitMeasuring @SEQUENTIAL_FLOW_CHART 
+@RT(0) @RT(0) @RT(10)TaskAnalog @T @F 
+@END_Algo 
+
+@BEG_Dcl 
+@RT(16)DclTreeContainer 
+2 
+@Var @RT(13)sEndPointName @RT(0) @T @F @DT @RT(10)STRING(63) @RT(0) @T @T @STRING 0 @F @RT(2)63 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(6)Status @RT(0) @T @T @DERIVED 0 @T @T @DT @RT(11)KSYS_Status @RT(0) @T @T @UNKNOWN 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@END_Dcl 
+
+@END_Export 
+
+@BEG_Export 
+
+@BEG_Algo 
+@PROCESS_ALGORITHM @RT(19)paMeasureClampPress @STRUCTURED_TEXT 
+@RT(0) @RT(0) @RT(16)TaskAnalog(1000) @F @F 
+@END_Algo 
+
+@BEG_Dcl 
+@RT(16)DclTreeContainer 
+3 
+@Var @RT(18)rActClampPressHydr @RT(0) @T @F @DT @RT(4)REAL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(14)rClampForceAct @RT(0) @T @F @DT @RT(4)REAL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 4 @F @F @F @F 
+
+@Var @RT(1)b @RT(0) @T @F @DT @RT(4)BOOL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 4 @F @F @F @F 
+
+@END_Dcl 
+
+@END_Export 
+
+@BEG_Export 
+
+@BEG_Algo 
+@PROCESS_ALGORITHM @RT(19)paMeasureClampForce @STRUCTURED_TEXT 
+@RT(0) @RT(0) @RT(16)TaskAnalog(1000) @F @F 
+@END_Algo 
+
+@BEG_Dcl 
+@RT(16)DclTreeContainer 
+1 
+@Var @RT(1)b @RT(0) @T @F @DT @RT(4)BOOL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 4 @F @F @F @F 
+
+@END_Dcl 
+
+@END_Export 
+
+@BEG_Export 
+
+@BEG_Algo 
+@PROCESS_ALGORITHM @RT(20)paStopMeasureDelayed @STRUCTURED_TEXT 
+@RT(0) @RT(0) @RT(7)TaskMid @F @F 
+@END_Algo 
+
+@BEG_Dcl 
+@RT(16)DclTreeContainer 
+2 
+@Var @RT(5)fbTon @RT(0) @T @T @DERIVED 0 @T @T @DT @RT(3)TON @RT(0) @T @T @UNKNOWN 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(10)mbInitDone @RT(0) @T @F @DT @RT(4)BOOL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@END_Dcl 
+
+@END_Export 
+
+@BEG_Export 
+
+@BEG_Algo 
+@POSTUPDATE_ALGORITHM @RT(29)pStartStopClampPressMeasuring @STRUCTURED_TEXT 
+@RT(0) @RT(25)sv_bMoldOpen,sv_bInitDone @RT(9)PU_Task_7 @F @F 
+@END_Algo 
+
+@BEG_Dcl 
+@RT(16)DclTreeContainer 
+0 
+@END_Dcl 
+
+@END_Export 
+
+@BEG_Export 
+
+@BEG_Algo 
+@EVENT_ALGORITHM @RT(16)evaMoldOpenStart @STRUCTURED_TEXT 
+@RT(0) @RT(7)evStart @RT(9)EV_Task_7 @F @F 
+@END_Algo 
+
+@BEG_Dcl 
+@RT(16)DclTreeContainer 
+1 
+@Var @RT(11)evStartData @RT(0) @T @T @DERIVED 0 @T @T @DT @RT(12)tevStartData @RT(0) @T @T @UNKNOWN 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 1 @F @F @F @F 
+
+@END_Dcl 
+
+@END_Export 
+
+@BEG_Export 
+
+@BEG_Algo 
+@EVENT_ALGORITHM @RT(17)evaStartedStopped @STRUCTURED_TEXT 
+@RT(0) @RT(16)evStartedStopped @RT(9)EV_Task_7 @F @F 
+@END_Algo 
+
+@BEG_Dcl 
+@RT(16)DclTreeContainer 
+1 
+@Var @RT(20)evStartedStoppedData @RT(0) @T @T @DERIVED 0 @T @T @DT @RT(21)tevStartedStoppedData @RT(0) @T @T @UNKNOWN 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 1 @F @F @F @F 
+
+@END_Dcl 
+
+@END_Export 
+
+@BEG_Export 
+
+@BEG_Algo 
+@POSTUPDATE_ALGORITHM @RT(21)pSetClampPressChanged @STRUCTURED_TEXT 
+@RT(0) @RT(129)sv_ClampForce.rSetClampForce,sv_MoldFwdProfVisSrc.Profile.Points,sv_CylinderData,sv_bInitStart,sv_HydrMaxValuesClose.rMaxPressure @RT(9)PU_Task_7 @F @F 
+@END_Algo 
+
+@BEG_Dcl 
+@RT(16)DclTreeContainer 
+1 
+@Var @RT(13)rSetClampPres @RT(0) @T @F @DT @RT(4)REAL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@END_Dcl 
+
+@END_Export 
+
+@BEG_Export 
+
+@BEG_Algo 
+@PROCESS_ALGORITHM @RT(26)paMonitorClampPressHighLow @STRUCTURED_TEXT 
+@RT(0) @RT(0) @RT(7)TaskMid @F @F 
+@END_Algo 
+
+@BEG_Dcl 
+@RT(16)DclTreeContainer 
+1 
+@Var @RT(17)DeviceIdInjection @RT(0) @T @T @DERIVED 0 @T @T @DT @RT(10)tsDeviceId @RT(0) @T @T @UNKNOWN 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(35)(CompId:=cCompInjection,IndexId:=1) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@END_Dcl 
+
+@END_Export 
+
+@BEG_Export 
+
+@BEG_Algo 
+@POSTUPDATE_ALGORITHM @RT(26)pStartClampPressMonHighLow @STRUCTURED_TEXT 
+@RT(0) @RT(36)sv_bMoldClosed,sv_bMonitorClampPress @RT(9)PU_Task_7 @F @F 
+@END_Algo 
+
+@BEG_Dcl 
+@RT(16)DclTreeContainer 
+0 
+@END_Dcl 
+
+@END_Export 
+
+@BEG_SfcBody 
+8 7 6 
+
+@BEG_SfcData 2 
+@StepSeq @RT(4)sseq @F 7 
+@Step @RT(7)S_Start @F @T @T @F @RT(0) @F 
+@AcbCont @RT(7)unnamed @F 1 
+@Acb @RT(31)ACheckClampPressSensorAvailable @F @F @RT(1)P @RT(0) @F @F @F @F 
+
+@AltBranch @RT(3)alt @F 2 
+@TransSeq @RT(4)tseq @F 1 
+@Trans @RT(7)TLinked @F @T @F @F @T @T @TL(2)
+mbClampPressSensorAvailable
+
+@RT(7)TLinked @F 
+
+@TransSeq @RT(4)tseq @F 4 
+@Trans @RT(10)TNotLinked @F @T @F @F @T @T @TL(2)
+NOT mbClampPressSensorAvailable
+
+@RT(10)TNotLinked @F 
+@Step @RT(6)S_Stop @F @F @T @F @RT(0) @F 
+@AcbCont @RT(7)unnamed @F 1 
+@Acb @RT(5)AStop @F @T @RT(1)P @RT(0) @F @F @T @TL(3)
+sv_bLockDecompOK := TRUE;
+STOP_PROCESS_ALGORITHM();
+
+@F 
+
+@Trans @RT(5)TStop @F @T @F @F @T @T @TL(2)
+TRUE
+
+@RT(5)TStop @F 
+@Goto @RT(7)S_Start @F @F 
+
+
+@Step @RT(6)S_Init @F @F @F @F @RT(0) @F 
+@AcbCont @RT(7)unnamed @F 2 
+@Acb @RT(16)AInitMeasurement @F @F @RT(1)P @RT(0) @F @F @F @F 
+@Acb @RT(22)AResetClampPressSensor @F @F @RT(1)P @RT(0) @F @F @F @F 
+
+@Trans @RT(9)TInitDone @F @T @F @F @T @T @TL(2)
+S_Init.T > T#500ms
+
+@RT(9)TInitDone @F 
+@Step @RT(5)S_End @F @F @F @F @RT(0) @F 
+@AcbCont @RT(7)unnamed @F 1 
+@Acb @RT(25)AActivateClampPressSensor @F @F @RT(1)P @RT(0) @F @F @F @F 
+
+@Trans @RT(8)TEndDone @F @T @F @F @T @T @TL(2)
+TRUE
+
+@RT(8)TEndDone @F 
+@Goto @RT(6)S_Stop @F @F 
+@END_SfcData 
+@SaActions 4 
+@SaText @RT(31)ACheckClampPressSensorAvailable 1 @TL(17)
+mbClampPressSensorAvailable := IS_LINKED(ai_ClampPress);
+mbClampPressSensorWithReset := IS_LINKED(do_ClampPressSensorReset);
+IF NOT mbClampPressSensorAvailable THEN
+   sv_bClampForceBuildUpWithTime := TRUE;
+ELSE
+   sv_bClampForceBuildUpWithTime := FALSE;
+END_IF;
+
+//Cyclic mold height adjust in closed loop
+sv_bClampPressSensorAvailable := mbClampPressSensorAvailable;   
+mpbAdjustInProduction := GET_SYNC_REFTO('MoldHeight1.sv_MoveClosedLoop.bProgrammedInSequence', T#0s, Status);
+IF Status <> KSYS_Status_OK THEN
+   mpbAdjustInProduction := @sv_bFALSE;
+END_IF;
+
+g_bClampPressSensorsAvailable := mbClampPressSensorAvailable; 
+
+
+@SaText @RT(25)AActivateClampPressSensor 1 @TL(17)
+(**************************************** WARNING ********************************************
+ *** The KEBA Kemro K2 System including software is not intended for safety control tasks! ***
+ ***                       For further information see Comment tab!                        ***
+ *********************************************************************************************)
+
+IF mbClampPressSensorWithReset THEN
+   (*activate sensor*)
+   do_ClampPressSensorReset := FALSE;
+END_IF;
+
+IF mbDirectLock THEN
+   START_PROCESS_ALGORITHM(paMeasureClampPress);
+ELSE
+   START_PROCESS_ALGORITHM(paMeasureClampForce);
+   sv_bLockDecompOK := TRUE;
+END_IF;
+
+
+@SaText @RT(22)AResetClampPressSensor 1 @TL(10)
+(**************************************** WARNING ********************************************
+ *** The KEBA Kemro K2 System including software is not intended for safety control tasks! ***
+ ***                       For further information see Comment tab!                        ***
+ *********************************************************************************************)
+
+IF mbClampPressSensorWithReset THEN
+   (*reset clamp pressure sensor --> measurement inactive*)
+   do_ClampPressSensorReset := TRUE;
+END_IF;
+
+
+@SaText @RT(16)AInitMeasurement 1 @TL(19)
+(**************************************** WARNING ********************************************
+ *** The KEBA Kemro K2 System including software is not intended for safety control tasks! ***
+ ***                       For further information see Comment tab!                        ***
+ *********************************************************************************************)
+
+sEndPointName := CONCAT(GET_MY_FU_NAME(),'.ai_ClampPress');
+mbDirectLock := ((sv_Options AND cSubOptionMoldDirectLock) = cSubOptionMoldDirectLock);
+
+IF mbDirectLock THEN
+   abMeasure.aInit(sRawValue := sEndPointName,
+                pLintabPointArray := @sv_ClampPressLintab.LintabPoints.Point,
+                piUsedLintabPoints := @sv_ClampPressLintab.LintabPoints.uNoOfPoints);
+ELSE
+   abMeasure.aInit(sRawValue := sEndPointName,
+                pLintabPointArray := @sv_ClampForceSensorLintab.LintabPoints.Point,
+                piUsedLintabPoints := @sv_ClampForceSensorLintab.LintabPoints.uNoOfPoints);   
+END_IF;
+
+
+
+@SaTrans 0 
+@SaExits 0 
+@END_SfcBody 
+
+@@@BEG_Comment@@@ 
+@TL(0)
+
+@@@END_Comment@@@ 
+
+@BEG_Body 
+@TL(15)
+(**************************************** WARNING ********************************************
+ *** The KEBA Kemro K2 System including software is not intended for safety control tasks! ***
+ ***                       For further information see Comment tab!                        ***
+ *********************************************************************************************)
+
+abMeasure.aRunLight(rValue => rActClampPressHydr);
+sv_bClampPressSensorError := abMeasure.aRunLight.bSensorError;
+
+// Actual Clamp Force in [kN]
+rClampForceAct := ((rActClampPressHydr * 1.0E5) * (mrCylinderSizeClampForce * 1.0E-6)) / 1000.0;
+b := WRITE_SVREAL_DIRECT(sv_rClampForceAct, rClampForceAct);
+
+sv_bLockDecompOK := (sv_rClampForceAct <= sv_rLockDecompLimit);
+
+
+@END_Body 
+
+@@@BEG_Comment@@@ 
+@TL(0)
+
+@@@END_Comment@@@ 
+
+@BEG_Body 
+@TL(9)
+(**************************************** WARNING ********************************************
+ *** The KEBA Kemro K2 System including software is not intended for safety control tasks! ***
+ ***                       For further information see Comment tab!                        ***
+ *********************************************************************************************)
+
+abMeasure.aRunLight();
+sv_bClampPressSensorError := abMeasure.aRunLight.bSensorError;
+b := WRITE_SVREAL_DIRECT(sv_rClampForceAct, abMeasure.aRunLight.rValue);
+
+@END_Body 
+
+@@@BEG_Comment@@@ 
+@TL(1)
+convert input voltage to clamp force
+@@@END_Comment@@@ 
+
+@BEG_Body 
+@TL(37)
+(**************************************** WARNING ********************************************
+ *** The KEBA Kemro K2 System including software is not intended for safety control tasks! ***
+ ***                       For further information see Comment tab!                        ***
+ *********************************************************************************************)
+
+IF NOT mbInitDone THEN
+   fbTon(IN := TRUE, PT := T#200ms);
+   mbInitDone := TRUE;
+
+END_IF;
+
+fbTon(IN := TRUE);
+
+IF mbMeasuringRequested THEN
+   (*new measuring requested --> do not stop measuring and monitoring*)
+   fbTon(IN := FALSE);
+   mbInitDone := FALSE;
+   STOP_PROCESS_ALGORITHM();
+   RETURN;
+
+END_IF;
+
+IF fbTon.Q THEN
+      
+   IF mbClampPressSensorWithReset THEN
+      (*reset sensor*)
+      do_ClampPressSensorReset := TRUE;
+   END_IF;
+   
+   fbTon(IN := FALSE);
+   mbInitDone := FALSE;
+   STOP_PROCESS_ALGORITHM();
+
+END_IF;
+
+
+
+@END_Body 
+
+@@@BEG_Comment@@@ 
+@TL(0)
+
+@@@END_Comment@@@ 
+
+@BEG_Body 
+@TL(21)
+(**************************************** WARNING ********************************************
+ *** The KEBA Kemro K2 System including software is not intended for safety control tasks! ***
+ ***                       For further information see Comment tab!                        ***
+ *********************************************************************************************)
+
+IF sv_bMoldOpen THEN
+   (*stop measuring delayed*)
+   mbMeasuringRequested := FALSE;
+   START_PROCESS_ALGORITHM(paStopMeasureDelayed);
+      
+ELSE
+   (*mold not open -> start measuring of clamp pressure*)
+   mbMeasuringRequested := TRUE;
+   IF mbClampPressSensorWithReset THEN
+      (*activate sensor*)
+      do_ClampPressSensorReset := FALSE;
+   END_IF;
+   
+   
+END_IF;
+
+@END_Body 
+
+@@@BEG_Comment@@@ 
+@TL(0)
+
+@@@END_Comment@@@ 
+
+@BEG_Body 
+@TL(13)
+(**************************************** WARNING ********************************************
+ *** The KEBA Kemro K2 System including software is not intended for safety control tasks! ***
+ ***                       For further information see Comment tab!                        ***
+ *********************************************************************************************)
+
+IF evStartData.DeviceId.CompId = cCompMold AND
+   evStartData.DeviceId.IndexId = 1 AND 
+   evStartData.MoveDir = cMoveBwd THEN
+        
+   (*start of any mold bwd movement --> reset "clamp force reached" flag*)
+   sv_bClampForceReached := FALSE;    
+END_IF;
+
+@END_Body 
+
+@@@BEG_Comment@@@ 
+@TL(0)
+
+@@@END_Comment@@@ 
+
+@BEG_Body 
+@TL(14)
+(**************************************** WARNING ********************************************
+ *** The KEBA Kemro K2 System including software is not intended for safety control tasks! ***
+ ***                       For further information see Comment tab!                        ***
+ *********************************************************************************************)
+
+IF evStartedStoppedData.State = nStarted AND
+   evStartedStoppedData.DeviceId.CompId = cCompInjection AND
+   evStartedStoppedData.DeviceId.IndexId = 1 AND
+   evStartedStoppedData.MoveId = cMoveInject THEN
+
+   (* sample clamp force for PDP when injection starts *)
+   sv_rClampForceStored := sv_rClampForceAct;
+END_IF;
+
+@END_Body 
+
+@@@BEG_Comment@@@ 
+@TL(0)
+
+@@@END_Comment@@@ 
+
+@BEG_Body 
+@TL(35)
+(**************************************** WARNING ********************************************
+ *** The KEBA Kemro K2 System including software is not intended for safety control tasks! ***
+ ***                       For further information see Comment tab!                        ***
+ *********************************************************************************************)
+
+//calculate needed hydraulic pressure from set clamp force
+//velocity not needed on this machine
+//FIXME also recalc after data loading
+
+mrCylinderSizeClampForce := FCalculateCylinderSize(CylinderData := sv_CylinderData,
+                                                   bSmallSize := sv_CylinderData.bUseSmallSize,
+                                                   bCalcHighPressSize := TRUE);
+
+IF mrCylinderSizeClampForce <= 0.0 THEN
+   // Errors: use default value
+   // - no division by zero
+   // - negative force not possible
+   mrCylinderSizeClampForce := 1.0;
+END_IF;
+
+IF g_bDirectLockAvailable THEN
+   //calculate max. clamp force from machine parameters (max pressure, cylinder size)
+   sv_ClampForce.rMaxClampForce := sv_HydrMaxValuesClose.rMaxPressure * 1.0E5 / 1.0E3 * (mrCylinderSizeClampForce * 1.0E-6);
+   IF mbClampPressSensorAvailable THEN
+      // Set pressure for pump should be greater than desired clamp force in [bar] to ensure
+      // that clamp forece can be reached -> only useful, if pressure sensor available
+      rSetClampPres := sv_ClampForce.rSetClampForce * 1000.0 / (MAX(mrCylinderSizeClampForce, 1.0) * 1.0E-6) * 1.0E-5;
+      sv_MoldFwdProfVisSrc.Profile.Points[19].rPressure := MIN(rSetClampPres, sv_HydrMaxValuesClose.rMaxPressure);
+   ELSE
+      //use high pressure for calculation of clamp force
+      //rSetClampPres (kN) := p (bar) * 1e5 -> (N/m^2) / 1e3 -> (kN/m^2) * A (m^2) * 1e-6 -> (kN)
+      sv_ClampForce.rSetClampForce := sv_MoldFwdProfVisSrc.Profile.Points[19].rPressure * 1.0E5 / 1.0E3 * (mrCylinderSizeClampForce * 1.0E-6);
+   END_IF;
+END_IF;
+
+@END_Body 
+
+@@@BEG_Comment@@@ 
+@TL(0)
+
+@@@END_Comment@@@ 
+
+@BEG_Body 
+@TL(44)
+(**************************************** WARNING ********************************************
+ *** The KEBA Kemro K2 System including software is not intended for safety control tasks! ***
+ ***                       For further information see Comment tab!                        ***
+ *********************************************************************************************)
+IF sv_bMoldClosed THEN
+   (*check lower limit*)
+   IF sv_rClampForceAct < (sv_ClampForce.rSetClampForce - sv_rClampForceTol) THEN
+       
+      (*mold height adjust in production with closed loop control*)
+      sv_bClampForceLow := TRUE;      
+      
+      (*alarm is not set in case that mold height adjustment in production is activated*)
+      IF NOT mpbAdjustInProduction^ THEN
+         SET_ALARM(Name := erClampPressToLow);
+      END_IF;         
+       
+      STOP_PROCESS_ALGORITHM();
+   ELSE                                                            
+       sv_bClampForceLow := FALSE;  
+   END_IF;   
+
+   (*check higher limit*)
+   IF sv_rClampForceAct > (sv_ClampForce.rSetClampForce + sv_rClampForceTol) THEN
+      (*limit is maybe exceeded because of to much injected material --> stop inject movement and set alarm*)
+
+      (*alarm is not set in case that mold height adjustment in production is activated*)
+      IF NOT mpbAdjustInProduction^ THEN         
+         fbStop(DeviceId := DeviceIdInjection);
+         SET_ALARM(Name := erClampPressToHigh);  
+      END_IF;         
+      
+      (*mold height adjust in production with closed loop control*)
+      sv_bClampForceHigh := TRUE;
+      STOP_PROCESS_ALGORITHM();
+   ELSE                                                              
+      sv_bClampForceHigh := FALSE;
+   END_IF;   
+     
+ELSE
+   (*stop checking limits*)     
+   STOP_PROCESS_ALGORITHM();
+END_IF;
+
+
+@END_Body 
+
+@@@BEG_Comment@@@ 
+@TL(2)
+cyclic monitoring of the clamp pressure when sv_bMoldClosed is set
+uses sv_rClampPressTol as tolerance
+@@@END_Comment@@@ 
+
+@BEG_Body 
+@TL(13)
+(**************************************** WARNING ********************************************
+ *** The KEBA Kemro K2 System including software is not intended for safety control tasks! ***
+ ***                       For further information see Comment tab!                        ***
+ *********************************************************************************************)
+
+IF sv_bInitDone AND sv_bMonitorClampPress AND sv_bMoldClosed THEN
+   IF mbClampPressSensorAvailable THEN
+      (*monitoring of clamp pressure when clamp pressure is built*)
+      START_PROCESS_ALGORITHM(paMonitorClampPressHighLow);       
+   END_IF;
+END_IF;    
+
+
+@END_Body 
+
+@@@BEG_Comment@@@ 
+@TL(0)
+
+@@@END_Comment@@@ 
+@END_Body 
+
+@END_Contents 

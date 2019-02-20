@@ -1,0 +1,1898 @@
+(*
+@h    ! WARNING !
+@h    The Kemro K2 system (including software) only meets category B according to EN 954-1,
+@h    thus it is not intended for usage in safety-relevant control applications in the field 
+@h    of personal safety (e.g. emergency stop).
+@h    To implement potentially necessary safety-relevant control tasks, always use additional 
+@h    external safety devices that are intended for the particular purpose, and meet the necessary 
+@h    functional safety.
+@h    For further information see EN 954-1 (EN ISO 13849-1) and/or the K2-x00 user manual, chapter 
+@h    "CE conformity, directives and standards".
+
+This AB starts and stopps the process algorithms for fast output and mid output.
+After a change in pressure or velocity lintab, a minimum output voltage is calculated.
+During operation modes manual, HA and FA the output to the pump is at least this calculated minimum voltage,
+even if there is actually no movement active.
+In setup mode, the output voltage is set to 0.0 if the pump is stopped.
+This block offers also the possibility to add a dither signal to pressure and velocity output.
+Setting the dither amplitude to 0.0 disables the signal.
+If the application is not running on a CP 03x, the dither amplitude is automatically resetted to 0.0. 
+*)
+
+IMPORT_OVER_LISTFILE
+ SET_ALARM
+, GET_SYNC_REFTO
+, WRITE_SVREAL_DIRECT
+, FAddToScopeGroup
+, ABAnalogOutput
+, ABAnalogHWOut
+, tsDeviceId
+, KAPPL_LintabData
+, tnOperationMode
+, tnAnaOutputMode
+, FBDebugTrace
+, FBSinus
+, KSWO_Status
+, KCTRL_Lintab_Light
+, KCTRL_Lintab_Param_Light
+, KCAT_HandleData
+, KCAT_Status
+
+END_IMPORT
+
+ALGORITHM_BLOCK ABPumpOutput #DUMMY_EDIT_BLOCK
+
+SYSTEM_VAR
+ sv_rPressure : REAL;
+ sv_rVelocity : REAL;
+ sv_DeviceId : tsDeviceId;
+ sv_rMinVoltageVelOutput : REAL;
+ sv_rMinVoltagePressOutput : REAL;
+ sv_VelocityLintab : KAPPL_LintabData;
+ sv_PressureLintab : KAPPL_LintabData;
+ sv_OperationMode : tnOperationMode;
+ sv_rValueMinVoltageVelDetect : REAL (* x - value [%] for detection of minimum output voltage of AO pump velocity *);
+ sv_rValueMinVoltagePresDetect : REAL (* x - value [bar] for detection of minimum output voltage of AO pump pressure *);
+ sv_rDitherFrequencyVel : REAL;
+ sv_rDitherAmplitudeVel : REAL;
+ sv_rDitherFrequencyPres : REAL;
+ sv_rDitherAmplitudePres : REAL;
+ sv_bInitStart : BOOL;
+ sv_bInitDone : BOOL;
+ sv_rMaxPressure : REAL;
+END_VAR
+
+SYSTEM_OBJECT
+ TaskAnalog : TASK;
+ TaskInject : TASK;
+ TaskSlow : TASK;
+ erVariableNotLinked : ALARM;
+ PU_Task_7 : TASK;
+ PU_Task_3 : TASK;
+END_OBJECT
+
+VAR
+ mbStop : BOOL;
+ mbStopped : BOOL := TRUE;
+ mprPressureSource : REFTO REAL;
+ mprVelocitySource : REFTO REAL;
+ abAnalogOutputP : ABAnalogOutput;
+ abAnalogOutputV : ABAnalogOutput;
+ abAnalogHWOutP : ABAnalogHWOut;
+ abAnalogHWOutV : ABAnalogHWOut;
+ mrMinVoltageVelocityOutput : REAL (* minimum voltage for AO velocity (only considered in HA and FA) *);
+ mrMinVoltagePressureOutput : REAL (* minimum voltage for AO pressure (only considered in HA and FA) *);
+END_VAR
+
+ALGORITHM aStart
+
+
+VAR_INPUT
+ AnaOutMode : tnAnaOutputMode;
+ pLintabP : REFTO KAPPL_LintabData;
+ pLintabV : REFTO KAPPL_LintabData;
+ prPressure : REFTO REAL;
+ prVelocity : REFTO REAL;
+END_VAR
+#BEGIN_EDIT_BLOCK
+(**************************************** WARNING ********************************************
+ *** The KEBA Kemro K2 System including software is not intended for safety control tasks! ***
+ ***                       For further information see Comment tab!                        ***
+ *********************************************************************************************)
+
+mbStop := FALSE;
+//make sure when we get a start and a stop very fast,
+//we do not end up in a situation where mbStopped is FALSE but paXxxOutput is still running
+mbStopped := FALSE;
+ 
+abAnalogOutputP.aInit(pLintab := pLintabP);
+abAnalogOutputV.aInit(pLintab := pLintabV);
+ 
+mprPressureSource := prPressure;
+mprVelocitySource := prVelocity;
+
+CASE AnaOutMode OF
+
+   nAnaOutputModeMid:  
+         START_PROCESS_ALGORITHM(paMidOutput);   
+                                               
+   nAnaOutputModeFast: 
+         START_PROCESS_ALGORITHM(paFastOutput);
+END_CASE;    
+
+
+;#END_EDIT_BLOCK END_ALGORITHM
+
+ALGORITHM aStop
+
+
+VAR_OUTPUT
+ bReady : BOOL;
+END_VAR
+#BEGIN_EDIT_BLOCK
+(**************************************** WARNING ********************************************
+ *** The KEBA Kemro K2 System including software is not intended for safety control tasks! ***
+ ***                       For further information see Comment tab!                        ***
+ *********************************************************************************************)
+
+IF NOT mbStopped THEN
+   mbStop := TRUE;
+END_IF;
+bReady := mbStopped;
+
+
+;#END_EDIT_BLOCK END_ALGORITHM
+
+ALGORITHM aSetErrorMessage
+
+
+VAR
+ fbDebugTrace : FBDebugTrace;
+END_VAR
+#BEGIN_EDIT_BLOCK
+(**************************************** WARNING ********************************************
+ *** The KEBA Kemro K2 System including software is not intended for safety control tasks! ***
+ ***                       For further information see Comment tab!                        ***
+ *********************************************************************************************)
+
+IF NOT abAnalogHWOutV.aIsLinked() THEN
+   SET_ALARM(Name := erVariableNotLinked,
+             SubID1 := sv_DeviceId.CompId,
+             SubID2 := sv_DeviceId.IndexId,
+             Param1 := 'ao_Velocity');
+END_IF;
+
+IF NOT abAnalogHWOutP.aIsLinked() THEN
+   SET_ALARM(Name := erVariableNotLinked,
+             SubID1 := sv_DeviceId.CompId,
+             SubID2 := sv_DeviceId.IndexId,
+             Param1 := 'ao_Pressure');
+END_IF;
+
+IF abAnalogOutputP.aRun.bError THEN
+   fbDebugTrace(CONCAT('ABPumpOutput: error ',DINT_TO_STRING(abAnalogOutputP.aRun.iErrorInfo),' in ABAnalogOutputP'));
+END_IF;
+
+IF abAnalogOutputV.aRun.bError THEN
+   fbDebugTrace(CONCAT('ABPumpOutput: error ',DINT_TO_STRING(abAnalogOutputV.aRun.iErrorInfo),' in ABAnalogOutputV'));
+END_IF;
+
+
+
+;#END_EDIT_BLOCK END_ALGORITHM
+
+PROCESS_ALGORITHM paFastOutput ON TaskInject(15000)
+
+
+VAR_TEMP
+ b : BOOL;
+END_VAR
+
+VAR
+ fbSinusVel : FBSinus;
+ fbSinusPres : FBSinus;
+ rDitherVel : REAL;
+ rDitherPres : REAL;
+ rPressure : REAL;
+END_VAR
+
+(* IecGraph-Code *)
+
+(* init step *)
+INITIAL_STEP OUT:
+Init (P);
+ADitherSignal (N);
+AOUT (N);
+END_STEP
+
+ACTION Init: #BEGIN_EDIT_BLOCK
+mbStopped := FALSE;
+
+;#END_EDIT_BLOCK END_ACTION (*Init*)
+ACTION AOUT: #BEGIN_EDIT_BLOCK
+//limit pressure output to max. pressure of the pump
+rPressure := MIN(sv_rMaxPressure, mprPressureSource^);  
+
+b := WRITE_SVREAL_DIRECT(sv_rPressure, rPressure);
+b := WRITE_SVREAL_DIRECT(sv_rVelocity, mprVelocitySource^);
+   
+(* Lintab Calculation *)
+abAnalogOutputP.aRun(rSetValue := sv_rPressure);
+abAnalogOutputV.aRun(rSetValue := sv_rVelocity);
+
+(* Output to AO and Shortcircuit detection *)
+abAnalogHWOutP.aOut(rValue := (MAX(abAnalogOutputP.aRun.rOutput, mrMinVoltagePressureOutput)) + rDitherPres);
+abAnalogHWOutV.aOut(rValue := (MAX(abAnalogOutputV.aRun.rOutput, mrMinVoltageVelocityOutput)) + rDitherVel);
+
+;#END_EDIT_BLOCK END_ACTION (*AOUT*)
+
+(* steps *)
+STEP ERROR_STOP:
+AErrorStop (P);
+END_STEP
+
+ACTION AErrorStop: #BEGIN_EDIT_BLOCK
+sv_rPressure := 0.0;
+sv_rVelocity := 0.0;
+aSetErrorMessage();
+
+;#END_EDIT_BLOCK END_ACTION (*AErrorStop*)
+STEP S_Stop:
+AStop (P);
+END_STEP
+
+ACTION AStop: #BEGIN_EDIT_BLOCK
+mbStop := FALSE; 
+
+(* Stopping Analog Output*)
+abAnalogHWOutP.aOut(rValue := mrMinVoltagePressureOutput);
+abAnalogHWOutV.aOut(rValue := mrMinVoltageVelocityOutput);
+
+mbStopped := TRUE;
+STOP_PROCESS_ALGORITHM();
+
+;#END_EDIT_BLOCK END_ACTION (*AStop*)
+
+(* transitions *)
+TRANSITION Trans1 (* Trans1 *) FROM OUT TO ERROR_STOP :=  #BEGIN_EDIT_BLOCK
+abAnalogOutputP.aRun.bError OR
+abAnalogOutputV.aRun.bError OR
+abAnalogHWOutP.aOut.bError OR
+abAnalogHWOutV.aOut.bError
+;#END_EDIT_BLOCK
+END_TRANSITION
+
+GO_ON_TRANSITION Trans5 (* Trans5 *) FROM ERROR_STOP TO S_Stop :=  #BEGIN_EDIT_BLOCK
+TRUE
+;#END_EDIT_BLOCK
+END_TRANSITION
+
+GO_ON_TRANSITION TStop (* Trans4 *) FROM OUT TO S_Stop :=  #BEGIN_EDIT_BLOCK
+mbStop
+;#END_EDIT_BLOCK
+END_TRANSITION
+
+TRANSITION TNewOutput (* Trans7 *) FROM S_Stop TO OUT :=  #BEGIN_EDIT_BLOCK
+TRUE
+;#END_EDIT_BLOCK
+END_TRANSITION
+
+(* end IecGraph-Code *)
+(* sfc-code *)
+
+(* stand alone actions *)
+ACTION ADitherSignal: #BEGIN_EDIT_BLOCK
+(**************************************** WARNING ********************************************
+ *** The KEBA Kemro K2 System including software is not intended for safety control tasks! ***
+ ***                       For further information see Comment tab!                        ***
+ *********************************************************************************************)
+
+//sinus signals for pressure and velocity dither
+IF sv_rDitherAmplitudeVel > 0.0 THEN
+   fbSinusVel(rAmplitude := sv_rDitherAmplitudeVel,
+              rFrequency := sv_rDitherFrequencyVel,
+              rOut => rDitherVel);
+ELSE
+   rDitherVel := 0.0;
+END_IF;
+
+IF sv_rDitherAmplitudePres > 0.0 THEN
+   fbSinusPres(rAmplitude := sv_rDitherAmplitudePres,
+              rFrequency := sv_rDitherFrequencyPres,
+              rOut => rDitherPres);
+ELSE
+   rDitherPres := 0.0;
+END_IF;
+
+;#END_EDIT_BLOCK END_ACTION (*ADitherSignal*)
+(* end sfc-code *)
+
+
+END_ALGORITHM
+
+PROCESS_ALGORITHM paMidOutput ON TaskAnalog(15000)
+
+
+VAR_TEMP
+ b : BOOL;
+END_VAR
+
+VAR
+ fbSinusVel : FBSinus;
+ fbSinusPres : FBSinus;
+ rDitherVel : REAL;
+ rDitherPres : REAL;
+ rPressure : REAL;
+END_VAR
+
+(* IecGraph-Code *)
+
+(* init step *)
+INITIAL_STEP OUT:
+Init (P);
+ADitherSignal (N);
+AOUT (N);
+END_STEP
+
+ACTION Init: #BEGIN_EDIT_BLOCK
+mbStopped := FALSE;
+
+;#END_EDIT_BLOCK END_ACTION (*Init*)
+ACTION AOUT: #BEGIN_EDIT_BLOCK
+//limit pressure output to max. pressure of the pump
+rPressure := MIN(sv_rMaxPressure, mprPressureSource^);  
+
+b := WRITE_SVREAL_DIRECT(sv_rPressure, rPressure);
+b := WRITE_SVREAL_DIRECT(sv_rVelocity, mprVelocitySource^);
+   
+(* Lintab Calculation *)
+abAnalogOutputP.aRun(rSetValue := sv_rPressure);
+abAnalogOutputV.aRun(rSetValue := sv_rVelocity);
+
+(* Shortcircuit detection *)
+abAnalogHWOutP.aOut(rValue := (MAX(abAnalogOutputP.aRun.rOutput, mrMinVoltagePressureOutput)) + rDitherPres);
+abAnalogHWOutV.aOut(rValue := (MAX(abAnalogOutputV.aRun.rOutput, mrMinVoltageVelocityOutput)) + rDitherVel);
+
+
+
+;#END_EDIT_BLOCK END_ACTION (*AOUT*)
+
+(* steps *)
+STEP ERROR_STOP:
+AErrorStop (P);
+END_STEP
+
+ACTION AErrorStop: #BEGIN_EDIT_BLOCK
+sv_rPressure := 0.0;
+sv_rVelocity := 0.0;
+aSetErrorMessage();
+
+;#END_EDIT_BLOCK END_ACTION (*AErrorStop*)
+STEP S_Stop:
+AStop (P);
+END_STEP
+
+ACTION AStop: #BEGIN_EDIT_BLOCK
+mbStop := FALSE; 
+
+(* Stopping Analog Output*)
+abAnalogHWOutP.aOut(rValue := mrMinVoltagePressureOutput);
+abAnalogHWOutV.aOut(rValue := mrMinVoltageVelocityOutput);
+
+mbStopped := TRUE;
+STOP_PROCESS_ALGORITHM();
+
+;#END_EDIT_BLOCK END_ACTION (*AStop*)
+
+(* transitions *)
+TRANSITION Trans1 (* Trans1 *) FROM OUT TO ERROR_STOP :=  #BEGIN_EDIT_BLOCK
+abAnalogOutputP.aRun.bError OR
+abAnalogOutputV.aRun.bError OR
+abAnalogHWOutP.aOut.bError OR
+abAnalogHWOutV.aOut.bError
+;#END_EDIT_BLOCK
+END_TRANSITION
+
+GO_ON_TRANSITION Trans5 (* Trans5 *) FROM ERROR_STOP TO S_Stop :=  #BEGIN_EDIT_BLOCK
+TRUE
+;#END_EDIT_BLOCK
+END_TRANSITION
+
+GO_ON_TRANSITION TStop (* Trans4 *) FROM OUT TO S_Stop :=  #BEGIN_EDIT_BLOCK
+mbStop
+;#END_EDIT_BLOCK
+END_TRANSITION
+
+TRANSITION TNewOutput (* Trans7 *) FROM S_Stop TO OUT :=  #BEGIN_EDIT_BLOCK
+TRUE
+;#END_EDIT_BLOCK
+END_TRANSITION
+
+(* end IecGraph-Code *)
+(* sfc-code *)
+
+(* stand alone actions *)
+ACTION ADitherSignal: #BEGIN_EDIT_BLOCK
+(**************************************** WARNING ********************************************
+ *** The KEBA Kemro K2 System including software is not intended for safety control tasks! ***
+ ***                       For further information see Comment tab!                        ***
+ *********************************************************************************************)
+
+//sinus signals for pressure and velocity dither
+IF sv_rDitherAmplitudeVel > 0.0 THEN
+   fbSinusVel(rAmplitude := sv_rDitherAmplitudeVel,
+              rFrequency := sv_rDitherFrequencyVel,
+              rOut => rDitherVel);
+ELSE
+   rDitherVel := 0.0;
+END_IF;
+
+IF sv_rDitherAmplitudePres > 0.0 THEN
+   fbSinusPres(rAmplitude := sv_rDitherAmplitudePres,
+              rFrequency := sv_rDitherFrequencyPres,
+              rOut => rDitherPres);
+ELSE
+   rDitherPres := 0.0;
+END_IF;
+
+;#END_EDIT_BLOCK END_ACTION (*ADitherSignal*)
+(* end sfc-code *)
+
+
+END_ALGORITHM
+
+PROCESS_ALGORITHM paInitDebugMeasurement ON TaskSlow AUTOSTART
+
+
+VAR
+ fuName : STRING(255);
+ variableName : STRING(255);
+ swoState : KSWO_Status;
+ b : BOOL;
+END_VAR
+#BEGIN_EDIT_BLOCK
+fuName := GET_MY_FU_NAME();
+variableName := CONCAT(fuName,'.rPressure Hydr bar');
+swoState := KSWO_AddVariable( Task := TaskInject,
+                              Name := variableName,
+                              Variable := sv_rPressure);
+b := FAddToScopeGroup(Task := TaskInject, 
+                      Name := variableName, 
+                      GroupId := cScopeGroupPump);
+variableName := CONCAT(fuName,'.rVelocity %');
+swoState := KSWO_AddVariable( Task := TaskInject,
+                              Name := variableName,
+                              Variable := sv_rVelocity);
+b := FAddToScopeGroup(Task := TaskInject, 
+                      Name := variableName, 
+                      GroupId := cScopeGroupPump);
+
+variableName := CONCAT(fuName,'.rPressure Hydr bar');
+swoState := KSWO_AddVariable( Task := TaskAnalog,
+                              Name := variableName,
+                              Variable := sv_rPressure);
+variableName := CONCAT(fuName,'.rVelocity %');
+swoState := KSWO_AddVariable( Task := TaskAnalog,
+                              Name := variableName,
+                              Variable := sv_rVelocity);
+
+STOP_PROCESS_ALGORITHM();
+
+
+
+;#END_EDIT_BLOCK END_ALGORITHM
+
+ALGORITHM aGetMinVoltage
+
+
+VAR_INPUT
+ pLintab : REFTO KAPPL_LintabData;
+ rXValue : REAL (* xValue (for example 1% or 2 bar) *);
+END_VAR
+
+VAR_OUTPUT
+ rMinVoltage : REAL (* according voltage for rXValue *);
+END_VAR
+
+VAR
+ Lintab : KCTRL_Lintab_Light;
+ LintabParams : KCTRL_Lintab_Param_Light;
+END_VAR
+#BEGIN_EDIT_BLOCK
+(**************************************** WARNING ********************************************
+ *** The KEBA Kemro K2 System including software is not intended for safety control tasks! ***
+ ***                       For further information see Comment tab!                        ***
+ *********************************************************************************************)
+
+LintabParams.LintabPoints := pLintab^.LintabPoints;
+LintabParams.Mode.bLinearExtrapolation := TRUE; 
+LintabParams.Mode.bSetNegativeValuesToZero := FALSE;
+LintabParams.Mode.bZeroExtrapolation := FALSE;
+Lintab.Par(Param := LintabParams);
+
+IF Lintab.Par.parStatus <> KCTRL_Ret_OK THEN
+   rMinVoltage := 0.0;
+   RETURN; //error -> return 0.0
+END_IF;
+
+//calculate value
+Lintab.Calculate(rX := rXValue);
+IF Lintab.Calculate.calcStatus <> KCTRL_Ret_OK THEN
+   rMinVoltage := 0.0;
+   RETURN; //error -> return 0.0
+ELSE
+   rMinVoltage := Lintab.Calculate.rY;
+END_IF;
+
+
+
+;#END_EDIT_BLOCK END_ALGORITHM
+
+POSTUPDATE_ALGORITHM pVelocityLintab ON PU_Task_7 WITH sv_VelocityLintab,sv_rValueMinVoltageVelDetect
+
+#BEGIN_EDIT_BLOCK
+(**************************************** WARNING ********************************************
+ *** The KEBA Kemro K2 System including software is not intended for safety control tasks! ***
+ ***                       For further information see Comment tab!                        ***
+ *********************************************************************************************)
+
+aGetMinVoltage(pLintab := @sv_VelocityLintab,
+               rXValue := sv_rValueMinVoltageVelDetect,
+               rMinVoltage => sv_rMinVoltageVelOutput);
+
+
+;#END_EDIT_BLOCK END_ALGORITHM
+
+POSTUPDATE_ALGORITHM pPressureLintab ON PU_Task_7 WITH sv_PressureLintab,sv_rValueMinVoltagePresDetect
+
+#BEGIN_EDIT_BLOCK
+(**************************************** WARNING ********************************************
+ *** The KEBA Kemro K2 System including software is not intended for safety control tasks! ***
+ ***                       For further information see Comment tab!                        ***
+ *********************************************************************************************)
+
+aGetMinVoltage(pLintab := @sv_PressureLintab,
+               rXValue := sv_rValueMinVoltagePresDetect,
+               rMinVoltage => sv_rMinVoltagePressOutput);
+
+
+;#END_EDIT_BLOCK END_ALGORITHM
+
+POSTUPDATE_ALGORITHM pDitherParams ON PU_Task_7 WITH sv_bInitStart,sv_rDitherAmplitudePres,sv_rDitherAmplitudeVel
+
+
+VAR
+ HandleData : KCAT_HandleData;
+ CatStatus : KCAT_Status;
+ sDevice : STRING(31);
+ bInitDone : BOOL;
+ bCurrentOutput : BOOL (* TRUE: current output available *);
+END_VAR
+#BEGIN_EDIT_BLOCK
+(**************************************** WARNING ********************************************
+ *** The KEBA Kemro K2 System including software is not intended for safety control tasks! ***
+ ***                       For further information see Comment tab!                        ***
+ *********************************************************************************************)
+
+IF NOT bInitDone THEN
+   //get device name
+   HandleData := KCAT_GetHandle('IO.ONBOARD.deviceName');
+   IF HandleData.Status = KCAT_Status_OK THEN
+      CatStatus := KCAT_GetValue(Handle := HandleData.Handle, Buffer := sDevice);  
+      sDevice := LEFT(sDevice,5);
+      
+      IF sDevice ='CP 03' THEN
+         bCurrentOutput := TRUE;     
+      END_IF;  
+   END_IF;
+   
+   bInitDone := TRUE;
+   
+END_IF;
+
+IF NOT bCurrentOutput THEN
+   //set dither amplitude to 0.0 (=disable dither signal)
+   sv_rDitherAmplitudeVel := 0.0;
+   sv_rDitherAmplitudePres := 0.0;
+END_IF;
+
+
+
+
+;#END_EDIT_BLOCK END_ALGORITHM
+
+POSTUPDATE_ALGORITHM pSetMinVoltage ON PU_Task_3 WITH sv_bInitDone,sv_rMinVoltageVelOutput,sv_rMinVoltagePressOutput,sv_OperationMode
+
+#BEGIN_EDIT_BLOCK
+(**************************************** WARNING ********************************************
+ *** The KEBA Kemro K2 System including software is not intended for safety control tasks! ***
+ ***                       For further information see Comment tab!                        ***
+ *********************************************************************************************)
+
+IF sv_OperationMode = nSetup THEN
+   //setup mode -> set minimum output voltage to 0.0
+   mrMinVoltagePressureOutput := 0.0;
+   mrMinVoltageVelocityOutput := 0.0;
+   
+ELSE
+   //all other operation modes
+   mrMinVoltagePressureOutput := sv_rMinVoltagePressOutput;
+   mrMinVoltageVelocityOutput := sv_rMinVoltageVelOutput;   
+END_IF;
+
+IF mbStopped THEN
+   //write to AO´s immediately if device is not active
+   abAnalogHWOutP.aOut(rValue := mrMinVoltagePressureOutput);
+   abAnalogHWOutV.aOut(rValue := mrMinVoltageVelocityOutput);
+END_IF;
+
+
+;#END_EDIT_BLOCK END_ALGORITHM
+
+
+
+END_ALGORITHM_BLOCK
+
+
+
+#END_OF_IEC_PART
+
+@Puma @IecEditor 6 97 @Pou 25 
+@@@BEG_Comment@@@
+@h    ! WARNING !
+@h    The Kemro K2 system (including software) only meets category B according to EN 954-1,
+@h    thus it is not intended for usage in safety-relevant control applications in the field 
+@h    of personal safety (e.g. emergency stop).
+@h    To implement potentially necessary safety-relevant control tasks, always use additional 
+@h    external safety devices that are intended for the particular purpose, and meet the necessary 
+@h    functional safety.
+@h    For further information see EN 954-1 (EN ISO 13849-1) and/or the K2-x00 user manual, chapter 
+@h    "CE conformity, directives and standards".
+
+This AB starts and stopps the process algorithms for fast output and mid output.
+After a change in pressure or velocity lintab, a minimum output voltage is calculated.
+During operation modes manual, HA and FA the output to the pump is at least this calculated minimum voltage,
+even if there is actually no movement active.
+In setup mode, the output voltage is set to 0.0 if the pump is stopped.
+This block offers also the possibility to add a dither signal to pressure and velocity output.
+Setting the dither amplitude to 0.0 disables the signal.
+If the application is not running on a CP 03x, the dither amplitude is automatically resetted to 0.0. 
+@@@END_Comment@@@
+
+@BEG_Contents 
+
+@BEG_Func 
+@RT(17)FuncTreeContainer 
+4 
+@Var @RT(9)SET_ALARM @RT(0) @T @T @DERIVED 0 @F @RT(23)KEBA_STANDARD_PROCEDURE @F 
+@T 
+@BEG_Attrib 
+0 @RT(0) @RT(0) 
+@END_Attrib 
+1 1 @F @F @F @F 
+
+@Var @RT(14)GET_SYNC_REFTO @RT(0) @T @T @DERIVED 0 @F @RT(22)KEBA_STANDARD_FUNCTION @F 
+@T 
+@BEG_Attrib 
+0 @RT(0) @RT(0) 
+@END_Attrib 
+1 1 @F @F @F @F 
+
+@Var @RT(19)WRITE_SVREAL_DIRECT @RT(0) @T @T @DERIVED 0 @F @RT(22)KEBA_STANDARD_FUNCTION @F 
+@T 
+@BEG_Attrib 
+0 @RT(0) @RT(0) 
+@END_Attrib 
+1 1 @F @F @F @F 
+
+@Var @RT(16)FAddToScopeGroup @RT(0) @T @T @DERIVED 0 @F @RT(8)FUNCTION @F 
+@T 
+@BEG_Attrib 
+0 @RT(0) @RT(0) 
+@END_Attrib 
+1 1 @F @F @F @F 
+
+@END_Func 
+
+@BEG_Const 
+@RT(18)ConstTreeContainer 
+0 
+@END_Const 
+
+@BEG_Export 
+
+@BEG_Kind 
+@ALGORITHM_BLOCK @RT(12)ABPumpOutput @STRUCTURED_TEXT 
+@RT(0) @RT(0) @RT(0) 
+@END_Kind 
+
+@BEG_Dcl 
+@RT(16)DclTreeContainer 
+33 
+@Var @RT(10)TaskAnalog @RT(0) @T @T @RENAMED 0 @T @T @DT @RT(4)TASK @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 7 @F @F @F @F 
+
+@Var @RT(10)TaskInject @RT(0) @T @T @RENAMED 0 @T @T @DT @RT(4)TASK @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 7 @F @F @F @F 
+
+@Var @RT(8)TaskSlow @RT(0) @T @T @RENAMED 0 @T @T @DT @RT(4)TASK @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 7 @F @F @F @F 
+
+@Var @RT(12)sv_rPressure @RT(0) @T @F @DT @RT(4)REAL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 8 @F @F @F @F 
+
+@Var @RT(12)sv_rVelocity @RT(0) @T @F @DT @RT(4)REAL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 8 @F @F @F @F 
+
+@Var @RT(6)mbStop @RT(0) @T @F @DT @RT(4)BOOL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(9)mbStopped @RT(0) @T @F @DT @RT(4)BOOL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(4)TRUE @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(17)mprPressureSource @RT(0) @T @T @REFTO 0 @T @DT @RT(4)REAL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(17)mprVelocitySource @RT(0) @T @T @REFTO 0 @T @DT @RT(4)REAL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(15)abAnalogOutputP @RT(0) @T @T @DERIVED 0 @T @T @DT @RT(14)ABAnalogOutput @RT(0) @T @T @UNKNOWN 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(15)abAnalogOutputV @RT(0) @T @T @DERIVED 0 @T @T @DT @RT(14)ABAnalogOutput @RT(0) @T @T @UNKNOWN 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(14)abAnalogHWOutP @RT(0) @T @T @DERIVED 0 @T @T @DT @RT(13)ABAnalogHWOut @RT(0) @T @T @UNKNOWN 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(14)abAnalogHWOutV @RT(0) @T @T @DERIVED 0 @T @T @DT @RT(13)ABAnalogHWOut @RT(0) @T @T @UNKNOWN 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(19)erVariableNotLinked @RT(0) @T @F @DT @RT(5)ALARM @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 7 @F @F @F @F 
+
+@Var @RT(11)sv_DeviceId @RT(0) @T @T @DERIVED 0 @T @T @DT @RT(10)tsDeviceId @RT(0) @T @T @UNKNOWN 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 8 @F @F @F @F 
+
+@Var @RT(23)sv_rMinVoltageVelOutput @RT(0) @T @F @DT @RT(4)REAL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 8 @F @F @F @F 
+
+@Var @RT(25)sv_rMinVoltagePressOutput @RT(0) @T @F @DT @RT(4)REAL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 8 @F @F @F @F 
+
+@Var @RT(9)PU_Task_7 @RT(0) @T @T @RENAMED 0 @T @T @DT @RT(4)TASK @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 7 @F @F @F @F 
+
+@Var @RT(9)PU_Task_3 @RT(0) @T @T @RENAMED 0 @T @T @DT @RT(4)TASK @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 7 @F @F @F @F 
+
+@Var @RT(17)sv_VelocityLintab @RT(0) @T @T @DERIVED 0 @T @T @DT @RT(16)KAPPL_LintabData @RT(0) @T @T @UNKNOWN 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 8 @F @F @F @F 
+
+@Var @RT(17)sv_PressureLintab @RT(0) @T @T @DERIVED 0 @T @T @DT @RT(16)KAPPL_LintabData @RT(0) @T @T @UNKNOWN 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 8 @F @F @F @F 
+
+@Var @RT(16)sv_OperationMode @RT(0) @T @T @DERIVED 0 @T @T @DT @RT(15)tnOperationMode @RT(0) @T @T @UNKNOWN 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 8 @F @F @F @F 
+
+@Var @RT(26)mrMinVoltageVelocityOutput @RT(0) @T @F @DT @RT(4)REAL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(62)minimum voltage for AO velocity (only considered in HA and FA) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(26)mrMinVoltagePressureOutput @RT(0) @T @F @DT @RT(4)REAL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(62)minimum voltage for AO pressure (only considered in HA and FA) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(28)sv_rValueMinVoltageVelDetect @RT(0) @T @F @DT @RT(4)REAL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(73)x - value [%] for detection of minimum output voltage of AO pump velocity @RT(0) 
+@END_Attrib 
+1 8 @F @F @F @F 
+
+@Var @RT(29)sv_rValueMinVoltagePresDetect @RT(0) @T @F @DT @RT(4)REAL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(75)x - value [bar] for detection of minimum output voltage of AO pump pressure @RT(0) 
+@END_Attrib 
+1 8 @F @F @F @F 
+
+@Var @RT(22)sv_rDitherFrequencyVel @RT(0) @T @F @DT @RT(4)REAL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 8 @F @F @F @F 
+
+@Var @RT(22)sv_rDitherAmplitudeVel @RT(0) @T @F @DT @RT(4)REAL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 8 @F @F @F @F 
+
+@Var @RT(23)sv_rDitherFrequencyPres @RT(0) @T @F @DT @RT(4)REAL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 8 @F @F @F @F 
+
+@Var @RT(23)sv_rDitherAmplitudePres @RT(0) @T @F @DT @RT(4)REAL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 8 @F @F @F @F 
+
+@Var @RT(13)sv_bInitStart @RT(0) @T @T @RENAMED 0 @T @T @DT @RT(4)BOOL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 8 @F @F @F @F 
+
+@Var @RT(12)sv_bInitDone @RT(0) @T @F @DT @RT(4)BOOL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 8 @F @F @F @F 
+
+@Var @RT(15)sv_rMaxPressure @RT(0) @T @F @DT @RT(4)REAL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 8 @F @F @F @F 
+
+@END_Dcl 
+
+@END_Export 
+
+@BEG_Body 
+
+11 
+
+@BEG_Export 
+
+@BEG_Algo 
+@ALGORITHM @RT(6)aStart @STRUCTURED_TEXT 
+@RT(0) @RT(0) @RT(0) @F @F 
+@END_Algo 
+
+@BEG_Dcl 
+@RT(16)DclTreeContainer 
+5 
+@Var @RT(10)AnaOutMode @RT(0) @T @T @DERIVED 0 @T @T @DT @RT(15)tnAnaOutputMode @RT(0) @T @T @UNKNOWN 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 1 @F @F @F @F 
+
+@Var @RT(8)pLintabP @RT(0) @T @T @REFTO 0 @F @DERIVED 0 @T @T @DT @RT(16)KAPPL_LintabData @RT(0) @T @T @UNKNOWN 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 1 @F @F @F @F 
+
+@Var @RT(8)pLintabV @RT(0) @T @T @REFTO 0 @F @DERIVED 0 @T @T @DT @RT(16)KAPPL_LintabData @RT(0) @T @T @UNKNOWN 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 1 @F @F @F @F 
+
+@Var @RT(10)prPressure @RT(0) @T @T @REFTO 0 @T @DT @RT(4)REAL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 1 @F @F @F @F 
+
+@Var @RT(10)prVelocity @RT(0) @T @T @REFTO 0 @T @DT @RT(4)REAL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 1 @F @F @F @F 
+
+@END_Dcl 
+
+@END_Export 
+
+@BEG_Export 
+
+@BEG_Algo 
+@ALGORITHM @RT(5)aStop @STRUCTURED_TEXT 
+@RT(0) @RT(0) @RT(0) @F @F 
+@END_Algo 
+
+@BEG_Dcl 
+@RT(16)DclTreeContainer 
+1 
+@Var @RT(6)bReady @RT(0) @T @F @DT @RT(4)BOOL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 3 @F @F @F @F 
+
+@END_Dcl 
+
+@END_Export 
+
+@BEG_Export 
+
+@BEG_Algo 
+@ALGORITHM @RT(16)aSetErrorMessage @STRUCTURED_TEXT 
+@RT(0) @RT(0) @RT(0) @F @F 
+@END_Algo 
+
+@BEG_Dcl 
+@RT(16)DclTreeContainer 
+1 
+@Var @RT(12)fbDebugTrace @RT(0) @T @T @DERIVED 0 @T @T @DT @RT(12)FBDebugTrace @RT(0) @T @T @UNKNOWN 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@END_Dcl 
+
+@END_Export 
+
+@BEG_Export 
+
+@BEG_Algo 
+@PROCESS_ALGORITHM @RT(12)paFastOutput @SEQUENTIAL_FLOW_CHART 
+@RT(0) @RT(0) @RT(17)TaskInject(15000) @F @F 
+@END_Algo 
+
+@BEG_Dcl 
+@RT(16)DclTreeContainer 
+6 
+@Var @RT(10)fbSinusVel @RT(0) @T @T @DERIVED 0 @T @T @DT @RT(7)FBSinus @RT(0) @T @T @UNKNOWN 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(11)fbSinusPres @RT(0) @T @T @DERIVED 0 @T @T @DT @RT(7)FBSinus @RT(0) @T @T @UNKNOWN 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(10)rDitherVel @RT(0) @T @F @DT @RT(4)REAL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(11)rDitherPres @RT(0) @T @F @DT @RT(4)REAL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(1)b @RT(0) @T @F @DT @RT(4)BOOL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 4 @F @F @F @F 
+
+@Var @RT(9)rPressure @RT(0) @T @F @DT @RT(4)REAL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@END_Dcl 
+
+@END_Export 
+
+@BEG_Export 
+
+@BEG_Algo 
+@PROCESS_ALGORITHM @RT(11)paMidOutput @SEQUENTIAL_FLOW_CHART 
+@RT(0) @RT(0) @RT(17)TaskAnalog(15000) @F @F 
+@END_Algo 
+
+@BEG_Dcl 
+@RT(16)DclTreeContainer 
+6 
+@Var @RT(10)fbSinusVel @RT(0) @T @T @DERIVED 0 @T @T @DT @RT(7)FBSinus @RT(0) @T @T @UNKNOWN 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(11)fbSinusPres @RT(0) @T @T @DERIVED 0 @T @T @DT @RT(7)FBSinus @RT(0) @T @T @UNKNOWN 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(10)rDitherVel @RT(0) @T @F @DT @RT(4)REAL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(11)rDitherPres @RT(0) @T @F @DT @RT(4)REAL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(1)b @RT(0) @T @F @DT @RT(4)BOOL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 4 @F @F @F @F 
+
+@Var @RT(9)rPressure @RT(0) @T @F @DT @RT(4)REAL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@END_Dcl 
+
+@END_Export 
+
+@BEG_Export 
+
+@BEG_Algo 
+@PROCESS_ALGORITHM @RT(22)paInitDebugMeasurement @STRUCTURED_TEXT 
+@RT(0) @RT(0) @RT(8)TaskSlow @T @F 
+@END_Algo 
+
+@BEG_Dcl 
+@RT(16)DclTreeContainer 
+4 
+@Var @RT(6)fuName @RT(0) @T @F @DT @RT(11)STRING(255) @RT(0) @T @T @STRING 0 @F @RT(3)255 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(12)variableName @RT(0) @T @F @DT @RT(11)STRING(255) @RT(0) @T @T @STRING 0 @F @RT(3)255 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(8)swoState @RT(0) @T @T @DERIVED 0 @T @T @DT @RT(11)KSWO_Status @RT(0) @T @T @UNKNOWN 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(1)b @RT(0) @T @F @DT @RT(4)BOOL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@END_Dcl 
+
+@END_Export 
+
+@BEG_Export 
+
+@BEG_Algo 
+@ALGORITHM @RT(14)aGetMinVoltage @STRUCTURED_TEXT 
+@RT(0) @RT(0) @RT(0) @F @F 
+@END_Algo 
+
+@BEG_Dcl 
+@RT(16)DclTreeContainer 
+5 
+@Var @RT(7)pLintab @RT(0) @T @T @REFTO 0 @F @DERIVED 0 @T @T @DT @RT(16)KAPPL_LintabData @RT(0) @T @T @UNKNOWN 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 1 @F @F @F @F 
+
+@Var @RT(7)rXValue @RT(0) @T @F @DT @RT(4)REAL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(32)xValue (for example 1% or 2 bar) @RT(0) 
+@END_Attrib 
+1 1 @F @F @F @F 
+
+@Var @RT(11)rMinVoltage @RT(0) @T @F @DT @RT(4)REAL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(29)according voltage for rXValue @RT(0) 
+@END_Attrib 
+1 3 @F @F @F @F 
+
+@Var @RT(6)Lintab @RT(0) @T @T @DERIVED 0 @T @T @DT @RT(18)KCTRL_Lintab_Light @RT(0) @T @T @UNKNOWN 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(12)LintabParams @RT(0) @T @T @DERIVED 0 @T @T @DT @RT(24)KCTRL_Lintab_Param_Light @RT(0) @T @T @UNKNOWN 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@END_Dcl 
+
+@END_Export 
+
+@BEG_Export 
+
+@BEG_Algo 
+@POSTUPDATE_ALGORITHM @RT(15)pVelocityLintab @STRUCTURED_TEXT 
+@RT(0) @RT(46)sv_VelocityLintab,sv_rValueMinVoltageVelDetect @RT(9)PU_Task_7 @F @F 
+@END_Algo 
+
+@BEG_Dcl 
+@RT(16)DclTreeContainer 
+0 
+@END_Dcl 
+
+@END_Export 
+
+@BEG_Export 
+
+@BEG_Algo 
+@POSTUPDATE_ALGORITHM @RT(15)pPressureLintab @STRUCTURED_TEXT 
+@RT(0) @RT(47)sv_PressureLintab,sv_rValueMinVoltagePresDetect @RT(9)PU_Task_7 @F @F 
+@END_Algo 
+
+@BEG_Dcl 
+@RT(16)DclTreeContainer 
+0 
+@END_Dcl 
+
+@END_Export 
+
+@BEG_Export 
+
+@BEG_Algo 
+@POSTUPDATE_ALGORITHM @RT(13)pDitherParams @STRUCTURED_TEXT 
+@RT(0) @RT(60)sv_bInitStart,sv_rDitherAmplitudePres,sv_rDitherAmplitudeVel @RT(9)PU_Task_7 @F @F 
+@END_Algo 
+
+@BEG_Dcl 
+@RT(16)DclTreeContainer 
+5 
+@Var @RT(10)HandleData @RT(0) @T @T @DERIVED 0 @T @T @DT @RT(15)KCAT_HandleData @RT(0) @T @T @UNKNOWN 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(9)CatStatus @RT(0) @T @T @DERIVED 0 @T @T @DT @RT(11)KCAT_Status @RT(0) @T @T @UNKNOWN 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(7)sDevice @RT(0) @T @F @DT @RT(10)STRING(31) @RT(0) @T @T @STRING 0 @F @RT(2)31 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(9)bInitDone @RT(0) @T @F @DT @RT(4)BOOL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(14)bCurrentOutput @RT(0) @T @F @DT @RT(4)BOOL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(30)TRUE: current output available @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@END_Dcl 
+
+@END_Export 
+
+@BEG_Export 
+
+@BEG_Algo 
+@POSTUPDATE_ALGORITHM @RT(14)pSetMinVoltage @STRUCTURED_TEXT 
+@RT(0) @RT(79)sv_bInitDone,sv_rMinVoltageVelOutput,sv_rMinVoltagePressOutput,sv_OperationMode @RT(9)PU_Task_3 @F @F 
+@END_Algo 
+
+@BEG_Dcl 
+@RT(16)DclTreeContainer 
+0 
+@END_Dcl 
+
+@END_Export 
+
+@BEG_Body 
+@TL(25)
+(**************************************** WARNING ********************************************
+ *** The KEBA Kemro K2 System including software is not intended for safety control tasks! ***
+ ***                       For further information see Comment tab!                        ***
+ *********************************************************************************************)
+
+mbStop := FALSE;
+//make sure when we get a start and a stop very fast,
+//we do not end up in a situation where mbStopped is FALSE but paXxxOutput is still running
+mbStopped := FALSE;
+ 
+abAnalogOutputP.aInit(pLintab := pLintabP);
+abAnalogOutputV.aInit(pLintab := pLintabV);
+ 
+mprPressureSource := prPressure;
+mprVelocitySource := prVelocity;
+
+CASE AnaOutMode OF
+
+   nAnaOutputModeMid:  
+         START_PROCESS_ALGORITHM(paMidOutput);   
+                                               
+   nAnaOutputModeFast: 
+         START_PROCESS_ALGORITHM(paFastOutput);
+END_CASE;    
+
+@END_Body 
+
+@@@BEG_Comment@@@ 
+@TL(0)
+
+@@@END_Comment@@@ 
+
+@BEG_Body 
+@TL(10)
+(**************************************** WARNING ********************************************
+ *** The KEBA Kemro K2 System including software is not intended for safety control tasks! ***
+ ***                       For further information see Comment tab!                        ***
+ *********************************************************************************************)
+
+IF NOT mbStopped THEN
+   mbStop := TRUE;
+END_IF;
+bReady := mbStopped;
+
+@END_Body 
+
+@@@BEG_Comment@@@ 
+@TL(0)
+
+@@@END_Comment@@@ 
+
+@BEG_Body 
+@TL(28)
+(**************************************** WARNING ********************************************
+ *** The KEBA Kemro K2 System including software is not intended for safety control tasks! ***
+ ***                       For further information see Comment tab!                        ***
+ *********************************************************************************************)
+
+IF NOT abAnalogHWOutV.aIsLinked() THEN
+   SET_ALARM(Name := erVariableNotLinked,
+             SubID1 := sv_DeviceId.CompId,
+             SubID2 := sv_DeviceId.IndexId,
+             Param1 := 'ao_Velocity');
+END_IF;
+
+IF NOT abAnalogHWOutP.aIsLinked() THEN
+   SET_ALARM(Name := erVariableNotLinked,
+             SubID1 := sv_DeviceId.CompId,
+             SubID2 := sv_DeviceId.IndexId,
+             Param1 := 'ao_Pressure');
+END_IF;
+
+IF abAnalogOutputP.aRun.bError THEN
+   fbDebugTrace(CONCAT('ABPumpOutput: error ',DINT_TO_STRING(abAnalogOutputP.aRun.iErrorInfo),' in ABAnalogOutputP'));
+END_IF;
+
+IF abAnalogOutputV.aRun.bError THEN
+   fbDebugTrace(CONCAT('ABPumpOutput: error ',DINT_TO_STRING(abAnalogOutputV.aRun.iErrorInfo),' in ABAnalogOutputV'));
+END_IF;
+
+
+@END_Body 
+
+@@@BEG_Comment@@@ 
+@TL(0)
+
+@@@END_Comment@@@ 
+
+@BEG_SfcBody 
+10 7 8 
+
+@BEG_SfcData 2 
+@StepSeq @RT(4)sseq @F 5 
+@Step @RT(3)OUT @F @T @T @F @RT(0) @F 
+@AcbCont @RT(7)unnamed @F 3 
+@Acb @RT(4)Init @F @T @RT(1)P @RT(0) @F @F @T @TL(2)
+mbStopped := FALSE;
+
+@F 
+@Acb @RT(13)ADitherSignal @F @F @RT(1)N @RT(0) @F @F @F @F 
+@Acb @RT(4)AOUT @F @T @RT(1)N @RT(0) @F @F @T @TL(14)
+//limit pressure output to max. pressure of the pump
+rPressure := MIN(sv_rMaxPressure, mprPressureSource^);  
+
+b := WRITE_SVREAL_DIRECT(sv_rPressure, rPressure);
+b := WRITE_SVREAL_DIRECT(sv_rVelocity, mprVelocitySource^);
+   
+(* Lintab Calculation *)
+abAnalogOutputP.aRun(rSetValue := sv_rPressure);
+abAnalogOutputV.aRun(rSetValue := sv_rVelocity);
+
+(* Output to AO and Shortcircuit detection *)
+abAnalogHWOutP.aOut(rValue := (MAX(abAnalogOutputP.aRun.rOutput, mrMinVoltagePressureOutput)) + rDitherPres);
+abAnalogHWOutV.aOut(rValue := (MAX(abAnalogOutputV.aRun.rOutput, mrMinVoltageVelocityOutput)) + rDitherVel);
+
+@F 
+
+@AltBranch @RT(3)alt @F 2 
+@TransSeq @RT(4)tseq @F 3 
+@Trans @RT(6)Trans1 @F @T @F @F @T @T @TL(5)
+abAnalogOutputP.aRun.bError OR
+abAnalogOutputV.aRun.bError OR
+abAnalogHWOutP.aOut.bError OR
+abAnalogHWOutV.aOut.bError
+
+@RT(6)Trans1 @F 
+@Step @RT(10)ERROR_STOP @F @F @F @F @RT(0) @F 
+@AcbCont @RT(7)unnamed @F 1 
+@Acb @RT(10)AErrorStop @F @T @RT(1)P @RT(0) @F @F @T @TL(4)
+sv_rPressure := 0.0;
+sv_rVelocity := 0.0;
+aSetErrorMessage();
+
+@F 
+
+@Trans @RT(6)Trans5 @F @T @F @F @T @F @TL(2)
+TRUE
+
+@RT(6)Trans5 @F 
+
+@TransSeq @RT(4)tseq @F 1 
+@Trans @RT(5)TStop @F @T @T @F @T @F @TL(2)
+mbStop
+
+@RT(6)Trans4 @F 
+
+
+@Step @RT(6)S_Stop @F @F @F @F @RT(0) @F 
+@AcbCont @RT(7)unnamed @F 1 
+@Acb @RT(5)AStop @F @T @RT(1)P @RT(0) @F @F @T @TL(9)
+mbStop := FALSE; 
+
+(* Stopping Analog Output*)
+abAnalogHWOutP.aOut(rValue := mrMinVoltagePressureOutput);
+abAnalogHWOutV.aOut(rValue := mrMinVoltageVelocityOutput);
+
+mbStopped := TRUE;
+STOP_PROCESS_ALGORITHM();
+
+@F 
+
+@Trans @RT(10)TNewOutput @F @T @F @F @T @T @TL(2)
+TRUE
+
+@RT(6)Trans7 @F 
+@Goto @RT(3)OUT @F @F 
+@END_SfcData 
+@SaActions 1 
+@SaText @RT(13)ADitherSignal 1 @TL(22)
+(**************************************** WARNING ********************************************
+ *** The KEBA Kemro K2 System including software is not intended for safety control tasks! ***
+ ***                       For further information see Comment tab!                        ***
+ *********************************************************************************************)
+
+//sinus signals for pressure and velocity dither
+IF sv_rDitherAmplitudeVel > 0.0 THEN
+   fbSinusVel(rAmplitude := sv_rDitherAmplitudeVel,
+              rFrequency := sv_rDitherFrequencyVel,
+              rOut => rDitherVel);
+ELSE
+   rDitherVel := 0.0;
+END_IF;
+
+IF sv_rDitherAmplitudePres > 0.0 THEN
+   fbSinusPres(rAmplitude := sv_rDitherAmplitudePres,
+              rFrequency := sv_rDitherFrequencyPres,
+              rOut => rDitherPres);
+ELSE
+   rDitherPres := 0.0;
+END_IF;
+
+
+@SaTrans 0 
+@SaExits 0 
+@END_SfcBody 
+
+@@@BEG_Comment@@@ 
+@TL(0)
+
+@@@END_Comment@@@ 
+
+@BEG_SfcBody 
+11 8 8 
+
+@BEG_SfcData 2 
+@StepSeq @RT(4)sseq @F 5 
+@Step @RT(3)OUT @F @T @T @F @RT(0) @F 
+@AcbCont @RT(7)unnamed @F 3 
+@Acb @RT(4)Init @F @T @RT(1)P @RT(0) @F @F @T @TL(2)
+mbStopped := FALSE;
+
+@F 
+@Acb @RT(13)ADitherSignal @F @F @RT(1)N @RT(0) @F @F @F @F 
+@Acb @RT(4)AOUT @F @T @RT(1)N @RT(0) @F @F @T @TL(16)
+//limit pressure output to max. pressure of the pump
+rPressure := MIN(sv_rMaxPressure, mprPressureSource^);  
+
+b := WRITE_SVREAL_DIRECT(sv_rPressure, rPressure);
+b := WRITE_SVREAL_DIRECT(sv_rVelocity, mprVelocitySource^);
+   
+(* Lintab Calculation *)
+abAnalogOutputP.aRun(rSetValue := sv_rPressure);
+abAnalogOutputV.aRun(rSetValue := sv_rVelocity);
+
+(* Shortcircuit detection *)
+abAnalogHWOutP.aOut(rValue := (MAX(abAnalogOutputP.aRun.rOutput, mrMinVoltagePressureOutput)) + rDitherPres);
+abAnalogHWOutV.aOut(rValue := (MAX(abAnalogOutputV.aRun.rOutput, mrMinVoltageVelocityOutput)) + rDitherVel);
+
+
+
+@F 
+
+@AltBranch @RT(3)alt @F 2 
+@TransSeq @RT(4)tseq @F 3 
+@Trans @RT(6)Trans1 @F @T @F @F @T @T @TL(5)
+abAnalogOutputP.aRun.bError OR
+abAnalogOutputV.aRun.bError OR
+abAnalogHWOutP.aOut.bError OR
+abAnalogHWOutV.aOut.bError
+
+@RT(6)Trans1 @F 
+@Step @RT(10)ERROR_STOP @F @F @F @F @RT(0) @F 
+@AcbCont @RT(7)unnamed @F 1 
+@Acb @RT(10)AErrorStop @F @T @RT(1)P @RT(0) @F @F @T @TL(4)
+sv_rPressure := 0.0;
+sv_rVelocity := 0.0;
+aSetErrorMessage();
+
+@F 
+
+@Trans @RT(6)Trans5 @F @T @F @F @T @F @TL(2)
+TRUE
+
+@RT(6)Trans5 @F 
+
+@TransSeq @RT(4)tseq @F 1 
+@Trans @RT(5)TStop @F @T @T @F @T @F @TL(2)
+mbStop
+
+@RT(6)Trans4 @F 
+
+
+@Step @RT(6)S_Stop @F @F @F @F @RT(0) @F 
+@AcbCont @RT(7)unnamed @F 1 
+@Acb @RT(5)AStop @F @T @RT(1)P @RT(0) @F @F @T @TL(9)
+mbStop := FALSE; 
+
+(* Stopping Analog Output*)
+abAnalogHWOutP.aOut(rValue := mrMinVoltagePressureOutput);
+abAnalogHWOutV.aOut(rValue := mrMinVoltageVelocityOutput);
+
+mbStopped := TRUE;
+STOP_PROCESS_ALGORITHM();
+
+@F 
+
+@Trans @RT(10)TNewOutput @F @T @F @F @T @T @TL(2)
+TRUE
+
+@RT(6)Trans7 @F 
+@Goto @RT(3)OUT @F @F 
+@END_SfcData 
+@SaActions 1 
+@SaText @RT(13)ADitherSignal 1 @TL(22)
+(**************************************** WARNING ********************************************
+ *** The KEBA Kemro K2 System including software is not intended for safety control tasks! ***
+ ***                       For further information see Comment tab!                        ***
+ *********************************************************************************************)
+
+//sinus signals for pressure and velocity dither
+IF sv_rDitherAmplitudeVel > 0.0 THEN
+   fbSinusVel(rAmplitude := sv_rDitherAmplitudeVel,
+              rFrequency := sv_rDitherFrequencyVel,
+              rOut => rDitherVel);
+ELSE
+   rDitherVel := 0.0;
+END_IF;
+
+IF sv_rDitherAmplitudePres > 0.0 THEN
+   fbSinusPres(rAmplitude := sv_rDitherAmplitudePres,
+              rFrequency := sv_rDitherFrequencyPres,
+              rOut => rDitherPres);
+ELSE
+   rDitherPres := 0.0;
+END_IF;
+
+
+@SaTrans 0 
+@SaExits 0 
+@END_SfcBody 
+
+@@@BEG_Comment@@@ 
+@TL(0)
+
+@@@END_Comment@@@ 
+
+@BEG_Body 
+@TL(28)
+fuName := GET_MY_FU_NAME();
+variableName := CONCAT(fuName,'.rPressure Hydr bar');
+swoState := KSWO_AddVariable( Task := TaskInject,
+                              Name := variableName,
+                              Variable := sv_rPressure);
+b := FAddToScopeGroup(Task := TaskInject, 
+                      Name := variableName, 
+                      GroupId := cScopeGroupPump);
+variableName := CONCAT(fuName,'.rVelocity %');
+swoState := KSWO_AddVariable( Task := TaskInject,
+                              Name := variableName,
+                              Variable := sv_rVelocity);
+b := FAddToScopeGroup(Task := TaskInject, 
+                      Name := variableName, 
+                      GroupId := cScopeGroupPump);
+
+variableName := CONCAT(fuName,'.rPressure Hydr bar');
+swoState := KSWO_AddVariable( Task := TaskAnalog,
+                              Name := variableName,
+                              Variable := sv_rPressure);
+variableName := CONCAT(fuName,'.rVelocity %');
+swoState := KSWO_AddVariable( Task := TaskAnalog,
+                              Name := variableName,
+                              Variable := sv_rVelocity);
+
+STOP_PROCESS_ALGORITHM();
+
+
+@END_Body 
+
+@@@BEG_Comment@@@ 
+@TL(0)
+
+@@@END_Comment@@@ 
+
+@BEG_Body 
+@TL(26)
+(**************************************** WARNING ********************************************
+ *** The KEBA Kemro K2 System including software is not intended for safety control tasks! ***
+ ***                       For further information see Comment tab!                        ***
+ *********************************************************************************************)
+
+LintabParams.LintabPoints := pLintab^.LintabPoints;
+LintabParams.Mode.bLinearExtrapolation := TRUE; 
+LintabParams.Mode.bSetNegativeValuesToZero := FALSE;
+LintabParams.Mode.bZeroExtrapolation := FALSE;
+Lintab.Par(Param := LintabParams);
+
+IF Lintab.Par.parStatus <> KCTRL_Ret_OK THEN
+   rMinVoltage := 0.0;
+   RETURN; //error -> return 0.0
+END_IF;
+
+//calculate value
+Lintab.Calculate(rX := rXValue);
+IF Lintab.Calculate.calcStatus <> KCTRL_Ret_OK THEN
+   rMinVoltage := 0.0;
+   RETURN; //error -> return 0.0
+ELSE
+   rMinVoltage := Lintab.Calculate.rY;
+END_IF;
+
+
+@END_Body 
+
+@@@BEG_Comment@@@ 
+@TL(0)
+
+@@@END_Comment@@@ 
+
+@BEG_Body 
+@TL(9)
+(**************************************** WARNING ********************************************
+ *** The KEBA Kemro K2 System including software is not intended for safety control tasks! ***
+ ***                       For further information see Comment tab!                        ***
+ *********************************************************************************************)
+
+aGetMinVoltage(pLintab := @sv_VelocityLintab,
+               rXValue := sv_rValueMinVoltageVelDetect,
+               rMinVoltage => sv_rMinVoltageVelOutput);
+
+@END_Body 
+
+@@@BEG_Comment@@@ 
+@TL(0)
+
+@@@END_Comment@@@ 
+
+@BEG_Body 
+@TL(9)
+(**************************************** WARNING ********************************************
+ *** The KEBA Kemro K2 System including software is not intended for safety control tasks! ***
+ ***                       For further information see Comment tab!                        ***
+ *********************************************************************************************)
+
+aGetMinVoltage(pLintab := @sv_PressureLintab,
+               rXValue := sv_rValueMinVoltagePresDetect,
+               rMinVoltage => sv_rMinVoltagePressOutput);
+
+@END_Body 
+
+@@@BEG_Comment@@@ 
+@TL(0)
+
+@@@END_Comment@@@ 
+
+@BEG_Body 
+@TL(29)
+(**************************************** WARNING ********************************************
+ *** The KEBA Kemro K2 System including software is not intended for safety control tasks! ***
+ ***                       For further information see Comment tab!                        ***
+ *********************************************************************************************)
+
+IF NOT bInitDone THEN
+   //get device name
+   HandleData := KCAT_GetHandle('IO.ONBOARD.deviceName');
+   IF HandleData.Status = KCAT_Status_OK THEN
+      CatStatus := KCAT_GetValue(Handle := HandleData.Handle, Buffer := sDevice);  
+      sDevice := LEFT(sDevice,5);
+      
+      IF sDevice ='CP 03' THEN
+         bCurrentOutput := TRUE;     
+      END_IF;  
+   END_IF;
+   
+   bInitDone := TRUE;
+   
+END_IF;
+
+IF NOT bCurrentOutput THEN
+   //set dither amplitude to 0.0 (=disable dither signal)
+   sv_rDitherAmplitudeVel := 0.0;
+   sv_rDitherAmplitudePres := 0.0;
+END_IF;
+
+
+
+@END_Body 
+
+@@@BEG_Comment@@@ 
+@TL(0)
+
+@@@END_Comment@@@ 
+
+@BEG_Body 
+@TL(22)
+(**************************************** WARNING ********************************************
+ *** The KEBA Kemro K2 System including software is not intended for safety control tasks! ***
+ ***                       For further information see Comment tab!                        ***
+ *********************************************************************************************)
+
+IF sv_OperationMode = nSetup THEN
+   //setup mode -> set minimum output voltage to 0.0
+   mrMinVoltagePressureOutput := 0.0;
+   mrMinVoltageVelocityOutput := 0.0;
+   
+ELSE
+   //all other operation modes
+   mrMinVoltagePressureOutput := sv_rMinVoltagePressOutput;
+   mrMinVoltageVelocityOutput := sv_rMinVoltageVelOutput;   
+END_IF;
+
+IF mbStopped THEN
+   //write to AO´s immediately if device is not active
+   abAnalogHWOutP.aOut(rValue := mrMinVoltagePressureOutput);
+   abAnalogHWOutV.aOut(rValue := mrMinVoltageVelocityOutput);
+END_IF;
+
+@END_Body 
+
+@@@BEG_Comment@@@ 
+@TL(0)
+
+@@@END_Comment@@@ 
+@END_Body 
+
+@END_Contents 

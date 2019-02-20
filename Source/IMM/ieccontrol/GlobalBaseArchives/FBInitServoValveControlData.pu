@@ -1,0 +1,282 @@
+IMPORT_OVER_LISTFILE
+ KAPPL_ServoValveControlData
+, tsCylinderData
+, KAPPL_ServoValveControllerMode
+, tsVelPre
+, tsControlParameters
+
+END_IMPORT
+
+FUNCTION_BLOCK FBInitServoValveControlData #DUMMY_EDIT_BLOCK
+
+VAR_IN_OUT
+ sServoValveControlData : KAPPL_ServoValveControlData;
+END_VAR
+
+VAR_INPUT
+ pCylinderData : REFTO tsCylinderData;
+ pCylinderStroke : REFTO REAL;
+ pActPressureA : REFTO REAL;
+ pSetPressureA : REFTO REAL;
+ pSysPressure : REFTO REAL;
+ pActPosition : REFTO REAL;
+ pActVelocity : REFTO REAL;
+ pSetVelocity : REFTO REAL;
+ pControllerMode : REFTO KAPPL_ServoValveControllerMode;
+ pTransducerError : REFTO BOOL;
+ pConstSetupFwd : REFTO tsVelPre;
+ pConstSetupBwd : REFTO tsVelPre;
+ pDeviceReady : REFTO BOOL;
+ pScrewDiameter : REFTO REAL;
+ pMaxSpeedFwdMachLimit : REFTO REAL;
+ pSetValueLimitActive : REFTO BOOL;
+ pPressureControlParams : REFTO tsControlParameters;
+ pBackPressureControlParams : REFTO tsControlParameters;
+ pbMoveToServoCalibStartPos : REFTO BOOL;
+END_VAR
+#BEGIN_EDIT_BLOCK
+sServoValveControlData.pCylinderData := pCylinderData;
+sServoValveControlData.pCylinderStroke := pCylinderStroke;
+sServoValveControlData.pActPressureA := pActPressureA;
+sServoValveControlData.pSysPressure := pSysPressure;
+sServoValveControlData.pActPosition := pActPosition;
+sServoValveControlData.pActVelocity := pActVelocity;
+sServoValveControlData.pControllerMode := pControllerMode;
+sServoValveControlData.pTransducerError := pTransducerError;
+sServoValveControlData.pConstSetupFwd := pConstSetupFwd;
+sServoValveControlData.pConstSetupBwd := pConstSetupBwd;
+sServoValveControlData.pSetPressureA := pSetPressureA;
+sServoValveControlData.pSetVelocity := pSetVelocity;
+sServoValveControlData.pDeviceReady := pDeviceReady;
+sServoValveControlData.pScrewDiameter := pScrewDiameter;
+sServoValveControlData.prMaxSpeedFwdMachLimit := pMaxSpeedFwdMachLimit;
+sServoValveControlData.pSetValueLimitActive := pSetValueLimitActive;
+sServoValveControlData.pPressureControlParams := pPressureControlParams;
+sServoValveControlData.pBackPressureControlParams := pBackPressureControlParams;
+sServoValveControlData.pbMoveToServoCalibStartPos := pbMoveToServoCalibStartPos;
+
+
+
+;#END_EDIT_BLOCK END_FUNCTION_BLOCK
+
+
+
+#END_OF_IEC_PART
+
+@Puma @IecEditor 6 103 @Pou 25 
+@@@BEG_Comment@@@
+
+@@@END_Comment@@@
+
+@BEG_Contents 
+
+@BEG_Func 
+@RT(17)FuncTreeContainer 
+0 
+@END_Func 
+
+@BEG_Const 
+@RT(18)ConstTreeContainer 
+0 
+@END_Const 
+
+@BEG_Export 
+
+@BEG_Kind 
+@FUNCTION_BLOCK @RT(27)FBInitServoValveControlData @STRUCTURED_TEXT 
+@RT(0) @RT(0) @RT(0) 
+@END_Kind 
+
+@BEG_Dcl 
+@RT(16)DclTreeContainer 
+20 
+@Var @RT(22)sServoValveControlData @RT(0) @T @T @DERIVED 0 @T @T @DT @RT(27)KAPPL_ServoValveControlData @RT(0) @T @T @UNKNOWN 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 2 @F @F @F @F 
+
+@Var @RT(13)pCylinderData @RT(0) @T @T @REFTO 0 @F @DERIVED 0 @T @T @DT @RT(14)tsCylinderData @RT(0) @T @T @UNKNOWN 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 1 @F @F @F @F 
+
+@Var @RT(15)pCylinderStroke @RT(0) @T @T @REFTO 0 @T @DT @RT(4)REAL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 1 @F @F @F @F 
+
+@Var @RT(13)pActPressureA @RT(0) @T @T @REFTO 0 @T @DT @RT(4)REAL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 1 @F @F @F @F 
+
+@Var @RT(13)pSetPressureA @RT(0) @T @T @REFTO 0 @T @DT @RT(4)REAL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 1 @F @F @F @F 
+
+@Var @RT(12)pSysPressure @RT(0) @T @T @REFTO 0 @T @DT @RT(4)REAL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 1 @F @F @F @F 
+
+@Var @RT(12)pActPosition @RT(0) @T @T @REFTO 0 @T @DT @RT(4)REAL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 1 @F @F @F @F 
+
+@Var @RT(12)pActVelocity @RT(0) @T @T @REFTO 0 @T @DT @RT(4)REAL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 1 @F @F @F @F 
+
+@Var @RT(12)pSetVelocity @RT(0) @T @T @REFTO 0 @T @DT @RT(4)REAL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 1 @F @F @F @F 
+
+@Var @RT(15)pControllerMode @RT(0) @T @T @REFTO 0 @F @DERIVED 0 @T @T @DT @RT(30)KAPPL_ServoValveControllerMode @RT(0) @T @T @UNKNOWN 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 1 @F @F @F @F 
+
+@Var @RT(16)pTransducerError @RT(0) @T @T @REFTO 0 @T @DT @RT(4)BOOL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 1 @F @F @F @F 
+
+@Var @RT(14)pConstSetupFwd @RT(0) @T @T @REFTO 0 @F @DERIVED 0 @T @T @DT @RT(8)tsVelPre @RT(0) @T @T @UNKNOWN 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 1 @F @F @F @F 
+
+@Var @RT(14)pConstSetupBwd @RT(0) @T @T @REFTO 0 @F @DERIVED 0 @T @T @DT @RT(8)tsVelPre @RT(0) @T @T @UNKNOWN 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 1 @F @F @F @F 
+
+@Var @RT(12)pDeviceReady @RT(0) @T @T @REFTO 0 @T @DT @RT(4)BOOL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 1 @F @F @F @F 
+
+@Var @RT(14)pScrewDiameter @RT(0) @T @T @REFTO 0 @T @DT @RT(4)REAL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 1 @F @F @F @F 
+
+@Var @RT(21)pMaxSpeedFwdMachLimit @RT(0) @T @T @REFTO 0 @T @DT @RT(4)REAL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 1 @F @F @F @F 
+
+@Var @RT(20)pSetValueLimitActive @RT(0) @T @T @REFTO 0 @T @DT @RT(4)BOOL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 1 @F @F @F @F 
+
+@Var @RT(22)pPressureControlParams @RT(0) @T @T @REFTO 0 @F @DERIVED 0 @T @T @DT @RT(19)tsControlParameters @RT(0) @T @T @UNKNOWN 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 1 @F @F @F @F 
+
+@Var @RT(26)pBackPressureControlParams @RT(0) @T @T @REFTO 0 @F @DERIVED 0 @T @T @DT @RT(19)tsControlParameters @RT(0) @T @T @UNKNOWN 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 1 @F @F @F @F 
+
+@Var @RT(26)pbMoveToServoCalibStartPos @RT(0) @T @T @REFTO 0 @T @DT @RT(4)BOOL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 1 @F @F @F @F 
+
+@END_Dcl 
+
+@END_Export 
+
+@BEG_Body 
+@TL(21)
+sServoValveControlData.pCylinderData := pCylinderData;
+sServoValveControlData.pCylinderStroke := pCylinderStroke;
+sServoValveControlData.pActPressureA := pActPressureA;
+sServoValveControlData.pSysPressure := pSysPressure;
+sServoValveControlData.pActPosition := pActPosition;
+sServoValveControlData.pActVelocity := pActVelocity;
+sServoValveControlData.pControllerMode := pControllerMode;
+sServoValveControlData.pTransducerError := pTransducerError;
+sServoValveControlData.pConstSetupFwd := pConstSetupFwd;
+sServoValveControlData.pConstSetupBwd := pConstSetupBwd;
+sServoValveControlData.pSetPressureA := pSetPressureA;
+sServoValveControlData.pSetVelocity := pSetVelocity;
+sServoValveControlData.pDeviceReady := pDeviceReady;
+sServoValveControlData.pScrewDiameter := pScrewDiameter;
+sServoValveControlData.prMaxSpeedFwdMachLimit := pMaxSpeedFwdMachLimit;
+sServoValveControlData.pSetValueLimitActive := pSetValueLimitActive;
+sServoValveControlData.pPressureControlParams := pPressureControlParams;
+sServoValveControlData.pBackPressureControlParams := pBackPressureControlParams;
+sServoValveControlData.pbMoveToServoCalibStartPos := pbMoveToServoCalibStartPos;
+
+
+@END_Body 
+
+@END_Contents 

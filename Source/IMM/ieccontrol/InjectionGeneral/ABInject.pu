@@ -1,0 +1,5469 @@
+(*
+@h    ! WARNING !
+@h    The Kemro K2 system (including software) only meets category B according to EN 954-1,
+@h    thus it is not intended for usage in safety-relevant control applications in the field 
+@h    of personal safety (e.g. emergency stop).
+@h    To implement potentially necessary safety-relevant control tasks, always use additional 
+@h    external safety devices that are intended for the particular purpose, and meet the necessary 
+@h    functional safety.
+@h    For further information see EN 954-1 (EN ISO 13849-1) and/or the K2-x00 user manual, chapter 
+@h    "CE conformity, directives and standards".
+
+This AB provides all functions to realize the inject movement.
+It includes the following funcionalities:
+- profile calculation for inject and holding profile
+  (including error detection of the profiles) 
+- automatic reparam of all necessary blocks after changes in the profiles
+  Attention: reparam will be done after the movement is stopped and not during the movement is active
+- profile output for inject (PID - controlled if selected)
+- cut off detection (PID - controlled if selected)
+- profile output for holding
+- timeout detection (including automatic stop after timeout)
+
+@FunctionID: S_KPIEC_ALAMOVE_02
+@FunctionID: S_KPIEC_ALAMOVE_03
+@FunctionID: S_KPIEC_PRINJ_01
+@FunctionID: S_KPIEC_PRINJ_02
+
+*)
+
+IMPORT_OVER_LISTFILE
+ SET_ALARM
+, GET_SYNC_REFTO
+, GET_MY_FU_NAME
+, KSWO_AddVariable
+, FAddToScopeGroup
+, GET_TASK_INTERVAL
+, GET_RUNTIME
+, RESET_ALARM
+, FCalcDuration
+, KCAT_GetHandle
+, KCAT_GetValue
+, CHECK_REF
+, KSYS_Status_OK
+, cSubOpSpeedpumpMaster
+, cScopeGroupInject
+, cApplPlasticsNoError
+, cApplPlasticsToMuchController
+, nKAPPL_IMM_Electric
+, nKAPPL_IMM_ServoValve
+, nKAPPL_IMM_PQ
+, cApplPlasticsDecompressFailure
+, cMaxIntermediateConditions
+, tsDeviceId
+, KAPPL_Plastics_CutOffDetection
+, KAPPL_VisProfile
+, KAPPL_ProfileData
+, tMoveIdent
+, KAPPL_Plastics_Injection
+, tyInstanceListArray
+, tsCutOffCriterions
+, tsCompDataArray
+, FBCutOffInterpolation
+, KCAT_HandleData
+, KCAT_Status
+, KCAT_TypeData
+, KSWO_Status
+, KSYS_Status
+, tOptionId
+, KCAT_HWPathData
+, KHW_Servo_Data
+, tsControlParameters
+, tsDeadTimeParameters
+, KAPPL_IMM_Type
+, R_TRIG
+, TON
+, TOF
+, KAPPL_Plastics_ProfileCalc
+
+END_IMPORT
+
+ALGORITHM_BLOCK ABInject #DUMMY_EDIT_BLOCK
+
+SYSTEM_VAR
+ sv_bUseStartPosProfiles : BOOL;
+ sv_iSelCavityPressureSensor : DINT (* which cavity pressure sensor will be used for cut off *);
+ sv_DeviceId : tsDeviceId;
+ sv_bInitDone : BOOL;
+ sv_bProfileEditorActive : BOOL (* "profile dirty" flag (will be set / reset by HMI) *);
+END_VAR
+
+SYSTEM_OBJECT
+ PU_Task_7 : TASK;
+ TaskSlow : TASK;
+ TaskInject : TASK;
+ erProfileSequence : ALARM;
+ erMoveTimeout : ALARM;
+ erPresProfDamaged : ALARM;
+ erVelProfDamaged : ALARM;
+ erInvalidProfileReference : ALARM;
+ erInjectOutput : ALARM;
+ erInjectParam : ALARM;
+ erInjectScrewPosition : ALARM;
+ erCycleTimeIOUpdate : ALARM;
+ erProfileMinOutput : ALARM;
+END_OBJECT
+
+VAR_EXTERNAL
+ g_dActiveTimestamp : TIME;
+END_VAR
+
+VAR
+ erInject : ALARM;
+ fbCutOffDetection : KAPPL_Plastics_CutOffDetection;
+ mpInjectProfile : REFTO KAPPL_VisProfile;
+ mpHoldProfile : REFTO KAPPL_VisProfile;
+ InjectVelocityProfile : KAPPL_ProfileData;
+ InjectPressureProfile : KAPPL_ProfileData;
+ HoldVelocityProfile : KAPPL_ProfileData;
+ HoldPressureProfile : KAPPL_ProfileData;
+ mbReparam : BOOL;
+ mbMovementActive : BOOL (* info if movement is active *);
+ mMoveIdInject : tMoveIdent;
+ mMoveIdHold : tMoveIdent;
+ mbInjectProfileError : BOOL (* error during profile calc detected *);
+ mbHoldProfileError : BOOL (* error during profile calc detected *);
+ mbInjectReferenceValid : BOOL (* info if reference to inject profile is valid *);
+ mbHoldReferenceValid : BOOL (* info if reference to hold profile is valid *);
+ mrActScrewPosition : REAL;
+ mrActInjectPressure : REAL;
+ mbCutOffDetected : BOOL;
+ mbInjectActive : BOOL;
+ mrPressureSet : REAL;
+ mrPressureOutput : REAL;
+ mrVelocitySet : REAL;
+ mrVelocityOutput : REAL;
+ mrServoOutput : REAL;
+ fbInject : KAPPL_Plastics_Injection;
+ mbInitInjectProfilDone : BOOL := FALSE;
+ mbInitHoldProfilDone : BOOL := FALSE;
+ mpdCalcedInjectDuration : REFTO TIME;
+ mpdCalcedHoldDuration : REFTO TIME;
+ mpInstanceDataInterPos : REFTO tyInstanceListArray;
+ mpCutOffParams : REFTO tsCutOffCriterions (* pointer to cut off parameters *);
+ mbRefInstanceDataInterPosValid : BOOL (* reference to array with data of interpos movements is valid *);
+ mprCalcDurationStartPosition : REFTO REAL;
+ mbRefCalcDurationStartPosValid : BOOL (* reference to start position is valid *);
+ mbRefCalcedInjectDurationValid : BOOL (* reference to calculated inject duration is valid *);
+ mbRefCalcedHoldDurationValid : BOOL (* reference to calculated hold duration is valid *);
+ mbRefCutOffParamsValid : BOOL (* reference to cut off params is valid *);
+ mbReCalcDurations : BOOL (* Recalculate durations *);
+ mpScrewDiameter : REFTO REAL;
+ mpComparatorData : tsCompDataArray;
+ mInstanceDataInterPos : tyInstanceListArray (* Local array of interstop movement data *);
+ mrCalcDurationStartPos : REAL (* start position for calculation of duration *);
+ mbIsSpeedpump : BOOL (* if the speed pump configurated *);
+ mbReducedInjectCall : BOOL (* TRUE: fbInject is not called in every tasks cycle *);
+ miCount : DINT (* counter for reduced call of fbInject (starts with 0) *);
+ mdTimeThresholdDiff : TIME;
+ mdOffsetToIoSys : TIME;
+ mbMaxSpeedLinked : BOOL;
+ mprMaxSpeed : REFTO REAL;
+ fbCutOffInterpolation : FBCutOffInterpolation;
+ mrPositionThreshold : REAL;
+ mrPressureThreshold : REAL;
+ mrCutOffPressure : REAL;
+ mrCutOffPosition : REAL;
+ miCutOffTimeDiff : UDINT;
+ mrCalcedInitStartRamp : REAL;
+ miReductionFactor : DINT := 1 (* reduction factor for reduced call of fbInject *);
+END_VAR
+
+ALGORITHM aGetOnboardCycleTime
+
+
+VAR_OUTPUT
+ rOnboardCycleTime : REAL (* onboard cycletime in [s] *);
+END_VAR
+
+VAR
+ hdl : KCAT_HandleData;
+ s : KCAT_Status;
+ DataType : KCAT_TypeData;
+ rTmp : LREAL;
+ sIOCycleTime : STRING(255);
+ bDone : BOOL;
+END_VAR
+#BEGIN_EDIT_BLOCK
+(**************************************** WARNING ********************************************
+ *** The KEBA Kemro K2 System including software is not intended for safety control tasks! ***
+ ***                       For further information see Comment tab!                        ***
+ *********************************************************************************************)
+
+IF NOT bDone THEN
+   
+   rOnboardCycleTime := 0.0;
+
+   //get cycle time from catalog
+   hdl := KCAT_GetHandle('IO.ONBOARD.cycleTime');
+   DataType := KCAT_GetType(hdl.Handle);
+   IF DataType.Type = KCAT_Type_STRING THEN
+      s := KCAT_GetValue(hdl.Handle, sIOCycleTime);
+      rOnboardCycleTime := STRING_TO_REAL(sIOCycleTime);
+   ELSIF DataType.Type = KCAT_Type_LREAL THEN
+      s := KCAT_GetValue(hdl.Handle, rTmp);
+      rOnboardCycleTime := LREAL_TO_REAL(rTmp);
+   END_IF;
+   
+   bDone := TRUE;
+END_IF;
+
+
+
+
+;#END_EDIT_BLOCK END_ALGORITHM
+
+(*
+This algorithm copies the input values to local variables and starts
+the process algorithms for initialization of the inject and hold profile.
+*)
+
+ALGORITHM aInit
+
+
+VAR_INPUT
+ pInjectProfile : REFTO KAPPL_VisProfile (* pointer to systemvariable that contains the inject profile *);
+ pHoldProfile : REFTO KAPPL_VisProfile (* pointer to systemvariable that contains the hold profile *);
+ MoveIdInject : tMoveIdent (* moveId of inject movement *);
+ MoveIdHold : tMoveIdent (* moveId of hold movement *);
+ pScrewDiameter : REFTO REAL;
+ ComparatorData : tsCompDataArray;
+ pdCalcedInjectDuration : REFTO TIME (* pointer to calculated inject duration (without holding) *);
+ pdCalcedHoldDuration : REFTO TIME (* pointer to calculated hold duration *);
+ prCalcDurationStartPosition : REFTO REAL (* pointer to startposition to calculate duration *);
+ pCutOffParams : REFTO tsCutOffCriterions (* pointer to cut off parameters *);
+ pInstanceDataInterPos : REFTO tyInstanceListArray (* pointer to array with data of interpos movements *);
+ prMaxSpeed : REFTO REAL;
+END_VAR
+
+VAR
+ bInitDone : BOOL;
+ swoState : KSWO_Status;
+ fuName : STRING(255);
+ variableName : STRING(255);
+ s : KSYS_Status;
+ pPumpOptions : REFTO tOptionId;
+ b : BOOL;
+ dCycleTimeIOSystem : TIME;
+ rTmp : REAL;
+ hwPathData : KCAT_HWPathData;
+ pServoData : REFTO KHW_Servo_Data;
+END_VAR
+#BEGIN_EDIT_BLOCK
+(**************************************** WARNING ********************************************
+ *** The KEBA Kemro K2 System including software is not intended for safety control tasks! ***
+ ***                       For further information see Comment tab!                        ***
+ *********************************************************************************************)
+
+IF NOT bInitDone THEN
+    //copy references of vis variables
+    mpInjectProfile := pInjectProfile;
+    mpHoldProfile := pHoldProfile;
+    mpScrewDiameter := pScrewDiameter;
+    mMoveIdInject := MoveIdInject;
+    mMoveIdHold := MoveIdHold;
+   
+    //copy references for calculation of duration
+    mpdCalcedInjectDuration := pdCalcedInjectDuration;
+    mpdCalcedHoldDuration := pdCalcedHoldDuration;
+    mpInstanceDataInterPos := pInstanceDataInterPos;
+    mprCalcDurationStartPosition := prCalcDurationStartPosition;
+    mpCutOffParams := pCutOffParams;
+  
+    IF CHECK_REF(mpdCalcedInjectDuration^) THEN
+        mbRefCalcedInjectDurationValid := TRUE;
+    END_IF;
+   
+    IF CHECK_REF(mpdCalcedHoldDuration^) THEN
+        mbRefCalcedHoldDurationValid := TRUE;
+    END_IF;
+    
+    IF CHECK_REF(mpInstanceDataInterPos^) THEN
+        mbRefInstanceDataInterPosValid := TRUE;
+        mInstanceDataInterPos := mpInstanceDataInterPos^;
+    END_IF;
+    
+    IF CHECK_REF(mpCutOffParams^) THEN
+        mbRefCutOffParamsValid := TRUE;
+    END_IF;
+   
+    IF CHECK_REF(mprCalcDurationStartPosition^) THEN
+        mbRefCalcDurationStartPosValid := TRUE;
+        mrCalcDurationStartPos := mprCalcDurationStartPosition^;
+    END_IF;
+    
+    IF CHECK_REF(mpInjectProfile^) THEN
+        mbInjectReferenceValid := TRUE;
+        //start paInitInjectProfile only if reference of inject profile is valid
+        START_PROCESS_ALGORITHM(paInitInjectProfile);
+    ELSE
+        SET_ALARM(Name := erInvalidProfileReference,
+                  SubID1 := sv_DeviceId.CompId,
+                  SubID2 := sv_DeviceId.IndexId,
+                  SubID3 := mMoveIdInject);
+    END_IF;
+    
+    IF CHECK_REF(mpHoldProfile^) THEN
+        mbHoldReferenceValid := TRUE;
+        //start paInitHoldProfile only if reference of hold profile is valid
+        START_PROCESS_ALGORITHM(paInitHoldProfile);
+    ELSE
+        SET_ALARM(Name := erInvalidProfileReference,
+                  SubID1 := sv_DeviceId.CompId,
+                  SubID2 := sv_DeviceId.IndexId,
+                  SubID3 := mMoveIdHold);
+    END_IF;
+    
+    //Check the existance of speed pump
+    pPumpOptions := GET_SYNC_REFTO('Pump1.sv_Options', T#0s, s);
+    mbIsSpeedpump := (s = KSYS_Status_OK) AND ((pPumpOptions^ AND cSubOpSpeedpumpMaster) = cSubOpSpeedpumpMaster);
+    
+    IF mbIsSpeedpump THEN
+       pServoData := GET_SYNC_REFTO('Pump1.sv_KHW_ServoMaster_actValue', T#0s, s);
+       hwPathData := KCAT_GetHWPath(pServoData^);
+       IF hwPathData.Status = KCAT_Status_OK THEN
+          IF FIND(hwPathData.Name,'CAN') > 0 THEN       
+             mbReducedInjectCall := TRUE;
+             //calling of fbInject is reduced in case of speedpump via CAN
+             //-> calculate reduction factor
+             //CAN cycle time for speedpump is fixed with 4ms!
+             miReductionFactor := LINT_TO_DINT(4000 / TIME_TO_LINT(GET_TASK_INTERVAL(TaskInject)));            
+          END_IF; 
+       END_IF;
+    END_IF;
+   
+    fuName := GET_MY_FU_NAME(); 
+    variableName := CONCAT(fuName,'.Inject.SetPressure bar');
+    swoState := KSWO_AddVariable( Task := TaskInject,
+                                  Name := variableName,
+                                  Variable := mrPressureSet);
+    b := FAddToScopeGroup(Task := TaskInject, 
+                          Name := variableName, 
+                          GroupId := cScopeGroupInject);  
+    variableName := CONCAT(fuName,'.Inject.SetVelocity ccm/s');
+    swoState := KSWO_AddVariable( Task := TaskInject,
+                                  Name := variableName,
+                                  Variable := mrVelocitySet);
+    b := FAddToScopeGroup(Task := TaskInject, 
+                          Name := variableName, 
+                          GroupId := cScopeGroupInject);  
+    variableName := CONCAT(fuName,'.Inject.PressureOutput bar');
+    swoState := KSWO_AddVariable( Task := TaskInject,
+                                  Name := variableName,
+                                  Variable := mrPressureOutput);
+    variableName := CONCAT(fuName,'.Inject.VelocityOutput ccm/s');
+    swoState := KSWO_AddVariable( Task := TaskInject,
+                                  Name := variableName,
+                                  Variable := mrVelocityOutput);
+    variableName := CONCAT(fuName,'.Inject.ControlVariable');
+    swoState := KSWO_AddVariable( Task := TaskInject,
+                                  Name := variableName,
+                                  Variable := mrServoOutput);
+    variableName := CONCAT(fuName,'.Inject.InjectActive');
+    swoState := KSWO_AddVariable( Task := TaskInject,
+                                  Name := variableName,
+                                  Variable := mbInjectActive);
+    b := FAddToScopeGroup(Task := TaskInject, 
+                          Name := variableName, 
+                          GroupId := cScopeGroupInject);     
+    variableName := CONCAT(fuName,'.Inject.CutOffDetected');
+    swoState := KSWO_AddVariable( Task := TaskInject,
+                                  Name := variableName,
+                                  Variable := mbCutOffDetected);
+    b := FAddToScopeGroup(Task := TaskInject, 
+                          Name := variableName, 
+                          GroupId := cScopeGroupInject);  
+    variableName := CONCAT(fuName,'.Inject.CutOff.PositionThreshold ccm');
+    swoState := KSWO_AddVariable( Task := TaskInject,
+                                  Name := variableName,
+                                  Variable := mrPositionThreshold);
+    variableName := CONCAT(fuName,'.Inject.CutOff.PressureThreshold bar_spec');
+    swoState := KSWO_AddVariable( Task := TaskInject,
+                                  Name := variableName,
+                                  Variable := mrPressureThreshold);
+    variableName := CONCAT(fuName,'.Inject.CutOff.CutOffPosition ccm');
+    swoState := KSWO_AddVariable( Task := TaskInject,
+                                  Name := variableName,
+                                  Variable := mrCutOffPosition);
+    variableName := CONCAT(fuName,'.Inject.CutOff.CutOffPressure bar_spec');
+    swoState := KSWO_AddVariable( Task := TaskInject,
+                                  Name := variableName,
+                                  Variable := mrCutOffPressure);
+    variableName := CONCAT(fuName,'.Inject.CutOff.CutOffTimeDiff µs');
+    swoState := KSWO_AddVariable( Task := TaskInject,
+                                  Name := variableName,
+                                  Variable := miCutOffTimeDiff);
+   
+    START_PROCESS_ALGORITHM(paInitDebugMeasurement);
+    
+   // copy Comparatordata to local structure
+   mpComparatorData := ComparatorData;
+   fbCutOffDetection(bInit := TRUE, ComparatorData := ComparatorData, iSelCavityPressSensor := sv_iSelCavityPressureSensor);
+   IF (fbCutOffDetection.bHWCompAvailable) THEN
+      // check IO system
+      aGetOnboardCycleTime();
+      rTmp := aGetOnboardCycleTime.rOnboardCycleTime * 1.0e6; //convert to µs
+      dCycleTimeIOSystem := LINT_TO_TIME(REAL_TO_LINT(rTmp));
+      IF (dCycleTimeIOSystem <> GET_TASK_INTERVAL(TaskInject)) THEN
+         SET_ALARM(erCycleTimeIOUpdate);
+      END_IF; 
+   END_IF;
+   
+   mprMaxSpeed := prMaxSpeed; 
+   IF CHECK_REF(mprMaxSpeed^) THEN
+        mbMaxSpeedLinked := TRUE;
+    END_IF;
+   
+    bInitDone := TRUE;
+END_IF;
+
+
+
+
+;#END_EDIT_BLOCK END_ALGORITHM
+
+(*
+Following functions are realized in this algorithm:
+
+1) reparam of the profileoutput - blocks
+2) profile output for pressure and velocity (for inject and holding)
+   Attention: If an error was detected during profile calculation of inject or
+   hoding profile the algorithm will not be executed!
+3) cut off detection according 
+4) Timeout detection if dMaxMoveTime is bigger than 0.
+   dMaxMoveTime = 0 means no timeout detection active
+   If a timeout is detected an alarm will be set and the profileoutput will be stopped automatically
+*)
+
+ALGORITHM aRun
+
+
+VAR_INPUT
+ bStart : BOOL (* start profile output *);
+ bStop : BOOL (* stop profile output *);
+ rActScrewPosition : REAL (* actual screw position *);
+ rMaxScrewPosition : REAL (* maximum screw position, limit during postpressure PID - to avoid mech. crash *);
+ rStartOutputPressure : REAL (* start output pressure *);
+ rStartOutputVelocity : REAL (* start output velocity *);
+ rMaxInjectSpeed : REAL (* max. inject speed (mm/s) *);
+ rMaxPossiblePressure : REAL (* max. possible pressure (used for holding PID controller) *);
+ InjectControlParams : tsControlParameters (* PID - parameters for inject *);
+ InjectDeadTimeParams : tsDeadTimeParameters;
+ HoldingControlParams : tsControlParameters (* PID - parameters for holding *);
+ HoldingDeadTimeParams : tsDeadTimeParameters;
+ dMaxMoveTime : TIME (* maximum move time (0 = no timeout detection) *);
+ CutOffParams : tsCutOffCriterions (* settings for cut off detection *);
+ rActMoldPressure : REAL (* actual mold pressure *);
+ rActInjectPressure : REAL (* actual inject pressure *);
+ di_ExtCutOff : BOOL (* di for external cut off detection *);
+ PressureLimitControlParams : tsControlParameters (* PID - parameters for inject *);
+ PressureLimitControlVelocityPar : tsControlParameters (* PID - parameters for inject *);
+ dT_ActValFilter : TIME (* PID - parameters for inject *);
+ rActScrewVelocity : REAL;
+ ProfileDeadTime : TIME;
+ IMM_Type : KAPPL_IMM_Type;
+ rMaxPressureEndHold : REAL;
+ dDelayTimeOn : TIME (* Delay Time between preoutput and  constoutput *);
+ dDelayTimeOff : TIME (* Delay Time between pump stop and bActive FALSE *);
+ bUseInterruptPos : BOOL (* TRUE: movement stops at rInterruptPos *);
+ rInterruptPos : REAL (* interrrupt position  *);
+ rInterruptDec : REAL (* stop acceleration before interruptposition *);
+ rInterruptAcc : REAL;
+ dInterruptDeadTime : TIME;
+ bInjectPIDIntStop : BOOL (* Stop position integrator of inject PID *);
+ bHoldPIDIntStop : BOOL (* Stop integration in PID-controller *);
+ bEnableHoldVelLimit : BOOL;
+ rMaxDecompSpeedHold : REAL;
+ dMaxPressureDecompressTime : TIME;
+ rMaxHoldEndVelocityRamp : REAL;
+ bUseHoldVelocityLimitBwd : BOOL;
+ bIgnoreVSProfilPostCutOff : BOOL (* don't use inject profile for velocity limitation at post cut off *);
+ bUseCalcedPressureStartRamp : BOOL (* use calculated start ramp for hold pressure profile *);
+ bIgnoreStopAtCutOffNoHold : BOOL (* ignore stop at cutoff position if hold time is 0s *);
+END_VAR
+
+VAR_OUTPUT
+ rPressureOutput : REAL (* calculated pressure output *);
+ rVelocityOutput : REAL (* calculated velocity output *);
+ rPressureSet : REAL (* set output for pressure (according to the entered profile) *);
+ rVelocitySet : REAL (* set output for velocity (according to the entered profile) *);
+ bActive : BOOL (* profile movement is active *);
+ bCutOffDetected : BOOL (* cut off was detected *);
+ rCutOffPosition : REAL (* position where cut off was detected *);
+ rMaxInjectVelocityOutput : REAL (* maximum output for inject velocity *);
+ iActiveInjectStage : DINT (* active stage in inject profile *);
+ bPreOutputReached : BOOL (* preoutput reached *);
+ dActMoveTime : TIME (* actual move time *);
+ dActHoldingTime : TIME (* actual holding time *);
+ bTimeOut : BOOL (* timeout detected *);
+ bError : BOOL (* error detected *);
+ iErrorInfo : DINT (* additional error info *);
+ rServoOutput : REAL;
+ rHoldDonePosition : REAL (* position at the end of hold *);
+ rCutOffPressure : REAL;
+ rCutOffCavityPressure : REAL;
+ rCushion : REAL (* smallest screw position during holding *);
+END_VAR
+
+VAR_TEMP
+ i : UDINT;
+END_VAR
+
+VAR
+ fbCutOffDone : R_TRIG;
+ fbREdge_Start : R_TRIG;
+ fbTimer : TON;
+ fbREdge_Timeout : R_TRIG;
+ bAlarmInjectSet : BOOL;
+ bAlarmHoldSet : BOOL;
+ fbREdgeError : R_TRIG;
+ rCutOffVelocity : REAL;
+ iCutOffTimeDiff : UDINT;
+ bUsePostCutOff : BOOL := FALSE;
+ rFactorPercentToSpeed : REAL;
+ bActiveInt : BOOL;
+ fbTOFActive : TOF;
+ bComparatorUsed : BOOL;
+ rMinScrewPosition : REAL;
+ dCycleTime : TIME;
+ rHoldTime : REAL;
+ rCutOffInitPressure : REAL;
+ bInitDone : BOOL;
+END_VAR
+#BEGIN_EDIT_BLOCK
+(**************************************** WARNING ********************************************
+ *** The KEBA Kemro K2 System including software is not intended for safety control tasks! ***
+ ***                       For further information see Comment tab!                        ***
+ *********************************************************************************************)
+ 
+bError := FALSE;
+iErrorInfo := cApplPlasticsNoError;
+
+IF NOT bInitDone THEN
+   //get cycle time
+   dCycleTime := GET_TASK_INTERVAL();
+  
+   IF mbReducedInjectCall THEN     
+      //fbInject ist called reduced -> modify dCycleTime     
+      dCycleTime := MULTIME(dCycleTime, miReductionFactor);      
+   END_IF;
+
+   bInitDone := TRUE;
+END_IF;
+  
+
+//necessary to init the instance at the each beginning of movement  
+IF NOT bStart THEN
+    miCount := (miReductionFactor -1);
+END_IF;           
+
+//do not execute if reference of inject profile or hold profile is not valid
+IF NOT mbInjectReferenceValid OR NOT mbHoldReferenceValid THEN
+    
+    //set alarms because algorithm can be called without calling aInit before
+    IF NOT mbInjectReferenceValid AND NOT bAlarmInjectSet THEN        
+        SET_ALARM(Name := erInvalidProfileReference,
+                  SubID1 := sv_DeviceId.CompId,
+                  SubID2 := sv_DeviceId.IndexId,
+                  SubID3 := mMoveIdInject);
+        bAlarmInjectSet := TRUE;
+    END_IF;
+    
+    IF NOT mbHoldReferenceValid AND NOT bAlarmHoldSet THEN        
+        SET_ALARM(Name := erInvalidProfileReference,
+                  SubID1 := sv_DeviceId.CompId,
+                  SubID2 := sv_DeviceId.IndexId,
+                  SubID3 := mMoveIdHold);
+        bAlarmHoldSet := TRUE;
+    END_IF;
+        
+    bError := TRUE;
+    RETURN;
+END_IF;
+
+//do not execute if profile error was detected
+IF mbInjectProfileError OR mbHoldProfileError THEN
+    bError := TRUE;
+    RETURN;
+END_IF;
+ 
+//init part
+IF mbReparam THEN   
+
+    // init inject block
+    fbInject(CycleTime := dCycleTime,
+             PreOutputRampV := mpInjectProfile^.rPreOutputVelRamp,
+            PreOutputValueV := mpInjectProfile^.rPreOutputVel,
+            PreOutputRampP := mpInjectProfile^.rPreOutputPressRamp,
+            PreOutputValueP := mpInjectProfile^.rPreOutputPress,
+            RampTypePreCutOffV := mpInjectProfile^.RampTypeVel,
+            RampTypePreCutOffP := mpInjectProfile^.RampTypePress,
+            RampTypePostCutOffV := mpHoldProfile^.RampTypeVel,
+            RampTypePostCutOffP := mpHoldProfile^.RampTypePress,
+            ProfilPreCutOffV := InjectVelocityProfile,
+            ProfilPreCutOffP := InjectPressureProfile,
+            ProfilPostCutOffV := HoldVelocityProfile,
+            ProfilPostCutOffP := HoldPressureProfile,
+            //MaxPressure := sv_InjectionParam.MaxPressure,     //todo!!
+            MinOutputVelocity := mpInjectProfile^.rMinOutputVel,
+            MinOutputPressure := mpInjectProfile^.rMinOutputPress,
+//            PostCutOff := FALSE, -> if valve delay inject still active, cutoff must not be reseted at ReParam, reset done at Start 
+            ErrorInfo => iErrorInfo,
+            ProfileDeadTime := ProfileDeadTime,
+            IMM_Type := IMM_Type,
+            ReParam := TRUE,
+            DelayTime := dDelayTimeOn,
+            rScrewDiameter := mpScrewDiameter^,
+            bUseInterruptPos := bUseInterruptPos,
+            InterruptDeadTime := dInterruptDeadTime,
+            P_PressureLimitVelocity  := PressureLimitControlVelocityPar.rP,
+            TN_PressureLimitVelocity := PressureLimitControlVelocityPar.dTN,
+            TV_PressureLimitVelocity := PressureLimitControlVelocityPar.dTV,
+            KS_PressureLimitVelocity := PressureLimitControlVelocityPar.rKS,
+            UsePressureLimitVelocity := PressureLimitControlVelocityPar.bUsePIDControl,
+            EnableHoldVelLimit := bEnableHoldVelLimit,
+            MaxDecompSpeedHold := rMaxDecompSpeedHold,
+            MaxPressureDecompressTime := dMaxPressureDecompressTime,
+            MaxHoldEndVelocityRamp := rMaxHoldEndVelocityRamp,
+            UseHoldVelocityLimitBwd := bUseHoldVelocityLimitBwd,
+            bIgnoreVSProfilPostCutOff := bIgnoreVSProfilPostCutOff,
+            bIgnoreStopAtCutOffNoHold := bIgnoreStopAtCutOffNoHold);
+    IF (CutOffParams.rPositionThreshold > 0.0) AND (CutOffParams.bUsePosition) THEN
+       fbInject.rCutOffPosition := CutOffParams.rPositionThreshold;
+    ELSE
+       fbInject.rCutOffPosition := 0.0;
+    END_IF;
+    
+    IF fbInject.Error THEN
+        IF fbInject.ErrorInfo = cApplPlasticsToMuchController THEN
+           erInject := erInjectParam;
+        ELSE
+           erInject := erInjectOutput;
+        END_IF;
+        SET_ALARM(Name := erInject,
+                  SubID1 := sv_DeviceId.CompId,
+                  SubID2 := sv_DeviceId.IndexId,
+                  SubID3 := fbInject.ErrorInfo);
+        
+        bError := TRUE;        
+        //don´t do movement if injectblock has an error
+        RETURN;
+    END_IF;
+    rHoldTime := mpHoldProfile^.pCalculatedProfile^.VelocityProfile.CalculatedProfile.Point[mpHoldProfile^.pCalculatedProfile^.VelocityProfile.CalculatedProfile.uNoOfPoints].rX;
+    
+   fbCutOffInterpolation.dCycleTime := dCycleTime;
+   // pressure
+   IF (IMM_Type = nKAPPL_IMM_Electric) THEN
+      fbCutOffInterpolation.dFilterTime := dT_ActValFilter;
+   ELSIF ((IMM_Type = nKAPPL_IMM_ServoValve) OR ((IMM_Type = nKAPPL_IMM_PQ) AND 
+          (HoldingControlParams.bUsePIDControl) AND 
+          (HoldingDeadTimeParams.bCompensationEnabled))) THEN   
+      fbCutOffInterpolation.dFilterTime := HoldingDeadTimeParams.dPT2T1;
+   ELSE
+      fbCutOffInterpolation.dFilterTime := T#0s;
+   END_IF;
+   fbCutOffInterpolation.rPressureRamp := HoldPressureProfile.Acceleration;
+   fbCutOffInterpolation.rStartPressure := HoldPressureProfile.ProfilePoints.Point[1].rY;
+   // velocity
+   fbCutOffInterpolation.rRefVelocity := HoldVelocityProfile.ProfilePoints.Point[1].rY;
+   fbCutOffInterpolation.rVelocityRamp := HoldVelocityProfile.Acceleration;
+   fbCutOffInterpolation.bReParam := TRUE;
+   
+    mbReparam := FALSE;
+END_IF;
+
+//reInit cutOff params and PID parameters after a rising edge of bStart
+fbREdge_Start(CLK := bStart);
+IF fbREdge_Start.Q THEN
+    //Deadtime compensation
+    miCount := (miReductionFactor - 1);
+    
+    IF rInterruptAcc = 0.0 THEN
+       InjectVelocityProfile.Acceleration  := mpInjectProfile^.Profile.Points[1].rVelRamp / 100.0 * mpInjectProfile^.rMaxRampVel;
+    ELSE
+       InjectVelocityProfile.Acceleration := rInterruptAcc / 100.0  * mpInjectProfile^.rMaxRampVel; 
+    END_IF;
+   
+    // calc Interrupt deacceleration
+    InjectVelocityProfile.InterAcceleration := rInterruptDec / 100.0 * mpInjectProfile^.rMaxRampVel;
+   
+    // set factor to 1.0 because sv_rMaxInjectSpeed is parameterised in [mm/s]
+    rFactorPercentToSpeed := 1.0;
+       
+    // init cutOff detection
+    fbCutOffDetection(ControlExtDigIn := CutOffParams.bUseExtDigIn,
+                    MoldPressureThreshold := CutOffParams.rMoldPressureThreshold,
+                    ControlMoldPressure := CutOffParams.bUseMoldPressure,
+                    PressureThreshold := CutOffParams.rInjectPressureThreshold,
+                    ControlPressure := CutOffParams.bUseInjectPressure,
+                    TimeThreshold := CutOffParams.dTimeThreshold,
+                    ControlTimer := CutOffParams.bUseTimer,
+                    PositionThreshold := CutOffParams.rPositionThreshold,
+                    ControlPosition := CutOffParams.bUsePosition,    
+                    CutOffDetectionPositionLimit := CutOffParams.rDetectionPositionLimit,
+                    CutOffDetectionDeadTime := CutOffParams.dDetectionDeadTime,
+                    bSetThreshold := TRUE,
+                    bDeactivateComparator := FALSE);
+   
+    fbCutOffInterpolation.rCutOffThresholdPosition := CutOffParams.rPositionThreshold;
+    rCutOffInitPressure := rActInjectPressure;
+    
+    //init inject block with PID Parameters
+    bUsePostCutOff := (CutOffParams.bUseInjectPressure OR
+                       CutOffParams.bUseExtDigIn OR
+                       CutOffParams.bUseMoldPressure OR
+                       CutOffParams.bUsePosition OR
+                       CutOffParams.bUseTimer) AND
+                      (rHoldTime > 0.0); //  no post cut off if hold time 0.0
+        
+    IF (CutOffParams.rPositionThreshold > 0.0) AND (CutOffParams.bUsePosition) THEN
+       fbInject.rCutOffPosition := CutOffParams.rPositionThreshold;
+    ELSE
+       fbInject.rCutOffPosition := 0.0;
+    END_IF;
+    fbInject(ProfilPreCutOffV := InjectVelocityProfile,
+            P_PreCutOff := InjectControlParams.rP,
+            TN_PreCutOff := InjectControlParams.dTN,
+            TV_PreCutOff := InjectControlParams.dTV,
+            KS_PreCutOff := InjectControlParams.rKS,
+            PIDActivationDelayPreCutOff := InjectControlParams.dActivationDelay, 
+            P_PostCutOff := HoldingControlParams.rP,
+            TN_PostCutOff := HoldingControlParams.dTN,
+            TV_PostCutOff := HoldingControlParams.dTV,
+            KS_PostCutOff := HoldingControlParams.rKS,
+            DeadTimeCompensation := InjectDeadTimeParams.bCompensationEnabled,
+            DeadTime := InjectDeadTimeParams.dDeadTime, 
+            DeadTime_PT2T1 := InjectDeadTimeParams.dPT2T1,
+            DeadTime_PT2T2 := InjectDeadTimeParams.dPT2T2, 
+            RampTypePreCutOffV := mpInjectProfile^.RampTypeVel,
+            RampTypePreCutOffP := mpInjectProfile^.RampTypePress,
+            RampTypePostCutOffV := mpHoldProfile^.RampTypeVel,
+            RampTypePostCutOffP := mpHoldProfile^.RampTypePress,
+             
+            DeadTimeCompensation_PostCutOff := HoldingDeadTimeParams.bCompensationEnabled,
+            DeadTime_PostCutOff := HoldingDeadTimeParams.dDeadTime,
+            DeadTime_PT2T1_PostCutOff := HoldingDeadTimeParams.dPT2T1,
+            DeadTime_PT2K_PostCutOff := HoldingDeadTimeParams.rPT2K,
+            
+            UseInjectPID := InjectControlParams.bUsePIDControl,
+            UseHoldPID := HoldingControlParams.bUsePIDControl,
+            MaxPossiblePressure := rMaxPossiblePressure,
+            MinPossiblePressure := -rMaxPossiblePressure,   //It is not possible to have negative pressure if hydr. machine used
+            MaxPosition := rMaxScrewPosition,               //enhancement EIMM
+            FactorPercentToSpeed := rFactorPercentToSpeed,
+            PostCutOff := FALSE,
+            P_PressureLimit   := PressureLimitControlParams.rP,
+            TN_PressureLimit  := PressureLimitControlParams.dTN,
+            TV_PressureLimit  := PressureLimitControlParams.dTV,
+            KS_PressureLimit  := PressureLimitControlParams.rKS,
+            UsePressureLimit  := PressureLimitControlParams.bUsePIDControl,
+            MaxPressureEndHold := rMaxPressureEndHold, 
+            T_ActValFilter    := dT_ActValFilter,
+            UsePostCutOff     := bUsePostCutOff,
+            MaxInjectSpeed    := rMaxInjectSpeed,              
+            ProfileDeadTime := ProfileDeadTime,
+            IMM_Type := IMM_Type,
+            ReParam := TRUE,
+            DelayTime := dDelayTimeOn,
+            rScrewDiameter := mpScrewDiameter^,
+            bUseInterruptPos := bUseInterruptPos,
+            InterruptDeadTime := dInterruptDeadTime,
+            bHoldPIDIntStop := FALSE,
+            P_PressureLimitVelocity  := PressureLimitControlVelocityPar.rP,
+            TN_PressureLimitVelocity := PressureLimitControlVelocityPar.dTN,
+            TV_PressureLimitVelocity := PressureLimitControlVelocityPar.dTV,
+            KS_PressureLimitVelocity := PressureLimitControlVelocityPar.rKS,
+            UsePressureLimitVelocity := PressureLimitControlVelocityPar.bUsePIDControl,
+            EnableHoldVelLimit := bEnableHoldVelLimit,
+            MaxDecompSpeedHold := rMaxDecompSpeedHold,
+            MaxPressureDecompressTime := dMaxPressureDecompressTime,
+            MaxHoldEndVelocityRamp := rMaxHoldEndVelocityRamp,
+            UseHoldVelocityLimitBwd := bUseHoldVelocityLimitBwd,
+            bIgnoreVSProfilPostCutOff := bIgnoreVSProfilPostCutOff,
+            bUseExtPressureStartRamp := bUseCalcedPressureStartRamp,
+            bIgnoreStopAtCutOffNoHold := bIgnoreStopAtCutOffNoHold);
+    
+    IF fbInject.Error THEN
+        IF fbInject.ErrorInfo = cApplPlasticsToMuchController THEN
+           erInject := erInjectParam;
+        ELSE
+           erInject := erInjectOutput;
+        END_IF;
+        SET_ALARM(Name := erInject,
+                  SubID1 := sv_DeviceId.CompId,
+                  SubID2 := sv_DeviceId.IndexId,
+                  SubID3 := fbInject.ErrorInfo);
+        
+        bError := TRUE;        
+        //don´t do movement if injectblock has an error
+        RETURN;
+    END_IF;
+    
+    fbTimer(IN := FALSE);
+    bTimeOut := FALSE;
+    dActHoldingTime := t#0.0s;
+    rMaxInjectVelocityOutput := 0.0;
+    bCutOffDetected := FALSE;
+    //necessary to get a rising edge if cutoff is reached immediatly after starting
+    fbCutOffDone(CLK := FALSE);
+    fbREdgeError(CLK := FALSE);
+ 
+    //set min. screw position to actual screw position
+    rMinScrewPosition := rActScrewPosition;
+
+   // cutoff with comparator:  
+   mrPositionThreshold := CutOffParams.rPositionThreshold;
+   mrPressureThreshold := CutOffParams.rInjectPressureThreshold;
+   mrCalcedInitStartRamp := 0.0;
+END_IF;
+
+// cyclic part
+// CutOff Detection
+fbCutOffDetection(bInit := FALSE,
+                  bReParam := FALSE,
+                  bSetThreshold := FALSE,
+                  Start := bStart,
+                  ExtDigIn := di_ExtCutOff,
+                  MoldPressure := rActMoldPressure,
+                  Pressure := rActInjectPressure,
+                  Position := rActScrewPosition,
+                  TimeThreshold := (CutOffParams.dTimeThreshold - mdTimeThresholdDiff),
+                  CutOff => bCutOffDetected,
+                  bCompUsed => bComparatorUsed);
+
+fbCutOffDone (CLK := bCutOffDetected);
+IF fbCutOffDone.Q THEN
+   IF (CutOffParams.bUsePosition OR CutOffParams.bUsePosition) THEN
+      IF (IMM_Type = nKAPPL_IMM_Electric OR IMM_Type = nKAPPL_IMM_ElectricExtCtrl) THEN      
+         fbCutOffInterpolation.rActVelocityPreCutOff := rActScrewVelocity;
+      ELSE // hydraulic machines: don't use actual velocity
+         fbCutOffInterpolation.rActVelocityPreCutOff := rVelocitySet;
+      END_IF;
+      fbCutOffInterpolation(rActPressure := rActInjectPressure,
+                           rPressurePreCutOff:= mrActInjectPressure, 
+                           rPositionPreCutOff:= mrActScrewPosition, 
+                           rActPosition := rActScrewPosition,
+                           dActMoveTime := dActMoveTime,
+                           bUseCalcedInitPressure := TRUE,
+                           //rActVelocityPreCutOff := rVelocitySet, // depends on machine type, so already set above
+                           uTimeDiff := fbCutOffDetection.CutOffTimeDiff,
+                           bCompPosSwitched := fbCutOffDetection.bCompUsedPosition,
+                           rCompPositionCutOff := fbCutOffDetection.CutOffPosition,
+                           rMaxPressure := rMaxPossiblePressure);
+      fbCutOffInterpolation.bReParam := FALSE;   
+      rCutOffVelocity := fbCutOffInterpolation.rCalcedInitVelocity;
+      mrCalcedInitStartRamp := fbCutOffInterpolation.rCalcedInitStartRamp;
+   ELSE   
+      rCutOffVelocity := rActScrewVelocity;
+      mrCalcedInitStartRamp := HoldPressureProfile.Acceleration;
+   END_IF;   
+
+    IF (NOT bComparatorUsed) THEN
+        // sample cut off position and maximum velocity
+        IF CutOffParams.bUsePosition THEN
+           rCutOffPosition := fbCutOffInterpolation.rCutOffPosition;
+           rCutOffInitPressure := fbCutOffInterpolation.rInitPressure;
+        ELSE           
+           rCutOffPosition := rActScrewPosition;
+           rCutOffInitPressure := rActInjectPressure;
+        END_IF;
+        rCutOffPressure := rActInjectPressure;
+        iCutOffTimeDiff := 0;
+    ELSE
+        rCutOffPosition := fbCutOffDetection.CutOffPosition;
+        rCutOffPressure := fbCutOffDetection.CutOffPressure;
+        iCutOffTimeDiff := fbCutOffDetection.CutOffTimeDiff;
+        rCutOffInitPressure := rActInjectPressure;
+    END_IF;
+    mrCutOffPosition := rCutOffPosition;
+    mrCutOffPressure := rCutOffPressure;
+    miCutOffTimeDiff := iCutOffTimeDiff;
+    rCutOffCavityPressure := rActMoldPressure;   //ev. mit Werten aus fbCutOffDetection beschreiben 
+    rMaxInjectVelocityOutput := fbInject.MaxVelocity;
+
+    //update timer once after cut off is detected
+    IF (g_dActiveTimestamp > t#0s) THEN
+       dActMoveTime := GET_RUNTIME() - g_dActiveTimestamp + mdOffsetToIoSys;
+    ELSE
+       fbTimer(IN := TRUE, PT := dMaxMoveTime);
+       dActMoveTime := fbTimer.ET;
+    END_IF;
+   
+    //time with respect to determined comparator cutoff time
+    dActMoveTime := dActMoveTime - LINT_TO_TIME(UDINT_TO_LINT(iCutOffTimeDiff));
+       
+    //set inject stage to 0 after cut off was detected 
+    iActiveInjectStage := 0;
+END_IF;
+
+// inject block
+// consider reduced call of fbInject
+IF (miCount = (miReductionFactor - 1)) OR NOT mbReducedInjectCall THEN
+    fbInject(Start := bStart,
+            Stop := bStop OR bTimeOut,
+            Position := rActScrewPosition,
+            Pressure := rActInjectPressure,
+            StartOutputVelocity := rStartOutputVelocity,
+            StartOutputPressure := rStartOutputPressure,
+            PostCutOff := bCutOffDetected,
+            RampTypePreCutOffV := mpInjectProfile^.RampTypeVel,
+            RampTypePreCutOffP := mpInjectProfile^.RampTypePress,
+            RampTypePostCutOffV := mpHoldProfile^.RampTypeVel,
+            RampTypePostCutOffP := mpHoldProfile^.RampTypePress,
+            CutOffTimeDiff := iCutOffTimeDiff,
+            ActValPressureCutOff := rCutOffInitPressure,
+            ActValVelocityCutOff := rCutOffVelocity,
+            IMM_Type := IMM_Type,
+            ReParam := FALSE,
+            DelayTime := dDelayTimeOn,
+            bUseInterruptPos := bUseInterruptPos,
+            rInterruptPos := rInterruptPos,
+            bHoldPIDIntStop := bHoldPIDIntStop,
+            bInjectPIDIntStop := bInjectPIDIntStop,
+            bUseCutOffVelocity := TRUE,
+            bUseExtPressureStartRamp := bUseCalcedPressureStartRamp,
+            rHoldPressureStartRamp := mrCalcedInitStartRamp);
+    miCount := 0;    
+ELSE
+    miCount := (miCount + 1);
+END_IF;
+
+IF fbInject.Error THEN
+    bError := TRUE;
+    iErrorInfo := fbInject.ErrorInfo;
+END_IF;
+        
+// copy outputs
+rPressureOutput := fbInject.OutputPressure;
+rVelocityOutput := fbInject.OutputVelocity;
+rPressureSet := fbInject.OutputSetPressure;
+rVelocitySet := fbInject.OutputSetVelocity;
+bPreOutputReached := fbInject.PreOutputReady;
+rServoOutput := fbInject.OutputServo;
+
+fbREdgeError(CLK := fbInject.Error);
+IF fbREdgeError.Q THEN
+    IF fbInject.ErrorInfo = cApplPlasticsToMuchController THEN
+       bError := TRUE;
+       iErrorInfo := fbInject.ErrorInfo;
+       SET_ALARM(Name := erInjectParam,
+                 SubID1 := sv_DeviceId.CompId,
+                 SubID2 := sv_DeviceId.IndexId,
+                 SubID3 := fbInject.ErrorInfo);
+    ELSIF fbInject.ErrorInfo = cApplPlasticsDecompressFailure THEN
+       bError := TRUE;
+       iErrorInfo := fbInject.ErrorInfo;
+       SET_ALARM(Name := erInjectScrewPosition,
+                 SubID1 := sv_DeviceId.CompId,
+                 SubID2 := sv_DeviceId.IndexId,
+                 SubID3 := fbInject.ErrorInfo); 
+    ELSE       
+       SET_ALARM(Name := erInjectOutput,
+                 SubID1 := sv_DeviceId.CompId,
+                 SubID2 := sv_DeviceId.IndexId, 
+                 SubID3 := iErrorInfo);
+   END_IF;
+END_IF;
+
+IF bCutOffDetected THEN
+   //measure actual holding time with respect to determined comparator cutoff time
+   dActHoldingTime := fbInject.ActHoldTime + LINT_TO_TIME(UDINT_TO_LINT(iCutOffTimeDiff));
+
+   //get cushion (smallest screw position during hold phase)
+   IF rActScrewPosition < rMinScrewPosition THEN
+      rMinScrewPosition := rActScrewPosition;
+   END_IF;
+ELSE
+   //calculate active inject profile stage
+   FOR i := 1 TO mpInjectProfile^.Profile.iNoOfPoints DO        
+      IF rActScrewPosition > mpInjectProfile^.Profile.Points[i+1].rStartPos THEN
+         iActiveInjectStage := UDINT_TO_DINT(i);
+         EXIT;
+      END_IF;
+   END_FOR;
+END_IF;
+
+IF (fbInject.Done AND fbInject.PreOutputReady) OR bError THEN
+    bActiveInt := FALSE;
+    mbMovementActive := FALSE;
+    iActiveInjectStage := 0;
+    
+    //sample actual position at the end of hold
+    rHoldDonePosition := rActScrewPosition;
+   
+    //sample cushion at the end of inject and hold
+    rCushion := rMinScrewPosition;
+ELSE
+    bActiveInt := TRUE;
+    mbMovementActive := TRUE;
+END_IF;
+
+//Timeout detection
+IF bActiveInt AND NOT bCutOffDetected THEN
+    // do detection only untill cut off is detected
+    fbTimer(IN := TRUE,
+            PT := dMaxMoveTime);
+
+    //no timeout detection if dMaxMoveTime = 0
+    IF dMaxMoveTime > t#0.0s THEN
+       bTimeOut := fbTimer.Q;
+    END_IF;
+   
+    IF (g_dActiveTimestamp > t#0s) THEN
+       dActMoveTime := GET_RUNTIME() - g_dActiveTimestamp + mdOffsetToIoSys;
+    ELSE
+       dActMoveTime := fbTimer.ET;
+    END_IF;    
+END_IF;
+
+//set timeout alarm
+fbREdge_Timeout(CLK := bTimeOut);
+IF fbREdge_Timeout.Q THEN
+    SET_ALARM(Name := erMoveTimeout,
+              SubID1 := sv_DeviceId.CompId,
+              SubID2 := sv_DeviceId.IndexId,
+              SubID3 := mMoveIdInject);    
+END_IF;
+
+// set output bActive
+fbTOFActive(bActiveInt, dDelayTimeOff);
+bActive := fbTOFActive.Q;
+IF NOT bActive THEN
+   fbCutOffDetection(bDeactivateComparator := TRUE); // deactive comparator at end of inject: necessary because cut off may not be reached
+END_IF;
+// Variables for SWO Server
+mrActScrewPosition := rActScrewPosition;
+mrActInjectPressure := rActInjectPressure;
+mbCutOffDetected := bCutOffDetected;
+mbInjectActive := bActive;
+mrPressureSet := rPressureSet;
+mrPressureOutput := rPressureOutput;
+mrVelocitySet := rVelocitySet;
+mrVelocityOutput := rVelocityOutput;
+mrServoOutput := rServoOutput;
+
+
+;#END_EDIT_BLOCK END_ALGORITHM
+
+(*
+This algorithm reacts on changes of the inject profile.
+If the profile changes the process algorithm for initialization of inject profile
+will be started.
+*)
+
+POSTUPDATE_ALGORITHM pInjectProfileChanged ON PU_Task_7 WITH mpInjectProfile^
+
+#BEGIN_EDIT_BLOCK
+(**************************************** WARNING ********************************************
+ *** The KEBA Kemro K2 System including software is not intended for safety control tasks! ***
+ ***                       For further information see Comment tab!                        ***
+ *********************************************************************************************)
+
+START_PROCESS_ALGORITHM(paInitInjectProfile);
+
+
+;#END_EDIT_BLOCK END_ALGORITHM
+
+(*
+This algorithm reacts on changes of the hold profile.
+If the profile changes the process algorithm for initialization of hold profile
+will be started.
+*)
+
+POSTUPDATE_ALGORITHM pHoldProfileChanged ON PU_Task_7 WITH mpHoldProfile^
+
+#BEGIN_EDIT_BLOCK
+(**************************************** WARNING ********************************************
+ *** The KEBA Kemro K2 System including software is not intended for safety control tasks! ***
+ ***                       For further information see Comment tab!                        ***
+ *********************************************************************************************)
+
+START_PROCESS_ALGORITHM(paInitHoldProfile);
+
+
+;#END_EDIT_BLOCK END_ALGORITHM
+
+(*
+This algorithm does the initialization for the inject profile movement.
+This means profile calculation of pressure and velocity profile.
+If an error is detected during profile calculation an error will be set.
+*)
+
+PROCESS_ALGORITHM paInitInjectProfile ON TaskSlow
+
+
+VAR_TEMP
+ i : UDINT;
+END_VAR
+
+VAR
+ fbProfileCalc : KAPPL_Plastics_ProfileCalc;
+ iNoOfPoints : UDINT;
+END_VAR
+#BEGIN_EDIT_BLOCK
+(**************************************** WARNING ********************************************
+ *** The KEBA Kemro K2 System including software is not intended for safety control tasks! ***
+ ***                       For further information see Comment tab!                        ***
+ *********************************************************************************************)
+
+IF (NOT mbMovementActive) AND (NOT sv_bProfileEditorActive) THEN
+    
+    mbInjectProfileError := FALSE;
+   
+    //increase number of points if necessary
+    IF sv_bUseStartPosProfiles THEN
+        iNoOfPoints := mpInjectProfile^.Profile.iNoOfPoints;
+    ELSE
+        iNoOfPoints := mpInjectProfile^.Profile.iNoOfPoints + 1;        
+    END_IF;
+    
+   //set values of last stage to 0.0
+   //use rEndOutputXXX value if less than last profile step
+   //ohterwise use last profil step  
+   IF mpInjectProfile^.rEndOutputPress > 0.0 THEN
+      IF mpInjectProfile^.Profile.Points[iNoOfPoints-1].rPressure > mpInjectProfile^.rEndOutputPress  THEN 
+         mpInjectProfile^.Profile.Points[iNoOfPoints].rPressure := mpInjectProfile^.rEndOutputPress;    
+      ELSE
+         mpInjectProfile^.Profile.Points[iNoOfPoints].rPressure := mpInjectProfile^.Profile.Points[iNoOfPoints-1].rPressure; 
+      END_IF;
+   ELSE    
+      mpInjectProfile^.Profile.Points[iNoOfPoints].rPressure := 0.0;
+   END_IF;
+   mpInjectProfile^.Profile.Points[iNoOfPoints].rVelocity := 0.0;
+   
+    // calculate profiles
+    IF mpInjectProfile^.bOpenEndProfile THEN
+        //set last point to high negative value
+        mpInjectProfile^.Profile.Points[iNoOfPoints].rStartPos := -1000.0;
+    ELSE
+        //set last point to 0.0
+        mpInjectProfile^.Profile.Points[iNoOfPoints].rStartPos := 0.0;
+    END_IF;
+    
+    // use stop deceleration for last point
+    IF mpInjectProfile^.rStopRampPress > 0.0 THEN
+      mpInjectProfile^.Profile.Points[iNoOfPoints].rPressRamp := mpInjectProfile^.rStopRampPress;
+    ELSE
+      mpInjectProfile^.Profile.Points[iNoOfPoints].rPressRamp := 100.0;
+    END_IF;
+    IF mpInjectProfile^.rStopRampVel > 0.0 THEN
+      mpInjectProfile^.Profile.Points[iNoOfPoints].rVelRamp := mpInjectProfile^.rStopRampVel;
+    ELSE
+      mpInjectProfile^.Profile.Points[iNoOfPoints].rVelRamp := 100.0;
+    END_IF;
+    
+    // limit profile output also with last ramp
+    fbProfileCalc.LimitEveryPointToLastRamp := mpInjectProfile^.bLimitEveryPointToLastRamp;
+    
+    // inject speed profile
+    fbProfileCalc.RawProfilePoint.uNoOfPoints  := iNoOfPoints;
+    FOR i := 1 TO iNoOfPoints DO
+        fbProfileCalc.RawProfilePoint.RawProfilePoints[i].XValue := mpInjectProfile^.Profile.Points[i].rStartPos;
+        fbProfileCalc.RawProfilePoint.RawProfilePoints[i].YValue := mpInjectProfile^.Profile.Points[i].rVelocity;
+        fbProfileCalc.RawProfilePoint.RawProfilePoints[i].Ramp   := mpInjectProfile^.Profile.Points[i].rVelRamp /100.0 *
+                                                                    mpInjectProfile^.rMaxRampVel;
+    END_FOR;
+    
+    IF mbMaxSpeedLinked THEN
+       fbProfileCalc.MaxVelocity := mprMaxSpeed^;
+    ELSE
+       fbProfileCalc.MaxVelocity := 0.0;   
+    END_IF;       
+   
+    fbProfileCalc(MaxAcceleration := mpInjectProfile^.rMaxRampVel,
+                  MaxDeceleration := mpInjectProfile^.rMaxRampVel,
+                  RampType := mpInjectProfile^.RampTypeVel);
+    IF fbProfileCalc.Error THEN // profile not possible
+        IF (fbProfileCalc.ErrorOnPoint = -1) THEN
+            SET_ALARM(Name := erProfileSequence,
+                  SubID1 := sv_DeviceId.CompId,
+                  SubID2 := sv_DeviceId.IndexId,
+                  SubID3 := mMoveIdInject);
+        ELSE
+            SET_ALARM(Name := erVelProfDamaged,
+                      SubID1 := sv_DeviceId.CompId,
+                      SubID2 := sv_DeviceId.IndexId,
+                      SubID3 := mMoveIdInject,
+                      SubID4 := fbProfileCalc.ErrorOnPoint,
+                      Param1 := fbProfileCalc.MaximumPossibleValue);
+        END_IF;
+        mbInjectProfileError := TRUE;
+    ELSE // copy data to yx - generator values
+        IF mpInjectProfile^.Profile.Points[1].rVelRamp > 0.0 THEN
+            InjectVelocityProfile.Acceleration := mpInjectProfile^.rMaxRampVel * mpInjectProfile^.Profile.Points[1].rVelRamp / 100.0;
+        ELSE
+            InjectVelocityProfile.Acceleration := mpInjectProfile^.rMaxRampVel;
+        END_IF;
+        InjectVelocityProfile.StopAcceleration := mpInjectProfile^.rMaxRampVel * mpInjectProfile^.Profile.Points[iNoOfPoints].rVelRamp / 100.0;
+        InjectVelocityProfile.ProfilePoints := fbProfileCalc.CalcedProfile;
+        
+        // calced profile for vis
+        IF CHECK_REF(mpInjectProfile^.pCalculatedProfile^) THEN
+           IF mpInjectProfile^.pCalculatedProfile^.VelocityProfile.CalculatedProfile <> fbProfileCalc.CalcedProfile THEN
+              mpInjectProfile^.pCalculatedProfile^.VelocityProfile.CalculatedProfile := fbProfileCalc.CalcedProfile;
+              mpInjectProfile^.pCalculatedProfile^.VelocityProfile.iProfileChangedCounter := mpInjectProfile^.pCalculatedProfile^.VelocityProfile.iProfileChangedCounter + 1;              
+           END_IF;            
+        END_IF;
+        
+        RESET_ALARM(Name := erProfileSequence,
+                    SubID1 := sv_DeviceId.CompId,
+                    SubID2 := sv_DeviceId.IndexId,
+                    SubID3 := mMoveIdInject);
+        
+        RESET_ALARM(Name := erVelProfDamaged,
+                    SubID1 := sv_DeviceId.CompId,
+                    SubID2 := sv_DeviceId.IndexId,
+                    SubID3 := mMoveIdInject,
+                    SubID4 := ANY);
+    END_IF;
+       
+    //Calculate duration(s)
+    mbReCalcDurations := TRUE;
+    START_PROCESS_ALGORITHM(paCalcDurations);
+    
+    // inject pressure profile
+    FOR i := 1 TO iNoOfPoints DO
+        fbProfileCalc.RawProfilePoint.RawProfilePoints[i].XValue := mpInjectProfile^.Profile.Points[i].rStartPos;
+        fbProfileCalc.RawProfilePoint.RawProfilePoints[i].YValue := mpInjectProfile^.Profile.Points[i].rPressure;
+        fbProfileCalc.RawProfilePoint.RawProfilePoints[i].Ramp   := mpInjectProfile^.Profile.Points[i].rPressRamp / 100.0 *
+                                                                    mpInjectProfile^.rMaxRampPress;
+    
+      IF (mpInjectProfile^.Profile.Points[i].rPressure < mpInjectProfile^.rMinOutputPress) AND
+         (i <= mpInjectProfile^.Profile.iNoOfPoints) THEN
+         SET_ALARM(Name := erProfileMinOutput,
+                   SubID1 := sv_DeviceId.CompId,
+                   SubID2 := sv_DeviceId.IndexId,
+                   SubID3 := mMoveIdInject,
+                   SubID4 := i);      
+      END_IF;
+    
+    END_FOR;
+    
+    fbProfileCalc.MaxVelocity := 0.0;
+    fbProfileCalc(MaxAcceleration := mpInjectProfile^.rMaxRampPress,
+                  MaxDeceleration := mpInjectProfile^.rMaxRampPress,
+                  RampType := mpInjectProfile^.RampTypePress);
+
+    IF fbProfileCalc.Error THEN // profile not possible
+        IF (fbProfileCalc.ErrorOnPoint = -1) THEN
+            SET_ALARM(Name := erProfileSequence,
+                      SubID1 := sv_DeviceId.CompId,
+                      SubID2 := sv_DeviceId.IndexId,
+                      SubID3 := mMoveIdInject);
+        ELSE
+            SET_ALARM(Name := erPresProfDamaged,
+                      SubID1 := sv_DeviceId.CompId,
+                      SubID2 := sv_DeviceId.IndexId,
+                      SubID3 := mMoveIdInject,
+                      SubID4 := fbProfileCalc.ErrorOnPoint,
+                      Param1 := fbProfileCalc.MaximumPossibleValue);
+        END_IF;
+        mbInjectProfileError := TRUE;
+    ELSE // copy data to yx - generator values
+        IF mpInjectProfile^.Profile.Points[1].rPressRamp > 0.0 THEN
+            InjectPressureProfile.Acceleration := mpInjectProfile^.rMaxRampPress * mpInjectProfile^.Profile.Points[1].rPressRamp / 100.0;
+        ELSE
+            InjectPressureProfile.Acceleration := mpInjectProfile^.rMaxRampPress;
+        END_IF;
+        InjectPressureProfile.StopAcceleration := mpInjectProfile^.rMaxRampPress * mpInjectProfile^.Profile.Points[iNoOfPoints].rPressRamp / 100.0;
+        InjectPressureProfile.ProfilePoints    := fbProfileCalc.CalcedProfile;
+       
+        // calced profile for vis
+        IF CHECK_REF(mpInjectProfile^.pCalculatedProfile^) THEN
+           IF mpInjectProfile^.pCalculatedProfile^.PressureProfile.CalculatedProfile <> fbProfileCalc.CalcedProfile THEN
+              mpInjectProfile^.pCalculatedProfile^.PressureProfile.CalculatedProfile := fbProfileCalc.CalcedProfile;
+              mpInjectProfile^.pCalculatedProfile^.PressureProfile.iProfileChangedCounter := mpInjectProfile^.pCalculatedProfile^.PressureProfile.iProfileChangedCounter + 1;              
+           END_IF;            
+        END_IF;
+       
+        RESET_ALARM(Name := erProfileSequence,
+                    SubID1 := sv_DeviceId.CompId,
+                    SubID2 := sv_DeviceId.IndexId,
+                    SubID3 := mMoveIdInject);
+        
+        RESET_ALARM(Name := erPresProfDamaged,
+                    SubID1 := sv_DeviceId.CompId,
+                    SubID2 := sv_DeviceId.IndexId,
+                    SubID3 := mMoveIdInject,
+                    SubID4 := ANY);
+    END_IF;
+    
+    mbReparam := TRUE;    
+    mbInitInjectProfilDone := TRUE;   
+    STOP_PROCESS_ALGORITHM();
+END_IF;
+    
+
+
+;#END_EDIT_BLOCK END_ALGORITHM
+
+(*
+This algorithm does the initialization for the inject profile movement.
+This means profile calculation of pressure and velocity profile.
+If an error is detected during profile calculation an error will be set.
+*)
+
+PROCESS_ALGORITHM paInitHoldProfile ON TaskSlow
+
+
+VAR_TEMP
+ i : UDINT;
+ j : UDINT;
+END_VAR
+
+VAR
+ fbProfileCalc : KAPPL_Plastics_ProfileCalc;
+ absStartPos : REAL;
+ iNoOfPoints : UDINT;
+END_VAR
+#BEGIN_EDIT_BLOCK
+(**************************************** WARNING ********************************************
+ *** The KEBA Kemro K2 System including software is not intended for safety control tasks! ***
+ ***                       For further information see Comment tab!                        ***
+ *********************************************************************************************)
+
+IF (NOT mbMovementActive) AND (NOT sv_bProfileEditorActive) THEN
+ 
+    mbHoldProfileError := FALSE;
+    
+    // automatic point calc.
+    mpHoldProfile^.Profile.Points[1].rStartPos := 0.0;
+    
+    //increase number of points if necessary
+    IF sv_bUseStartPosProfiles THEN
+        iNoOfPoints := mpHoldProfile^.Profile.iNoOfPoints;
+    ELSE
+        iNoOfPoints := mpHoldProfile^.Profile.iNoOfPoints + 1; 
+    END_IF;
+   
+    //set values of last stage to 0.0
+    mpHoldProfile^.Profile.Points[iNoOfPoints].rPressure := 0.0;
+    mpHoldProfile^.Profile.Points[iNoOfPoints].rVelocity := 0.0;
+
+    // use stop deceleration for last point
+    IF mpHoldProfile^.rStopRampPress > 0.0 THEN
+      mpHoldProfile^.Profile.Points[iNoOfPoints].rPressRamp := mpHoldProfile^.rStopRampPress;
+    ELSE
+      mpHoldProfile^.Profile.Points[iNoOfPoints].rPressRamp := 100.0;
+    END_IF;
+    IF mpHoldProfile^.rStopRampVel > 0.0 THEN
+      mpHoldProfile^.Profile.Points[iNoOfPoints].rVelRamp := mpHoldProfile^.rStopRampVel;
+    ELSE
+      mpHoldProfile^.Profile.Points[iNoOfPoints].rVelRamp := 100.0;
+    END_IF;   
+
+    // limit profile output also with last ramp
+    fbProfileCalc.LimitEveryPointToLastRamp := mpHoldProfile^.bLimitEveryPointToLastRamp;
+    
+    // holding pressure profile
+    fbProfileCalc.RawProfilePoint.uNoOfPoints  := iNoOfPoints;
+    FOR i := 1 TO iNoOfPoints DO
+        // calculate absolute start position (HMI-pos. for hold are relative)
+        absStartPos := 0.0;
+        FOR j := 1 TO i DO
+            absStartPos := absStartPos + mpHoldProfile^.Profile.Points[j].rStartPos;
+        END_FOR;    
+        fbProfileCalc.RawProfilePoint.RawProfilePoints[i].XValue := absStartPos;
+        fbProfileCalc.RawProfilePoint.RawProfilePoints[i].YValue := mpHoldProfile^.Profile.Points[i].rPressure;
+        fbProfileCalc.RawProfilePoint.RawProfilePoints[i].Ramp   := mpHoldProfile^.Profile.Points[i].rPressRamp / 100.0 *
+                                                                    mpHoldProfile^.rMaxRampPress;
+    END_FOR;
+    
+    fbProfileCalc(MaxAcceleration := mpHoldProfile^.rMaxRampPress,
+                  MaxDeceleration := mpHoldProfile^.rMaxRampPress,
+                  RampType := mpHoldProfile^.RampTypePress);
+    IF fbProfileCalc.Error THEN // profile not possible
+        IF (fbProfileCalc.ErrorOnPoint = -1) THEN
+            SET_ALARM(Name   := erProfileSequence,
+                      SubID1 := sv_DeviceId.CompId,
+                      SubID2 := sv_DeviceId.IndexId,
+                      SubID3 := mMoveIdHold);
+        ELSE
+            SET_ALARM(Name   := erPresProfDamaged,
+                      SubID1 := sv_DeviceId.CompId,
+                      SubID2 := sv_DeviceId.IndexId,
+                      SubID3 := mMoveIdHold,
+                      SubID4 := fbProfileCalc.ErrorOnPoint,
+                      Param1 := fbProfileCalc.MaximumPossibleValue);
+        END_IF;
+        mbHoldProfileError := TRUE;
+        
+    ELSE // copy data to yx - generator values
+        IF mpHoldProfile^.Profile.Points[1].rPressRamp > 0.0 THEN
+            HoldPressureProfile.Acceleration := mpHoldProfile^.rMaxRampPress * mpHoldProfile^.Profile.Points[1].rPressRamp / 100.0;
+        ELSE
+            HoldPressureProfile.Acceleration := mpHoldProfile^.rMaxRampPress;
+        END_IF;
+        HoldPressureProfile.StopAcceleration := mpHoldProfile^.rMaxRampPress * mpHoldProfile^.Profile.Points[iNoOfPoints].rPressRamp / 100.0;
+        HoldPressureProfile.ProfilePoints := fbProfileCalc.CalcedProfile;
+       
+        // calced profile for vis
+        IF CHECK_REF(mpHoldProfile^.pCalculatedProfile^) THEN
+           IF mpHoldProfile^.pCalculatedProfile^.PressureProfile.CalculatedProfile <> fbProfileCalc.CalcedProfile THEN
+              mpHoldProfile^.pCalculatedProfile^.PressureProfile.CalculatedProfile := fbProfileCalc.CalcedProfile;
+              mpHoldProfile^.pCalculatedProfile^.PressureProfile.iProfileChangedCounter := mpHoldProfile^.pCalculatedProfile^.PressureProfile.iProfileChangedCounter + 1;
+           END_IF;            
+        END_IF;
+       
+        RESET_ALARM(Name   := erProfileSequence,
+                    SubID1 := sv_DeviceId.CompId,
+                    SubID2 := sv_DeviceId.IndexId,
+                    SubID3 := mMoveIdHold);
+        
+        RESET_ALARM(Name   := erPresProfDamaged,
+                    SubID1 := sv_DeviceId.CompId,
+                    SubID2 := sv_DeviceId.IndexId,
+                    SubID3 := mMoveIdHold,
+                    SubID4 := ANY);
+    END_IF;
+    
+    
+    // holding velocity profile
+    fbProfileCalc.RawProfilePoint.uNoOfPoints  := iNoOfPoints;    
+    FOR i := 1 TO iNoOfPoints DO
+        // calculate absolute start position (HMI-pos. for hold are relative)
+        absStartPos := 0.0;
+        FOR j := 1 TO i DO
+            absStartPos := absStartPos + mpHoldProfile^.Profile.Points[j].rStartPos;
+        END_FOR;
+    
+        fbProfileCalc.RawProfilePoint.RawProfilePoints[i].XValue := absStartPos;
+        fbProfileCalc.RawProfilePoint.RawProfilePoints[i].YValue := mpHoldProfile^.Profile.Points[i].rVelocity;
+        fbProfileCalc.RawProfilePoint.RawProfilePoints[i].Ramp   := mpHoldProfile^.Profile.Points[i].rVelRamp / 100.0 *
+                                                                    mpHoldProfile^.rMaxRampVel;
+    END_FOR;
+    
+    fbProfileCalc(MaxAcceleration := mpHoldProfile^.rMaxRampVel,
+                  MaxDeceleration := mpHoldProfile^.rMaxRampVel,
+                  RampType := mpHoldProfile^.RampTypeVel);
+    IF fbProfileCalc.Error THEN // profile not possible
+        IF (fbProfileCalc.ErrorOnPoint = -1) THEN
+            SET_ALARM(Name   := erProfileSequence,
+                      SubID1 := sv_DeviceId.CompId,
+                      SubID2 := sv_DeviceId.IndexId,
+                      SubID3 := mMoveIdHold);
+        ELSE
+            SET_ALARM(Name   := erVelProfDamaged,
+                      SubID1 := sv_DeviceId.CompId,
+                      SubID2 := sv_DeviceId.IndexId,
+                      SubID3 := mMoveIdHold,
+                      SubID4 := fbProfileCalc.ErrorOnPoint,
+                      Param1 := fbProfileCalc.MaximumPossibleValue);
+        END_IF;
+        mbHoldProfileError := TRUE;
+        
+    ELSE // copy data to yx - generator values
+        IF mpHoldProfile^.Profile.Points[1].rVelRamp > 0.0 THEN
+            HoldVelocityProfile.Acceleration := mpHoldProfile^.rMaxRampVel * mpHoldProfile^.Profile.Points[1].rVelRamp / 100.0;
+        ELSE
+            HoldVelocityProfile.Acceleration := mpHoldProfile^.rMaxRampVel;
+        END_IF;
+        HoldVelocityProfile.StopAcceleration := mpHoldProfile^.rMaxRampVel * mpHoldProfile^.Profile.Points[iNoOfPoints].rVelRamp / 100.0;
+        HoldVelocityProfile.ProfilePoints := fbProfileCalc.CalcedProfile;
+        
+        // calced profile for vis
+        IF CHECK_REF(mpHoldProfile^.pCalculatedProfile^) THEN
+           IF mpHoldProfile^.pCalculatedProfile^.VelocityProfile.CalculatedProfile <> fbProfileCalc.CalcedProfile THEN
+              mpHoldProfile^.pCalculatedProfile^.VelocityProfile.CalculatedProfile := fbProfileCalc.CalcedProfile;
+              mpHoldProfile^.pCalculatedProfile^.VelocityProfile.iProfileChangedCounter := mpHoldProfile^.pCalculatedProfile^.VelocityProfile.iProfileChangedCounter + 1;              
+           END_IF;
+        END_IF;
+        
+        RESET_ALARM(Name   := erProfileSequence,
+                    SubID1 := sv_DeviceId.CompId,
+                    SubID2 := sv_DeviceId.IndexId,
+                    SubID3 := mMoveIdHold);
+        
+        RESET_ALARM(Name   := erVelProfDamaged,
+                    SubID1 := sv_DeviceId.CompId,
+                    SubID2 := sv_DeviceId.IndexId,
+                    SubID3 := mMoveIdHold,
+                    SubID4 := ANY);
+    END_IF;
+    
+    //Calculate duration(s)
+    mbReCalcDurations := TRUE;
+    START_PROCESS_ALGORITHM(paCalcDurations);
+   
+    mbReparam := TRUE;    
+    mbInitHoldProfilDone := TRUE;
+    STOP_PROCESS_ALGORITHM();
+END_IF;
+
+
+;#END_EDIT_BLOCK END_ALGORITHM
+
+PROCESS_ALGORITHM paInitDebugMeasurement ON TaskSlow
+
+
+VAR
+ iErrorInfo : DINT;
+END_VAR
+#BEGIN_EDIT_BLOCK
+IF (mbInitInjectProfilDone AND mbInitHoldProfilDone) THEN
+   fbInject(PreOutputRampV := mpInjectProfile^.rPreOutputVelRamp,
+            PreOutputValueV := mpInjectProfile^.rPreOutputVel,
+            PreOutputRampP := mpInjectProfile^.rPreOutputPressRamp,
+            PreOutputValueP := mpInjectProfile^.rPreOutputPress,
+            ProfilPreCutOffV := InjectVelocityProfile,
+            ProfilPreCutOffP := InjectPressureProfile,
+            ProfilPostCutOffV := HoldVelocityProfile,
+            ProfilPostCutOffP := HoldPressureProfile,
+            RampTypePreCutOffV := mpInjectProfile^.RampTypeVel,
+            RampTypePreCutOffP := mpInjectProfile^.RampTypePress,
+            RampTypePostCutOffV := mpHoldProfile^.RampTypeVel,
+            RampTypePostCutOffP := mpHoldProfile^.RampTypePress,
+            //MaxPressure := sv_InjectionParam.MaxPressure,     //todo!!
+            MinOutputVelocity := mpInjectProfile^.rMinOutputVel,
+            MinOutputPressure := mpInjectProfile^.rMinOutputPress,
+            PostCutOff := FALSE, 
+            ErrorInfo => iErrorInfo,
+            //ProfileDeadTime := ProfileDeadTime,
+            MeasureTask := TaskInject,
+            ReParam := TRUE,
+            rScrewDiameter := mpScrewDiameter^);   
+    STOP_PROCESS_ALGORITHM();
+END_IF;
+
+
+;#END_EDIT_BLOCK END_ALGORITHM
+
+POSTUPDATE_ALGORITHM pCompDataChanged ON PU_Task_7 WITH sv_iSelCavityPressureSensor,mpComparatorData[1].LintabData^,mpComparatorData[2].LintabData^,mpComparatorData[3].LintabData^,mpComparatorData[4].LintabData^,mpComparatorData[5].LintabData^,mpComparatorData[6].LintabData^,mpComparatorData[7].LintabData^,mpComparatorData[8].LintabData^,mpComparatorData[9].LintabData^,mpComparatorData[10].LintabData^,mpComparatorData[1].ScrewDiameter^,mpComparatorData[2].SpecificPressureLintab^,mpComparatorData[1].pLintabPoints^,mpComparatorData[1].piUsedLintabPoints^,mpComparatorData[2].pLintabPoints^,mpComparatorData[2].piUsedLintabPoints^,mpComparatorData[2].pSpecificPressureLintabPoints^,mpComparatorData[2].piUsedSpecPressureLintabPoints^,mpComparatorData[3].pLintabPoints^,mpComparatorData[3].piUsedLintabPoints^,mpComparatorData[4].pLintabPoints^,mpComparatorData[4].piUsedLintabPoints^,mpComparatorData[5].pLintabPoints^,mpComparatorData[5].piUsedLintabPoints^,mpComparatorData[6].pLintabPoints^,mpComparatorData[6].piUsedLintabPoints^,mpComparatorData[7].pLintabPoints^,mpComparatorData[7].piUsedLintabPoints^,mpComparatorData[8].pLintabPoints^,mpComparatorData[8].piUsedLintabPoints^,mpComparatorData[9].pLintabPoints^,mpComparatorData[9].piUsedLintabPoints^,mpComparatorData[10].pLintabPoints^,mpComparatorData[10].piUsedLintabPoints^
+
+#BEGIN_EDIT_BLOCK
+
+fbCutOffDetection(bReParam := TRUE, iSelCavityPressSensor := sv_iSelCavityPressureSensor);
+// reset bReParam
+fbCutOffDetection(bInit := FALSE,
+                  bReParam := FALSE,
+                  bSetThreshold := FALSE,
+                  Start := FALSE);
+
+
+
+;#END_EDIT_BLOCK END_ALGORITHM
+
+(*
+This algorithm reacts on changes of the profile.
+If the profile changes the process algorithm for initialization will be started.
+*)
+
+POSTUPDATE_ALGORITHM pReCalcDurations ON PU_Task_7 WITH mprCalcDurationStartPosition^,mpInstanceDataInterPos^
+
+
+VAR_TEMP
+ i : DINT;
+END_VAR
+
+VAR
+ bStartPosChanged : BOOL;
+ bInstanceDataChanged : BOOL;
+END_VAR
+#BEGIN_EDIT_BLOCK
+(**************************************** WARNING ********************************************
+ *** The KEBA Kemro K2 System including software is not intended for safety control tasks! ***
+ ***                       For further information see Comment tab!                        ***
+ *********************************************************************************************)
+
+bStartPosChanged := FALSE;
+bInstanceDataChanged := FALSE;
+
+IF mbRefCalcDurationStartPosValid THEN
+   bStartPosChanged := mprCalcDurationStartPosition^ <> mrCalcDurationStartPos;
+   mrCalcDurationStartPos := mprCalcDurationStartPosition^;
+END_IF;
+
+IF mbRefInstanceDataInterPosValid THEN
+   //check if instance data (except duration) has changed
+   FOR i := 1 TO cMaxIntermediateConditions DO
+      IF (mpInstanceDataInterPos^[i].rTargetValue <> mInstanceDataInterPos[i].rTargetValue) OR
+         mpInstanceDataInterPos^[i].rDeceleration <> mInstanceDataInterPos[i].rDeceleration OR
+         mpInstanceDataInterPos^[i].rAcceleration <> mInstanceDataInterPos[i].rAcceleration THEN
+         bInstanceDataChanged := TRUE;
+         EXIT;   
+      END_IF; 
+   END_FOR;
+   
+   mInstanceDataInterPos := mpInstanceDataInterPos^;
+END_IF;
+
+
+//Recalculate durations
+IF bStartPosChanged OR bInstanceDataChanged THEN
+   mbReCalcDurations := TRUE;
+   START_PROCESS_ALGORITHM(paCalcDurations);
+END_IF;
+
+
+;#END_EDIT_BLOCK END_ALGORITHM
+
+(*
+This algorithm reacts on changes of the selected cut off parameters
+If the parameters changed, the calculation of the durations is triggered
+*)
+
+POSTUPDATE_ALGORITHM pCutOffParams ON PU_Task_7 WITH mpCutOffParams^
+
+#BEGIN_EDIT_BLOCK
+(**************************************** WARNING ********************************************
+ *** The KEBA Kemro K2 System including software is not intended for safety control tasks! ***
+ ***                       For further information see Comment tab!                        ***
+ *********************************************************************************************)
+
+//Recalculate duration(s)
+mbReCalcDurations := TRUE;
+START_PROCESS_ALGORITHM(paCalcDurations);
+
+
+;#END_EDIT_BLOCK END_ALGORITHM
+
+PROCESS_ALGORITHM paCalcDurations ON TaskSlow
+
+
+VAR_TEMP
+ i : DINT;
+END_VAR
+
+VAR
+ rCalcDurationStartPos : REAL (* Startposition for calculation of duration *);
+ rCalcDurationEndPos : REAL (* Endposition for calculation of duration *);
+ bInterPosMovementsAvailable : BOOL (* Interposition movement(s) are available *);
+ dCalcedInjectDuration : TIME (* Calculated inject duration *);
+ dHoldDuration : TIME (* Calculated inject duration *);
+ dDefaultInjDuration : TIME := T#2s (* Default inject duration when duration can't be calculated *);
+END_VAR
+#BEGIN_EDIT_BLOCK
+(**************************************** WARNING ********************************************
+ *** The KEBA Kemro K2 System including software is not intended for safety control tasks! ***
+ ***                       For further information see Comment tab!                        ***
+ *********************************************************************************************)
+
+IF mbReCalcDurations THEN
+    
+    bInterPosMovementsAvailable := FALSE;
+    
+    //Calculate duration(s) for interposition movement(s)
+    IF mbRefInstanceDataInterPosValid AND mbRefCalcDurationStartPosValid THEN
+        FOR i := 1 TO cMaxIntermediateConditions DO
+            IF (mpInstanceDataInterPos^[i].rTargetValue <> 0.0) THEN
+                bInterPosMovementsAvailable := TRUE;             
+                IF (i = 1) THEN                   
+                    rCalcDurationStartPos := mprCalcDurationStartPosition^;                   
+                ELSE
+                    rCalcDurationStartPos := mpInstanceDataInterPos^[i - 1].rTargetValue;
+                END_IF;
+                rCalcDurationEndPos := mpInstanceDataInterPos^[i].rTargetValue;
+                                
+                mpInstanceDataInterPos^[i].dCalculatedDuration := FCalcDuration(StartPosition := rCalcDurationStartPos,
+                                                                                StartVelocity := 0.0,   //not used
+                                                                                EndPosition := rCalcDurationEndPos,
+                                                                                Profile := InjectVelocityProfile.ProfilePoints,
+                                                                                StartRamp := InjectVelocityProfile.Acceleration,
+                                                                                StopRamp := 0.0,        //not used
+                                                                                ConstOutput := 0.0,     //not used
+                                                                                UseConstOutput := FALSE); 
+                    
+            ELSE              
+                //No more interposition movements -> Exit
+                EXIT;            
+            END_IF;    
+        END_FOR;
+        
+    END_IF;
+        
+    //Calculate duration for "normal" movement
+    IF mbRefCalcedInjectDurationValid AND mbRefCalcedHoldDurationValid AND mbRefCalcDurationStartPosValid THEN
+        IF bInterPosMovementsAvailable THEN
+            //Use endposition of last interposition movement
+            rCalcDurationStartPos := rCalcDurationEndPos;           
+        ELSE
+            //Use start position of profile
+            rCalcDurationStartPos := mprCalcDurationStartPosition^;        
+        END_IF;
+             
+        IF mbRefCutOffParamsValid THEN
+            IF mpCutOffParams^.bUsePosition THEN              
+                //Use cut off position as inject end position
+                rCalcDurationEndPos := mpCutOffParams^.rPositionThreshold;
+                
+                dCalcedInjectDuration := FCalcDuration(StartPosition := rCalcDurationStartPos,
+                                                        StartVelocity := 0.0,   //not used
+                                                        EndPosition := rCalcDurationEndPos,
+                                                        Profile := InjectVelocityProfile.ProfilePoints,
+                                                        StartRamp := InjectVelocityProfile.Acceleration,
+                                                        StopRamp := 0.0,        //not used
+                                                        ConstOutput := 0.0,     //not used
+                                                        UseConstOutput := FALSE);
+                
+                dHoldDuration := LINT_TO_TIME(REAL_TO_LINT(HoldVelocityProfile.ProfilePoints.Point[HoldVelocityProfile.ProfilePoints.uNoOfPoints].rX * 1000000.0));                
+                
+            END_IF;
+                
+            IF mpCutOffParams^.bUseTimer THEN
+                
+                IF (NOT mpCutOffParams^.bUsePosition OR (mpCutOffParams^.dTimeThreshold < dCalcedInjectDuration)) THEN
+                    //Use cut off time as inject duration
+                    dCalcedInjectDuration := mpCutOffParams^.dTimeThreshold;
+                END_IF;
+               
+                dHoldDuration := LINT_TO_TIME(REAL_TO_LINT(HoldVelocityProfile.ProfilePoints.Point[HoldVelocityProfile.ProfilePoints.uNoOfPoints].rX * 1000000.0));                
+             END_IF;
+                        
+            IF ((NOT mpCutOffParams^.bUsePosition AND NOT mpCutOffParams^.bUseTimer)AND
+                (mpCutOffParams^.bUseExtDigIn OR mpCutOffParams^.bUseInjectPressure OR mpCutOffParams^.bUseMoldPressure)) THEN
+                
+                //Default time for inject duration
+                dCalcedInjectDuration := dDefaultInjDuration;                                    
+                dHoldDuration := LINT_TO_TIME(REAL_TO_LINT(HoldVelocityProfile.ProfilePoints.Point[HoldVelocityProfile.ProfilePoints.uNoOfPoints].rX * 1000000.0));                    
+            
+            ELSIF (NOT mpCutOffParams^.bUsePosition AND NOT mpCutOffParams^.bUseTimer AND
+                   NOT mpCutOffParams^.bUseExtDigIn AND NOT mpCutOffParams^.bUseInjectPressure AND
+                   NOT mpCutOffParams^.bUseMoldPressure) THEN
+                
+                //No cut off
+                IF mpInjectProfile^.bOpenEndProfile THEN
+                    //Last point = -1000.0 -> Set endposition for calculation to 0.0 
+                    rCalcDurationEndPos := 0.0;         
+                ELSE
+                    rCalcDurationEndPos := mpInjectProfile^.Profile.Points[mpInjectProfile^.Profile.iNoOfPoints + 1].rStartPos;
+                END_IF;
+                
+                dCalcedInjectDuration := FCalcDuration(StartPosition := rCalcDurationStartPos,
+                                                        StartVelocity := 0.0,   //not used
+                                                        EndPosition := rCalcDurationEndPos,
+                                                        Profile := InjectVelocityProfile.ProfilePoints,
+                                                        StartRamp := InjectVelocityProfile.Acceleration,
+                                                        StopRamp := 0.0,        //not used
+                                                        ConstOutput := 0.0,     //not used
+                                                        UseConstOutput := FALSE);
+                
+                dHoldDuration := T#0s;
+            END_IF;
+        END_IF;
+                
+        //copy durations        
+        mpdCalcedInjectDuration^ := dCalcedInjectDuration;
+        mpdCalcedHoldDuration^ := dHoldDuration;
+    END_IF;
+    
+    mbReCalcDurations := FALSE;  
+END_IF;
+
+STOP_PROCESS_ALGORITHM();
+
+
+
+;#END_EDIT_BLOCK END_ALGORITHM
+
+PROCESS_ALGORITHM paCyclic ON TaskInject(0) AUTOSTART
+
+
+VAR
+ dLastTime : TIME;
+ dActTime : TIME;
+ dDifTime : TIME;
+ bActOld : BOOL;
+ bInitDone : BOOL;
+ dCycleTimeIOSystem : TIME;
+ iCycleTimeIOSystem : LINT;
+ rIOCycleTime : REAL;
+ dCycleTime : TIME;
+END_VAR
+#BEGIN_EDIT_BLOCK
+(**************************************** WARNING ********************************************
+ *** The KEBA Kemro K2 System including software is not intended for safety control tasks! ***
+ ***                       For further information see Comment tab!                        ***
+ *********************************************************************************************)
+
+IF NOT sv_bInitDone THEN
+   //no action before sv_bInitDone
+   RETURN;
+END_IF;
+
+IF NOT bInitDone THEN   
+   
+   IF mbReducedInjectCall THEN       
+      dCycleTime := MULTIME(GET_TASK_INTERVAL(),miReductionFactor);
+      //use reduced inject cycle time
+      dCycleTimeIOSystem := dCycleTime;
+      iCycleTimeIOSystem := TIME_TO_LINT(dCycleTimeIOSystem);
+   ELSE
+      dCycleTime := GET_TASK_INTERVAL();
+      //get cycle time from catalog
+      aGetOnboardCycleTime();      
+      rIOCycleTime := MAX(aGetOnboardCycleTime.rOnboardCycleTime, 0.0005);      
+      iCycleTimeIOSystem := REAL_TO_LINT(rIOCycleTime*1000000.0);
+      dCycleTimeIOSystem := LINT_TO_TIME(iCycleTimeIOSystem);
+   END_IF;
+   
+   IF ((dCycleTime <> t#2ms) AND (NOT mbIsSpeedpump))  THEN
+      //no compensation if cycle time <> 2ms (except speedpump)
+      STOP_PROCESS_ALGORITHM;
+      RETURN;
+   END_IF;
+   
+   bInitDone := TRUE;
+END_IF;
+
+
+IF mbReducedInjectCall AND (miCount < (miReductionFactor - 1)) AND aRun.bActive THEN
+   //consider reduced call of fbInject
+   RETURN;
+END_IF;
+
+dActTime := GET_RUNTIME();
+dDifTime := dActTime - dLastTime; 
+
+IF (aRun.bActive) THEN
+   IF NOT bActOld THEN
+      mdOffsetToIoSys := t#0s;
+   END_IF;
+   
+   IF (mdOffsetToIoSys = T#0s AND g_dActiveTimestamp > t#0s) THEN
+      IF (dDifTime < (dCycleTime + t#30us)) THEN
+         mdOffsetToIoSys := dCycleTimeIOSystem - LINT_TO_TIME(TIME_TO_LINT(dActTime - g_dActiveTimestamp) MOD iCycleTimeIOSystem);     
+      END_IF;   
+   END_IF;
+   
+END_IF;
+
+bActOld := aRun.bActive; 
+dLastTime := dActTime;
+
+IF (mdOffsetToIoSys > t#0ms) AND (g_dActiveTimestamp > t#0s) THEN 
+   mdTimeThresholdDiff := mdOffsetToIoSys + (dCycleTimeIOSystem / 8);
+ELSE 
+   mdTimeThresholdDiff := t#0s;
+END_IF;
+
+
+
+
+;#END_EDIT_BLOCK END_ALGORITHM
+
+
+
+END_ALGORITHM_BLOCK
+
+
+
+#END_OF_IEC_PART
+
+@Puma @IecEditor 6 154 @Pou 25 
+@@@BEG_Comment@@@
+@h    ! WARNING !
+@h    The Kemro K2 system (including software) only meets category B according to EN 954-1,
+@h    thus it is not intended for usage in safety-relevant control applications in the field 
+@h    of personal safety (e.g. emergency stop).
+@h    To implement potentially necessary safety-relevant control tasks, always use additional 
+@h    external safety devices that are intended for the particular purpose, and meet the necessary 
+@h    functional safety.
+@h    For further information see EN 954-1 (EN ISO 13849-1) and/or the K2-x00 user manual, chapter 
+@h    "CE conformity, directives and standards".
+
+This AB provides all functions to realize the inject movement.
+It includes the following funcionalities:
+- profile calculation for inject and holding profile
+  (including error detection of the profiles) 
+- automatic reparam of all necessary blocks after changes in the profiles
+  Attention: reparam will be done after the movement is stopped and not during the movement is active
+- profile output for inject (PID - controlled if selected)
+- cut off detection (PID - controlled if selected)
+- profile output for holding
+- timeout detection (including automatic stop after timeout)
+
+@FunctionID: S_KPIEC_ALAMOVE_02
+@FunctionID: S_KPIEC_ALAMOVE_03
+@FunctionID: S_KPIEC_PRINJ_01
+@FunctionID: S_KPIEC_PRINJ_02
+
+@@@END_Comment@@@
+
+@BEG_Contents 
+
+@BEG_Func 
+@RT(17)FuncTreeContainer 
+12 
+@Var @RT(9)SET_ALARM @RT(0) @T @T @DERIVED 0 @F @RT(23)KEBA_STANDARD_PROCEDURE @F 
+@T 
+@BEG_Attrib 
+0 @RT(0) @RT(0) 
+@END_Attrib 
+1 1 @F @F @F @F 
+
+@Var @RT(14)GET_SYNC_REFTO @RT(0) @T @T @DERIVED 0 @F @RT(22)KEBA_STANDARD_FUNCTION @F 
+@T 
+@BEG_Attrib 
+0 @RT(0) @RT(0) 
+@END_Attrib 
+1 1 @F @F @F @F 
+
+@Var @RT(14)GET_MY_FU_NAME @RT(0) @T @T @DERIVED 0 @F @RT(22)KEBA_STANDARD_FUNCTION @F 
+@T 
+@BEG_Attrib 
+0 @RT(0) @RT(0) 
+@END_Attrib 
+1 1 @F @F @F @F 
+
+@Var @RT(16)KSWO_AddVariable @RT(0) @T @T @DERIVED 0 @F @RT(22)KEBA_STANDARD_FUNCTION @F 
+@T 
+@BEG_Attrib 
+0 @RT(0) @RT(0) 
+@END_Attrib 
+1 1 @F @F @F @F 
+
+@Var @RT(16)FAddToScopeGroup @RT(0) @T @T @DERIVED 0 @F @RT(8)FUNCTION @F 
+@T 
+@BEG_Attrib 
+0 @RT(0) @RT(0) 
+@END_Attrib 
+1 1 @F @F @F @F 
+
+@Var @RT(17)GET_TASK_INTERVAL @RT(0) @T @T @DERIVED 0 @F @RT(22)KEBA_STANDARD_FUNCTION @F 
+@T 
+@BEG_Attrib 
+0 @RT(0) @RT(0) 
+@END_Attrib 
+1 1 @F @F @F @F 
+
+@Var @RT(11)GET_RUNTIME @RT(0) @T @T @DERIVED 0 @F @RT(22)KEBA_STANDARD_FUNCTION @F 
+@T 
+@BEG_Attrib 
+0 @RT(0) @RT(0) 
+@END_Attrib 
+1 1 @F @F @F @F 
+
+@Var @RT(11)RESET_ALARM @RT(0) @T @T @DERIVED 0 @F @RT(23)KEBA_STANDARD_PROCEDURE @F 
+@T 
+@BEG_Attrib 
+0 @RT(0) @RT(0) 
+@END_Attrib 
+1 1 @F @F @F @F 
+
+@Var @RT(13)FCalcDuration @RT(0) @T @T @DERIVED 0 @F @RT(8)FUNCTION @F 
+@T 
+@BEG_Attrib 
+0 @RT(0) @RT(0) 
+@END_Attrib 
+1 1 @F @F @F @F 
+
+@Var @RT(14)KCAT_GetHandle @RT(0) @T @T @DERIVED 0 @F @RT(22)KEBA_STANDARD_FUNCTION @F 
+@T 
+@BEG_Attrib 
+0 @RT(0) @RT(0) 
+@END_Attrib 
+1 1 @F @F @F @F 
+
+@Var @RT(13)KCAT_GetValue @RT(0) @T @T @DERIVED 0 @F @RT(22)KEBA_STANDARD_FUNCTION @F 
+@T 
+@BEG_Attrib 
+0 @RT(0) @RT(0) 
+@END_Attrib 
+1 1 @F @F @F @F 
+
+@Var @RT(9)CHECK_REF @RT(0) @T @T @DERIVED 0 @F @RT(23)KEBA_STANDARD_PROCEDURE @F 
+@T 
+@BEG_Attrib 
+0 @RT(0) @RT(0) 
+@END_Attrib 
+1 1 @F @F @F @F 
+
+@END_Func 
+
+@BEG_Const 
+@RT(18)ConstTreeContainer 
+10 
+@Var @RT(14)KSYS_Status_OK @RT(0) @T @T @DERIVED 0 @F @RT(11)KSYS_Status @F 
+@T 
+@BEG_Attrib 
+0 @RT(1)1 @RT(0) 
+@END_Attrib 
+1 1 @F @F @F @F 
+
+@Var @RT(21)cSubOpSpeedpumpMaster @RT(0) @T @F @DT @RT(5)DWORD @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+0 @RT(6)16#100 @RT(17)Speed pump Master 
+@END_Attrib 
+1 1 @F @F @F @F 
+
+@Var @RT(17)cScopeGroupInject @RT(0) @T @F @DT @RT(5)UDINT @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+0 @RT(1)3 @RT(0) 
+@END_Attrib 
+1 1 @F @F @F @F 
+
+@Var @RT(20)cApplPlasticsNoError @RT(0) @T @F @DT @RT(4)DINT @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+0 @RT(1)0 @RT(8)No Error 
+@END_Attrib 
+1 1 @F @F @F @F 
+
+@Var @RT(29)cApplPlasticsToMuchController @RT(0) @T @F @DT @RT(4)DINT @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+0 @RT(4)-156 @RT(32)To much controller modi selected 
+@END_Attrib 
+1 1 @F @F @F @F 
+
+@Var @RT(19)nKAPPL_IMM_Electric @RT(0) @T @T @DERIVED 0 @F @RT(14)KAPPL_IMM_Type @F 
+@T 
+@BEG_Attrib 
+0 @RT(1)1 @RT(0) 
+@END_Attrib 
+1 1 @F @F @F @F 
+
+@Var @RT(21)nKAPPL_IMM_ServoValve @RT(0) @T @T @DERIVED 0 @F @RT(14)KAPPL_IMM_Type @F 
+@T 
+@BEG_Attrib 
+0 @RT(1)2 @RT(0) 
+@END_Attrib 
+1 1 @F @F @F @F 
+
+@Var @RT(13)nKAPPL_IMM_PQ @RT(0) @T @T @DERIVED 0 @F @RT(14)KAPPL_IMM_Type @F 
+@T 
+@BEG_Attrib 
+0 @RT(1)0 @RT(0) 
+@END_Attrib 
+1 1 @F @F @F @F 
+
+@Var @RT(30)cApplPlasticsDecompressFailure @RT(0) @T @F @DT @RT(4)DINT @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+0 @RT(4)-195 @RT(72)Screw moved back nearly to scrfew stroke during decompression at inject  
+@END_Attrib 
+1 1 @F @F @F @F 
+
+@Var @RT(26)cMaxIntermediateConditions @RT(0) @T @F @DT @RT(4)DINT @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+0 @RT(2)10 @RT(38)max. number of intermediate conditions 
+@END_Attrib 
+1 1 @F @F @F @F 
+
+@END_Const 
+
+@BEG_Export 
+
+@BEG_Kind 
+@ALGORITHM_BLOCK @RT(8)ABInject @STRUCTURED_TEXT 
+@RT(0) @RT(0) @RT(0) 
+@END_Kind 
+
+@BEG_Dcl 
+@RT(16)DclTreeContainer 
+77 
+@Var @RT(23)sv_bUseStartPosProfiles @RT(0) @T @F @DT @RT(4)BOOL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 8 @F @F @F @F 
+
+@Var @RT(27)sv_iSelCavityPressureSensor @RT(0) @T @F @DT @RT(4)DINT @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(53)which cavity pressure sensor will be used for cut off @RT(0) 
+@END_Attrib 
+1 8 @F @F @F @F 
+
+@Var @RT(11)sv_DeviceId @RT(0) @T @T @DERIVED 0 @T @T @DT @RT(10)tsDeviceId @RT(0) @T @T @UNKNOWN 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 8 @F @F @F @F 
+
+@Var @RT(12)sv_bInitDone @RT(0) @T @F @DT @RT(4)BOOL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 8 @F @F @F @F 
+
+@Var @RT(23)sv_bProfileEditorActive @RT(0) @T @F @DT @RT(4)BOOL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(49)"profile dirty" flag (will be set / reset by HMI) @RT(0) 
+@END_Attrib 
+1 8 @F @F @F @F 
+
+@Var @RT(9)PU_Task_7 @RT(0) @T @F @DT @RT(4)TASK @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 7 @F @F @F @F 
+
+@Var @RT(8)TaskSlow @RT(0) @T @F @DT @RT(4)TASK @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 7 @F @F @F @F 
+
+@Var @RT(10)TaskInject @RT(0) @T @F @DT @RT(4)TASK @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 7 @F @F @F @F 
+
+@Var @RT(17)erProfileSequence @RT(0) @T @F @DT @RT(5)ALARM @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 7 @F @F @F @F 
+
+@Var @RT(13)erMoveTimeout @RT(0) @T @F @DT @RT(5)ALARM @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 7 @F @F @F @F 
+
+@Var @RT(17)erPresProfDamaged @RT(0) @T @F @DT @RT(5)ALARM @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 7 @F @F @F @F 
+
+@Var @RT(16)erVelProfDamaged @RT(0) @T @F @DT @RT(5)ALARM @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 7 @F @F @F @F 
+
+@Var @RT(25)erInvalidProfileReference @RT(0) @T @F @DT @RT(5)ALARM @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 7 @F @F @F @F 
+
+@Var @RT(14)erInjectOutput @RT(0) @T @F @DT @RT(5)ALARM @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 7 @F @F @F @F 
+
+@Var @RT(13)erInjectParam @RT(0) @T @F @DT @RT(5)ALARM @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 7 @F @F @F @F 
+
+@Var @RT(21)erInjectScrewPosition @RT(0) @T @F @DT @RT(5)ALARM @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 7 @F @F @F @F 
+
+@Var @RT(19)erCycleTimeIOUpdate @RT(0) @T @F @DT @RT(5)ALARM @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 7 @F @F @F @F 
+
+@Var @RT(18)erProfileMinOutput @RT(0) @T @F @DT @RT(5)ALARM @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 7 @F @F @F @F 
+
+@Var @RT(18)g_dActiveTimestamp @RT(0) @T @F @DT @RT(4)TIME @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 6 @F @F @F @F 
+
+@Var @RT(8)erInject @RT(0) @T @F @DT @RT(5)ALARM @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(17)fbCutOffDetection @RT(0) @T @T @DERIVED 0 @T @T @DT @RT(30)KAPPL_Plastics_CutOffDetection @RT(0) @T @T @UNKNOWN 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(15)mpInjectProfile @RT(0) @T @T @REFTO 0 @F @DERIVED 0 @T @T @DT @RT(16)KAPPL_VisProfile @RT(0) @T @T @UNKNOWN 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(13)mpHoldProfile @RT(0) @T @T @REFTO 0 @F @DERIVED 0 @T @T @DT @RT(16)KAPPL_VisProfile @RT(0) @T @T @UNKNOWN 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(21)InjectVelocityProfile @RT(0) @T @T @DERIVED 0 @T @T @DT @RT(17)KAPPL_ProfileData @RT(0) @T @T @UNKNOWN 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(21)InjectPressureProfile @RT(0) @T @T @DERIVED 0 @T @T @DT @RT(17)KAPPL_ProfileData @RT(0) @T @T @UNKNOWN 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(19)HoldVelocityProfile @RT(0) @T @T @DERIVED 0 @T @T @DT @RT(17)KAPPL_ProfileData @RT(0) @T @T @UNKNOWN 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(19)HoldPressureProfile @RT(0) @T @T @DERIVED 0 @T @T @DT @RT(17)KAPPL_ProfileData @RT(0) @T @T @UNKNOWN 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(9)mbReparam @RT(0) @T @F @DT @RT(4)BOOL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(16)mbMovementActive @RT(0) @T @F @DT @RT(4)BOOL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(26)info if movement is active @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(13)mMoveIdInject @RT(0) @T @T @DERIVED 0 @T @T @DT @RT(10)tMoveIdent @RT(0) @T @T @UNKNOWN 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(11)mMoveIdHold @RT(0) @T @T @DERIVED 0 @T @T @DT @RT(10)tMoveIdent @RT(0) @T @T @UNKNOWN 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(20)mbInjectProfileError @RT(0) @T @F @DT @RT(4)BOOL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(34)error during profile calc detected @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(18)mbHoldProfileError @RT(0) @T @F @DT @RT(4)BOOL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(34)error during profile calc detected @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(22)mbInjectReferenceValid @RT(0) @T @F @DT @RT(4)BOOL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(44)info if reference to inject profile is valid @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(20)mbHoldReferenceValid @RT(0) @T @F @DT @RT(4)BOOL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(42)info if reference to hold profile is valid @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(18)mrActScrewPosition @RT(0) @T @F @DT @RT(4)REAL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(19)mrActInjectPressure @RT(0) @T @F @DT @RT(4)REAL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(16)mbCutOffDetected @RT(0) @T @F @DT @RT(4)BOOL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(14)mbInjectActive @RT(0) @T @F @DT @RT(4)BOOL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(13)mrPressureSet @RT(0) @T @F @DT @RT(4)REAL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(16)mrPressureOutput @RT(0) @T @F @DT @RT(4)REAL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(13)mrVelocitySet @RT(0) @T @F @DT @RT(4)REAL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(16)mrVelocityOutput @RT(0) @T @F @DT @RT(4)REAL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(13)mrServoOutput @RT(0) @T @F @DT @RT(4)REAL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(8)fbInject @RT(0) @T @T @DERIVED 0 @T @T @DT @RT(24)KAPPL_Plastics_Injection @RT(0) @T @T @UNKNOWN 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(22)mbInitInjectProfilDone @RT(0) @T @F @DT @RT(4)BOOL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(5)FALSE @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(20)mbInitHoldProfilDone @RT(0) @T @F @DT @RT(4)BOOL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(5)FALSE @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(23)mpdCalcedInjectDuration @RT(0) @T @T @REFTO 0 @T @DT @RT(4)TIME @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(21)mpdCalcedHoldDuration @RT(0) @T @T @REFTO 0 @T @DT @RT(4)TIME @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(22)mpInstanceDataInterPos @RT(0) @T @T @REFTO 0 @F @DERIVED 0 @T @T @DT @RT(19)tyInstanceListArray @RT(0) @T @T @UNKNOWN 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(14)mpCutOffParams @RT(0) @T @T @REFTO 0 @F @DERIVED 0 @T @T @DT @RT(18)tsCutOffCriterions @RT(0) @T @T @UNKNOWN 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(29)pointer to cut off parameters @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(30)mbRefInstanceDataInterPosValid @RT(0) @T @F @DT @RT(4)BOOL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(59)reference to array with data of interpos movements is valid @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(28)mprCalcDurationStartPosition @RT(0) @T @T @REFTO 0 @T @DT @RT(4)REAL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(30)mbRefCalcDurationStartPosValid @RT(0) @T @F @DT @RT(4)BOOL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(36)reference to start position is valid @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(30)mbRefCalcedInjectDurationValid @RT(0) @T @F @DT @RT(4)BOOL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(48)reference to calculated inject duration is valid @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(28)mbRefCalcedHoldDurationValid @RT(0) @T @F @DT @RT(4)BOOL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(46)reference to calculated hold duration is valid @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(22)mbRefCutOffParamsValid @RT(0) @T @F @DT @RT(4)BOOL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(36)reference to cut off params is valid @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(17)mbReCalcDurations @RT(0) @T @F @DT @RT(4)BOOL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(21)Recalculate durations @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(15)mpScrewDiameter @RT(0) @T @T @REFTO 0 @T @DT @RT(4)REAL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(16)mpComparatorData @RT(0) @T @T @DERIVED 0 @T @T @DT @RT(15)tsCompDataArray @RT(0) @T @T @UNKNOWN 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(21)mInstanceDataInterPos @RT(0) @T @T @DERIVED 0 @T @T @DT @RT(19)tyInstanceListArray @RT(0) @T @T @UNKNOWN 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(38)Local array of interstop movement data @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(22)mrCalcDurationStartPos @RT(0) @T @F @DT @RT(4)REAL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(42)start position for calculation of duration @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(13)mbIsSpeedpump @RT(0) @T @F @DT @RT(4)BOOL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(30)if the speed pump configurated @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(19)mbReducedInjectCall @RT(0) @T @F @DT @RT(4)BOOL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(49)TRUE: fbInject is not called in every tasks cycle @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(7)miCount @RT(0) @T @F @DT @RT(4)DINT @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(52)counter for reduced call of fbInject (starts with 0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(19)mdTimeThresholdDiff @RT(0) @T @F @DT @RT(4)TIME @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(15)mdOffsetToIoSys @RT(0) @T @F @DT @RT(4)TIME @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(16)mbMaxSpeedLinked @RT(0) @T @F @DT @RT(4)BOOL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(11)mprMaxSpeed @RT(0) @T @T @REFTO 0 @T @DT @RT(4)REAL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(21)fbCutOffInterpolation @RT(0) @T @T @DERIVED 0 @T @T @DT @RT(21)FBCutOffInterpolation @RT(0) @T @T @UNKNOWN 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(19)mrPositionThreshold @RT(0) @T @F @DT @RT(4)REAL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(19)mrPressureThreshold @RT(0) @T @F @DT @RT(4)REAL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(16)mrCutOffPressure @RT(0) @T @F @DT @RT(4)REAL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(16)mrCutOffPosition @RT(0) @T @F @DT @RT(4)REAL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(16)miCutOffTimeDiff @RT(0) @T @F @DT @RT(5)UDINT @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(21)mrCalcedInitStartRamp @RT(0) @T @F @DT @RT(4)REAL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(17)miReductionFactor @RT(0) @T @F @DT @RT(4)DINT @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(1)1 @RT(45)reduction factor for reduced call of fbInject @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@END_Dcl 
+
+@END_Export 
+
+@BEG_Body 
+
+13 
+
+@BEG_Export 
+
+@BEG_Algo 
+@ALGORITHM @RT(20)aGetOnboardCycleTime @STRUCTURED_TEXT 
+@RT(0) @RT(0) @RT(0) @F @F 
+@END_Algo 
+
+@BEG_Dcl 
+@RT(16)DclTreeContainer 
+7 
+@Var @RT(17)rOnboardCycleTime @RT(0) @T @F @DT @RT(4)REAL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(24)onboard cycletime in [s] @RT(0) 
+@END_Attrib 
+1 3 @F @F @F @F 
+
+@Var @RT(3)hdl @RT(0) @T @T @DERIVED 0 @T @T @DT @RT(15)KCAT_HandleData @RT(0) @T @T @UNKNOWN 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(1)s @RT(0) @T @T @DERIVED 0 @T @T @DT @RT(11)KCAT_Status @RT(0) @T @T @UNKNOWN 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(8)DataType @RT(0) @T @T @DERIVED 0 @T @T @DT @RT(13)KCAT_TypeData @RT(0) @T @T @UNKNOWN 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(4)rTmp @RT(0) @T @F @DT @RT(5)LREAL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(12)sIOCycleTime @RT(0) @T @F @DT @RT(11)STRING(255) @RT(0) @T @T @STRING 0 @F @RT(3)255 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(5)bDone @RT(0) @T @F @DT @RT(4)BOOL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@END_Dcl 
+
+@END_Export 
+
+@BEG_Export 
+
+@BEG_Algo 
+@ALGORITHM @RT(5)aInit @STRUCTURED_TEXT 
+@RT(0) @RT(0) @RT(0) @F @F 
+@END_Algo 
+
+@BEG_Dcl 
+@RT(16)DclTreeContainer 
+23 
+@Var @RT(14)pInjectProfile @RT(0) @T @T @REFTO 0 @F @DERIVED 0 @T @T @DT @RT(16)KAPPL_VisProfile @RT(0) @T @T @UNKNOWN 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(58)pointer to systemvariable that contains the inject profile @RT(0) 
+@END_Attrib 
+1 1 @F @F @F @F 
+
+@Var @RT(12)pHoldProfile @RT(0) @T @T @REFTO 0 @F @DERIVED 0 @T @T @DT @RT(16)KAPPL_VisProfile @RT(0) @T @T @UNKNOWN 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(56)pointer to systemvariable that contains the hold profile @RT(0) 
+@END_Attrib 
+1 1 @F @F @F @F 
+
+@Var @RT(12)MoveIdInject @RT(0) @T @T @DERIVED 0 @T @T @DT @RT(10)tMoveIdent @RT(0) @T @T @UNKNOWN 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(25)moveId of inject movement @RT(0) 
+@END_Attrib 
+1 1 @F @F @F @F 
+
+@Var @RT(10)MoveIdHold @RT(0) @T @T @DERIVED 0 @T @T @DT @RT(10)tMoveIdent @RT(0) @T @T @UNKNOWN 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(23)moveId of hold movement @RT(0) 
+@END_Attrib 
+1 1 @F @F @F @F 
+
+@Var @RT(14)pScrewDiameter @RT(0) @T @T @REFTO 0 @T @DT @RT(4)REAL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 1 @F @F @F @F 
+
+@Var @RT(14)ComparatorData @RT(0) @T @T @DERIVED 0 @T @T @DT @RT(15)tsCompDataArray @RT(0) @T @T @UNKNOWN 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 1 @F @F @F @F 
+
+@Var @RT(22)pdCalcedInjectDuration @RT(0) @T @T @REFTO 0 @T @DT @RT(4)TIME @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(55)pointer to calculated inject duration (without holding) @RT(0) 
+@END_Attrib 
+1 1 @F @F @F @F 
+
+@Var @RT(20)pdCalcedHoldDuration @RT(0) @T @T @REFTO 0 @T @DT @RT(4)TIME @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(35)pointer to calculated hold duration @RT(0) 
+@END_Attrib 
+1 1 @F @F @F @F 
+
+@Var @RT(27)prCalcDurationStartPosition @RT(0) @T @T @REFTO 0 @T @DT @RT(4)REAL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(46)pointer to startposition to calculate duration @RT(0) 
+@END_Attrib 
+1 1 @F @F @F @F 
+
+@Var @RT(13)pCutOffParams @RT(0) @T @T @REFTO 0 @F @DERIVED 0 @T @T @DT @RT(18)tsCutOffCriterions @RT(0) @T @T @UNKNOWN 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(29)pointer to cut off parameters @RT(0) 
+@END_Attrib 
+1 1 @F @F @F @F 
+
+@Var @RT(21)pInstanceDataInterPos @RT(0) @T @T @REFTO 0 @F @DERIVED 0 @T @T @DT @RT(19)tyInstanceListArray @RT(0) @T @T @UNKNOWN 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(48)pointer to array with data of interpos movements @RT(0) 
+@END_Attrib 
+1 1 @F @F @F @F 
+
+@Var @RT(10)prMaxSpeed @RT(0) @T @T @REFTO 0 @T @DT @RT(4)REAL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 1 @F @F @F @F 
+
+@Var @RT(9)bInitDone @RT(0) @T @F @DT @RT(4)BOOL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(8)swoState @RT(0) @T @T @DERIVED 0 @T @T @DT @RT(11)KSWO_Status @RT(0) @T @T @UNKNOWN 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(6)fuName @RT(0) @T @F @DT @RT(11)STRING(255) @RT(0) @T @T @STRING 0 @F @RT(3)255 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(12)variableName @RT(0) @T @F @DT @RT(11)STRING(255) @RT(0) @T @T @STRING 0 @F @RT(3)255 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(1)s @RT(0) @T @T @DERIVED 0 @T @T @DT @RT(11)KSYS_Status @RT(0) @T @T @UNKNOWN 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(12)pPumpOptions @RT(0) @T @T @REFTO 0 @F @DERIVED 0 @T @T @DT @RT(9)tOptionId @RT(0) @T @T @UNKNOWN 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(1)b @RT(0) @T @F @DT @RT(4)BOOL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(18)dCycleTimeIOSystem @RT(0) @T @F @DT @RT(4)TIME @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(4)rTmp @RT(0) @T @F @DT @RT(4)REAL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(10)hwPathData @RT(0) @T @T @DERIVED 0 @T @T @DT @RT(15)KCAT_HWPathData @RT(0) @T @T @UNKNOWN 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(10)pServoData @RT(0) @T @T @REFTO 0 @F @DERIVED 0 @T @T @DT @RT(14)KHW_Servo_Data @RT(0) @T @T @UNKNOWN 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@END_Dcl 
+
+@END_Export 
+
+@BEG_Export 
+
+@BEG_Algo 
+@ALGORITHM @RT(4)aRun @STRUCTURED_TEXT 
+@RT(0) @RT(0) @RT(0) @F @F 
+@END_Algo 
+
+@BEG_Dcl 
+@RT(16)DclTreeContainer 
+81 
+@Var @RT(6)bStart @RT(0) @T @F @DT @RT(4)BOOL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(20)start profile output @RT(0) 
+@END_Attrib 
+1 1 @F @F @F @F 
+
+@Var @RT(5)bStop @RT(0) @T @F @DT @RT(4)BOOL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(19)stop profile output @RT(0) 
+@END_Attrib 
+1 1 @F @F @F @F 
+
+@Var @RT(17)rActScrewPosition @RT(0) @T @F @DT @RT(4)REAL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(21)actual screw position @RT(0) 
+@END_Attrib 
+1 1 @F @F @F @F 
+
+@Var @RT(17)rMaxScrewPosition @RT(0) @T @F @DT @RT(4)REAL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(76)maximum screw position, limit during postpressure PID - to avoid mech. crash @RT(0) 
+@END_Attrib 
+1 1 @F @F @F @F 
+
+@Var @RT(20)rStartOutputPressure @RT(0) @T @F @DT @RT(4)REAL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(21)start output pressure @RT(0) 
+@END_Attrib 
+1 1 @F @F @F @F 
+
+@Var @RT(20)rStartOutputVelocity @RT(0) @T @F @DT @RT(4)REAL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(21)start output velocity @RT(0) 
+@END_Attrib 
+1 1 @F @F @F @F 
+
+@Var @RT(15)rMaxInjectSpeed @RT(0) @T @F @DT @RT(4)REAL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(24)max. inject speed (mm/s) @RT(0) 
+@END_Attrib 
+1 1 @F @F @F @F 
+
+@Var @RT(20)rMaxPossiblePressure @RT(0) @T @F @DT @RT(4)REAL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(56)max. possible pressure (used for holding PID controller) @RT(0) 
+@END_Attrib 
+1 1 @F @F @F @F 
+
+@Var @RT(19)InjectControlParams @RT(0) @T @T @DERIVED 0 @T @T @DT @RT(19)tsControlParameters @RT(0) @T @T @UNKNOWN 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(27)PID - parameters for inject @RT(0) 
+@END_Attrib 
+1 1 @F @F @F @F 
+
+@Var @RT(20)InjectDeadTimeParams @RT(0) @T @T @DERIVED 0 @T @T @DT @RT(20)tsDeadTimeParameters @RT(0) @T @T @UNKNOWN 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 1 @F @F @F @F 
+
+@Var @RT(20)HoldingControlParams @RT(0) @T @T @DERIVED 0 @T @T @DT @RT(19)tsControlParameters @RT(0) @T @T @UNKNOWN 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(28)PID - parameters for holding @RT(0) 
+@END_Attrib 
+1 1 @F @F @F @F 
+
+@Var @RT(21)HoldingDeadTimeParams @RT(0) @T @T @DERIVED 0 @T @T @DT @RT(20)tsDeadTimeParameters @RT(0) @T @T @UNKNOWN 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 1 @F @F @F @F 
+
+@Var @RT(12)dMaxMoveTime @RT(0) @T @F @DT @RT(4)TIME @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(44)maximum move time (0 = no timeout detection) @RT(0) 
+@END_Attrib 
+1 1 @F @F @F @F 
+
+@Var @RT(12)CutOffParams @RT(0) @T @T @DERIVED 0 @T @T @DT @RT(18)tsCutOffCriterions @RT(0) @T @T @UNKNOWN 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(30)settings for cut off detection @RT(0) 
+@END_Attrib 
+1 1 @F @F @F @F 
+
+@Var @RT(16)rActMoldPressure @RT(0) @T @F @DT @RT(4)REAL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(20)actual mold pressure @RT(0) 
+@END_Attrib 
+1 1 @F @F @F @F 
+
+@Var @RT(18)rActInjectPressure @RT(0) @T @F @DT @RT(4)REAL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(22)actual inject pressure @RT(0) 
+@END_Attrib 
+1 1 @F @F @F @F 
+
+@Var @RT(12)di_ExtCutOff @RT(0) @T @F @DT @RT(4)BOOL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(33)di for external cut off detection @RT(0) 
+@END_Attrib 
+1 1 @F @F @F @F 
+
+@Var @RT(26)PressureLimitControlParams @RT(0) @T @T @DERIVED 0 @T @T @DT @RT(19)tsControlParameters @RT(0) @T @T @UNKNOWN 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(27)PID - parameters for inject @RT(0) 
+@END_Attrib 
+1 1 @F @F @F @F 
+
+@Var @RT(31)PressureLimitControlVelocityPar @RT(0) @T @T @DERIVED 0 @T @T @DT @RT(19)tsControlParameters @RT(0) @T @T @UNKNOWN 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(27)PID - parameters for inject @RT(0) 
+@END_Attrib 
+1 1 @F @F @F @F 
+
+@Var @RT(15)dT_ActValFilter @RT(0) @T @F @DT @RT(4)TIME @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(27)PID - parameters for inject @RT(0) 
+@END_Attrib 
+1 1 @F @F @F @F 
+
+@Var @RT(17)rActScrewVelocity @RT(0) @T @F @DT @RT(4)REAL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 1 @F @F @F @F 
+
+@Var @RT(15)ProfileDeadTime @RT(0) @T @F @DT @RT(4)TIME @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 1 @F @F @F @F 
+
+@Var @RT(8)IMM_Type @RT(0) @T @T @DERIVED 0 @T @T @DT @RT(14)KAPPL_IMM_Type @RT(0) @T @T @UNKNOWN 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 1 @F @F @F @F 
+
+@Var @RT(19)rMaxPressureEndHold @RT(0) @T @F @DT @RT(4)REAL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 1 @F @F @F @F 
+
+@Var @RT(12)dDelayTimeOn @RT(0) @T @F @DT @RT(4)TIME @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(45)Delay Time between preoutput and  constoutput @RT(0) 
+@END_Attrib 
+1 1 @F @F @F @F 
+
+@Var @RT(13)dDelayTimeOff @RT(0) @T @F @DT @RT(4)TIME @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(46)Delay Time between pump stop and bActive FALSE @RT(0) 
+@END_Attrib 
+1 1 @F @F @F @F 
+
+@Var @RT(16)bUseInterruptPos @RT(0) @T @F @DT @RT(4)BOOL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(37)TRUE: movement stops at rInterruptPos @RT(0) 
+@END_Attrib 
+1 1 @F @F @F @F 
+
+@Var @RT(13)rInterruptPos @RT(0) @T @F @DT @RT(4)REAL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(20)interrrupt position  @RT(0) 
+@END_Attrib 
+1 1 @F @F @F @F 
+
+@Var @RT(13)rInterruptDec @RT(0) @T @F @DT @RT(4)REAL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(42)stop acceleration before interruptposition @RT(0) 
+@END_Attrib 
+1 1 @F @F @F @F 
+
+@Var @RT(13)rInterruptAcc @RT(0) @T @F @DT @RT(4)REAL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 1 @F @F @F @F 
+
+@Var @RT(18)dInterruptDeadTime @RT(0) @T @F @DT @RT(4)TIME @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 1 @F @F @F @F 
+
+@Var @RT(17)bInjectPIDIntStop @RT(0) @T @F @DT @RT(4)BOOL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(38)Stop position integrator of inject PID @RT(0) 
+@END_Attrib 
+1 1 @F @F @F @F 
+
+@Var @RT(15)bHoldPIDIntStop @RT(0) @T @F @DT @RT(4)BOOL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(34)Stop integration in PID-controller @RT(0) 
+@END_Attrib 
+1 1 @F @F @F @F 
+
+@Var @RT(19)bEnableHoldVelLimit @RT(0) @T @F @DT @RT(4)BOOL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 1 @F @F @F @F 
+
+@Var @RT(19)rMaxDecompSpeedHold @RT(0) @T @F @DT @RT(4)REAL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 1 @F @F @F @F 
+
+@Var @RT(26)dMaxPressureDecompressTime @RT(0) @T @F @DT @RT(4)TIME @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 1 @F @F @F @F 
+
+@Var @RT(23)rMaxHoldEndVelocityRamp @RT(0) @T @F @DT @RT(4)REAL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 1 @F @F @F @F 
+
+@Var @RT(24)bUseHoldVelocityLimitBwd @RT(0) @T @F @DT @RT(4)BOOL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 1 @F @F @F @F 
+
+@Var @RT(25)bIgnoreVSProfilPostCutOff @RT(0) @T @F @DT @RT(4)BOOL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(64)don't use inject profile for velocity limitation at post cut off @RT(0) 
+@END_Attrib 
+1 1 @F @F @F @F 
+
+@Var @RT(27)bUseCalcedPressureStartRamp @RT(0) @T @F @DT @RT(4)BOOL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(51)use calculated start ramp for hold pressure profile @RT(0) 
+@END_Attrib 
+1 1 @F @F @F @F 
+
+@Var @RT(25)bIgnoreStopAtCutOffNoHold @RT(0) @T @F @DT @RT(4)BOOL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(49)ignore stop at cutoff position if hold time is 0s @RT(0) 
+@END_Attrib 
+1 1 @F @F @F @F 
+
+@Var @RT(15)rPressureOutput @RT(0) @T @F @DT @RT(4)REAL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(26)calculated pressure output @RT(0) 
+@END_Attrib 
+1 3 @F @F @F @F 
+
+@Var @RT(15)rVelocityOutput @RT(0) @T @F @DT @RT(4)REAL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(26)calculated velocity output @RT(0) 
+@END_Attrib 
+1 3 @F @F @F @F 
+
+@Var @RT(12)rPressureSet @RT(0) @T @F @DT @RT(4)REAL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(58)set output for pressure (according to the entered profile) @RT(0) 
+@END_Attrib 
+1 3 @F @F @F @F 
+
+@Var @RT(12)rVelocitySet @RT(0) @T @F @DT @RT(4)REAL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(58)set output for velocity (according to the entered profile) @RT(0) 
+@END_Attrib 
+1 3 @F @F @F @F 
+
+@Var @RT(7)bActive @RT(0) @T @F @DT @RT(4)BOOL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(26)profile movement is active @RT(0) 
+@END_Attrib 
+1 3 @F @F @F @F 
+
+@Var @RT(15)bCutOffDetected @RT(0) @T @F @DT @RT(4)BOOL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(20)cut off was detected @RT(0) 
+@END_Attrib 
+1 3 @F @F @F @F 
+
+@Var @RT(15)rCutOffPosition @RT(0) @T @F @DT @RT(4)REAL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(35)position where cut off was detected @RT(0) 
+@END_Attrib 
+1 3 @F @F @F @F 
+
+@Var @RT(24)rMaxInjectVelocityOutput @RT(0) @T @F @DT @RT(4)REAL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(34)maximum output for inject velocity @RT(0) 
+@END_Attrib 
+1 3 @F @F @F @F 
+
+@Var @RT(18)iActiveInjectStage @RT(0) @T @F @DT @RT(4)DINT @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(30)active stage in inject profile @RT(0) 
+@END_Attrib 
+1 3 @F @F @F @F 
+
+@Var @RT(17)bPreOutputReached @RT(0) @T @F @DT @RT(4)BOOL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(17)preoutput reached @RT(0) 
+@END_Attrib 
+1 3 @F @F @F @F 
+
+@Var @RT(12)dActMoveTime @RT(0) @T @F @DT @RT(4)TIME @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(16)actual move time @RT(0) 
+@END_Attrib 
+1 3 @F @F @F @F 
+
+@Var @RT(15)dActHoldingTime @RT(0) @T @F @DT @RT(4)TIME @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(19)actual holding time @RT(0) 
+@END_Attrib 
+1 3 @F @F @F @F 
+
+@Var @RT(8)bTimeOut @RT(0) @T @F @DT @RT(4)BOOL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(16)timeout detected @RT(0) 
+@END_Attrib 
+1 3 @F @F @F @F 
+
+@Var @RT(6)bError @RT(0) @T @F @DT @RT(4)BOOL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(14)error detected @RT(0) 
+@END_Attrib 
+1 3 @F @F @F @F 
+
+@Var @RT(10)iErrorInfo @RT(0) @T @F @DT @RT(4)DINT @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(21)additional error info @RT(0) 
+@END_Attrib 
+1 3 @F @F @F @F 
+
+@Var @RT(12)rServoOutput @RT(0) @T @F @DT @RT(4)REAL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 3 @F @F @F @F 
+
+@Var @RT(17)rHoldDonePosition @RT(0) @T @F @DT @RT(4)REAL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(27)position at the end of hold @RT(0) 
+@END_Attrib 
+1 3 @F @F @F @F 
+
+@Var @RT(15)rCutOffPressure @RT(0) @T @F @DT @RT(4)REAL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 3 @F @F @F @F 
+
+@Var @RT(21)rCutOffCavityPressure @RT(0) @T @F @DT @RT(4)REAL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 3 @F @F @F @F 
+
+@Var @RT(8)rCushion @RT(0) @T @F @DT @RT(4)REAL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(38)smallest screw position during holding @RT(0) 
+@END_Attrib 
+1 3 @F @F @F @F 
+
+@Var @RT(1)i @RT(0) @T @F @DT @RT(5)UDINT @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 4 @F @F @F @F 
+
+@Var @RT(12)fbCutOffDone @RT(0) @T @T @DERIVED 0 @T @T @DT @RT(6)R_TRIG @RT(0) @T @T @UNKNOWN 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(13)fbREdge_Start @RT(0) @T @T @DERIVED 0 @T @T @DT @RT(6)R_TRIG @RT(0) @T @T @UNKNOWN 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(7)fbTimer @RT(0) @T @T @DERIVED 0 @T @T @DT @RT(3)TON @RT(0) @T @T @UNKNOWN 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(15)fbREdge_Timeout @RT(0) @T @T @DERIVED 0 @T @T @DT @RT(6)R_TRIG @RT(0) @T @T @UNKNOWN 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(15)bAlarmInjectSet @RT(0) @T @F @DT @RT(4)BOOL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(13)bAlarmHoldSet @RT(0) @T @F @DT @RT(4)BOOL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(12)fbREdgeError @RT(0) @T @T @DERIVED 0 @T @T @DT @RT(6)R_TRIG @RT(0) @T @T @UNKNOWN 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(15)rCutOffVelocity @RT(0) @T @F @DT @RT(4)REAL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(15)iCutOffTimeDiff @RT(0) @T @F @DT @RT(5)UDINT @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(14)bUsePostCutOff @RT(0) @T @F @DT @RT(4)BOOL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(5)FALSE @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(21)rFactorPercentToSpeed @RT(0) @T @F @DT @RT(4)REAL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(10)bActiveInt @RT(0) @T @F @DT @RT(4)BOOL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(11)fbTOFActive @RT(0) @T @T @DERIVED 0 @T @T @DT @RT(3)TOF @RT(0) @T @T @UNKNOWN 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(15)bComparatorUsed @RT(0) @T @F @DT @RT(4)BOOL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(17)rMinScrewPosition @RT(0) @T @F @DT @RT(4)REAL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(10)dCycleTime @RT(0) @T @F @DT @RT(4)TIME @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(9)rHoldTime @RT(0) @T @F @DT @RT(4)REAL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(19)rCutOffInitPressure @RT(0) @T @F @DT @RT(4)REAL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(9)bInitDone @RT(0) @T @F @DT @RT(4)BOOL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@END_Dcl 
+
+@END_Export 
+
+@BEG_Export 
+
+@BEG_Algo 
+@POSTUPDATE_ALGORITHM @RT(21)pInjectProfileChanged @STRUCTURED_TEXT 
+@RT(0) @RT(16)mpInjectProfile^ @RT(9)PU_Task_7 @F @F 
+@END_Algo 
+
+@BEG_Dcl 
+@RT(16)DclTreeContainer 
+0 
+@END_Dcl 
+
+@END_Export 
+
+@BEG_Export 
+
+@BEG_Algo 
+@POSTUPDATE_ALGORITHM @RT(19)pHoldProfileChanged @STRUCTURED_TEXT 
+@RT(0) @RT(14)mpHoldProfile^ @RT(9)PU_Task_7 @F @F 
+@END_Algo 
+
+@BEG_Dcl 
+@RT(16)DclTreeContainer 
+0 
+@END_Dcl 
+
+@END_Export 
+
+@BEG_Export 
+
+@BEG_Algo 
+@PROCESS_ALGORITHM @RT(19)paInitInjectProfile @STRUCTURED_TEXT 
+@RT(0) @RT(0) @RT(8)TaskSlow @F @F 
+@END_Algo 
+
+@BEG_Dcl 
+@RT(16)DclTreeContainer 
+3 
+@Var @RT(1)i @RT(0) @T @F @DT @RT(5)UDINT @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 4 @F @F @F @F 
+
+@Var @RT(13)fbProfileCalc @RT(0) @T @T @DERIVED 0 @T @T @DT @RT(26)KAPPL_Plastics_ProfileCalc @RT(0) @T @T @UNKNOWN 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(11)iNoOfPoints @RT(0) @T @F @DT @RT(5)UDINT @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@END_Dcl 
+
+@END_Export 
+
+@BEG_Export 
+
+@BEG_Algo 
+@PROCESS_ALGORITHM @RT(17)paInitHoldProfile @STRUCTURED_TEXT 
+@RT(0) @RT(0) @RT(8)TaskSlow @F @F 
+@END_Algo 
+
+@BEG_Dcl 
+@RT(16)DclTreeContainer 
+5 
+@Var @RT(1)i @RT(0) @T @F @DT @RT(5)UDINT @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 4 @F @F @F @F 
+
+@Var @RT(1)j @RT(0) @T @F @DT @RT(5)UDINT @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 4 @F @F @F @F 
+
+@Var @RT(13)fbProfileCalc @RT(0) @T @T @DERIVED 0 @T @T @DT @RT(26)KAPPL_Plastics_ProfileCalc @RT(0) @T @T @UNKNOWN 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(11)absStartPos @RT(0) @T @F @DT @RT(4)REAL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(11)iNoOfPoints @RT(0) @T @F @DT @RT(5)UDINT @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@END_Dcl 
+
+@END_Export 
+
+@BEG_Export 
+
+@BEG_Algo 
+@PROCESS_ALGORITHM @RT(22)paInitDebugMeasurement @STRUCTURED_TEXT 
+@RT(0) @RT(0) @RT(8)TaskSlow @F @F 
+@END_Algo 
+
+@BEG_Dcl 
+@RT(16)DclTreeContainer 
+1 
+@Var @RT(10)iErrorInfo @RT(0) @T @F @DT @RT(4)DINT @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@END_Dcl 
+
+@END_Export 
+
+@BEG_Export 
+
+@BEG_Algo 
+@POSTUPDATE_ALGORITHM @RT(16)pCompDataChanged @STRUCTURED_TEXT 
+@RT(0) @RT(1282)sv_iSelCavityPressureSensor,mpComparatorData[1].LintabData^,mpComparatorData[2].LintabData^,mpComparatorData[3].LintabData^,mpComparatorData[4].LintabData^,mpComparatorData[5].LintabData^,mpComparatorData[6].LintabData^,mpComparatorData[7].LintabData^,mpComparatorData[8].LintabData^,mpComparatorData[9].LintabData^,mpComparatorData[10].LintabData^,mpComparatorData[1].ScrewDiameter^,mpComparatorData[2].SpecificPressureLintab^,mpComparatorData[1].pLintabPoints^,mpComparatorData[1].piUsedLintabPoints^,mpComparatorData[2].pLintabPoints^,mpComparatorData[2].piUsedLintabPoints^,mpComparatorData[2].pSpecificPressureLintabPoints^,mpComparatorData[2].piUsedSpecPressureLintabPoints^,mpComparatorData[3].pLintabPoints^,mpComparatorData[3].piUsedLintabPoints^,mpComparatorData[4].pLintabPoints^,mpComparatorData[4].piUsedLintabPoints^,mpComparatorData[5].pLintabPoints^,mpComparatorData[5].piUsedLintabPoints^,mpComparatorData[6].pLintabPoints^,mpComparatorData[6].piUsedLintabPoints^,mpComparatorData[7].pLintabPoints^,mpComparatorData[7].piUsedLintabPoints^,mpComparatorData[8].pLintabPoints^,mpComparatorData[8].piUsedLintabPoints^,mpComparatorData[9].pLintabPoints^,mpComparatorData[9].piUsedLintabPoints^,mpComparatorData[10].pLintabPoints^,mpComparatorData[10].piUsedLintabPoints^ @RT(9)PU_Task_7 @F @F 
+@END_Algo 
+
+@BEG_Dcl 
+@RT(16)DclTreeContainer 
+0 
+@END_Dcl 
+
+@END_Export 
+
+@BEG_Export 
+
+@BEG_Algo 
+@POSTUPDATE_ALGORITHM @RT(16)pReCalcDurations @STRUCTURED_TEXT 
+@RT(0) @RT(53)mprCalcDurationStartPosition^,mpInstanceDataInterPos^ @RT(9)PU_Task_7 @F @F 
+@END_Algo 
+
+@BEG_Dcl 
+@RT(16)DclTreeContainer 
+3 
+@Var @RT(1)i @RT(0) @T @F @DT @RT(4)DINT @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 4 @F @F @F @F 
+
+@Var @RT(16)bStartPosChanged @RT(0) @T @F @DT @RT(4)BOOL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(20)bInstanceDataChanged @RT(0) @T @F @DT @RT(4)BOOL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@END_Dcl 
+
+@END_Export 
+
+@BEG_Export 
+
+@BEG_Algo 
+@POSTUPDATE_ALGORITHM @RT(13)pCutOffParams @STRUCTURED_TEXT 
+@RT(0) @RT(15)mpCutOffParams^ @RT(9)PU_Task_7 @F @F 
+@END_Algo 
+
+@BEG_Dcl 
+@RT(16)DclTreeContainer 
+0 
+@END_Dcl 
+
+@END_Export 
+
+@BEG_Export 
+
+@BEG_Algo 
+@PROCESS_ALGORITHM @RT(15)paCalcDurations @STRUCTURED_TEXT 
+@RT(0) @RT(0) @RT(8)TaskSlow @F @F 
+@END_Algo 
+
+@BEG_Dcl 
+@RT(16)DclTreeContainer 
+7 
+@Var @RT(1)i @RT(0) @T @F @DT @RT(4)DINT @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 4 @F @F @F @F 
+
+@Var @RT(21)rCalcDurationStartPos @RT(0) @T @F @DT @RT(4)REAL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(41)Startposition for calculation of duration @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(19)rCalcDurationEndPos @RT(0) @T @F @DT @RT(4)REAL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(39)Endposition for calculation of duration @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(27)bInterPosMovementsAvailable @RT(0) @T @F @DT @RT(4)BOOL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(39)Interposition movement(s) are available @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(21)dCalcedInjectDuration @RT(0) @T @F @DT @RT(4)TIME @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(26)Calculated inject duration @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(13)dHoldDuration @RT(0) @T @F @DT @RT(4)TIME @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(26)Calculated inject duration @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(19)dDefaultInjDuration @RT(0) @T @F @DT @RT(4)TIME @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(4)T#2s @RT(57)Default inject duration when duration can't be calculated @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@END_Dcl 
+
+@END_Export 
+
+@BEG_Export 
+
+@BEG_Algo 
+@PROCESS_ALGORITHM @RT(8)paCyclic @STRUCTURED_TEXT 
+@RT(0) @RT(0) @RT(13)TaskInject(0) @T @F 
+@END_Algo 
+
+@BEG_Dcl 
+@RT(16)DclTreeContainer 
+9 
+@Var @RT(9)dLastTime @RT(0) @T @F @DT @RT(4)TIME @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(8)dActTime @RT(0) @T @F @DT @RT(4)TIME @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(8)dDifTime @RT(0) @T @F @DT @RT(4)TIME @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(7)bActOld @RT(0) @T @F @DT @RT(4)BOOL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(9)bInitDone @RT(0) @T @F @DT @RT(4)BOOL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(18)dCycleTimeIOSystem @RT(0) @T @F @DT @RT(4)TIME @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(18)iCycleTimeIOSystem @RT(0) @T @F @DT @RT(4)LINT @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(12)rIOCycleTime @RT(0) @T @F @DT @RT(4)REAL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(10)dCycleTime @RT(0) @T @F @DT @RT(4)TIME @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@END_Dcl 
+
+@END_Export 
+
+@BEG_Body 
+@TL(25)
+(**************************************** WARNING ********************************************
+ *** The KEBA Kemro K2 System including software is not intended for safety control tasks! ***
+ ***                       For further information see Comment tab!                        ***
+ *********************************************************************************************)
+
+IF NOT bDone THEN
+   
+   rOnboardCycleTime := 0.0;
+
+   //get cycle time from catalog
+   hdl := KCAT_GetHandle('IO.ONBOARD.cycleTime');
+   DataType := KCAT_GetType(hdl.Handle);
+   IF DataType.Type = KCAT_Type_STRING THEN
+      s := KCAT_GetValue(hdl.Handle, sIOCycleTime);
+      rOnboardCycleTime := STRING_TO_REAL(sIOCycleTime);
+   ELSIF DataType.Type = KCAT_Type_LREAL THEN
+      s := KCAT_GetValue(hdl.Handle, rTmp);
+      rOnboardCycleTime := LREAL_TO_REAL(rTmp);
+   END_IF;
+   
+   bDone := TRUE;
+END_IF;
+
+
+
+@END_Body 
+
+@@@BEG_Comment@@@ 
+@TL(0)
+
+@@@END_Comment@@@ 
+
+@BEG_Body 
+@TL(169)
+(**************************************** WARNING ********************************************
+ *** The KEBA Kemro K2 System including software is not intended for safety control tasks! ***
+ ***                       For further information see Comment tab!                        ***
+ *********************************************************************************************)
+
+IF NOT bInitDone THEN
+    //copy references of vis variables
+    mpInjectProfile := pInjectProfile;
+    mpHoldProfile := pHoldProfile;
+    mpScrewDiameter := pScrewDiameter;
+    mMoveIdInject := MoveIdInject;
+    mMoveIdHold := MoveIdHold;
+   
+    //copy references for calculation of duration
+    mpdCalcedInjectDuration := pdCalcedInjectDuration;
+    mpdCalcedHoldDuration := pdCalcedHoldDuration;
+    mpInstanceDataInterPos := pInstanceDataInterPos;
+    mprCalcDurationStartPosition := prCalcDurationStartPosition;
+    mpCutOffParams := pCutOffParams;
+  
+    IF CHECK_REF(mpdCalcedInjectDuration^) THEN
+        mbRefCalcedInjectDurationValid := TRUE;
+    END_IF;
+   
+    IF CHECK_REF(mpdCalcedHoldDuration^) THEN
+        mbRefCalcedHoldDurationValid := TRUE;
+    END_IF;
+    
+    IF CHECK_REF(mpInstanceDataInterPos^) THEN
+        mbRefInstanceDataInterPosValid := TRUE;
+        mInstanceDataInterPos := mpInstanceDataInterPos^;
+    END_IF;
+    
+    IF CHECK_REF(mpCutOffParams^) THEN
+        mbRefCutOffParamsValid := TRUE;
+    END_IF;
+   
+    IF CHECK_REF(mprCalcDurationStartPosition^) THEN
+        mbRefCalcDurationStartPosValid := TRUE;
+        mrCalcDurationStartPos := mprCalcDurationStartPosition^;
+    END_IF;
+    
+    IF CHECK_REF(mpInjectProfile^) THEN
+        mbInjectReferenceValid := TRUE;
+        //start paInitInjectProfile only if reference of inject profile is valid
+        START_PROCESS_ALGORITHM(paInitInjectProfile);
+    ELSE
+        SET_ALARM(Name := erInvalidProfileReference,
+                  SubID1 := sv_DeviceId.CompId,
+                  SubID2 := sv_DeviceId.IndexId,
+                  SubID3 := mMoveIdInject);
+    END_IF;
+    
+    IF CHECK_REF(mpHoldProfile^) THEN
+        mbHoldReferenceValid := TRUE;
+        //start paInitHoldProfile only if reference of hold profile is valid
+        START_PROCESS_ALGORITHM(paInitHoldProfile);
+    ELSE
+        SET_ALARM(Name := erInvalidProfileReference,
+                  SubID1 := sv_DeviceId.CompId,
+                  SubID2 := sv_DeviceId.IndexId,
+                  SubID3 := mMoveIdHold);
+    END_IF;
+    
+    //Check the existance of speed pump
+    pPumpOptions := GET_SYNC_REFTO('Pump1.sv_Options', T#0s, s);
+    mbIsSpeedpump := (s = KSYS_Status_OK) AND ((pPumpOptions^ AND cSubOpSpeedpumpMaster) = cSubOpSpeedpumpMaster);
+    
+    IF mbIsSpeedpump THEN
+       pServoData := GET_SYNC_REFTO('Pump1.sv_KHW_ServoMaster_actValue', T#0s, s);
+       hwPathData := KCAT_GetHWPath(pServoData^);
+       IF hwPathData.Status = KCAT_Status_OK THEN
+          IF FIND(hwPathData.Name,'CAN') > 0 THEN       
+             mbReducedInjectCall := TRUE;
+             //calling of fbInject is reduced in case of speedpump via CAN
+             //-> calculate reduction factor
+             //CAN cycle time for speedpump is fixed with 4ms!
+             miReductionFactor := LINT_TO_DINT(4000 / TIME_TO_LINT(GET_TASK_INTERVAL(TaskInject)));            
+          END_IF; 
+       END_IF;
+    END_IF;
+   
+    fuName := GET_MY_FU_NAME(); 
+    variableName := CONCAT(fuName,'.Inject.SetPressure bar');
+    swoState := KSWO_AddVariable( Task := TaskInject,
+                                  Name := variableName,
+                                  Variable := mrPressureSet);
+    b := FAddToScopeGroup(Task := TaskInject, 
+                          Name := variableName, 
+                          GroupId := cScopeGroupInject);  
+    variableName := CONCAT(fuName,'.Inject.SetVelocity ccm/s');
+    swoState := KSWO_AddVariable( Task := TaskInject,
+                                  Name := variableName,
+                                  Variable := mrVelocitySet);
+    b := FAddToScopeGroup(Task := TaskInject, 
+                          Name := variableName, 
+                          GroupId := cScopeGroupInject);  
+    variableName := CONCAT(fuName,'.Inject.PressureOutput bar');
+    swoState := KSWO_AddVariable( Task := TaskInject,
+                                  Name := variableName,
+                                  Variable := mrPressureOutput);
+    variableName := CONCAT(fuName,'.Inject.VelocityOutput ccm/s');
+    swoState := KSWO_AddVariable( Task := TaskInject,
+                                  Name := variableName,
+                                  Variable := mrVelocityOutput);
+    variableName := CONCAT(fuName,'.Inject.ControlVariable');
+    swoState := KSWO_AddVariable( Task := TaskInject,
+                                  Name := variableName,
+                                  Variable := mrServoOutput);
+    variableName := CONCAT(fuName,'.Inject.InjectActive');
+    swoState := KSWO_AddVariable( Task := TaskInject,
+                                  Name := variableName,
+                                  Variable := mbInjectActive);
+    b := FAddToScopeGroup(Task := TaskInject, 
+                          Name := variableName, 
+                          GroupId := cScopeGroupInject);     
+    variableName := CONCAT(fuName,'.Inject.CutOffDetected');
+    swoState := KSWO_AddVariable( Task := TaskInject,
+                                  Name := variableName,
+                                  Variable := mbCutOffDetected);
+    b := FAddToScopeGroup(Task := TaskInject, 
+                          Name := variableName, 
+                          GroupId := cScopeGroupInject);  
+    variableName := CONCAT(fuName,'.Inject.CutOff.PositionThreshold ccm');
+    swoState := KSWO_AddVariable( Task := TaskInject,
+                                  Name := variableName,
+                                  Variable := mrPositionThreshold);
+    variableName := CONCAT(fuName,'.Inject.CutOff.PressureThreshold bar_spec');
+    swoState := KSWO_AddVariable( Task := TaskInject,
+                                  Name := variableName,
+                                  Variable := mrPressureThreshold);
+    variableName := CONCAT(fuName,'.Inject.CutOff.CutOffPosition ccm');
+    swoState := KSWO_AddVariable( Task := TaskInject,
+                                  Name := variableName,
+                                  Variable := mrCutOffPosition);
+    variableName := CONCAT(fuName,'.Inject.CutOff.CutOffPressure bar_spec');
+    swoState := KSWO_AddVariable( Task := TaskInject,
+                                  Name := variableName,
+                                  Variable := mrCutOffPressure);
+    variableName := CONCAT(fuName,'.Inject.CutOff.CutOffTimeDiff µs');
+    swoState := KSWO_AddVariable( Task := TaskInject,
+                                  Name := variableName,
+                                  Variable := miCutOffTimeDiff);
+   
+    START_PROCESS_ALGORITHM(paInitDebugMeasurement);
+    
+   // copy Comparatordata to local structure
+   mpComparatorData := ComparatorData;
+   fbCutOffDetection(bInit := TRUE, ComparatorData := ComparatorData, iSelCavityPressSensor := sv_iSelCavityPressureSensor);
+   IF (fbCutOffDetection.bHWCompAvailable) THEN
+      // check IO system
+      aGetOnboardCycleTime();
+      rTmp := aGetOnboardCycleTime.rOnboardCycleTime * 1.0e6; //convert to µs
+      dCycleTimeIOSystem := LINT_TO_TIME(REAL_TO_LINT(rTmp));
+      IF (dCycleTimeIOSystem <> GET_TASK_INTERVAL(TaskInject)) THEN
+         SET_ALARM(erCycleTimeIOUpdate);
+      END_IF; 
+   END_IF;
+   
+   mprMaxSpeed := prMaxSpeed; 
+   IF CHECK_REF(mprMaxSpeed^) THEN
+        mbMaxSpeedLinked := TRUE;
+    END_IF;
+   
+    bInitDone := TRUE;
+END_IF;
+
+
+
+@END_Body 
+
+@@@BEG_Comment@@@ 
+@TL(2)
+This algorithm copies the input values to local variables and starts
+the process algorithms for initialization of the inject and hold profile.
+@@@END_Comment@@@ 
+
+@BEG_Body 
+@TL(511)
+(**************************************** WARNING ********************************************
+ *** The KEBA Kemro K2 System including software is not intended for safety control tasks! ***
+ ***                       For further information see Comment tab!                        ***
+ *********************************************************************************************)
+ 
+bError := FALSE;
+iErrorInfo := cApplPlasticsNoError;
+
+IF NOT bInitDone THEN
+   //get cycle time
+   dCycleTime := GET_TASK_INTERVAL();
+  
+   IF mbReducedInjectCall THEN     
+      //fbInject ist called reduced -> modify dCycleTime     
+      dCycleTime := MULTIME(dCycleTime, miReductionFactor);      
+   END_IF;
+
+   bInitDone := TRUE;
+END_IF;
+  
+
+//necessary to init the instance at the each beginning of movement  
+IF NOT bStart THEN
+    miCount := (miReductionFactor -1);
+END_IF;           
+
+//do not execute if reference of inject profile or hold profile is not valid
+IF NOT mbInjectReferenceValid OR NOT mbHoldReferenceValid THEN
+    
+    //set alarms because algorithm can be called without calling aInit before
+    IF NOT mbInjectReferenceValid AND NOT bAlarmInjectSet THEN        
+        SET_ALARM(Name := erInvalidProfileReference,
+                  SubID1 := sv_DeviceId.CompId,
+                  SubID2 := sv_DeviceId.IndexId,
+                  SubID3 := mMoveIdInject);
+        bAlarmInjectSet := TRUE;
+    END_IF;
+    
+    IF NOT mbHoldReferenceValid AND NOT bAlarmHoldSet THEN        
+        SET_ALARM(Name := erInvalidProfileReference,
+                  SubID1 := sv_DeviceId.CompId,
+                  SubID2 := sv_DeviceId.IndexId,
+                  SubID3 := mMoveIdHold);
+        bAlarmHoldSet := TRUE;
+    END_IF;
+        
+    bError := TRUE;
+    RETURN;
+END_IF;
+
+//do not execute if profile error was detected
+IF mbInjectProfileError OR mbHoldProfileError THEN
+    bError := TRUE;
+    RETURN;
+END_IF;
+ 
+//init part
+IF mbReparam THEN   
+
+    // init inject block
+    fbInject(CycleTime := dCycleTime,
+             PreOutputRampV := mpInjectProfile^.rPreOutputVelRamp,
+            PreOutputValueV := mpInjectProfile^.rPreOutputVel,
+            PreOutputRampP := mpInjectProfile^.rPreOutputPressRamp,
+            PreOutputValueP := mpInjectProfile^.rPreOutputPress,
+            RampTypePreCutOffV := mpInjectProfile^.RampTypeVel,
+            RampTypePreCutOffP := mpInjectProfile^.RampTypePress,
+            RampTypePostCutOffV := mpHoldProfile^.RampTypeVel,
+            RampTypePostCutOffP := mpHoldProfile^.RampTypePress,
+            ProfilPreCutOffV := InjectVelocityProfile,
+            ProfilPreCutOffP := InjectPressureProfile,
+            ProfilPostCutOffV := HoldVelocityProfile,
+            ProfilPostCutOffP := HoldPressureProfile,
+            //MaxPressure := sv_InjectionParam.MaxPressure,     //todo!!
+            MinOutputVelocity := mpInjectProfile^.rMinOutputVel,
+            MinOutputPressure := mpInjectProfile^.rMinOutputPress,
+//            PostCutOff := FALSE, -> if valve delay inject still active, cutoff must not be reseted at ReParam, reset done at Start 
+            ErrorInfo => iErrorInfo,
+            ProfileDeadTime := ProfileDeadTime,
+            IMM_Type := IMM_Type,
+            ReParam := TRUE,
+            DelayTime := dDelayTimeOn,
+            rScrewDiameter := mpScrewDiameter^,
+            bUseInterruptPos := bUseInterruptPos,
+            InterruptDeadTime := dInterruptDeadTime,
+            P_PressureLimitVelocity  := PressureLimitControlVelocityPar.rP,
+            TN_PressureLimitVelocity := PressureLimitControlVelocityPar.dTN,
+            TV_PressureLimitVelocity := PressureLimitControlVelocityPar.dTV,
+            KS_PressureLimitVelocity := PressureLimitControlVelocityPar.rKS,
+            UsePressureLimitVelocity := PressureLimitControlVelocityPar.bUsePIDControl,
+            EnableHoldVelLimit := bEnableHoldVelLimit,
+            MaxDecompSpeedHold := rMaxDecompSpeedHold,
+            MaxPressureDecompressTime := dMaxPressureDecompressTime,
+            MaxHoldEndVelocityRamp := rMaxHoldEndVelocityRamp,
+            UseHoldVelocityLimitBwd := bUseHoldVelocityLimitBwd,
+            bIgnoreVSProfilPostCutOff := bIgnoreVSProfilPostCutOff,
+            bIgnoreStopAtCutOffNoHold := bIgnoreStopAtCutOffNoHold);
+    IF (CutOffParams.rPositionThreshold > 0.0) AND (CutOffParams.bUsePosition) THEN
+       fbInject.rCutOffPosition := CutOffParams.rPositionThreshold;
+    ELSE
+       fbInject.rCutOffPosition := 0.0;
+    END_IF;
+    
+    IF fbInject.Error THEN
+        IF fbInject.ErrorInfo = cApplPlasticsToMuchController THEN
+           erInject := erInjectParam;
+        ELSE
+           erInject := erInjectOutput;
+        END_IF;
+        SET_ALARM(Name := erInject,
+                  SubID1 := sv_DeviceId.CompId,
+                  SubID2 := sv_DeviceId.IndexId,
+                  SubID3 := fbInject.ErrorInfo);
+        
+        bError := TRUE;        
+        //don´t do movement if injectblock has an error
+        RETURN;
+    END_IF;
+    rHoldTime := mpHoldProfile^.pCalculatedProfile^.VelocityProfile.CalculatedProfile.Point[mpHoldProfile^.pCalculatedProfile^.VelocityProfile.CalculatedProfile.uNoOfPoints].rX;
+    
+   fbCutOffInterpolation.dCycleTime := dCycleTime;
+   // pressure
+   IF (IMM_Type = nKAPPL_IMM_Electric) THEN
+      fbCutOffInterpolation.dFilterTime := dT_ActValFilter;
+   ELSIF ((IMM_Type = nKAPPL_IMM_ServoValve) OR ((IMM_Type = nKAPPL_IMM_PQ) AND 
+          (HoldingControlParams.bUsePIDControl) AND 
+          (HoldingDeadTimeParams.bCompensationEnabled))) THEN   
+      fbCutOffInterpolation.dFilterTime := HoldingDeadTimeParams.dPT2T1;
+   ELSE
+      fbCutOffInterpolation.dFilterTime := T#0s;
+   END_IF;
+   fbCutOffInterpolation.rPressureRamp := HoldPressureProfile.Acceleration;
+   fbCutOffInterpolation.rStartPressure := HoldPressureProfile.ProfilePoints.Point[1].rY;
+   // velocity
+   fbCutOffInterpolation.rRefVelocity := HoldVelocityProfile.ProfilePoints.Point[1].rY;
+   fbCutOffInterpolation.rVelocityRamp := HoldVelocityProfile.Acceleration;
+   fbCutOffInterpolation.bReParam := TRUE;
+   
+    mbReparam := FALSE;
+END_IF;
+
+//reInit cutOff params and PID parameters after a rising edge of bStart
+fbREdge_Start(CLK := bStart);
+IF fbREdge_Start.Q THEN
+    //Deadtime compensation
+    miCount := (miReductionFactor - 1);
+    
+    IF rInterruptAcc = 0.0 THEN
+       InjectVelocityProfile.Acceleration  := mpInjectProfile^.Profile.Points[1].rVelRamp / 100.0 * mpInjectProfile^.rMaxRampVel;
+    ELSE
+       InjectVelocityProfile.Acceleration := rInterruptAcc / 100.0  * mpInjectProfile^.rMaxRampVel; 
+    END_IF;
+   
+    // calc Interrupt deacceleration
+    InjectVelocityProfile.InterAcceleration := rInterruptDec / 100.0 * mpInjectProfile^.rMaxRampVel;
+   
+    // set factor to 1.0 because sv_rMaxInjectSpeed is parameterised in [mm/s]
+    rFactorPercentToSpeed := 1.0;
+       
+    // init cutOff detection
+    fbCutOffDetection(ControlExtDigIn := CutOffParams.bUseExtDigIn,
+                    MoldPressureThreshold := CutOffParams.rMoldPressureThreshold,
+                    ControlMoldPressure := CutOffParams.bUseMoldPressure,
+                    PressureThreshold := CutOffParams.rInjectPressureThreshold,
+                    ControlPressure := CutOffParams.bUseInjectPressure,
+                    TimeThreshold := CutOffParams.dTimeThreshold,
+                    ControlTimer := CutOffParams.bUseTimer,
+                    PositionThreshold := CutOffParams.rPositionThreshold,
+                    ControlPosition := CutOffParams.bUsePosition,    
+                    CutOffDetectionPositionLimit := CutOffParams.rDetectionPositionLimit,
+                    CutOffDetectionDeadTime := CutOffParams.dDetectionDeadTime,
+                    bSetThreshold := TRUE,
+                    bDeactivateComparator := FALSE);
+   
+    fbCutOffInterpolation.rCutOffThresholdPosition := CutOffParams.rPositionThreshold;
+    rCutOffInitPressure := rActInjectPressure;
+    
+    //init inject block with PID Parameters
+    bUsePostCutOff := (CutOffParams.bUseInjectPressure OR
+                       CutOffParams.bUseExtDigIn OR
+                       CutOffParams.bUseMoldPressure OR
+                       CutOffParams.bUsePosition OR
+                       CutOffParams.bUseTimer) AND
+                      (rHoldTime > 0.0); //  no post cut off if hold time 0.0
+        
+    IF (CutOffParams.rPositionThreshold > 0.0) AND (CutOffParams.bUsePosition) THEN
+       fbInject.rCutOffPosition := CutOffParams.rPositionThreshold;
+    ELSE
+       fbInject.rCutOffPosition := 0.0;
+    END_IF;
+    fbInject(ProfilPreCutOffV := InjectVelocityProfile,
+            P_PreCutOff := InjectControlParams.rP,
+            TN_PreCutOff := InjectControlParams.dTN,
+            TV_PreCutOff := InjectControlParams.dTV,
+            KS_PreCutOff := InjectControlParams.rKS,
+            PIDActivationDelayPreCutOff := InjectControlParams.dActivationDelay, 
+            P_PostCutOff := HoldingControlParams.rP,
+            TN_PostCutOff := HoldingControlParams.dTN,
+            TV_PostCutOff := HoldingControlParams.dTV,
+            KS_PostCutOff := HoldingControlParams.rKS,
+            DeadTimeCompensation := InjectDeadTimeParams.bCompensationEnabled,
+            DeadTime := InjectDeadTimeParams.dDeadTime, 
+            DeadTime_PT2T1 := InjectDeadTimeParams.dPT2T1,
+            DeadTime_PT2T2 := InjectDeadTimeParams.dPT2T2, 
+            RampTypePreCutOffV := mpInjectProfile^.RampTypeVel,
+            RampTypePreCutOffP := mpInjectProfile^.RampTypePress,
+            RampTypePostCutOffV := mpHoldProfile^.RampTypeVel,
+            RampTypePostCutOffP := mpHoldProfile^.RampTypePress,
+             
+            DeadTimeCompensation_PostCutOff := HoldingDeadTimeParams.bCompensationEnabled,
+            DeadTime_PostCutOff := HoldingDeadTimeParams.dDeadTime,
+            DeadTime_PT2T1_PostCutOff := HoldingDeadTimeParams.dPT2T1,
+            DeadTime_PT2K_PostCutOff := HoldingDeadTimeParams.rPT2K,
+            
+            UseInjectPID := InjectControlParams.bUsePIDControl,
+            UseHoldPID := HoldingControlParams.bUsePIDControl,
+            MaxPossiblePressure := rMaxPossiblePressure,
+            MinPossiblePressure := -rMaxPossiblePressure,   //It is not possible to have negative pressure if hydr. machine used
+            MaxPosition := rMaxScrewPosition,               //enhancement EIMM
+            FactorPercentToSpeed := rFactorPercentToSpeed,
+            PostCutOff := FALSE,
+            P_PressureLimit   := PressureLimitControlParams.rP,
+            TN_PressureLimit  := PressureLimitControlParams.dTN,
+            TV_PressureLimit  := PressureLimitControlParams.dTV,
+            KS_PressureLimit  := PressureLimitControlParams.rKS,
+            UsePressureLimit  := PressureLimitControlParams.bUsePIDControl,
+            MaxPressureEndHold := rMaxPressureEndHold, 
+            T_ActValFilter    := dT_ActValFilter,
+            UsePostCutOff     := bUsePostCutOff,
+            MaxInjectSpeed    := rMaxInjectSpeed,              
+            ProfileDeadTime := ProfileDeadTime,
+            IMM_Type := IMM_Type,
+            ReParam := TRUE,
+            DelayTime := dDelayTimeOn,
+            rScrewDiameter := mpScrewDiameter^,
+            bUseInterruptPos := bUseInterruptPos,
+            InterruptDeadTime := dInterruptDeadTime,
+            bHoldPIDIntStop := FALSE,
+            P_PressureLimitVelocity  := PressureLimitControlVelocityPar.rP,
+            TN_PressureLimitVelocity := PressureLimitControlVelocityPar.dTN,
+            TV_PressureLimitVelocity := PressureLimitControlVelocityPar.dTV,
+            KS_PressureLimitVelocity := PressureLimitControlVelocityPar.rKS,
+            UsePressureLimitVelocity := PressureLimitControlVelocityPar.bUsePIDControl,
+            EnableHoldVelLimit := bEnableHoldVelLimit,
+            MaxDecompSpeedHold := rMaxDecompSpeedHold,
+            MaxPressureDecompressTime := dMaxPressureDecompressTime,
+            MaxHoldEndVelocityRamp := rMaxHoldEndVelocityRamp,
+            UseHoldVelocityLimitBwd := bUseHoldVelocityLimitBwd,
+            bIgnoreVSProfilPostCutOff := bIgnoreVSProfilPostCutOff,
+            bUseExtPressureStartRamp := bUseCalcedPressureStartRamp,
+            bIgnoreStopAtCutOffNoHold := bIgnoreStopAtCutOffNoHold);
+    
+    IF fbInject.Error THEN
+        IF fbInject.ErrorInfo = cApplPlasticsToMuchController THEN
+           erInject := erInjectParam;
+        ELSE
+           erInject := erInjectOutput;
+        END_IF;
+        SET_ALARM(Name := erInject,
+                  SubID1 := sv_DeviceId.CompId,
+                  SubID2 := sv_DeviceId.IndexId,
+                  SubID3 := fbInject.ErrorInfo);
+        
+        bError := TRUE;        
+        //don´t do movement if injectblock has an error
+        RETURN;
+    END_IF;
+    
+    fbTimer(IN := FALSE);
+    bTimeOut := FALSE;
+    dActHoldingTime := t#0.0s;
+    rMaxInjectVelocityOutput := 0.0;
+    bCutOffDetected := FALSE;
+    //necessary to get a rising edge if cutoff is reached immediatly after starting
+    fbCutOffDone(CLK := FALSE);
+    fbREdgeError(CLK := FALSE);
+ 
+    //set min. screw position to actual screw position
+    rMinScrewPosition := rActScrewPosition;
+
+   // cutoff with comparator:  
+   mrPositionThreshold := CutOffParams.rPositionThreshold;
+   mrPressureThreshold := CutOffParams.rInjectPressureThreshold;
+   mrCalcedInitStartRamp := 0.0;
+END_IF;
+
+// cyclic part
+// CutOff Detection
+fbCutOffDetection(bInit := FALSE,
+                  bReParam := FALSE,
+                  bSetThreshold := FALSE,
+                  Start := bStart,
+                  ExtDigIn := di_ExtCutOff,
+                  MoldPressure := rActMoldPressure,
+                  Pressure := rActInjectPressure,
+                  Position := rActScrewPosition,
+                  TimeThreshold := (CutOffParams.dTimeThreshold - mdTimeThresholdDiff),
+                  CutOff => bCutOffDetected,
+                  bCompUsed => bComparatorUsed);
+
+fbCutOffDone (CLK := bCutOffDetected);
+IF fbCutOffDone.Q THEN
+   IF (CutOffParams.bUsePosition OR CutOffParams.bUsePosition) THEN
+      IF (IMM_Type = nKAPPL_IMM_Electric OR IMM_Type = nKAPPL_IMM_ElectricExtCtrl) THEN      
+         fbCutOffInterpolation.rActVelocityPreCutOff := rActScrewVelocity;
+      ELSE // hydraulic machines: don't use actual velocity
+         fbCutOffInterpolation.rActVelocityPreCutOff := rVelocitySet;
+      END_IF;
+      fbCutOffInterpolation(rActPressure := rActInjectPressure,
+                           rPressurePreCutOff:= mrActInjectPressure, 
+                           rPositionPreCutOff:= mrActScrewPosition, 
+                           rActPosition := rActScrewPosition,
+                           dActMoveTime := dActMoveTime,
+                           bUseCalcedInitPressure := TRUE,
+                           //rActVelocityPreCutOff := rVelocitySet, // depends on machine type, so already set above
+                           uTimeDiff := fbCutOffDetection.CutOffTimeDiff,
+                           bCompPosSwitched := fbCutOffDetection.bCompUsedPosition,
+                           rCompPositionCutOff := fbCutOffDetection.CutOffPosition,
+                           rMaxPressure := rMaxPossiblePressure);
+      fbCutOffInterpolation.bReParam := FALSE;   
+      rCutOffVelocity := fbCutOffInterpolation.rCalcedInitVelocity;
+      mrCalcedInitStartRamp := fbCutOffInterpolation.rCalcedInitStartRamp;
+   ELSE   
+      rCutOffVelocity := rActScrewVelocity;
+      mrCalcedInitStartRamp := HoldPressureProfile.Acceleration;
+   END_IF;   
+
+    IF (NOT bComparatorUsed) THEN
+        // sample cut off position and maximum velocity
+        IF CutOffParams.bUsePosition THEN
+           rCutOffPosition := fbCutOffInterpolation.rCutOffPosition;
+           rCutOffInitPressure := fbCutOffInterpolation.rInitPressure;
+        ELSE           
+           rCutOffPosition := rActScrewPosition;
+           rCutOffInitPressure := rActInjectPressure;
+        END_IF;
+        rCutOffPressure := rActInjectPressure;
+        iCutOffTimeDiff := 0;
+    ELSE
+        rCutOffPosition := fbCutOffDetection.CutOffPosition;
+        rCutOffPressure := fbCutOffDetection.CutOffPressure;
+        iCutOffTimeDiff := fbCutOffDetection.CutOffTimeDiff;
+        rCutOffInitPressure := rActInjectPressure;
+    END_IF;
+    mrCutOffPosition := rCutOffPosition;
+    mrCutOffPressure := rCutOffPressure;
+    miCutOffTimeDiff := iCutOffTimeDiff;
+    rCutOffCavityPressure := rActMoldPressure;   //ev. mit Werten aus fbCutOffDetection beschreiben 
+    rMaxInjectVelocityOutput := fbInject.MaxVelocity;
+
+    //update timer once after cut off is detected
+    IF (g_dActiveTimestamp > t#0s) THEN
+       dActMoveTime := GET_RUNTIME() - g_dActiveTimestamp + mdOffsetToIoSys;
+    ELSE
+       fbTimer(IN := TRUE, PT := dMaxMoveTime);
+       dActMoveTime := fbTimer.ET;
+    END_IF;
+   
+    //time with respect to determined comparator cutoff time
+    dActMoveTime := dActMoveTime - LINT_TO_TIME(UDINT_TO_LINT(iCutOffTimeDiff));
+       
+    //set inject stage to 0 after cut off was detected 
+    iActiveInjectStage := 0;
+END_IF;
+
+// inject block
+// consider reduced call of fbInject
+IF (miCount = (miReductionFactor - 1)) OR NOT mbReducedInjectCall THEN
+    fbInject(Start := bStart,
+            Stop := bStop OR bTimeOut,
+            Position := rActScrewPosition,
+            Pressure := rActInjectPressure,
+            StartOutputVelocity := rStartOutputVelocity,
+            StartOutputPressure := rStartOutputPressure,
+            PostCutOff := bCutOffDetected,
+            RampTypePreCutOffV := mpInjectProfile^.RampTypeVel,
+            RampTypePreCutOffP := mpInjectProfile^.RampTypePress,
+            RampTypePostCutOffV := mpHoldProfile^.RampTypeVel,
+            RampTypePostCutOffP := mpHoldProfile^.RampTypePress,
+            CutOffTimeDiff := iCutOffTimeDiff,
+            ActValPressureCutOff := rCutOffInitPressure,
+            ActValVelocityCutOff := rCutOffVelocity,
+            IMM_Type := IMM_Type,
+            ReParam := FALSE,
+            DelayTime := dDelayTimeOn,
+            bUseInterruptPos := bUseInterruptPos,
+            rInterruptPos := rInterruptPos,
+            bHoldPIDIntStop := bHoldPIDIntStop,
+            bInjectPIDIntStop := bInjectPIDIntStop,
+            bUseCutOffVelocity := TRUE,
+            bUseExtPressureStartRamp := bUseCalcedPressureStartRamp,
+            rHoldPressureStartRamp := mrCalcedInitStartRamp);
+    miCount := 0;    
+ELSE
+    miCount := (miCount + 1);
+END_IF;
+
+IF fbInject.Error THEN
+    bError := TRUE;
+    iErrorInfo := fbInject.ErrorInfo;
+END_IF;
+        
+// copy outputs
+rPressureOutput := fbInject.OutputPressure;
+rVelocityOutput := fbInject.OutputVelocity;
+rPressureSet := fbInject.OutputSetPressure;
+rVelocitySet := fbInject.OutputSetVelocity;
+bPreOutputReached := fbInject.PreOutputReady;
+rServoOutput := fbInject.OutputServo;
+
+fbREdgeError(CLK := fbInject.Error);
+IF fbREdgeError.Q THEN
+    IF fbInject.ErrorInfo = cApplPlasticsToMuchController THEN
+       bError := TRUE;
+       iErrorInfo := fbInject.ErrorInfo;
+       SET_ALARM(Name := erInjectParam,
+                 SubID1 := sv_DeviceId.CompId,
+                 SubID2 := sv_DeviceId.IndexId,
+                 SubID3 := fbInject.ErrorInfo);
+    ELSIF fbInject.ErrorInfo = cApplPlasticsDecompressFailure THEN
+       bError := TRUE;
+       iErrorInfo := fbInject.ErrorInfo;
+       SET_ALARM(Name := erInjectScrewPosition,
+                 SubID1 := sv_DeviceId.CompId,
+                 SubID2 := sv_DeviceId.IndexId,
+                 SubID3 := fbInject.ErrorInfo); 
+    ELSE       
+       SET_ALARM(Name := erInjectOutput,
+                 SubID1 := sv_DeviceId.CompId,
+                 SubID2 := sv_DeviceId.IndexId, 
+                 SubID3 := iErrorInfo);
+   END_IF;
+END_IF;
+
+IF bCutOffDetected THEN
+   //measure actual holding time with respect to determined comparator cutoff time
+   dActHoldingTime := fbInject.ActHoldTime + LINT_TO_TIME(UDINT_TO_LINT(iCutOffTimeDiff));
+
+   //get cushion (smallest screw position during hold phase)
+   IF rActScrewPosition < rMinScrewPosition THEN
+      rMinScrewPosition := rActScrewPosition;
+   END_IF;
+ELSE
+   //calculate active inject profile stage
+   FOR i := 1 TO mpInjectProfile^.Profile.iNoOfPoints DO        
+      IF rActScrewPosition > mpInjectProfile^.Profile.Points[i+1].rStartPos THEN
+         iActiveInjectStage := UDINT_TO_DINT(i);
+         EXIT;
+      END_IF;
+   END_FOR;
+END_IF;
+
+IF (fbInject.Done AND fbInject.PreOutputReady) OR bError THEN
+    bActiveInt := FALSE;
+    mbMovementActive := FALSE;
+    iActiveInjectStage := 0;
+    
+    //sample actual position at the end of hold
+    rHoldDonePosition := rActScrewPosition;
+   
+    //sample cushion at the end of inject and hold
+    rCushion := rMinScrewPosition;
+ELSE
+    bActiveInt := TRUE;
+    mbMovementActive := TRUE;
+END_IF;
+
+//Timeout detection
+IF bActiveInt AND NOT bCutOffDetected THEN
+    // do detection only untill cut off is detected
+    fbTimer(IN := TRUE,
+            PT := dMaxMoveTime);
+
+    //no timeout detection if dMaxMoveTime = 0
+    IF dMaxMoveTime > t#0.0s THEN
+       bTimeOut := fbTimer.Q;
+    END_IF;
+   
+    IF (g_dActiveTimestamp > t#0s) THEN
+       dActMoveTime := GET_RUNTIME() - g_dActiveTimestamp + mdOffsetToIoSys;
+    ELSE
+       dActMoveTime := fbTimer.ET;
+    END_IF;    
+END_IF;
+
+//set timeout alarm
+fbREdge_Timeout(CLK := bTimeOut);
+IF fbREdge_Timeout.Q THEN
+    SET_ALARM(Name := erMoveTimeout,
+              SubID1 := sv_DeviceId.CompId,
+              SubID2 := sv_DeviceId.IndexId,
+              SubID3 := mMoveIdInject);    
+END_IF;
+
+// set output bActive
+fbTOFActive(bActiveInt, dDelayTimeOff);
+bActive := fbTOFActive.Q;
+IF NOT bActive THEN
+   fbCutOffDetection(bDeactivateComparator := TRUE); // deactive comparator at end of inject: necessary because cut off may not be reached
+END_IF;
+// Variables for SWO Server
+mrActScrewPosition := rActScrewPosition;
+mrActInjectPressure := rActInjectPressure;
+mbCutOffDetected := bCutOffDetected;
+mbInjectActive := bActive;
+mrPressureSet := rPressureSet;
+mrPressureOutput := rPressureOutput;
+mrVelocitySet := rVelocitySet;
+mrVelocityOutput := rVelocityOutput;
+mrServoOutput := rServoOutput;
+
+@END_Body 
+
+@@@BEG_Comment@@@ 
+@TL(10)
+Following functions are realized in this algorithm:
+
+1) reparam of the profileoutput - blocks
+2) profile output for pressure and velocity (for inject and holding)
+   Attention: If an error was detected during profile calculation of inject or
+   hoding profile the algorithm will not be executed!
+3) cut off detection according 
+4) Timeout detection if dMaxMoveTime is bigger than 0.
+   dMaxMoveTime = 0 means no timeout detection active
+   If a timeout is detected an alarm will be set and the profileoutput will be stopped automatically
+@@@END_Comment@@@ 
+
+@BEG_Body 
+@TL(7)
+(**************************************** WARNING ********************************************
+ *** The KEBA Kemro K2 System including software is not intended for safety control tasks! ***
+ ***                       For further information see Comment tab!                        ***
+ *********************************************************************************************)
+
+START_PROCESS_ALGORITHM(paInitInjectProfile);
+
+@END_Body 
+
+@@@BEG_Comment@@@ 
+@TL(3)
+This algorithm reacts on changes of the inject profile.
+If the profile changes the process algorithm for initialization of inject profile
+will be started.
+@@@END_Comment@@@ 
+
+@BEG_Body 
+@TL(7)
+(**************************************** WARNING ********************************************
+ *** The KEBA Kemro K2 System including software is not intended for safety control tasks! ***
+ ***                       For further information see Comment tab!                        ***
+ *********************************************************************************************)
+
+START_PROCESS_ALGORITHM(paInitHoldProfile);
+
+@END_Body 
+
+@@@BEG_Comment@@@ 
+@TL(3)
+This algorithm reacts on changes of the hold profile.
+If the profile changes the process algorithm for initialization of hold profile
+will be started.
+@@@END_Comment@@@ 
+
+@BEG_Body 
+@TL(193)
+(**************************************** WARNING ********************************************
+ *** The KEBA Kemro K2 System including software is not intended for safety control tasks! ***
+ ***                       For further information see Comment tab!                        ***
+ *********************************************************************************************)
+
+IF (NOT mbMovementActive) AND (NOT sv_bProfileEditorActive) THEN
+    
+    mbInjectProfileError := FALSE;
+   
+    //increase number of points if necessary
+    IF sv_bUseStartPosProfiles THEN
+        iNoOfPoints := mpInjectProfile^.Profile.iNoOfPoints;
+    ELSE
+        iNoOfPoints := mpInjectProfile^.Profile.iNoOfPoints + 1;        
+    END_IF;
+    
+   //set values of last stage to 0.0
+   //use rEndOutputXXX value if less than last profile step
+   //ohterwise use last profil step  
+   IF mpInjectProfile^.rEndOutputPress > 0.0 THEN
+      IF mpInjectProfile^.Profile.Points[iNoOfPoints-1].rPressure > mpInjectProfile^.rEndOutputPress  THEN 
+         mpInjectProfile^.Profile.Points[iNoOfPoints].rPressure := mpInjectProfile^.rEndOutputPress;    
+      ELSE
+         mpInjectProfile^.Profile.Points[iNoOfPoints].rPressure := mpInjectProfile^.Profile.Points[iNoOfPoints-1].rPressure; 
+      END_IF;
+   ELSE    
+      mpInjectProfile^.Profile.Points[iNoOfPoints].rPressure := 0.0;
+   END_IF;
+   mpInjectProfile^.Profile.Points[iNoOfPoints].rVelocity := 0.0;
+   
+    // calculate profiles
+    IF mpInjectProfile^.bOpenEndProfile THEN
+        //set last point to high negative value
+        mpInjectProfile^.Profile.Points[iNoOfPoints].rStartPos := -1000.0;
+    ELSE
+        //set last point to 0.0
+        mpInjectProfile^.Profile.Points[iNoOfPoints].rStartPos := 0.0;
+    END_IF;
+    
+    // use stop deceleration for last point
+    IF mpInjectProfile^.rStopRampPress > 0.0 THEN
+      mpInjectProfile^.Profile.Points[iNoOfPoints].rPressRamp := mpInjectProfile^.rStopRampPress;
+    ELSE
+      mpInjectProfile^.Profile.Points[iNoOfPoints].rPressRamp := 100.0;
+    END_IF;
+    IF mpInjectProfile^.rStopRampVel > 0.0 THEN
+      mpInjectProfile^.Profile.Points[iNoOfPoints].rVelRamp := mpInjectProfile^.rStopRampVel;
+    ELSE
+      mpInjectProfile^.Profile.Points[iNoOfPoints].rVelRamp := 100.0;
+    END_IF;
+    
+    // limit profile output also with last ramp
+    fbProfileCalc.LimitEveryPointToLastRamp := mpInjectProfile^.bLimitEveryPointToLastRamp;
+    
+    // inject speed profile
+    fbProfileCalc.RawProfilePoint.uNoOfPoints  := iNoOfPoints;
+    FOR i := 1 TO iNoOfPoints DO
+        fbProfileCalc.RawProfilePoint.RawProfilePoints[i].XValue := mpInjectProfile^.Profile.Points[i].rStartPos;
+        fbProfileCalc.RawProfilePoint.RawProfilePoints[i].YValue := mpInjectProfile^.Profile.Points[i].rVelocity;
+        fbProfileCalc.RawProfilePoint.RawProfilePoints[i].Ramp   := mpInjectProfile^.Profile.Points[i].rVelRamp /100.0 *
+                                                                    mpInjectProfile^.rMaxRampVel;
+    END_FOR;
+    
+    IF mbMaxSpeedLinked THEN
+       fbProfileCalc.MaxVelocity := mprMaxSpeed^;
+    ELSE
+       fbProfileCalc.MaxVelocity := 0.0;   
+    END_IF;       
+   
+    fbProfileCalc(MaxAcceleration := mpInjectProfile^.rMaxRampVel,
+                  MaxDeceleration := mpInjectProfile^.rMaxRampVel,
+                  RampType := mpInjectProfile^.RampTypeVel);
+    IF fbProfileCalc.Error THEN // profile not possible
+        IF (fbProfileCalc.ErrorOnPoint = -1) THEN
+            SET_ALARM(Name := erProfileSequence,
+                  SubID1 := sv_DeviceId.CompId,
+                  SubID2 := sv_DeviceId.IndexId,
+                  SubID3 := mMoveIdInject);
+        ELSE
+            SET_ALARM(Name := erVelProfDamaged,
+                      SubID1 := sv_DeviceId.CompId,
+                      SubID2 := sv_DeviceId.IndexId,
+                      SubID3 := mMoveIdInject,
+                      SubID4 := fbProfileCalc.ErrorOnPoint,
+                      Param1 := fbProfileCalc.MaximumPossibleValue);
+        END_IF;
+        mbInjectProfileError := TRUE;
+    ELSE // copy data to yx - generator values
+        IF mpInjectProfile^.Profile.Points[1].rVelRamp > 0.0 THEN
+            InjectVelocityProfile.Acceleration := mpInjectProfile^.rMaxRampVel * mpInjectProfile^.Profile.Points[1].rVelRamp / 100.0;
+        ELSE
+            InjectVelocityProfile.Acceleration := mpInjectProfile^.rMaxRampVel;
+        END_IF;
+        InjectVelocityProfile.StopAcceleration := mpInjectProfile^.rMaxRampVel * mpInjectProfile^.Profile.Points[iNoOfPoints].rVelRamp / 100.0;
+        InjectVelocityProfile.ProfilePoints := fbProfileCalc.CalcedProfile;
+        
+        // calced profile for vis
+        IF CHECK_REF(mpInjectProfile^.pCalculatedProfile^) THEN
+           IF mpInjectProfile^.pCalculatedProfile^.VelocityProfile.CalculatedProfile <> fbProfileCalc.CalcedProfile THEN
+              mpInjectProfile^.pCalculatedProfile^.VelocityProfile.CalculatedProfile := fbProfileCalc.CalcedProfile;
+              mpInjectProfile^.pCalculatedProfile^.VelocityProfile.iProfileChangedCounter := mpInjectProfile^.pCalculatedProfile^.VelocityProfile.iProfileChangedCounter + 1;              
+           END_IF;            
+        END_IF;
+        
+        RESET_ALARM(Name := erProfileSequence,
+                    SubID1 := sv_DeviceId.CompId,
+                    SubID2 := sv_DeviceId.IndexId,
+                    SubID3 := mMoveIdInject);
+        
+        RESET_ALARM(Name := erVelProfDamaged,
+                    SubID1 := sv_DeviceId.CompId,
+                    SubID2 := sv_DeviceId.IndexId,
+                    SubID3 := mMoveIdInject,
+                    SubID4 := ANY);
+    END_IF;
+       
+    //Calculate duration(s)
+    mbReCalcDurations := TRUE;
+    START_PROCESS_ALGORITHM(paCalcDurations);
+    
+    // inject pressure profile
+    FOR i := 1 TO iNoOfPoints DO
+        fbProfileCalc.RawProfilePoint.RawProfilePoints[i].XValue := mpInjectProfile^.Profile.Points[i].rStartPos;
+        fbProfileCalc.RawProfilePoint.RawProfilePoints[i].YValue := mpInjectProfile^.Profile.Points[i].rPressure;
+        fbProfileCalc.RawProfilePoint.RawProfilePoints[i].Ramp   := mpInjectProfile^.Profile.Points[i].rPressRamp / 100.0 *
+                                                                    mpInjectProfile^.rMaxRampPress;
+    
+      IF (mpInjectProfile^.Profile.Points[i].rPressure < mpInjectProfile^.rMinOutputPress) AND
+         (i <= mpInjectProfile^.Profile.iNoOfPoints) THEN
+         SET_ALARM(Name := erProfileMinOutput,
+                   SubID1 := sv_DeviceId.CompId,
+                   SubID2 := sv_DeviceId.IndexId,
+                   SubID3 := mMoveIdInject,
+                   SubID4 := i);      
+      END_IF;
+    
+    END_FOR;
+    
+    fbProfileCalc.MaxVelocity := 0.0;
+    fbProfileCalc(MaxAcceleration := mpInjectProfile^.rMaxRampPress,
+                  MaxDeceleration := mpInjectProfile^.rMaxRampPress,
+                  RampType := mpInjectProfile^.RampTypePress);
+
+    IF fbProfileCalc.Error THEN // profile not possible
+        IF (fbProfileCalc.ErrorOnPoint = -1) THEN
+            SET_ALARM(Name := erProfileSequence,
+                      SubID1 := sv_DeviceId.CompId,
+                      SubID2 := sv_DeviceId.IndexId,
+                      SubID3 := mMoveIdInject);
+        ELSE
+            SET_ALARM(Name := erPresProfDamaged,
+                      SubID1 := sv_DeviceId.CompId,
+                      SubID2 := sv_DeviceId.IndexId,
+                      SubID3 := mMoveIdInject,
+                      SubID4 := fbProfileCalc.ErrorOnPoint,
+                      Param1 := fbProfileCalc.MaximumPossibleValue);
+        END_IF;
+        mbInjectProfileError := TRUE;
+    ELSE // copy data to yx - generator values
+        IF mpInjectProfile^.Profile.Points[1].rPressRamp > 0.0 THEN
+            InjectPressureProfile.Acceleration := mpInjectProfile^.rMaxRampPress * mpInjectProfile^.Profile.Points[1].rPressRamp / 100.0;
+        ELSE
+            InjectPressureProfile.Acceleration := mpInjectProfile^.rMaxRampPress;
+        END_IF;
+        InjectPressureProfile.StopAcceleration := mpInjectProfile^.rMaxRampPress * mpInjectProfile^.Profile.Points[iNoOfPoints].rPressRamp / 100.0;
+        InjectPressureProfile.ProfilePoints    := fbProfileCalc.CalcedProfile;
+       
+        // calced profile for vis
+        IF CHECK_REF(mpInjectProfile^.pCalculatedProfile^) THEN
+           IF mpInjectProfile^.pCalculatedProfile^.PressureProfile.CalculatedProfile <> fbProfileCalc.CalcedProfile THEN
+              mpInjectProfile^.pCalculatedProfile^.PressureProfile.CalculatedProfile := fbProfileCalc.CalcedProfile;
+              mpInjectProfile^.pCalculatedProfile^.PressureProfile.iProfileChangedCounter := mpInjectProfile^.pCalculatedProfile^.PressureProfile.iProfileChangedCounter + 1;              
+           END_IF;            
+        END_IF;
+       
+        RESET_ALARM(Name := erProfileSequence,
+                    SubID1 := sv_DeviceId.CompId,
+                    SubID2 := sv_DeviceId.IndexId,
+                    SubID3 := mMoveIdInject);
+        
+        RESET_ALARM(Name := erPresProfDamaged,
+                    SubID1 := sv_DeviceId.CompId,
+                    SubID2 := sv_DeviceId.IndexId,
+                    SubID3 := mMoveIdInject,
+                    SubID4 := ANY);
+    END_IF;
+    
+    mbReparam := TRUE;    
+    mbInitInjectProfilDone := TRUE;   
+    STOP_PROCESS_ALGORITHM();
+END_IF;
+    
+
+@END_Body 
+
+@@@BEG_Comment@@@ 
+@TL(3)
+This algorithm does the initialization for the inject profile movement.
+This means profile calculation of pressure and velocity profile.
+If an error is detected during profile calculation an error will be set.
+@@@END_Comment@@@ 
+
+@BEG_Body 
+@TL(173)
+(**************************************** WARNING ********************************************
+ *** The KEBA Kemro K2 System including software is not intended for safety control tasks! ***
+ ***                       For further information see Comment tab!                        ***
+ *********************************************************************************************)
+
+IF (NOT mbMovementActive) AND (NOT sv_bProfileEditorActive) THEN
+ 
+    mbHoldProfileError := FALSE;
+    
+    // automatic point calc.
+    mpHoldProfile^.Profile.Points[1].rStartPos := 0.0;
+    
+    //increase number of points if necessary
+    IF sv_bUseStartPosProfiles THEN
+        iNoOfPoints := mpHoldProfile^.Profile.iNoOfPoints;
+    ELSE
+        iNoOfPoints := mpHoldProfile^.Profile.iNoOfPoints + 1; 
+    END_IF;
+   
+    //set values of last stage to 0.0
+    mpHoldProfile^.Profile.Points[iNoOfPoints].rPressure := 0.0;
+    mpHoldProfile^.Profile.Points[iNoOfPoints].rVelocity := 0.0;
+
+    // use stop deceleration for last point
+    IF mpHoldProfile^.rStopRampPress > 0.0 THEN
+      mpHoldProfile^.Profile.Points[iNoOfPoints].rPressRamp := mpHoldProfile^.rStopRampPress;
+    ELSE
+      mpHoldProfile^.Profile.Points[iNoOfPoints].rPressRamp := 100.0;
+    END_IF;
+    IF mpHoldProfile^.rStopRampVel > 0.0 THEN
+      mpHoldProfile^.Profile.Points[iNoOfPoints].rVelRamp := mpHoldProfile^.rStopRampVel;
+    ELSE
+      mpHoldProfile^.Profile.Points[iNoOfPoints].rVelRamp := 100.0;
+    END_IF;   
+
+    // limit profile output also with last ramp
+    fbProfileCalc.LimitEveryPointToLastRamp := mpHoldProfile^.bLimitEveryPointToLastRamp;
+    
+    // holding pressure profile
+    fbProfileCalc.RawProfilePoint.uNoOfPoints  := iNoOfPoints;
+    FOR i := 1 TO iNoOfPoints DO
+        // calculate absolute start position (HMI-pos. for hold are relative)
+        absStartPos := 0.0;
+        FOR j := 1 TO i DO
+            absStartPos := absStartPos + mpHoldProfile^.Profile.Points[j].rStartPos;
+        END_FOR;    
+        fbProfileCalc.RawProfilePoint.RawProfilePoints[i].XValue := absStartPos;
+        fbProfileCalc.RawProfilePoint.RawProfilePoints[i].YValue := mpHoldProfile^.Profile.Points[i].rPressure;
+        fbProfileCalc.RawProfilePoint.RawProfilePoints[i].Ramp   := mpHoldProfile^.Profile.Points[i].rPressRamp / 100.0 *
+                                                                    mpHoldProfile^.rMaxRampPress;
+    END_FOR;
+    
+    fbProfileCalc(MaxAcceleration := mpHoldProfile^.rMaxRampPress,
+                  MaxDeceleration := mpHoldProfile^.rMaxRampPress,
+                  RampType := mpHoldProfile^.RampTypePress);
+    IF fbProfileCalc.Error THEN // profile not possible
+        IF (fbProfileCalc.ErrorOnPoint = -1) THEN
+            SET_ALARM(Name   := erProfileSequence,
+                      SubID1 := sv_DeviceId.CompId,
+                      SubID2 := sv_DeviceId.IndexId,
+                      SubID3 := mMoveIdHold);
+        ELSE
+            SET_ALARM(Name   := erPresProfDamaged,
+                      SubID1 := sv_DeviceId.CompId,
+                      SubID2 := sv_DeviceId.IndexId,
+                      SubID3 := mMoveIdHold,
+                      SubID4 := fbProfileCalc.ErrorOnPoint,
+                      Param1 := fbProfileCalc.MaximumPossibleValue);
+        END_IF;
+        mbHoldProfileError := TRUE;
+        
+    ELSE // copy data to yx - generator values
+        IF mpHoldProfile^.Profile.Points[1].rPressRamp > 0.0 THEN
+            HoldPressureProfile.Acceleration := mpHoldProfile^.rMaxRampPress * mpHoldProfile^.Profile.Points[1].rPressRamp / 100.0;
+        ELSE
+            HoldPressureProfile.Acceleration := mpHoldProfile^.rMaxRampPress;
+        END_IF;
+        HoldPressureProfile.StopAcceleration := mpHoldProfile^.rMaxRampPress * mpHoldProfile^.Profile.Points[iNoOfPoints].rPressRamp / 100.0;
+        HoldPressureProfile.ProfilePoints := fbProfileCalc.CalcedProfile;
+       
+        // calced profile for vis
+        IF CHECK_REF(mpHoldProfile^.pCalculatedProfile^) THEN
+           IF mpHoldProfile^.pCalculatedProfile^.PressureProfile.CalculatedProfile <> fbProfileCalc.CalcedProfile THEN
+              mpHoldProfile^.pCalculatedProfile^.PressureProfile.CalculatedProfile := fbProfileCalc.CalcedProfile;
+              mpHoldProfile^.pCalculatedProfile^.PressureProfile.iProfileChangedCounter := mpHoldProfile^.pCalculatedProfile^.PressureProfile.iProfileChangedCounter + 1;
+           END_IF;            
+        END_IF;
+       
+        RESET_ALARM(Name   := erProfileSequence,
+                    SubID1 := sv_DeviceId.CompId,
+                    SubID2 := sv_DeviceId.IndexId,
+                    SubID3 := mMoveIdHold);
+        
+        RESET_ALARM(Name   := erPresProfDamaged,
+                    SubID1 := sv_DeviceId.CompId,
+                    SubID2 := sv_DeviceId.IndexId,
+                    SubID3 := mMoveIdHold,
+                    SubID4 := ANY);
+    END_IF;
+    
+    
+    // holding velocity profile
+    fbProfileCalc.RawProfilePoint.uNoOfPoints  := iNoOfPoints;    
+    FOR i := 1 TO iNoOfPoints DO
+        // calculate absolute start position (HMI-pos. for hold are relative)
+        absStartPos := 0.0;
+        FOR j := 1 TO i DO
+            absStartPos := absStartPos + mpHoldProfile^.Profile.Points[j].rStartPos;
+        END_FOR;
+    
+        fbProfileCalc.RawProfilePoint.RawProfilePoints[i].XValue := absStartPos;
+        fbProfileCalc.RawProfilePoint.RawProfilePoints[i].YValue := mpHoldProfile^.Profile.Points[i].rVelocity;
+        fbProfileCalc.RawProfilePoint.RawProfilePoints[i].Ramp   := mpHoldProfile^.Profile.Points[i].rVelRamp / 100.0 *
+                                                                    mpHoldProfile^.rMaxRampVel;
+    END_FOR;
+    
+    fbProfileCalc(MaxAcceleration := mpHoldProfile^.rMaxRampVel,
+                  MaxDeceleration := mpHoldProfile^.rMaxRampVel,
+                  RampType := mpHoldProfile^.RampTypeVel);
+    IF fbProfileCalc.Error THEN // profile not possible
+        IF (fbProfileCalc.ErrorOnPoint = -1) THEN
+            SET_ALARM(Name   := erProfileSequence,
+                      SubID1 := sv_DeviceId.CompId,
+                      SubID2 := sv_DeviceId.IndexId,
+                      SubID3 := mMoveIdHold);
+        ELSE
+            SET_ALARM(Name   := erVelProfDamaged,
+                      SubID1 := sv_DeviceId.CompId,
+                      SubID2 := sv_DeviceId.IndexId,
+                      SubID3 := mMoveIdHold,
+                      SubID4 := fbProfileCalc.ErrorOnPoint,
+                      Param1 := fbProfileCalc.MaximumPossibleValue);
+        END_IF;
+        mbHoldProfileError := TRUE;
+        
+    ELSE // copy data to yx - generator values
+        IF mpHoldProfile^.Profile.Points[1].rVelRamp > 0.0 THEN
+            HoldVelocityProfile.Acceleration := mpHoldProfile^.rMaxRampVel * mpHoldProfile^.Profile.Points[1].rVelRamp / 100.0;
+        ELSE
+            HoldVelocityProfile.Acceleration := mpHoldProfile^.rMaxRampVel;
+        END_IF;
+        HoldVelocityProfile.StopAcceleration := mpHoldProfile^.rMaxRampVel * mpHoldProfile^.Profile.Points[iNoOfPoints].rVelRamp / 100.0;
+        HoldVelocityProfile.ProfilePoints := fbProfileCalc.CalcedProfile;
+        
+        // calced profile for vis
+        IF CHECK_REF(mpHoldProfile^.pCalculatedProfile^) THEN
+           IF mpHoldProfile^.pCalculatedProfile^.VelocityProfile.CalculatedProfile <> fbProfileCalc.CalcedProfile THEN
+              mpHoldProfile^.pCalculatedProfile^.VelocityProfile.CalculatedProfile := fbProfileCalc.CalcedProfile;
+              mpHoldProfile^.pCalculatedProfile^.VelocityProfile.iProfileChangedCounter := mpHoldProfile^.pCalculatedProfile^.VelocityProfile.iProfileChangedCounter + 1;              
+           END_IF;
+        END_IF;
+        
+        RESET_ALARM(Name   := erProfileSequence,
+                    SubID1 := sv_DeviceId.CompId,
+                    SubID2 := sv_DeviceId.IndexId,
+                    SubID3 := mMoveIdHold);
+        
+        RESET_ALARM(Name   := erVelProfDamaged,
+                    SubID1 := sv_DeviceId.CompId,
+                    SubID2 := sv_DeviceId.IndexId,
+                    SubID3 := mMoveIdHold,
+                    SubID4 := ANY);
+    END_IF;
+    
+    //Calculate duration(s)
+    mbReCalcDurations := TRUE;
+    START_PROCESS_ALGORITHM(paCalcDurations);
+   
+    mbReparam := TRUE;    
+    mbInitHoldProfilDone := TRUE;
+    STOP_PROCESS_ALGORITHM();
+END_IF;
+
+@END_Body 
+
+@@@BEG_Comment@@@ 
+@TL(3)
+This algorithm does the initialization for the inject profile movement.
+This means profile calculation of pressure and velocity profile.
+If an error is detected during profile calculation an error will be set.
+@@@END_Comment@@@ 
+
+@BEG_Body 
+@TL(25)
+IF (mbInitInjectProfilDone AND mbInitHoldProfilDone) THEN
+   fbInject(PreOutputRampV := mpInjectProfile^.rPreOutputVelRamp,
+            PreOutputValueV := mpInjectProfile^.rPreOutputVel,
+            PreOutputRampP := mpInjectProfile^.rPreOutputPressRamp,
+            PreOutputValueP := mpInjectProfile^.rPreOutputPress,
+            ProfilPreCutOffV := InjectVelocityProfile,
+            ProfilPreCutOffP := InjectPressureProfile,
+            ProfilPostCutOffV := HoldVelocityProfile,
+            ProfilPostCutOffP := HoldPressureProfile,
+            RampTypePreCutOffV := mpInjectProfile^.RampTypeVel,
+            RampTypePreCutOffP := mpInjectProfile^.RampTypePress,
+            RampTypePostCutOffV := mpHoldProfile^.RampTypeVel,
+            RampTypePostCutOffP := mpHoldProfile^.RampTypePress,
+            //MaxPressure := sv_InjectionParam.MaxPressure,     //todo!!
+            MinOutputVelocity := mpInjectProfile^.rMinOutputVel,
+            MinOutputPressure := mpInjectProfile^.rMinOutputPress,
+            PostCutOff := FALSE, 
+            ErrorInfo => iErrorInfo,
+            //ProfileDeadTime := ProfileDeadTime,
+            MeasureTask := TaskInject,
+            ReParam := TRUE,
+            rScrewDiameter := mpScrewDiameter^);   
+    STOP_PROCESS_ALGORITHM();
+END_IF;
+
+@END_Body 
+
+@@@BEG_Comment@@@ 
+@TL(0)
+
+@@@END_Comment@@@ 
+
+@BEG_Body 
+@TL(9)
+
+fbCutOffDetection(bReParam := TRUE, iSelCavityPressSensor := sv_iSelCavityPressureSensor);
+// reset bReParam
+fbCutOffDetection(bInit := FALSE,
+                  bReParam := FALSE,
+                  bSetThreshold := FALSE,
+                  Start := FALSE);
+
+
+@END_Body 
+
+@@@BEG_Comment@@@ 
+@TL(0)
+
+@@@END_Comment@@@ 
+
+@BEG_Body 
+@TL(34)
+(**************************************** WARNING ********************************************
+ *** The KEBA Kemro K2 System including software is not intended for safety control tasks! ***
+ ***                       For further information see Comment tab!                        ***
+ *********************************************************************************************)
+
+bStartPosChanged := FALSE;
+bInstanceDataChanged := FALSE;
+
+IF mbRefCalcDurationStartPosValid THEN
+   bStartPosChanged := mprCalcDurationStartPosition^ <> mrCalcDurationStartPos;
+   mrCalcDurationStartPos := mprCalcDurationStartPosition^;
+END_IF;
+
+IF mbRefInstanceDataInterPosValid THEN
+   //check if instance data (except duration) has changed
+   FOR i := 1 TO cMaxIntermediateConditions DO
+      IF (mpInstanceDataInterPos^[i].rTargetValue <> mInstanceDataInterPos[i].rTargetValue) OR
+         mpInstanceDataInterPos^[i].rDeceleration <> mInstanceDataInterPos[i].rDeceleration OR
+         mpInstanceDataInterPos^[i].rAcceleration <> mInstanceDataInterPos[i].rAcceleration THEN
+         bInstanceDataChanged := TRUE;
+         EXIT;   
+      END_IF; 
+   END_FOR;
+   
+   mInstanceDataInterPos := mpInstanceDataInterPos^;
+END_IF;
+
+
+//Recalculate durations
+IF bStartPosChanged OR bInstanceDataChanged THEN
+   mbReCalcDurations := TRUE;
+   START_PROCESS_ALGORITHM(paCalcDurations);
+END_IF;
+
+@END_Body 
+
+@@@BEG_Comment@@@ 
+@TL(2)
+This algorithm reacts on changes of the profile.
+If the profile changes the process algorithm for initialization will be started.
+@@@END_Comment@@@ 
+
+@BEG_Body 
+@TL(9)
+(**************************************** WARNING ********************************************
+ *** The KEBA Kemro K2 System including software is not intended for safety control tasks! ***
+ ***                       For further information see Comment tab!                        ***
+ *********************************************************************************************)
+
+//Recalculate duration(s)
+mbReCalcDurations := TRUE;
+START_PROCESS_ALGORITHM(paCalcDurations);
+
+@END_Body 
+
+@@@BEG_Comment@@@ 
+@TL(2)
+This algorithm reacts on changes of the selected cut off parameters
+If the parameters changed, the calculation of the durations is triggered
+@@@END_Comment@@@ 
+
+@BEG_Body 
+@TL(119)
+(**************************************** WARNING ********************************************
+ *** The KEBA Kemro K2 System including software is not intended for safety control tasks! ***
+ ***                       For further information see Comment tab!                        ***
+ *********************************************************************************************)
+
+IF mbReCalcDurations THEN
+    
+    bInterPosMovementsAvailable := FALSE;
+    
+    //Calculate duration(s) for interposition movement(s)
+    IF mbRefInstanceDataInterPosValid AND mbRefCalcDurationStartPosValid THEN
+        FOR i := 1 TO cMaxIntermediateConditions DO
+            IF (mpInstanceDataInterPos^[i].rTargetValue <> 0.0) THEN
+                bInterPosMovementsAvailable := TRUE;             
+                IF (i = 1) THEN                   
+                    rCalcDurationStartPos := mprCalcDurationStartPosition^;                   
+                ELSE
+                    rCalcDurationStartPos := mpInstanceDataInterPos^[i - 1].rTargetValue;
+                END_IF;
+                rCalcDurationEndPos := mpInstanceDataInterPos^[i].rTargetValue;
+                                
+                mpInstanceDataInterPos^[i].dCalculatedDuration := FCalcDuration(StartPosition := rCalcDurationStartPos,
+                                                                                StartVelocity := 0.0,   //not used
+                                                                                EndPosition := rCalcDurationEndPos,
+                                                                                Profile := InjectVelocityProfile.ProfilePoints,
+                                                                                StartRamp := InjectVelocityProfile.Acceleration,
+                                                                                StopRamp := 0.0,        //not used
+                                                                                ConstOutput := 0.0,     //not used
+                                                                                UseConstOutput := FALSE); 
+                    
+            ELSE              
+                //No more interposition movements -> Exit
+                EXIT;            
+            END_IF;    
+        END_FOR;
+        
+    END_IF;
+        
+    //Calculate duration for "normal" movement
+    IF mbRefCalcedInjectDurationValid AND mbRefCalcedHoldDurationValid AND mbRefCalcDurationStartPosValid THEN
+        IF bInterPosMovementsAvailable THEN
+            //Use endposition of last interposition movement
+            rCalcDurationStartPos := rCalcDurationEndPos;           
+        ELSE
+            //Use start position of profile
+            rCalcDurationStartPos := mprCalcDurationStartPosition^;        
+        END_IF;
+             
+        IF mbRefCutOffParamsValid THEN
+            IF mpCutOffParams^.bUsePosition THEN              
+                //Use cut off position as inject end position
+                rCalcDurationEndPos := mpCutOffParams^.rPositionThreshold;
+                
+                dCalcedInjectDuration := FCalcDuration(StartPosition := rCalcDurationStartPos,
+                                                        StartVelocity := 0.0,   //not used
+                                                        EndPosition := rCalcDurationEndPos,
+                                                        Profile := InjectVelocityProfile.ProfilePoints,
+                                                        StartRamp := InjectVelocityProfile.Acceleration,
+                                                        StopRamp := 0.0,        //not used
+                                                        ConstOutput := 0.0,     //not used
+                                                        UseConstOutput := FALSE);
+                
+                dHoldDuration := LINT_TO_TIME(REAL_TO_LINT(HoldVelocityProfile.ProfilePoints.Point[HoldVelocityProfile.ProfilePoints.uNoOfPoints].rX * 1000000.0));                
+                
+            END_IF;
+                
+            IF mpCutOffParams^.bUseTimer THEN
+                
+                IF (NOT mpCutOffParams^.bUsePosition OR (mpCutOffParams^.dTimeThreshold < dCalcedInjectDuration)) THEN
+                    //Use cut off time as inject duration
+                    dCalcedInjectDuration := mpCutOffParams^.dTimeThreshold;
+                END_IF;
+               
+                dHoldDuration := LINT_TO_TIME(REAL_TO_LINT(HoldVelocityProfile.ProfilePoints.Point[HoldVelocityProfile.ProfilePoints.uNoOfPoints].rX * 1000000.0));                
+             END_IF;
+                        
+            IF ((NOT mpCutOffParams^.bUsePosition AND NOT mpCutOffParams^.bUseTimer)AND
+                (mpCutOffParams^.bUseExtDigIn OR mpCutOffParams^.bUseInjectPressure OR mpCutOffParams^.bUseMoldPressure)) THEN
+                
+                //Default time for inject duration
+                dCalcedInjectDuration := dDefaultInjDuration;                                    
+                dHoldDuration := LINT_TO_TIME(REAL_TO_LINT(HoldVelocityProfile.ProfilePoints.Point[HoldVelocityProfile.ProfilePoints.uNoOfPoints].rX * 1000000.0));                    
+            
+            ELSIF (NOT mpCutOffParams^.bUsePosition AND NOT mpCutOffParams^.bUseTimer AND
+                   NOT mpCutOffParams^.bUseExtDigIn AND NOT mpCutOffParams^.bUseInjectPressure AND
+                   NOT mpCutOffParams^.bUseMoldPressure) THEN
+                
+                //No cut off
+                IF mpInjectProfile^.bOpenEndProfile THEN
+                    //Last point = -1000.0 -> Set endposition for calculation to 0.0 
+                    rCalcDurationEndPos := 0.0;         
+                ELSE
+                    rCalcDurationEndPos := mpInjectProfile^.Profile.Points[mpInjectProfile^.Profile.iNoOfPoints + 1].rStartPos;
+                END_IF;
+                
+                dCalcedInjectDuration := FCalcDuration(StartPosition := rCalcDurationStartPos,
+                                                        StartVelocity := 0.0,   //not used
+                                                        EndPosition := rCalcDurationEndPos,
+                                                        Profile := InjectVelocityProfile.ProfilePoints,
+                                                        StartRamp := InjectVelocityProfile.Acceleration,
+                                                        StopRamp := 0.0,        //not used
+                                                        ConstOutput := 0.0,     //not used
+                                                        UseConstOutput := FALSE);
+                
+                dHoldDuration := T#0s;
+            END_IF;
+        END_IF;
+                
+        //copy durations        
+        mpdCalcedInjectDuration^ := dCalcedInjectDuration;
+        mpdCalcedHoldDuration^ := dHoldDuration;
+    END_IF;
+    
+    mbReCalcDurations := FALSE;  
+END_IF;
+
+STOP_PROCESS_ALGORITHM();
+
+
+@END_Body 
+
+@@@BEG_Comment@@@ 
+@TL(0)
+
+@@@END_Comment@@@ 
+
+@BEG_Body 
+@TL(68)
+(**************************************** WARNING ********************************************
+ *** The KEBA Kemro K2 System including software is not intended for safety control tasks! ***
+ ***                       For further information see Comment tab!                        ***
+ *********************************************************************************************)
+
+IF NOT sv_bInitDone THEN
+   //no action before sv_bInitDone
+   RETURN;
+END_IF;
+
+IF NOT bInitDone THEN   
+   
+   IF mbReducedInjectCall THEN       
+      dCycleTime := MULTIME(GET_TASK_INTERVAL(),miReductionFactor);
+      //use reduced inject cycle time
+      dCycleTimeIOSystem := dCycleTime;
+      iCycleTimeIOSystem := TIME_TO_LINT(dCycleTimeIOSystem);
+   ELSE
+      dCycleTime := GET_TASK_INTERVAL();
+      //get cycle time from catalog
+      aGetOnboardCycleTime();      
+      rIOCycleTime := MAX(aGetOnboardCycleTime.rOnboardCycleTime, 0.0005);      
+      iCycleTimeIOSystem := REAL_TO_LINT(rIOCycleTime*1000000.0);
+      dCycleTimeIOSystem := LINT_TO_TIME(iCycleTimeIOSystem);
+   END_IF;
+   
+   IF ((dCycleTime <> t#2ms) AND (NOT mbIsSpeedpump))  THEN
+      //no compensation if cycle time <> 2ms (except speedpump)
+      STOP_PROCESS_ALGORITHM;
+      RETURN;
+   END_IF;
+   
+   bInitDone := TRUE;
+END_IF;
+
+
+IF mbReducedInjectCall AND (miCount < (miReductionFactor - 1)) AND aRun.bActive THEN
+   //consider reduced call of fbInject
+   RETURN;
+END_IF;
+
+dActTime := GET_RUNTIME();
+dDifTime := dActTime - dLastTime; 
+
+IF (aRun.bActive) THEN
+   IF NOT bActOld THEN
+      mdOffsetToIoSys := t#0s;
+   END_IF;
+   
+   IF (mdOffsetToIoSys = T#0s AND g_dActiveTimestamp > t#0s) THEN
+      IF (dDifTime < (dCycleTime + t#30us)) THEN
+         mdOffsetToIoSys := dCycleTimeIOSystem - LINT_TO_TIME(TIME_TO_LINT(dActTime - g_dActiveTimestamp) MOD iCycleTimeIOSystem);     
+      END_IF;   
+   END_IF;
+   
+END_IF;
+
+bActOld := aRun.bActive; 
+dLastTime := dActTime;
+
+IF (mdOffsetToIoSys > t#0ms) AND (g_dActiveTimestamp > t#0s) THEN 
+   mdTimeThresholdDiff := mdOffsetToIoSys + (dCycleTimeIOSystem / 8);
+ELSE 
+   mdTimeThresholdDiff := t#0s;
+END_IF;
+
+
+
+@END_Body 
+
+@@@BEG_Comment@@@ 
+@TL(0)
+
+@@@END_Comment@@@ 
+@END_Body 
+
+@END_Contents 

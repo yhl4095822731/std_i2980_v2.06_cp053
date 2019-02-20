@@ -1,0 +1,89 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<base:Mask xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xmlns:base="http://www.keba.at/viewedit.model.base" widgetId="kvs.mask" name="PositionControlSettingsMask">
+  <resolution width="684" height="476"/>
+  <position x="1" y="1"/>
+  <attributeValues key="Title" value="Control settings"/>
+  <attributeValues key="Icon" value="system/hmi/images/maskicons/iconPIDPositionSet.gif"/>
+  <attributeValues key="DisplayLevel" value="12"/>
+  <widgetInstances xsi:type="base:ContainerWidgetInstance" widgetId="kvs.panel" name="panelMain" layoutConstraint="CENTER">
+    <resolution width="684" height="476"/>
+    <position/>
+    <border name="TitledBorder" id="kv.border.TitledBorder"/>
+    <widgetInstances xsi:type="base:ContainerWidgetInstance" widgetId="kvs.panel" name="panelLeft" layoutConstraint="LEFT">
+      <resolution width="333" height="466"/>
+      <position x="6" y="5"/>
+      <attributeValues key="PreferredSize" value="348, 490"/>
+      <widgetInstances xsi:type="base:CompositeWidgetInstance" widgetId="7cd6d254-a32f-43bc-9c0a-0e9992d53c8a" name="positionControlInject" layoutConstraint="null">
+        <resolution width="333" height="129"/>
+        <position/>
+        <attributeValues key="Title" value="Screw position controller"/>
+        <attributeValues key="ParamName" value="Injection1.sv_InjectionPosControlParam"/>
+        <attributeValues key="Time" value="Injection1.sv_dMaxPosCtrlTime"/>
+        <attributeValues key="PreferredSize" value="333,129"/>
+        <dynamicAttributes key="Create">
+          <value function="doesDeviceExist_OR_isDeviceElectric : UserFunctions" equal="true" unequal="false">
+            <parameter key="1" value="devicename;PlastFunctionUtils.createDeviceName(&quot;ValveServoInj1&quot;)"/>
+            <parameter key="2" value="devicename;PlastFunctionUtils.createDeviceName(&quot;Injection1&quot;)"/>
+          </value>
+        </dynamicAttributes>
+      </widgetInstances>
+      <widgetInstances xsi:type="base:CompositeWidgetInstance" widgetId="7cd6d254-a32f-43bc-9c0a-0e9992d53c8a" name="positionControlMold" layoutConstraint="null">
+        <resolution width="333" height="129"/>
+        <position y="129"/>
+        <attributeValues key="PreferredSize" value="333,129"/>
+        <attributeValues key="Title" value="Mold position controller"/>
+        <attributeValues key="ParamName" value="Mold1.sv_MoldPosControlParam"/>
+        <attributeValues key="Time" value="Mold1.sv_dMaxPosCtrlTime"/>
+        <dynamicAttributes key="Create">
+          <value function="doesVariableExist_OR_isDeviceElectric : UserFunctions" equal="true" unequal="false">
+            <parameter key="1" value="variableasstring;PlastFunctionUtils.createVariableString(&quot;Mold1.ao_Valve&quot;)"/>
+            <parameter key="2" value="devicename;PlastFunctionUtils.createDeviceName(&quot;Mold1&quot;)"/>
+          </value>
+        </dynamicAttributes>
+      </widgetInstances>
+      <widgetInstances xsi:type="base:CompositeWidgetInstance" widgetId="7cd6d254-a32f-43bc-9c0a-0e9992d53c8a" name="positionControlEjector" layoutConstraint="null">
+        <resolution width="333" height="129"/>
+        <position y="258"/>
+        <attributeValues key="PreferredSize" value="333,129"/>
+        <attributeValues key="Title" value="Ejector position controller"/>
+        <attributeValues key="ParamName" value="Ejector1.sv_EjectorPosControlParam"/>
+        <attributeValues key="Time" value="Ejector1.sv_dMaxPosCtrlTime"/>
+        <dynamicAttributes key="Create">
+          <value function="isDeviceElectric : UserFunctions" equal="true" unequal="false">
+            <parameter key="1" value="devicename;PlastFunctionUtils.createDeviceName(&quot;Ejector1&quot;)"/>
+          </value>
+        </dynamicAttributes>
+      </widgetInstances>
+      <layout layoutID="kvs.layout.VerticalFlowLayout" name="VerticalFlowLayout">
+        <attributeValues key="Hgap" value="0"/>
+        <attributeValues key="OuterGaps" value="false"/>
+        <attributeValues key="Alignment" value="TOP"/>
+        <attributeValues key="Vgap" value="0"/>
+      </layout>
+    </widgetInstances>
+    <widgetInstances xsi:type="base:ContainerWidgetInstance" widgetId="kvs.panel" name="panelRight" layoutConstraint="RIGHT">
+      <resolution width="333" height="129"/>
+      <position x="345" y="5"/>
+      <widgetInstances xsi:type="base:CompositeWidgetInstance" widgetId="7cd6d254-a32f-43bc-9c0a-0e9992d53c8a" name="positionControlNozzle" layoutConstraint="null">
+        <resolution width="333" height="129"/>
+        <position/>
+        <attributeValues key="PreferredSize" value="333,129"/>
+        <attributeValues key="Title" value="Nozzle position controller"/>
+        <attributeValues key="ParamName" value="Nozzle1.sv_NozzlePosControlParam"/>
+        <attributeValues key="Time" value="Nozzle1.sv_dMaxPosCtrlTime"/>
+        <dynamicAttributes key="Create">
+          <value function="isDeviceElectric : UserFunctions" equal="true" unequal="false">
+            <parameter key="1" value="devicename;PlastFunctionUtils.createDeviceName(&quot;Nozzle1&quot;)"/>
+          </value>
+        </dynamicAttributes>
+      </widgetInstances>
+      <layout layoutID="kvs.layout.VerticalFlowLayout" name="VerticalFlowLayout">
+        <attributeValues key="Vgap" value="0"/>
+        <attributeValues key="Hgap" value="0"/>
+        <attributeValues key="OuterGaps" value="false"/>
+      </layout>
+    </widgetInstances>
+    <layout layoutID="keplast.kvs.layout.horizontalsplitlayout" name="HorizontalSplitLayout"/>
+  </widgetInstances>
+  <layout layoutID="kvs.layout.BorderLayout" name="BorderLayout"/>
+</base:Mask>

@@ -1,0 +1,587 @@
+IMPORT_OVER_LISTFILE
+ cLintabPA
+, cLintabPB
+, cLintabNotDef
+, cLintabAT
+, cLintabBT
+, ABAnalogHWOut
+, ABAnalogOutput
+, tsDeviceId
+, KAPPL_LintabData
+, tnAnaOutputMode
+, FBDebugTrace
+
+END_IMPORT
+
+ALGORITHM_BLOCK ABMoldValveOutput #DUMMY_EDIT_BLOCK
+
+SYSTEM_VAR
+ sv_DeviceId : tsDeviceId;
+END_VAR
+
+SYSTEM_OBJECT
+ TaskAnalog : TASK;
+ erVariableNotLinked : ALARM;
+END_OBJECT
+
+VAR
+ mbStop : BOOL;
+ abAnalogHWOut : ABAnalogHWOut;
+ abAnalogOutput : ABAnalogOutput;
+ mrValveSetVal : REAL;
+ mprValveSetVal : REFTO REAL;
+ mbStopped : BOOL;
+END_VAR
+
+ALGORITHM aStart
+
+
+VAR_INPUT
+ pLintab : REFTO KAPPL_LintabData;
+ AnaOutMode : tnAnaOutputMode;
+ prValveSetVal : REFTO REAL;
+END_VAR
+#BEGIN_EDIT_BLOCK
+(**************************************** WARNING ********************************************
+ *** The KEBA Kemro K2 System including software is not intended for safety control tasks! ***
+ ***                       For further information see Comment tab!                        ***
+ *********************************************************************************************)
+
+mbStop := FALSE;
+mbStopped := FALSE;
+
+mprValveSetVal := prValveSetVal;
+
+abAnalogOutput.aInit (pLintab := pLintab);
+
+CASE AnaOutMode OF
+    
+        nAnaOutputModeMid:  START_PROCESS_ALGORITHM(paMidOutput);
+END_CASE;    
+
+
+;#END_EDIT_BLOCK END_ALGORITHM
+
+ALGORITHM aStop
+
+
+VAR_OUTPUT
+ bReady : BOOL;
+END_VAR
+#BEGIN_EDIT_BLOCK
+(**************************************** WARNING ********************************************
+ *** The KEBA Kemro K2 System including software is not intended for safety control tasks! ***
+ ***                       For further information see Comment tab!                        ***
+ *********************************************************************************************)
+
+IF NOT mbStopped THEN
+   mbStop := TRUE;
+END_IF;
+bReady := mbStopped;
+
+
+;#END_EDIT_BLOCK END_ALGORITHM
+
+ALGORITHM aSetErrorMessage
+
+
+VAR
+ fbDebugTrace : FBDebugTrace;
+END_VAR
+#BEGIN_EDIT_BLOCK
+(**************************************** WARNING ********************************************
+ *** The KEBA Kemro K2 System including software is not intended for safety control tasks! ***
+ ***                       For further information see Comment tab!                        ***
+ *********************************************************************************************)
+
+IF NOT abAnalogHWOut.aIsLinked() THEN
+   SET_ALARM(Name := erVariableNotLinked,
+             SubID1 := sv_DeviceId.CompId,
+             SubID2 := sv_DeviceId.IndexId,
+             Param1 := 'ao_Valve');
+ELSE
+   IF abAnalogOutput.aRun.bError THEN
+      fbDebugTrace(CONCAT('ABMoldValveOutput: error ',DINT_TO_STRING(abAnalogOutput.aRun.iErrorInfo),' in ABAnalogOutput'));
+   END_IF;
+END_IF;
+
+
+;#END_EDIT_BLOCK END_ALGORITHM
+
+PROCESS_ALGORITHM paMidOutput ON TaskAnalog(20000)
+
+
+(* IecGraph-Code *)
+
+(* init step *)
+INITIAL_STEP OUT:
+Init (P);
+AOUT (N);
+END_STEP
+
+ACTION Init: #BEGIN_EDIT_BLOCK
+mbStopped := FALSE;
+
+;#END_EDIT_BLOCK END_ACTION (*Init*)
+ACTION AOUT: #BEGIN_EDIT_BLOCK
+mrValveSetVal := mprValveSetVal^;
+(* Lintab Calculation *)
+abAnalogOutput.aRun(rSetValue := mrValveSetVal);
+
+(* Output to AO and Shortcircuit detection *)
+abAnalogHWOut.aOut(rValue := abAnalogOutput.aRun.rOutput);
+
+
+
+;#END_EDIT_BLOCK END_ACTION (*AOUT*)
+
+(* steps *)
+STEP ERROR_STOP:
+AErrorStop (P);
+END_STEP
+
+ACTION AErrorStop: #BEGIN_EDIT_BLOCK
+aSetErrorMessage();
+
+;#END_EDIT_BLOCK END_ACTION (*AErrorStop*)
+STEP S_Stop:
+AStop (P);
+END_STEP
+
+ACTION AStop: #BEGIN_EDIT_BLOCK
+mbStop := FALSE; 
+(* Stopping Analog Output*)
+abAnalogHWOut.aOut(rValue := 0.0);
+mbStopped := TRUE;
+STOP_PROCESS_ALGORITHM();
+
+;#END_EDIT_BLOCK END_ACTION (*AStop*)
+
+(* transitions *)
+TRANSITION Trans1 (* Trans1 *) FROM OUT TO ERROR_STOP :=  #BEGIN_EDIT_BLOCK
+abAnalogOutput.aRun.bError OR
+abAnalogHWOut.aOut.bError
+;#END_EDIT_BLOCK
+END_TRANSITION
+
+GO_ON_TRANSITION Trans6 (* Trans6 *) FROM ERROR_STOP TO S_Stop :=  #BEGIN_EDIT_BLOCK
+TRUE
+;#END_EDIT_BLOCK
+END_TRANSITION
+
+GO_ON_TRANSITION TStop (* Trans5 *) FROM OUT TO S_Stop :=  #BEGIN_EDIT_BLOCK
+mbStop
+;#END_EDIT_BLOCK
+END_TRANSITION
+
+TRANSITION TNewOutput (* Trans4 *) FROM S_Stop TO OUT :=  #BEGIN_EDIT_BLOCK
+TRUE
+;#END_EDIT_BLOCK
+END_TRANSITION
+
+(* end IecGraph-Code *)
+(* sfc-code *)
+(* end sfc-code *)
+
+
+END_ALGORITHM
+
+
+
+END_ALGORITHM_BLOCK
+
+
+
+#END_OF_IEC_PART
+
+@Puma @IecEditor 6 10 @Pou 25 
+@@@BEG_Comment@@@
+
+@@@END_Comment@@@
+
+@BEG_Contents 
+
+@BEG_Func 
+@RT(17)FuncTreeContainer 
+0 
+@END_Func 
+
+@BEG_Const 
+@RT(18)ConstTreeContainer 
+5 
+@Var @RT(9)cLintabPA @RT(0) @T @F @DT @RT(4)DINT @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+0 @RT(1)1 @RT(22)Servovalve Lintab P->A 
+@END_Attrib 
+1 1 @F @F @F @F 
+
+@Var @RT(9)cLintabPB @RT(0) @T @F @DT @RT(4)DINT @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+0 @RT(1)2 @RT(23)Servovalve Lintab P->B  
+@END_Attrib 
+1 1 @F @F @F @F 
+
+@Var @RT(13)cLintabNotDef @RT(0) @T @F @DT @RT(4)DINT @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+0 @RT(1)0 @RT(17)No special Lintab 
+@END_Attrib 
+1 1 @F @F @F @F 
+
+@Var @RT(9)cLintabAT @RT(0) @T @F @DT @RT(4)DINT @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+0 @RT(1)3 @RT(22)Servovalve Lintab A->T 
+@END_Attrib 
+1 1 @F @F @F @F 
+
+@Var @RT(9)cLintabBT @RT(0) @T @F @DT @RT(4)DINT @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+0 @RT(1)4 @RT(22)Servovalve Lintab B->T 
+@END_Attrib 
+1 1 @F @F @F @F 
+
+@END_Const 
+
+@BEG_Export 
+
+@BEG_Kind 
+@ALGORITHM_BLOCK @RT(17)ABMoldValveOutput @STRUCTURED_TEXT 
+@RT(0) @RT(0) @RT(0) 
+@END_Kind 
+
+@BEG_Dcl 
+@RT(16)DclTreeContainer 
+9 
+@Var @RT(10)TaskAnalog @RT(0) @T @T @RENAMED 0 @T @T @DT @RT(4)TASK @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 7 @F @F @F @F 
+
+@Var @RT(6)mbStop @RT(0) @T @F @DT @RT(4)BOOL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(13)abAnalogHWOut @RT(0) @T @T @DERIVED 0 @T @T @DT @RT(13)ABAnalogHWOut @RT(0) @T @T @UNKNOWN 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(14)abAnalogOutput @RT(0) @T @T @DERIVED 0 @T @T @DT @RT(14)ABAnalogOutput @RT(0) @T @T @UNKNOWN 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(13)mrValveSetVal @RT(0) @T @F @DT @RT(4)REAL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(14)mprValveSetVal @RT(0) @T @T @REFTO 0 @T @DT @RT(4)REAL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(9)mbStopped @RT(0) @T @F @DT @RT(4)BOOL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(19)erVariableNotLinked @RT(0) @T @F @DT @RT(5)ALARM @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 7 @F @F @F @F 
+
+@Var @RT(11)sv_DeviceId @RT(0) @T @T @DERIVED 0 @T @T @DT @RT(10)tsDeviceId @RT(0) @T @T @UNKNOWN 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 8 @F @F @F @F 
+
+@END_Dcl 
+
+@END_Export 
+
+@BEG_Body 
+
+4 
+
+@BEG_Export 
+
+@BEG_Algo 
+@ALGORITHM @RT(6)aStart @STRUCTURED_TEXT 
+@RT(0) @RT(0) @RT(0) @F @F 
+@END_Algo 
+
+@BEG_Dcl 
+@RT(16)DclTreeContainer 
+3 
+@Var @RT(7)pLintab @RT(0) @T @T @REFTO 0 @F @DERIVED 0 @T @T @DT @RT(16)KAPPL_LintabData @RT(0) @T @T @UNKNOWN 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 1 @F @F @F @F 
+
+@Var @RT(10)AnaOutMode @RT(0) @T @T @DERIVED 0 @T @T @DT @RT(15)tnAnaOutputMode @RT(0) @T @T @UNKNOWN 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 1 @F @F @F @F 
+
+@Var @RT(13)prValveSetVal @RT(0) @T @T @REFTO 0 @T @DT @RT(4)REAL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 1 @F @F @F @F 
+
+@END_Dcl 
+
+@END_Export 
+
+@BEG_Export 
+
+@BEG_Algo 
+@ALGORITHM @RT(5)aStop @STRUCTURED_TEXT 
+@RT(0) @RT(0) @RT(0) @F @F 
+@END_Algo 
+
+@BEG_Dcl 
+@RT(16)DclTreeContainer 
+1 
+@Var @RT(6)bReady @RT(0) @T @F @DT @RT(4)BOOL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 3 @F @F @F @F 
+
+@END_Dcl 
+
+@END_Export 
+
+@BEG_Export 
+
+@BEG_Algo 
+@ALGORITHM @RT(16)aSetErrorMessage @STRUCTURED_TEXT 
+@RT(0) @RT(0) @RT(0) @F @F 
+@END_Algo 
+
+@BEG_Dcl 
+@RT(16)DclTreeContainer 
+1 
+@Var @RT(12)fbDebugTrace @RT(0) @T @T @DERIVED 0 @T @T @DT @RT(12)FBDebugTrace @RT(0) @T @T @UNKNOWN 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@END_Dcl 
+
+@END_Export 
+
+@BEG_Export 
+
+@BEG_Algo 
+@PROCESS_ALGORITHM @RT(11)paMidOutput @SEQUENTIAL_FLOW_CHART 
+@RT(0) @RT(0) @RT(17)TaskAnalog(20000) @F @F 
+@END_Algo 
+
+@BEG_Dcl 
+@RT(16)DclTreeContainer 
+0 
+@END_Dcl 
+
+@END_Export 
+
+@BEG_Body 
+@TL(17)
+(**************************************** WARNING ********************************************
+ *** The KEBA Kemro K2 System including software is not intended for safety control tasks! ***
+ ***                       For further information see Comment tab!                        ***
+ *********************************************************************************************)
+
+mbStop := FALSE;
+mbStopped := FALSE;
+
+mprValveSetVal := prValveSetVal;
+
+abAnalogOutput.aInit (pLintab := pLintab);
+
+CASE AnaOutMode OF
+    
+        nAnaOutputModeMid:  START_PROCESS_ALGORITHM(paMidOutput);
+END_CASE;    
+
+@END_Body 
+
+@@@BEG_Comment@@@ 
+@TL(0)
+
+@@@END_Comment@@@ 
+
+@BEG_Body 
+@TL(10)
+(**************************************** WARNING ********************************************
+ *** The KEBA Kemro K2 System including software is not intended for safety control tasks! ***
+ ***                       For further information see Comment tab!                        ***
+ *********************************************************************************************)
+
+IF NOT mbStopped THEN
+   mbStop := TRUE;
+END_IF;
+bReady := mbStopped;
+
+@END_Body 
+
+@@@BEG_Comment@@@ 
+@TL(0)
+
+@@@END_Comment@@@ 
+
+@BEG_Body 
+@TL(16)
+(**************************************** WARNING ********************************************
+ *** The KEBA Kemro K2 System including software is not intended for safety control tasks! ***
+ ***                       For further information see Comment tab!                        ***
+ *********************************************************************************************)
+
+IF NOT abAnalogHWOut.aIsLinked() THEN
+   SET_ALARM(Name := erVariableNotLinked,
+             SubID1 := sv_DeviceId.CompId,
+             SubID2 := sv_DeviceId.IndexId,
+             Param1 := 'ao_Valve');
+ELSE
+   IF abAnalogOutput.aRun.bError THEN
+      fbDebugTrace(CONCAT('ABMoldValveOutput: error ',DINT_TO_STRING(abAnalogOutput.aRun.iErrorInfo),' in ABAnalogOutput'));
+   END_IF;
+END_IF;
+
+@END_Body 
+
+@@@BEG_Comment@@@ 
+@TL(0)
+
+@@@END_Comment@@@ 
+
+@BEG_SfcBody 
+12 7 8 
+
+@BEG_SfcData 2 
+@StepSeq @RT(4)sseq @F 5 
+@Step @RT(3)OUT @F @T @T @F @RT(0) @F 
+@AcbCont @RT(7)unnamed @F 2 
+@Acb @RT(4)Init @F @T @RT(1)P @RT(0) @F @F @T @TL(2)
+mbStopped := FALSE;
+
+@F 
+@Acb @RT(4)AOUT @F @T @RT(1)N @RT(0) @F @F @T @TL(9)
+mrValveSetVal := mprValveSetVal^;
+(* Lintab Calculation *)
+abAnalogOutput.aRun(rSetValue := mrValveSetVal);
+
+(* Output to AO and Shortcircuit detection *)
+abAnalogHWOut.aOut(rValue := abAnalogOutput.aRun.rOutput);
+
+
+
+@F 
+
+@AltBranch @RT(3)alt @F 2 
+@TransSeq @RT(4)tseq @F 3 
+@Trans @RT(6)Trans1 @F @T @F @F @T @T @TL(3)
+abAnalogOutput.aRun.bError OR
+abAnalogHWOut.aOut.bError
+
+@RT(6)Trans1 @F 
+@Step @RT(10)ERROR_STOP @F @F @F @F @RT(0) @F 
+@AcbCont @RT(7)unnamed @F 1 
+@Acb @RT(10)AErrorStop @F @T @RT(1)P @RT(0) @F @F @T @TL(2)
+aSetErrorMessage();
+
+@F 
+
+@Trans @RT(6)Trans6 @F @T @F @F @T @F @TL(2)
+TRUE
+
+@RT(6)Trans6 @F 
+
+@TransSeq @RT(4)tseq @F 1 
+@Trans @RT(5)TStop @F @T @T @F @T @F @TL(2)
+mbStop
+
+@RT(6)Trans5 @F 
+
+
+@Step @RT(6)S_Stop @F @F @F @F @RT(0) @F 
+@AcbCont @RT(7)unnamed @F 1 
+@Acb @RT(5)AStop @F @T @RT(1)P @RT(0) @F @F @T @TL(6)
+mbStop := FALSE; 
+(* Stopping Analog Output*)
+abAnalogHWOut.aOut(rValue := 0.0);
+mbStopped := TRUE;
+STOP_PROCESS_ALGORITHM();
+
+@F 
+
+@Trans @RT(10)TNewOutput @F @T @F @F @T @T @TL(2)
+TRUE
+
+@RT(6)Trans4 @F 
+@Goto @RT(3)OUT @F @F 
+@END_SfcData 
+@SaActions 0 
+@SaTrans 0 
+@SaExits 0 
+@END_SfcBody 
+
+@@@BEG_Comment@@@ 
+@TL(0)
+
+@@@END_Comment@@@ 
+@END_Body 
+
+@END_Contents 

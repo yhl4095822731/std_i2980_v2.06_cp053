@@ -1,0 +1,1149 @@
+(*
+@h    ! WARNING !
+@h    The Kemro K2 system (including software) only meets category B according to EN 954-1,
+@h    thus it is not intended for usage in safety-relevant control applications in the field 
+@h    of personal safety (e.g. emergency stop).
+@h    To implement potentially necessary safety-relevant control tasks, always use additional 
+@h    external safety devices that are intended for the particular purpose, and meet the necessary 
+@h    functional safety.
+@h    For further information see EN 954-1 (EN ISO 13849-1) and/or the K2-x00 user manual, chapter 
+@h    "CE conformity, directives and standards".
+
+This AB controls the service net connection state machine
+*)
+
+IMPORT_OVER_LISTFILE
+ ASSERT
+, KPROT_UserInfoLog
+, START_PROCESS_ALGORITHM
+, tyContactTo
+, tsMachineInfo
+, tnConnectionStatus
+, tnDialogOption
+, ABParser
+, ABVersionManager
+, FBSendData
+, KNETWORK_TcpInit
+, KSYS_Status
+, KPROT_Status
+, FBSNNetworkConfig
+
+END_IMPORT
+
+ALGORITHM_BLOCK ABServiceNetCtrl #DUMMY_EDIT_BLOCK
+
+SYSTEM_VAR
+ sv_ContactTo : tyContactTo;
+ sv_MachineInformation : tsMachineInfo;
+ sv_bInitDone : BOOL (* IEC initialisation is finished (after movement registration) *);
+ sv_iContactToIdx : DINT;
+ sv_bConnect : BOOL;
+ sv_ConnectionStatus : tnConnectionStatus;
+ sv_HMIResponse : tnDialogOption;
+ sv_bDownloadSIMInfo : BOOL;
+END_VAR
+
+SYSTEM_OBJECT
+ TaskVis : TASK;
+ erNoConnection : ALARM;
+ erConnectionReset : ALARM;
+ erWrongVersion : ALARM;
+ erConnectionClosed : ALARM;
+END_OBJECT
+
+VAR
+ abParser : ABParser;
+ abVersionInfo : ABVersionManager;
+ fbSend : FBSendData;
+END_VAR
+
+VAR CONSTANT
+ cConnectionTimeout : TIME := T#30s;
+ cVersionServicenetRequired : DINT := 16#100;
+ cVersionServicenetClient : DINT := 16#100;
+END_VAR
+
+(*
+@h    ! WARNING !
+@h    The Kemro K2 system (including software) only meets category B according to EN 954-1,
+@h    thus it is not intended for usage in safety-relevant control applications in the field 
+@h    of personal safety (e.g. emergency stop).
+@h    To implement potentially necessary safety-relevant control tasks, always use additional 
+@h    external safety devices that are intended for the particular purpose, and meet the necessary 
+@h    functional safety.
+@h    For further information see EN 954-1 (EN ISO 13849-1) and/or the K2-x00 user manual, chapter 
+@h    "CE conformity, directives and standards".
+
+Starts state machine algorithm on connect request
+*)
+
+POSTUPDATE_ALGORITHM pConnectChanged ON TaskVis(1) WITH sv_bConnect
+
+#BEGIN_EDIT_BLOCK
+(**************************************** WARNING ********************************************
+ *** The KEBA Kemro K2 System including software is not intended for safety control tasks! ***
+ ***                       For further information see Comment tab!                        ***
+ *********************************************************************************************)
+
+IF (sv_bConnect) THEN
+    IF (NOT sv_bDownloadSIMInfo) THEN 
+       START_PROCESS_ALGORITHM(paRun);
+    ELSE
+      // not allowed, download sim info in progress
+       sv_bConnect := FALSE; 
+    END_IF;
+END_IF;
+
+
+
+
+;#END_EDIT_BLOCK END_ALGORITHM
+
+(*
+@h    ! WARNING !
+@h    The Kemro K2 system (including software) only meets category B according to EN 954-1,
+@h    thus it is not intended for usage in safety-relevant control applications in the field 
+@h    of personal safety (e.g. emergency stop).
+@h    To implement potentially necessary safety-relevant control tasks, always use additional 
+@h    external safety devices that are intended for the particular purpose, and meet the necessary 
+@h    functional safety.
+@h    For further information see EN 954-1 (EN ISO 13849-1) and/or the K2-x00 user manual, chapter 
+@h    "CE conformity, directives and standards".
+
+state machine algorithm 
+when user requests a connection to ServiceNet this algorithm establishes a TCP connection
+and sends a client connection message to ServiceNet. 
+ServiceNet responds by sending a message containing a protocol version information and a "
+request state" number which is used to activate this state. 
+ABParser is used to parse the recieved messages, it provides access to the recieved data via 
+function aGetXXXValue().
+ServiceNet is expected to send a message at least all 30s, otherwise the connection will be closed.
+In case of any error (parsing error, timeout, tcp error, ...) the state changes to "Disconnected" 
+and the algorithm is stopped.
+
+*)
+
+PROCESS_ALGORITHM paRun ON TaskVis AUTOSTART
+
+
+VAR
+ fbTCPInit : KNETWORK_TcpInit;
+ iTmpVal : DINT;
+ iRequestState : DINT;
+ piTmp : REFTO DINT;
+ s : KSYS_Status;
+ ILogState : KPROT_Status;
+ fbSNNetConfig : FBSNNetworkConfig;
+END_VAR
+
+(* IecGraph-Code *)
+
+(* init step *)
+INITIAL_STEP S_Init:
+AInit (P);
+END_STEP
+
+ACTION AInit: #BEGIN_EDIT_BLOCK
+// if it is a kvb system wait until initialisation is
+// finished in order to get kvb version info which will be 
+// init is finished if sv_MaskID > cMaskNone (0x10000)
+// other version infos are available after sv_bInitDone
+
+piTmp := GET_SYNC_REFTO('KVB.sv_MaskID', T#0s, s); 
+
+;#END_EDIT_BLOCK END_ACTION (*AInit*)
+
+(* steps *)
+STEP S_ReadVersionInfo:
+AReadVersionInfo (P);
+END_STEP
+
+ACTION AReadVersionInfo: #BEGIN_EDIT_BLOCK
+abVersionInfo.aReadAllVersionInfos();
+STOP_PROCESS_ALGORITHM();
+
+;#END_EDIT_BLOCK END_ACTION (*AReadVersionInfo*)
+STEP S_NetworkConfigSN:
+AInitVars (P);
+ANetworkConfigSN (P);
+END_STEP
+
+ACTION AInitVars: #BEGIN_EDIT_BLOCK
+// initialize variables
+sv_HMIResponse := nWaiting; 
+sv_ConnectionStatus := nConnecting;
+
+;#END_EDIT_BLOCK END_ACTION (*AInitVars*)
+ACTION ANetworkConfigSN: #BEGIN_EDIT_BLOCK
+fbSNNetConfig(UseServiceNetConfig := TRUE); 
+
+;#END_EDIT_BLOCK END_ACTION (*ANetworkConfigSN*)
+STEP S_TCPInit:
+ATCPInit (N);
+ATCPReset (P);
+END_STEP
+
+ACTION ATCPInit: #BEGIN_EDIT_BLOCK
+// connect TCP socket
+fbTCPInit( Execute := TRUE,
+          RemoteIP := sv_ContactTo[sv_iContactToIdx].sAddress, 
+          RemotePort := cServiceNet_PortNumber);
+
+;#END_EDIT_BLOCK END_ACTION (*ATCPInit*)
+ACTION ATCPReset: #BEGIN_EDIT_BLOCK
+ILogState := KPROT_UserInfoLog('ServiceNet state: %5s', 0, 0, 0, 0, 'connecting');
+
+;#END_EDIT_BLOCK END_ACTION (*ATCPReset*)
+STEP S_TCPInitError:
+ATCPInitError (N);
+END_STEP
+
+ACTION ATCPInitError: #BEGIN_EDIT_BLOCK
+SET_ALARM(Name := erNoConnection, 
+              Param1 := sv_ContactTo[sv_iContactToIdx].sAddress);
+
+;#END_EDIT_BLOCK END_ACTION (*ATCPInitError*)
+STEP S_Connecting:
+AReset (P);
+AConnecting (N);
+ACommunication (S);
+END_STEP
+
+ACTION AReset: #BEGIN_EDIT_BLOCK
+RESET_ALARM(erNoConnection);
+RESET_ALARM(erConnectionReset);
+RESET_ALARM(erWrongVersion);
+RESET_ALARM(erConnectionClosed);
+
+abParser.aGetDINTValue(Execute := FALSE); 
+fbSend(FALSE, fbTCPInit.TcpHdl, cVersionServicenetClient, abVersionInfo);    
+
+;#END_EDIT_BLOCK END_ACTION (*AReset*)
+ACTION AConnecting: #BEGIN_EDIT_BLOCK
+// check ServiceNet version
+abParser.aGetDINTValue(TRUE, "VersionServiceNet", iTmpVal); 
+
+// ServiceNet version to old, newer version required -> alarm and disconnect
+IF (abParser.aGetDINTValue.bFound AND (iTmpVal < cVersionServicenetRequired)) THEN
+    SET_ALARM(Name := erWrongVersion,
+            Param1 := REAL_TO_FORMATTED_STRING(INT_TO_REAL(BCD_TO_INT(DINT_TO_WORD(cVersionServicenetRequired))) / 100.0, 2, 2),
+            Param2 := REAL_TO_FORMATTED_STRING(INT_TO_REAL(BCD_TO_INT(DINT_TO_WORD(iTmpVal))) / 100.0, 2, 2)
+             );
+    sv_bConnect := FALSE; // exit transition
+END_IF;
+
+
+;#END_EDIT_BLOCK END_ACTION (*AConnecting*)
+ACTION ACommunication: #BEGIN_EDIT_BLOCK
+// parse received messages, reset SFC in case of an Error
+abParser.aParse(Execute := TRUE, 
+                TcpHdl := fbTCPInit.TcpHdl); 
+
+// check connection timeout
+IF (abParser.aParse.ElapsedTimeSinceLastObj > cConnectionTimeout) THEN
+    SET_ALARM(Name := erConnectionReset, Param1 := 1);    
+    sv_bConnect := FALSE;  // exit transition
+ELSIF (abParser.aParse.Error) THEN
+    SET_ALARM(Name := erConnectionReset, Param1 := 2);
+    sv_bConnect := FALSE;  // exit transition
+END_IF;
+
+// send message, reset SFC in case of an error
+fbSend(Execute := TRUE);
+IF (fbSend.Error) THEN
+    SET_ALARM(Name := erConnectionReset, Param1 := 3);
+    sv_bConnect := FALSE; // exit transition
+END_IF;
+
+
+;#END_EDIT_BLOCK END_ACTION (*ACommunication*)
+STEP S_GetReqState:
+AReset2 (P);
+AGetRequestState (S);
+END_STEP
+
+ACTION AReset2: #BEGIN_EDIT_BLOCK
+abParser.aGetDINTValue(Execute := FALSE);
+
+;#END_EDIT_BLOCK END_ACTION (*AReset2*)
+ACTION AGetRequestState: #BEGIN_EDIT_BLOCK
+// cyclic update of local variable iRequestState
+abParser.aGetDINTValue(TRUE, "RequestState", iRequestState); 
+
+;#END_EDIT_BLOCK END_ACTION (*AGetRequestState*)
+STEP S_RequestPending:
+ARequestPending (P);
+END_STEP
+
+ACTION ARequestPending: #BEGIN_EDIT_BLOCK
+sv_ConnectionStatus := nRequestPending;
+ILogState := KPROT_UserInfoLog('ServiceNet state: %5s', 0, 0, 0, 0, 'request pending');
+
+;#END_EDIT_BLOCK END_ACTION (*ARequestPending*)
+STEP S_ServiceAccepted:
+AServiceAccepted (P);
+END_STEP
+
+ACTION AServiceAccepted: #BEGIN_EDIT_BLOCK
+sv_ConnectionStatus := nServiceAccepted;
+ILogState := KPROT_UserInfoLog('ServiceNet state: %5s', 0, 0, 0, 0, 'service accepted');
+
+;#END_EDIT_BLOCK END_ACTION (*AServiceAccepted*)
+STEP S_ServiceAccessRequest:
+AServiceAccessRequest (P);
+END_STEP
+
+ACTION AServiceAccessRequest: #BEGIN_EDIT_BLOCK
+sv_HMIResponse := nWaiting; 
+sv_ConnectionStatus := nServiceAccessRequest;
+ILogState := KPROT_UserInfoLog('ServiceNet state: %5s', 0, 0, 0, 0, 'service access request');
+
+;#END_EDIT_BLOCK END_ACTION (*AServiceAccessRequest*)
+STEP S_ServiceActive:
+AServiceActive (P);
+END_STEP
+
+ACTION AServiceActive: #BEGIN_EDIT_BLOCK
+sv_ConnectionStatus := nServiceActive;
+ILogState := KPROT_UserInfoLog('ServiceNet state: %5s', 0, 0, 0, 0, 'service active');
+
+;#END_EDIT_BLOCK END_ACTION (*AServiceActive*)
+STEP S_Disconnecting:
+ACommunication (R);
+AGetRequestState (R);
+AResetParser (P);
+ADisconnect (N);
+END_STEP
+
+ACTION AResetParser: #BEGIN_EDIT_BLOCK
+abParser.aParse(Execute := FALSE); 
+ILogState := KPROT_UserInfoLog('ServiceNet state: %5s', 0, 0, 0, 0, 'disconnected');
+
+;#END_EDIT_BLOCK END_ACTION (*AResetParser*)
+ACTION ADisconnect: #BEGIN_EDIT_BLOCK
+IF (iRequestState = cREQSTATE_SERVICE_CLOSE) THEN
+   // ServiceNet has sent disconnect command
+   SET_ALARM(erConnectionClosed);
+END_IF;
+
+fbTCPInit(Execute := FALSE);
+fbSNNetConfig(UseServiceNetConfig := FALSE);
+
+iRequestState := 0; 
+sv_ConnectionStatus := nDisconnected;
+sv_bConnect := FALSE;
+STOP_PROCESS_ALGORITHM();
+
+;#END_EDIT_BLOCK END_ACTION (*ADisconnect*)
+STEP S_Disconnected:
+END_STEP
+
+
+(* transitions *)
+GO_ON_TRANSITION Trans15 (* Trans15 *) FROM S_Init TO S_ReadVersionInfo :=  #BEGIN_EDIT_BLOCK
+((piTmp = EMPTY) OR (piTmp^ > 16#10000)) AND sv_bInitDone
+;#END_EDIT_BLOCK
+END_TRANSITION
+
+TRANSITION Trans29 (* Trans29 *) FROM S_ReadVersionInfo TO S_NetworkConfigSN :=  #BEGIN_EDIT_BLOCK
+TRUE
+;#END_EDIT_BLOCK
+END_TRANSITION
+
+TRANSITION Trans40 (* Trans40 *) FROM S_NetworkConfigSN TO S_TCPInit :=  #BEGIN_EDIT_BLOCK
+NOT fbSNNetConfig.Error
+;#END_EDIT_BLOCK
+END_TRANSITION
+
+TRANSITION Trans41 (* Trans41 *) FROM S_NetworkConfigSN TO S_TCPInitError :=  #BEGIN_EDIT_BLOCK
+fbSNNetConfig.Error
+;#END_EDIT_BLOCK
+END_TRANSITION
+
+GO_ON_TRANSITION Trans2 (* Trans2 *) FROM S_TCPInit TO S_Connecting :=  #BEGIN_EDIT_BLOCK
+fbTCPInit.Done
+;#END_EDIT_BLOCK
+END_TRANSITION
+
+GO_ON_TRANSITION Trans33 (* Trans33 *) FROM S_TCPInit TO S_TCPInitError :=  #BEGIN_EDIT_BLOCK
+fbTCPInit.Error
+;#END_EDIT_BLOCK
+END_TRANSITION
+
+GO_ON_TRANSITION Trans34 (* Trans34 *) FROM S_TCPInitError TO S_Disconnecting :=  #BEGIN_EDIT_BLOCK
+TRUE
+;#END_EDIT_BLOCK
+END_TRANSITION
+
+GO_ON_TRANSITION Trans39 (* Trans39 *) FROM S_TCPInit TO S_Disconnecting :=  #BEGIN_EDIT_BLOCK
+NOT sv_bConnect
+;#END_EDIT_BLOCK
+END_TRANSITION
+
+GO_ON_TRANSITION Trans13 (* Trans13 *) FROM S_Connecting TO S_GetReqState :=  #BEGIN_EDIT_BLOCK
+abParser.aGetDINTValue.bFound AND (NOT (iTmpVal < cVersionServicenetRequired))
+;#END_EDIT_BLOCK
+END_TRANSITION
+
+GO_ON_TRANSITION Trans22 (* Trans22 *) FROM S_GetReqState TO S_RequestPending :=  #BEGIN_EDIT_BLOCK
+abParser.aGetDINTValue.bFound AND (iRequestState >= cREQSTATE_SERVICE_REQPENDING)
+;#END_EDIT_BLOCK
+END_TRANSITION
+
+GO_ON_TRANSITION Trans14 (* Trans14 *) FROM S_RequestPending TO S_ServiceAccepted :=  #BEGIN_EDIT_BLOCK
+iRequestState >= cREQSTATE_SERVICE_ACCEPTED
+;#END_EDIT_BLOCK
+END_TRANSITION
+
+GO_ON_TRANSITION Trans16 (* Trans16 *) FROM S_ServiceAccepted TO S_ServiceAccessRequest :=  #BEGIN_EDIT_BLOCK
+iRequestState >= cREQSTATE_SERVICE_ACCESSREQ
+;#END_EDIT_BLOCK
+END_TRANSITION
+
+GO_ON_TRANSITION Trans17 (* Trans17 *) FROM S_ServiceAccessRequest TO S_Disconnecting :=  #BEGIN_EDIT_BLOCK
+sv_HMIResponse = nNo
+;#END_EDIT_BLOCK
+END_TRANSITION
+
+GO_ON_TRANSITION Trans26 (* Trans26 *) FROM S_ServiceAccessRequest TO S_ServiceActive :=  #BEGIN_EDIT_BLOCK
+sv_HMIResponse = nYes
+;#END_EDIT_BLOCK
+END_TRANSITION
+
+GO_ON_TRANSITION Trans23 (* Trans23 *) FROM S_ServiceActive TO S_Disconnecting :=  #BEGIN_EDIT_BLOCK
+iRequestState = cREQSTATE_SERVICE_CLOSE  // ServiceNet wants to disconnect
+;#END_EDIT_BLOCK
+END_TRANSITION
+
+GO_ON_TRANSITION Trans38 (* Trans38 *) FROM S_Disconnecting TO S_Disconnected :=  #BEGIN_EDIT_BLOCK
+TRUE
+;#END_EDIT_BLOCK
+END_TRANSITION
+
+TRANSITION Trans25 (* Trans25 *) FROM S_Disconnected TO S_NetworkConfigSN :=  #BEGIN_EDIT_BLOCK
+sv_bConnect
+;#END_EDIT_BLOCK
+END_TRANSITION
+
+(* end IecGraph-Code *)
+(* sfc-code *)
+
+(* exits *)
+
+EXIT_TRANSITION TDisconnectClient := #BEGIN_EDIT_BLOCK
+(S_Init.X = FALSE)
+AND (S_ReadVersionInfo.X = FALSE)
+AND (S_TCPInit.X = FALSE)
+AND (S_Disconnecting.X = FALSE)
+AND (S_Disconnected.X = FALSE) 
+AND (sv_bConnect = FALSE)
+;#END_EDIT_BLOCK
+PRIORITY 1 WITH  INITIAL_STEP S_Disconnecting: END_STEP
+END_TRANSITION
+
+EXIT_TRANSITION TDisconnectServer := #BEGIN_EDIT_BLOCK
+iRequestState = cREQSTATE_SERVICE_CLOSE
+;#END_EDIT_BLOCK
+PRIORITY 1 WITH  INITIAL_STEP S_Disconnecting: END_STEP
+END_TRANSITION
+(* end sfc-code *)
+
+
+END_ALGORITHM
+
+
+
+END_ALGORITHM_BLOCK
+
+
+
+#END_OF_IEC_PART
+
+@Puma @IecEditor 6 121 @Pou 25 
+@@@BEG_Comment@@@
+@h    ! WARNING !
+@h    The Kemro K2 system (including software) only meets category B according to EN 954-1,
+@h    thus it is not intended for usage in safety-relevant control applications in the field 
+@h    of personal safety (e.g. emergency stop).
+@h    To implement potentially necessary safety-relevant control tasks, always use additional 
+@h    external safety devices that are intended for the particular purpose, and meet the necessary 
+@h    functional safety.
+@h    For further information see EN 954-1 (EN ISO 13849-1) and/or the K2-x00 user manual, chapter 
+@h    "CE conformity, directives and standards".
+
+This AB controls the service net connection state machine
+@@@END_Comment@@@
+
+@BEG_Contents 
+
+@BEG_Func 
+@RT(17)FuncTreeContainer 
+3 
+@Var @RT(6)ASSERT @RT(0) @T @T @DERIVED 0 @F @RT(8)FUNCTION @F 
+@T 
+@BEG_Attrib 
+0 @RT(0) @RT(0) 
+@END_Attrib 
+1 1 @F @F @F @F 
+
+@Var @RT(17)KPROT_UserInfoLog @RT(0) @T @T @DERIVED 0 @F @RT(22)KEBA_STANDARD_FUNCTION @F 
+@T 
+@BEG_Attrib 
+0 @RT(0) @RT(0) 
+@END_Attrib 
+1 1 @F @F @F @F 
+
+@Var @RT(23)START_PROCESS_ALGORITHM @RT(0) @T @T @DERIVED 0 @F @RT(23)KEBA_STANDARD_PROCEDURE @F 
+@T 
+@BEG_Attrib 
+0 @RT(0) @RT(0) 
+@END_Attrib 
+1 1 @F @F @F @F 
+
+@END_Func 
+
+@BEG_Const 
+@RT(18)ConstTreeContainer 
+0 
+@END_Const 
+
+@BEG_Export 
+
+@BEG_Kind 
+@ALGORITHM_BLOCK @RT(16)ABServiceNetCtrl @STRUCTURED_TEXT 
+@RT(0) @RT(0) @RT(0) 
+@END_Kind 
+
+@BEG_Dcl 
+@RT(16)DclTreeContainer 
+19 
+@Var @RT(12)sv_ContactTo @RT(0) @T @T @DERIVED 0 @T @T @DT @RT(11)tyContactTo @RT(0) @T @T @UNKNOWN 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 8 @F @F @F @F 
+
+@Var @RT(21)sv_MachineInformation @RT(0) @T @T @DERIVED 0 @T @T @DT @RT(13)tsMachineInfo @RT(0) @T @T @UNKNOWN 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 8 @F @F @F @F 
+
+@Var @RT(12)sv_bInitDone @RT(0) @T @F @DT @RT(4)BOOL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(60)IEC initialisation is finished (after movement registration) @RT(0) 
+@END_Attrib 
+1 8 @F @F @F @F 
+
+@Var @RT(16)sv_iContactToIdx @RT(0) @T @F @DT @RT(4)DINT @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 8 @F @F @F @F 
+
+@Var @RT(11)sv_bConnect @RT(0) @T @F @DT @RT(4)BOOL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 8 @F @F @F @F 
+
+@Var @RT(19)sv_ConnectionStatus @RT(0) @T @T @DERIVED 0 @T @T @DT @RT(18)tnConnectionStatus @RT(0) @T @T @UNKNOWN 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 8 @F @F @F @F 
+
+@Var @RT(7)TaskVis @RT(0) @T @T @RENAMED 0 @T @T @DT @RT(4)TASK @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 7 @F @F @F @F 
+
+@Var @RT(14)sv_HMIResponse @RT(0) @T @T @DERIVED 0 @T @T @DT @RT(14)tnDialogOption @RT(0) @T @T @UNKNOWN 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 8 @F @F @F @F 
+
+@Var @RT(18)cConnectionTimeout @RT(0) @T @F @DT @RT(4)TIME @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(5)T#30s @RT(0) @RT(0) 
+@END_Attrib 
+1 15 @F @F @F @F 
+
+@Var @RT(26)cVersionServicenetRequired @RT(0) @T @F @DT @RT(4)DINT @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(6)16#100 @RT(0) @RT(0) 
+@END_Attrib 
+1 15 @F @F @F @F 
+
+@Var @RT(24)cVersionServicenetClient @RT(0) @T @F @DT @RT(4)DINT @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(6)16#100 @RT(0) @RT(0) 
+@END_Attrib 
+1 15 @F @F @F @F 
+
+@Var @RT(8)abParser @RT(0) @T @T @DERIVED 0 @T @T @DT @RT(8)ABParser @RT(0) @T @T @UNKNOWN 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(14)erNoConnection @RT(0) @T @F @DT @RT(5)ALARM @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 7 @F @F @F @F 
+
+@Var @RT(17)erConnectionReset @RT(0) @T @F @DT @RT(5)ALARM @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 7 @F @F @F @F 
+
+@Var @RT(14)erWrongVersion @RT(0) @T @F @DT @RT(5)ALARM @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 7 @F @F @F @F 
+
+@Var @RT(18)erConnectionClosed @RT(0) @T @F @DT @RT(5)ALARM @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 7 @F @F @F @F 
+
+@Var @RT(13)abVersionInfo @RT(0) @T @T @DERIVED 0 @T @T @DT @RT(16)ABVersionManager @RT(0) @T @T @UNKNOWN 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(19)sv_bDownloadSIMInfo @RT(0) @T @F @DT @RT(4)BOOL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 8 @F @F @F @F 
+
+@Var @RT(6)fbSend @RT(0) @T @T @DERIVED 0 @T @T @DT @RT(10)FBSendData @RT(0) @T @T @UNKNOWN 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@END_Dcl 
+
+@END_Export 
+
+@BEG_Body 
+
+2 
+
+@BEG_Export 
+
+@BEG_Algo 
+@POSTUPDATE_ALGORITHM @RT(15)pConnectChanged @STRUCTURED_TEXT 
+@RT(0) @RT(11)sv_bConnect @RT(10)TaskVis(1) @F @F 
+@END_Algo 
+
+@BEG_Dcl 
+@RT(16)DclTreeContainer 
+0 
+@END_Dcl 
+
+@END_Export 
+
+@BEG_Export 
+
+@BEG_Algo 
+@PROCESS_ALGORITHM @RT(5)paRun @SEQUENTIAL_FLOW_CHART 
+@RT(0) @RT(0) @RT(7)TaskVis @T @F 
+@END_Algo 
+
+@BEG_Dcl 
+@RT(16)DclTreeContainer 
+7 
+@Var @RT(9)fbTCPInit @RT(0) @T @T @DERIVED 0 @T @T @DT @RT(16)KNETWORK_TcpInit @RT(0) @T @T @UNKNOWN 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(7)iTmpVal @RT(0) @T @F @DT @RT(4)DINT @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(13)iRequestState @RT(0) @T @F @DT @RT(4)DINT @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(5)piTmp @RT(0) @T @T @REFTO 0 @T @DT @RT(4)DINT @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(1)s @RT(0) @T @T @DERIVED 0 @T @T @DT @RT(11)KSYS_Status @RT(0) @T @T @UNKNOWN 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(9)ILogState @RT(0) @T @T @RENAMED 0 @T @T @DT @RT(12)KPROT_Status @RT(0) @T @T @UNKNOWN 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(13)fbSNNetConfig @RT(0) @T @T @DERIVED 0 @T @T @DT @RT(17)FBSNNetworkConfig @RT(0) @T @T @UNKNOWN 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@END_Dcl 
+
+@END_Export 
+
+@BEG_Body 
+@TL(16)
+(**************************************** WARNING ********************************************
+ *** The KEBA Kemro K2 System including software is not intended for safety control tasks! ***
+ ***                       For further information see Comment tab!                        ***
+ *********************************************************************************************)
+
+IF (sv_bConnect) THEN
+    IF (NOT sv_bDownloadSIMInfo) THEN 
+       START_PROCESS_ALGORITHM(paRun);
+    ELSE
+      // not allowed, download sim info in progress
+       sv_bConnect := FALSE; 
+    END_IF;
+END_IF;
+
+
+
+@END_Body 
+
+@@@BEG_Comment@@@ 
+@TL(11)
+@h    ! WARNING !
+@h    The Kemro K2 system (including software) only meets category B according to EN 954-1,
+@h    thus it is not intended for usage in safety-relevant control applications in the field 
+@h    of personal safety (e.g. emergency stop).
+@h    To implement potentially necessary safety-relevant control tasks, always use additional 
+@h    external safety devices that are intended for the particular purpose, and meet the necessary 
+@h    functional safety.
+@h    For further information see EN 954-1 (EN ISO 13849-1) and/or the K2-x00 user manual, chapter 
+@h    "CE conformity, directives and standards".
+
+Starts state machine algorithm on connect request
+@@@END_Comment@@@ 
+
+@BEG_SfcBody 
+54 34 51 
+
+@BEG_SfcData 2 
+@StepSeq @RT(4)sseq @F 5 
+@Step @RT(6)S_Init @F @T @F @F @RT(0) @F 
+@AcbCont @RT(7)unnamed @F 1 
+@Acb @RT(5)AInit @F @T @RT(1)P @RT(0) @F @F @T @TL(7)
+// if it is a kvb system wait until initialisation is
+// finished in order to get kvb version info which will be 
+// init is finished if sv_MaskID > cMaskNone (0x10000)
+// other version infos are available after sv_bInitDone
+
+piTmp := GET_SYNC_REFTO('KVB.sv_MaskID', T#0s, s); 
+
+@F 
+
+@Trans @RT(7)Trans15 @F @T @F @F @T @F @TL(2)
+((piTmp = EMPTY) OR (piTmp^ > 16#10000)) AND sv_bInitDone
+
+@RT(7)Trans15 @F 
+@Step @RT(17)S_ReadVersionInfo @F @F @F @F @RT(0) @F 
+@AcbCont @RT(7)unnamed @F 1 
+@Acb @RT(16)AReadVersionInfo @F @T @RT(1)P @RT(0) @F @F @T @TL(3)
+abVersionInfo.aReadAllVersionInfos();
+STOP_PROCESS_ALGORITHM();
+
+@F 
+
+@Trans @RT(7)Trans29 @F @T @F @F @T @T @TL(2)
+TRUE
+
+@RT(7)Trans29 @F 
+@Loop @RT(4)loop @F 2 
+@StepSeq @RT(3)seq @F 17 
+@Step @RT(17)S_NetworkConfigSN @F @F @F @F @RT(0) @F 
+@AcbCont @RT(7)unnamed @F 2 
+@Acb @RT(9)AInitVars @F @T @RT(1)P @RT(0) @F @F @T @TL(4)
+// initialize variables
+sv_HMIResponse := nWaiting; 
+sv_ConnectionStatus := nConnecting;
+
+@F 
+@Acb @RT(16)ANetworkConfigSN @F @T @RT(1)P @RT(0) @F @F @T @TL(2)
+fbSNNetConfig(UseServiceNetConfig := TRUE); 
+
+@F 
+
+@AltBranch @RT(3)alt @F 2 
+@TransSeq @RT(4)tseq @F 1 
+@Trans @RT(7)Trans40 @F @T @F @F @T @T @TL(2)
+NOT fbSNNetConfig.Error
+
+@RT(7)Trans40 @F 
+
+@TransSeq @RT(4)tseq @F 2 
+@Trans @RT(7)Trans41 @F @T @F @F @T @T @TL(2)
+fbSNNetConfig.Error
+
+@RT(7)Trans41 @F 
+@Goto @RT(14)S_TCPInitError @F @F 
+
+
+@Step @RT(9)S_TCPInit @F @F @F @F @RT(0) @F 
+@AcbCont @RT(7)unnamed @F 2 
+@Acb @RT(8)ATCPInit @F @T @RT(1)N @RT(0) @F @F @T @TL(5)
+// connect TCP socket
+fbTCPInit( Execute := TRUE,
+          RemoteIP := sv_ContactTo[sv_iContactToIdx].sAddress, 
+          RemotePort := cServiceNet_PortNumber);
+
+@F 
+@Acb @RT(9)ATCPReset @F @T @RT(1)P @RT(0) @F @F @T @TL(2)
+ILogState := KPROT_UserInfoLog('ServiceNet state: %5s', 0, 0, 0, 0, 'connecting');
+
+@F 
+
+@AltBranch @RT(3)alt @F 3 
+@TransSeq @RT(4)tseq @F 1 
+@Trans @RT(6)Trans2 @F @T @F @F @T @F @TL(2)
+fbTCPInit.Done
+
+@RT(6)Trans2 @F 
+
+@TransSeq @RT(4)tseq @F 4 
+@Trans @RT(7)Trans33 @F @T @F @F @T @F @TL(2)
+fbTCPInit.Error
+
+@RT(7)Trans33 @F 
+@Step @RT(14)S_TCPInitError @F @F @T @F @RT(0) @F 
+@AcbCont @RT(7)unnamed @F 1 
+@Acb @RT(13)ATCPInitError @F @T @RT(1)N @RT(0) @F @F @T @TL(3)
+SET_ALARM(Name := erNoConnection, 
+              Param1 := sv_ContactTo[sv_iContactToIdx].sAddress);
+
+@F 
+
+@Trans @RT(7)Trans34 @F @T @F @F @T @F @TL(2)
+TRUE
+
+@RT(7)Trans34 @F 
+@Goto @RT(15)S_Disconnecting @F @F 
+
+@TransSeq @RT(4)tseq @F 2 
+@Trans @RT(7)Trans39 @F @T @F @F @T @F @TL(2)
+NOT sv_bConnect
+
+@RT(7)Trans39 @F 
+@Goto @RT(15)S_Disconnecting @F @F 
+
+
+@Step @RT(12)S_Connecting @F @F @F @F @RT(0) @F 
+@AcbCont @RT(7)unnamed @F 3 
+@Acb @RT(6)AReset @F @T @RT(1)P @RT(0) @F @F @T @TL(8)
+RESET_ALARM(erNoConnection);
+RESET_ALARM(erConnectionReset);
+RESET_ALARM(erWrongVersion);
+RESET_ALARM(erConnectionClosed);
+
+abParser.aGetDINTValue(Execute := FALSE); 
+fbSend(FALSE, fbTCPInit.TcpHdl, cVersionServicenetClient, abVersionInfo);    
+
+@F 
+@Acb @RT(11)AConnecting @F @T @RT(1)N @RT(0) @F @F @T @TL(13)
+// check ServiceNet version
+abParser.aGetDINTValue(TRUE, "VersionServiceNet", iTmpVal); 
+
+// ServiceNet version to old, newer version required -> alarm and disconnect
+IF (abParser.aGetDINTValue.bFound AND (iTmpVal < cVersionServicenetRequired)) THEN
+    SET_ALARM(Name := erWrongVersion,
+            Param1 := REAL_TO_FORMATTED_STRING(INT_TO_REAL(BCD_TO_INT(DINT_TO_WORD(cVersionServicenetRequired))) / 100.0, 2, 2),
+            Param2 := REAL_TO_FORMATTED_STRING(INT_TO_REAL(BCD_TO_INT(DINT_TO_WORD(iTmpVal))) / 100.0, 2, 2)
+             );
+    sv_bConnect := FALSE; // exit transition
+END_IF;
+
+
+@F 
+@Acb @RT(14)ACommunication @F @T @RT(1)S @RT(0) @F @F @T @TL(21)
+// parse received messages, reset SFC in case of an Error
+abParser.aParse(Execute := TRUE, 
+                TcpHdl := fbTCPInit.TcpHdl); 
+
+// check connection timeout
+IF (abParser.aParse.ElapsedTimeSinceLastObj > cConnectionTimeout) THEN
+    SET_ALARM(Name := erConnectionReset, Param1 := 1);    
+    sv_bConnect := FALSE;  // exit transition
+ELSIF (abParser.aParse.Error) THEN
+    SET_ALARM(Name := erConnectionReset, Param1 := 2);
+    sv_bConnect := FALSE;  // exit transition
+END_IF;
+
+// send message, reset SFC in case of an error
+fbSend(Execute := TRUE);
+IF (fbSend.Error) THEN
+    SET_ALARM(Name := erConnectionReset, Param1 := 3);
+    sv_bConnect := FALSE; // exit transition
+END_IF;
+
+
+@F 
+
+@Trans @RT(7)Trans13 @F @T @F @F @T @F @TL(2)
+abParser.aGetDINTValue.bFound AND (NOT (iTmpVal < cVersionServicenetRequired))
+
+@RT(7)Trans13 @F 
+@Step @RT(13)S_GetReqState @F @F @F @F @RT(0) @F 
+@AcbCont @RT(7)unnamed @F 2 
+@Acb @RT(7)AReset2 @F @T @RT(1)P @RT(0) @F @F @T @TL(2)
+abParser.aGetDINTValue(Execute := FALSE);
+
+@F 
+@Acb @RT(16)AGetRequestState @F @T @RT(1)S @RT(0) @F @F @T @TL(3)
+// cyclic update of local variable iRequestState
+abParser.aGetDINTValue(TRUE, "RequestState", iRequestState); 
+
+@F 
+
+@Trans @RT(7)Trans22 @F @T @F @F @T @F @TL(2)
+abParser.aGetDINTValue.bFound AND (iRequestState >= cREQSTATE_SERVICE_REQPENDING)
+
+@RT(7)Trans22 @F 
+@Step @RT(16)S_RequestPending @F @F @F @F @RT(0) @F 
+@AcbCont @RT(7)unnamed @F 1 
+@Acb @RT(15)ARequestPending @F @T @RT(1)P @RT(0) @F @F @T @TL(3)
+sv_ConnectionStatus := nRequestPending;
+ILogState := KPROT_UserInfoLog('ServiceNet state: %5s', 0, 0, 0, 0, 'request pending');
+
+@F 
+
+@Trans @RT(7)Trans14 @F @T @F @F @T @F @TL(2)
+iRequestState >= cREQSTATE_SERVICE_ACCEPTED
+
+@RT(7)Trans14 @F 
+@Step @RT(17)S_ServiceAccepted @F @F @F @F @RT(0) @F 
+@AcbCont @RT(7)unnamed @F 1 
+@Acb @RT(16)AServiceAccepted @F @T @RT(1)P @RT(0) @F @F @T @TL(3)
+sv_ConnectionStatus := nServiceAccepted;
+ILogState := KPROT_UserInfoLog('ServiceNet state: %5s', 0, 0, 0, 0, 'service accepted');
+
+@F 
+
+@Trans @RT(7)Trans16 @F @T @F @F @T @F @TL(2)
+iRequestState >= cREQSTATE_SERVICE_ACCESSREQ
+
+@RT(7)Trans16 @F 
+@Step @RT(22)S_ServiceAccessRequest @F @F @F @F @RT(0) @F 
+@AcbCont @RT(7)unnamed @F 1 
+@Acb @RT(21)AServiceAccessRequest @F @T @RT(1)P @RT(0) @F @F @T @TL(4)
+sv_HMIResponse := nWaiting; 
+sv_ConnectionStatus := nServiceAccessRequest;
+ILogState := KPROT_UserInfoLog('ServiceNet state: %5s', 0, 0, 0, 0, 'service access request');
+
+@F 
+
+@AltBranch @RT(3)alt @F 2 
+@TransSeq @RT(4)tseq @F 1 
+@Trans @RT(7)Trans17 @F @T @F @F @T @F @TL(2)
+sv_HMIResponse = nNo
+
+@RT(7)Trans17 @F 
+
+@TransSeq @RT(4)tseq @F 3 
+@Trans @RT(7)Trans26 @F @T @F @F @T @F @TL(2)
+sv_HMIResponse = nYes
+
+@RT(7)Trans26 @F 
+@Step @RT(15)S_ServiceActive @F @F @F @F @RT(0) @F 
+@AcbCont @RT(7)unnamed @F 1 
+@Acb @RT(14)AServiceActive @F @T @RT(1)P @RT(0) @F @F @T @TL(3)
+sv_ConnectionStatus := nServiceActive;
+ILogState := KPROT_UserInfoLog('ServiceNet state: %5s', 0, 0, 0, 0, 'service active');
+
+@F 
+
+@Trans @RT(7)Trans23 @F @T @F @F @T @F @TL(2)
+iRequestState = cREQSTATE_SERVICE_CLOSE  // ServiceNet wants to disconnect
+
+@RT(7)Trans23 @F 
+
+
+@Step @RT(15)S_Disconnecting @F @F @T @F @RT(0) @F 
+@AcbCont @RT(7)unnamed @F 4 
+@Acb @RT(14)ACommunication @F @F @RT(1)R @RT(0) @F @F @T @F 
+@Acb @RT(16)AGetRequestState @F @F @RT(1)R @RT(0) @F @F @T @F 
+@Acb @RT(12)AResetParser @F @T @RT(1)P @RT(0) @F @F @T @TL(3)
+abParser.aParse(Execute := FALSE); 
+ILogState := KPROT_UserInfoLog('ServiceNet state: %5s', 0, 0, 0, 0, 'disconnected');
+
+@F 
+@Acb @RT(11)ADisconnect @F @T @RT(1)N @RT(0) @F @F @T @TL(13)
+IF (iRequestState = cREQSTATE_SERVICE_CLOSE) THEN
+   // ServiceNet has sent disconnect command
+   SET_ALARM(erConnectionClosed);
+END_IF;
+
+fbTCPInit(Execute := FALSE);
+fbSNNetConfig(UseServiceNetConfig := FALSE);
+
+iRequestState := 0; 
+sv_ConnectionStatus := nDisconnected;
+sv_bConnect := FALSE;
+STOP_PROCESS_ALGORITHM();
+
+@F 
+
+@Trans @RT(7)Trans38 @F @T @F @F @T @F @TL(2)
+TRUE
+
+@RT(7)Trans38 @F 
+@Step @RT(14)S_Disconnected @F @F @F @F @RT(0) @F 
+@AcbCont @RT(7)unnamed @F 0 
+
+
+@Trans @RT(7)Trans25 @F @T @T @T @T @T @TL(2)
+sv_bConnect
+
+@RT(7)Trans25 @F 
+
+@END_SfcData 
+@SaActions 0 
+@SaTrans 0 
+@SaExits 2 
+@SaExit @SaText @RT(17)TDisconnectClient 1 @TL(7)
+(S_Init.X = FALSE)
+AND (S_ReadVersionInfo.X = FALSE)
+AND (S_TCPInit.X = FALSE)
+AND (S_Disconnecting.X = FALSE)
+AND (S_Disconnected.X = FALSE) 
+AND (sv_bConnect = FALSE)
+
+@RT(15)S_Disconnecting @RT(1)1 @F @F @SaSfc @RT(17)TDisconnectClient 5 @RT(5)DUMMY 
+@BEG_SfcData 2 
+@ExitSeq @RT(4)sseq @F 3 
+@Step @RT(5)Step6 @F @T @F @F @RT(0) @F 
+@AcbCont @RT(7)unnamed @F 1 
+@Acb @RT(7)Action8 @F @F @RT(1)N @RT(0) @F @F @T @F 
+
+@Trans @RT(6)Trans9 @F @T @T @F @T @T @TL(2)
+(*inl.*)
+
+@RT(6)Trans9 @F 
+@Goto @RT(9)unlabeled @F @F 
+@END_SfcData 
+
+@SaExit @SaText @RT(17)TDisconnectServer 1 @TL(2)
+iRequestState = cREQSTATE_SERVICE_CLOSE
+
+@RT(15)S_Disconnecting @RT(1)1 @F @F @SaSfc @RT(17)TDisconnectServer 5 @RT(5)DUMMY 
+@BEG_SfcData 2 
+@ExitSeq @RT(4)sseq @F 3 
+@Step @RT(5)Step6 @F @T @F @F @RT(0) @F 
+@AcbCont @RT(7)unnamed @F 1 
+@Acb @RT(7)Action8 @F @F @RT(1)N @RT(0) @F @F @T @F 
+
+@Trans @RT(6)Trans9 @F @T @T @F @T @T @TL(2)
+(*inl.*)
+
+@RT(6)Trans9 @F 
+@Goto @RT(9)unlabeled @F @F 
+@END_SfcData 
+
+@END_SfcBody 
+
+@@@BEG_Comment@@@ 
+@TL(21)
+@h    ! WARNING !
+@h    The Kemro K2 system (including software) only meets category B according to EN 954-1,
+@h    thus it is not intended for usage in safety-relevant control applications in the field 
+@h    of personal safety (e.g. emergency stop).
+@h    To implement potentially necessary safety-relevant control tasks, always use additional 
+@h    external safety devices that are intended for the particular purpose, and meet the necessary 
+@h    functional safety.
+@h    For further information see EN 954-1 (EN ISO 13849-1) and/or the K2-x00 user manual, chapter 
+@h    "CE conformity, directives and standards".
+
+state machine algorithm 
+when user requests a connection to ServiceNet this algorithm establishes a TCP connection
+and sends a client connection message to ServiceNet. 
+ServiceNet responds by sending a message containing a protocol version information and a "
+request state" number which is used to activate this state. 
+ABParser is used to parse the recieved messages, it provides access to the recieved data via 
+function aGetXXXValue().
+ServiceNet is expected to send a message at least all 30s, otherwise the connection will be closed.
+In case of any error (parsing error, timeout, tcp error, ...) the state changes to "Disconnected" 
+and the algorithm is stopped.
+
+@@@END_Comment@@@ 
+@END_Body 
+
+@END_Contents 

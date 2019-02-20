@@ -1,0 +1,784 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<base:Mask xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xmlns:base="http://www.keba.at/viewedit.model.base" widgetId="kvs.mask" name="MachineEquipmentMask">
+  <resolution width="714" height="476"/>
+  <position x="1" y="1"/>
+  <attributeValues key="Title" value="Machine equipment"/>
+  <attributeValues key="Icon" value="system/hmi/images/maskicons/iconMachEquip.gif"/>
+  <attributeValues key="Background" value="BG_Desktop:30,30,30"/>
+  <attributeValues key="DisplayLevel" value="5"/>
+  <widgetInstances xsi:type="base:MultiPageWidgetInstance" widgetId="keplast.kvs.tabpanelplast" name="tabPanelPlast1" layoutConstraint="CENTER">
+    <resolution width="714" height="476"/>
+    <position/>
+    <attributeValues key="Tabs" value="Basic, Tab1; Extended, Tab2; Extended 2, Tab3; Pump selection 1, Tab4; Pump selection 2, Tab5; Pump selection 3, Tab6"/>
+    <attributeValues key="ActivePage" value="0"/>
+    <attributeValues key="SelectedPage" value="0"/>
+    <pages widgetId="keplast.kvs.tabpanelplast.container" name="Tab1">
+      <resolution width="714" height="446"/>
+      <position/>
+      <attributeValues key="Background" value="BG_Panel:220,220,220"/>
+      <attributeValues key="HelpSubID" value="basic"/>
+      <widgetInstances xsi:type="base:ContainerWidgetInstance" widgetId="kvs.panel" name="panelLeftBasic" layoutConstraint="LEFT">
+        <resolution width="351" height="440"/>
+        <position x="3"/>
+        <attributeValues key="PreferredSize" value="350, 519"/>
+        <widgetInstances xsi:type="base:ContainerWidgetInstance" widgetId="keplast.kvs.borderpanelsmall" name="panelModeSettings" layoutConstraint="null">
+          <resolution width="351" height="182"/>
+          <position/>
+          <attributeValues key="Title" value="Operation and movement settings"/>
+          <widgetInstances widgetId="keplast.kvs.checkboxtext" name="chkboxUseSimplifyProfile" layoutConstraint="null">
+            <resolution width="345" height="29"/>
+            <position x="3" y="33"/>
+            <attributeValues key="Variable" value="system.sv_bSimplifyProfileVis"/>
+          </widgetInstances>
+          <widgetInstances widgetId="keplast.kvs.checkboxtext" name="chkboxAllowFA" layoutConstraint="null">
+            <resolution width="345" height="29"/>
+            <position x="3" y="62"/>
+            <attributeValues key="Variable" value="OperationMode1.sv_bAllowFullAutoMode"/>
+          </widgetInstances>
+          <widgetInstances widgetId="keplast.kvs.comboboxtext" name="comboboxNozzle" layoutConstraint="null">
+            <resolution width="345" height="29"/>
+            <position x="3" y="91"/>
+            <attributeValues key="Variable" value="Nozzle1.sv_NozzleMovementMode"/>
+            <dynamicAttributes key="Create">
+              <value function="isDeviceHydraulic : UserFunctions" equal="true" unequal="false">
+                <parameter key="1" value="devicename; PlastFunctionUtils.createDeviceName(&quot;Nozzle1&quot;)"/>
+              </value>
+            </dynamicAttributes>
+          </widgetInstances>
+          <layout layoutID="kvs.layout.GridLayout" name="GridLayout">
+            <attributeValues key="Rows" value="5"/>
+            <attributeValues key="Columns" value="1"/>
+          </layout>
+        </widgetInstances>
+        <widgetInstances xsi:type="base:ContainerWidgetInstance" widgetId="keplast.kvs.borderpanelsmall" name="panelMoldAdjust" layoutConstraint="null">
+          <resolution width="351" height="95"/>
+          <position y="185"/>
+          <attributeValues key="Title" value="Mold adjust"/>
+          <dynamicAttributes key="Create">
+            <value function="doesDeviceExist : UserFunctions" equal="true" unequal="false">
+              <parameter key="1" value="devicename;PlastFunctionUtils.createDeviceName(&quot;MoldHeight1&quot;)"/>
+            </value>
+          </dynamicAttributes>
+          <widgetInstances widgetId="keplast.kvs.comboboxtext" name="comboboxMoldAdjustMotor1" layoutConstraint="null">
+            <resolution width="345" height="29"/>
+            <position x="3" y="33"/>
+            <attributeValues key="Variable" value="MoldHeight1.sv_MoldHeightAdjustMotor"/>
+            <dynamicAttributes key="Create">
+              <value function="isDeviceHydraulic : UserFunctions" equal="true" unequal="false">
+                <parameter key="1" value="devicename; PlastFunctionUtils.createDeviceName(&quot;Mold1&quot;)"/>
+              </value>
+            </dynamicAttributes>
+          </widgetInstances>
+          <widgetInstances widgetId="keplast.kvs.comboboxtext" name="comboboxMoldAdjustLimitSwitch" layoutConstraint="null">
+            <resolution width="345" height="29"/>
+            <position x="3" y="62"/>
+            <attributeValues key="Variable" value="MoldHeight1.sv_LimitSwitchMode"/>
+          </widgetInstances>
+          <layout layoutID="kvs.layout.GridLayout" name="GridLayout">
+            <attributeValues key="Rows" value="2"/>
+            <attributeValues key="Columns" value="1"/>
+          </layout>
+        </widgetInstances>
+        <widgetInstances xsi:type="base:ContainerWidgetInstance" widgetId="keplast.kvs.borderpanelsmall" name="brdpanelMotor1" layoutConstraint="null">
+          <resolution width="351" height="153"/>
+          <position y="283"/>
+          <attributeValues key="Title" value="Motors"/>
+          <dynamicAttributes key="Create">
+            <value function="hasAnyMotor : UserFunctions" equal="true" unequal="false"/>
+          </dynamicAttributes>
+          <widgetInstances widgetId="keplast.kvs.numfieldtext" name="numfieldMotorY" layoutConstraint="null">
+            <resolution width="345" height="29"/>
+            <position x="3" y="33"/>
+            <attributeValues key="Variable" value="Motor1.sv_dYOnTime"/>
+          </widgetInstances>
+          <widgetInstances widgetId="keplast.kvs.numfieldtext" name="numfieldMotorTri" layoutConstraint="null">
+            <resolution width="345" height="29"/>
+            <position x="3" y="62"/>
+            <attributeValues key="Variable" value="Motor1.sv_dDeltaDelayTime"/>
+          </widgetInstances>
+          <widgetInstances widgetId="keplast.kvs.numfieldtext" name="numfieldMotor2Delay" layoutConstraint="null">
+            <resolution width="345" height="29"/>
+            <position x="3" y="91"/>
+            <attributeValues key="Variable" value="Motor1.sv_dDelayStartMotor2"/>
+            <dynamicAttributes key="Visible">
+              <value function="b1_EQ_true : ViewEditFunctions" equal="true" unequal="false">
+                <parameter key="1" value="kvariable;Motor1.sv_bUseMotor2"/>
+              </value>
+            </dynamicAttributes>
+          </widgetInstances>
+          <widgetInstances widgetId="keplast.kvs.comboboxtext" name="comboboxText3" layoutConstraint="null">
+            <resolution width="345" height="29"/>
+            <position x="3" y="120"/>
+            <attributeValues key="Variable" value="Motor1.sv_bMotorOverloadMode"/>
+          </widgetInstances>
+          <layout layoutID="kvs.layout.GridLayout" name="GridLayout">
+            <attributeValues key="Rows" value="4"/>
+            <attributeValues key="Columns" value="1"/>
+          </layout>
+        </widgetInstances>
+        <layout layoutID="kvs.layout.VerticalFlowLayout" name="VerticalFlowLayout">
+          <attributeValues key="Hgap" value="0"/>
+          <attributeValues key="Vgap" value="3"/>
+          <attributeValues key="OuterGaps" value="false"/>
+        </layout>
+      </widgetInstances>
+      <widgetInstances xsi:type="base:ContainerWidgetInstance" widgetId="kvs.panel" name="panelRightBasic" layoutConstraint="RIGHT">
+        <resolution width="351" height="440"/>
+        <position x="360"/>
+        <attributeValues key="PreferredSize" value="350, 497"/>
+        <widgetInstances xsi:type="base:ContainerWidgetInstance" widgetId="keplast.kvs.borderpanelsmall" name="brdpanelHeatSettings" layoutConstraint="null">
+          <resolution width="351" height="182"/>
+          <position/>
+          <attributeValues key="Title" value="Heat settings"/>
+          <widgetInstances widgetId="keplast.kvs.numfieldtext" name="numfieldNoOfZones" layoutConstraint="null">
+            <resolution width="345" height="29"/>
+            <position x="3" y="33"/>
+            <attributeValues key="Variable" value="HeatingNozzle1.sv_iNumberOfZones"/>
+          </widgetInstances>
+          <widgetInstances widgetId="keplast.kvs.numfieldtext" name="numfieldMaxTemp" layoutConstraint="null">
+            <resolution width="345" height="29"/>
+            <position x="3" y="62"/>
+            <attributeValues key="Variable" value="HeatingNozzle1.sv_rMaxTemperature"/>
+          </widgetInstances>
+          <widgetInstances widgetId="keplast.kvs.numfieldtext" name="numfieldTempDiff" layoutConstraint="null">
+            <resolution width="345" height="29"/>
+            <position x="3" y="91"/>
+            <attributeValues key="Variable" value="HeatingNozzle1.sv_TempDiff"/>
+          </widgetInstances>
+          <widgetInstances widgetId="keplast.kvs.numfieldtext" name="numfieldPWMCycleTime" layoutConstraint="null">
+            <resolution width="345" height="29"/>
+            <position x="3" y="120"/>
+            <attributeValues key="Variable" value="HeatingNozzle1.sv_PWMCycleTime"/>
+          </widgetInstances>
+          <widgetInstances widgetId="keplast.kvs.numfieldtext" name="numfieldPWMMinPulseTime" layoutConstraint="null">
+            <resolution width="345" height="29"/>
+            <position x="3" y="149"/>
+            <attributeValues key="Variable" value="HeatingNozzle1.sv_PWMMinPulseTime"/>
+          </widgetInstances>
+          <layout layoutID="kvs.layout.GridLayout" name="GridLayout">
+            <attributeValues key="Rows" value="5"/>
+            <attributeValues key="Columns" value="1"/>
+          </layout>
+        </widgetInstances>
+        <widgetInstances xsi:type="base:ContainerWidgetInstance" widgetId="keplast.kvs.borderpanelsmall" name="brdPanelValveGate" layoutConstraint="null">
+          <resolution width="351" height="124"/>
+          <position y="185"/>
+          <attributeValues key="PreferredSize" value="351, 124"/>
+          <attributeValues key="Title" value="Valve gates"/>
+          <dynamicAttributes key="Create">
+            <value function="doesDeviceExist : UserFunctions" equal="true" unequal="false">
+              <parameter key="1" value="devicename; PlastFunctionUtils.createDeviceName(&quot;ValveGate1&quot;)"/>
+            </value>
+          </dynamicAttributes>
+          <widgetInstances widgetId="keplast.kvs.comboboxtext" name="comboboxValvegate" layoutConstraint="null">
+            <resolution width="345" height="29"/>
+            <position x="3" y="33"/>
+            <attributeValues key="Variable" value="ValveGate1.sv_bBistableValveGates"/>
+          </widgetInstances>
+          <widgetInstances widgetId="keplast.kvs.numfieldtext" name="numFieldImpulseTime" layoutConstraint="null">
+            <resolution width="345" height="29"/>
+            <position x="3" y="62"/>
+            <attributeValues key="Variable" value="ValveGate1.sv_dBistableImpulseTime"/>
+            <dynamicAttributes key="Visible">
+              <value function="b1_EQ_true : ViewEditFunctions" equal="true" unequal="false">
+                <parameter key="1" value="kvariable; ValveGate1.sv_bBistableValveGates"/>
+              </value>
+            </dynamicAttributes>
+          </widgetInstances>
+          <widgetInstances widgetId="keplast.kvs.numfieldtext" name="numFieldImpulsDist" layoutConstraint="null">
+            <resolution width="345" height="29"/>
+            <position x="3" y="91"/>
+            <attributeValues key="Variable" value="ValveGate1.sv_rBistableImpulseDistance"/>
+            <dynamicAttributes key="Visible">
+              <value function="b1_EQ_true : ViewEditFunctions" equal="true" unequal="false">
+                <parameter key="1" value="kvariable; ValveGate1.sv_bBistableValveGates"/>
+              </value>
+            </dynamicAttributes>
+          </widgetInstances>
+          <layout layoutID="kvs.layout.GridLayout" name="GridLayout">
+            <attributeValues key="Rows" value="3"/>
+            <attributeValues key="Columns" value="1"/>
+          </layout>
+        </widgetInstances>
+        <widgetInstances xsi:type="base:ContainerWidgetInstance" widgetId="kvs.panel" name="pOptLightOrSafety" layoutConstraint="null">
+          <resolution width="351" height="128"/>
+          <position y="312"/>
+          <attributeValues key="PreferredSize" value="351, 128"/>
+          <widgetInstances xsi:type="base:ContainerWidgetInstance" widgetId="keplast.kvs.borderpanelsmall" name="pLightCurtain" layoutConstraint="0, 1, 100, 96">
+            <resolution width="351" height="122"/>
+            <position y="1"/>
+            <attributeValues key="Title" value="Light Curtain"/>
+            <dynamicAttributes key="Create">
+              <value function="doesDeviceExist : UserFunctions" equal="true" unequal="false">
+                <parameter key="1" value="devicename;PlastFunctionUtils.createDeviceName(&quot;LightCurtain1&quot;)"/>
+              </value>
+            </dynamicAttributes>
+            <widgetInstances widgetId="keplast.kvs.comboboxtext" name="comboboxText1" layoutConstraint="null">
+              <resolution width="345" height="28"/>
+              <position x="3" y="33"/>
+              <attributeValues key="Variable" value="LightCurtain1.sv_LCInterruptReaction"/>
+            </widgetInstances>
+            <widgetInstances widgetId="keplast.kvs.comboboxtext" name="comboboxText2" layoutConstraint="null">
+              <resolution width="345" height="28"/>
+              <position x="3" y="61"/>
+              <attributeValues key="Variable" value="LightCurtain1.sv_LCActivation"/>
+            </widgetInstances>
+            <layout layoutID="kvs.layout.GridLayout" name="GridLayout">
+              <attributeValues key="Rows" value="3"/>
+              <attributeValues key="Columns" value="1"/>
+            </layout>
+          </widgetInstances>
+          <widgetInstances xsi:type="base:ContainerWidgetInstance" widgetId="keplast.kvs.borderpanelsmall" name="brdpanelSafetyGate" layoutConstraint="0, 1, 100, 97">
+            <resolution width="351" height="124"/>
+            <position y="1"/>
+            <attributeValues key="Title" value="Safety gates"/>
+            <dynamicAttributes key="Visible">
+              <value function="doesDeviceExist_OR_doesDeviceExist : UserFunctions" equal="true" unequal="false">
+                <parameter key="1" value="devicename;PlastFunctionUtils.createDeviceName(&quot;SafetyGateMold1&quot;)"/>
+                <parameter key="2" value="devicename;PlastFunctionUtils.createDeviceName(&quot;SafetyGateAuto1&quot;)"/>
+              </value>
+            </dynamicAttributes>
+            <widgetInstances widgetId="keplast.kvs.numfieldtext" name="numfieldSGAuto" layoutConstraint="null">
+              <resolution width="345" height="29"/>
+              <position x="3" y="33"/>
+              <attributeValues key="Variable" value="SafetyGateAuto1.sv_dSupervisionTime"/>
+              <dynamicAttributes key="Create">
+                <value function="doesDeviceExist : UserFunctions" equal="true" unequal="false">
+                  <parameter key="1" value="devicename; PlastFunctionUtils.createDeviceName(&quot;SafetyGateAuto1&quot;)"/>
+                </value>
+              </dynamicAttributes>
+            </widgetInstances>
+            <widgetInstances widgetId="keplast.kvs.numfieldtext" name="numfieldSGMold" layoutConstraint="null">
+              <resolution width="345" height="29"/>
+              <position x="3" y="62"/>
+              <attributeValues key="Variable" value="SafetyGateMold1.sv_dSupervisionTime"/>
+              <dynamicAttributes key="Create">
+                <value function="doesVariableExist : UserFunctions" equal="true" unequal="false">
+                  <parameter key="1" value="variableasstring; PlastFunctionUtils.createVariableString(&quot;SafetyGateMold1.di_Open&quot;)"/>
+                </value>
+              </dynamicAttributes>
+            </widgetInstances>
+            <layout layoutID="kvs.layout.GridLayout" name="GridLayout">
+              <attributeValues key="Rows" value="3"/>
+              <attributeValues key="Columns" value="1"/>
+            </layout>
+          </widgetInstances>
+          <layout layoutID="kvs.layout.PercentLayout" name="PercentLayout"/>
+        </widgetInstances>
+        <layout layoutID="kvs.layout.VerticalFlowLayout" name="VerticalFlowLayout">
+          <attributeValues key="Hgap" value="0"/>
+          <attributeValues key="Vgap" value="3"/>
+          <attributeValues key="OuterGaps" value="false"/>
+        </layout>
+      </widgetInstances>
+      <layout layoutID="keplast.kvs.layout.horizontalsplitlayout" name="HorizontalSplitLayout"/>
+    </pages>
+    <pages widgetId="keplast.kvs.tabpanelplast.container" name="Tab2">
+      <resolution width="714" height="446"/>
+      <position/>
+      <attributeValues key="Background" value="BG_Panel:220,220,220"/>
+      <attributeValues key="HelpSubID" value="ext"/>
+      <widgetInstances xsi:type="base:ContainerWidgetInstance" widgetId="kvs.panel" name="panelLeftExtended" layoutConstraint="LEFT">
+        <resolution width="351" height="440"/>
+        <position x="3"/>
+        <attributeValues key="PreferredSize" value="351, 499"/>
+        <widgetInstances xsi:type="base:ContainerWidgetInstance" widgetId="keplast.kvs.borderpanelsmall" name="panelOilFilter" layoutConstraint="null">
+          <resolution width="351" height="124"/>
+          <position/>
+          <attributeValues key="Title" value="Oil filter"/>
+          <dynamicAttributes key="Create">
+            <value function="doesVariableExist : UserFunctions" equal="true" unequal="false">
+              <parameter key="1" value="variableasstring; PlastFunctionUtils.createVariableString(&quot;OilMaintenance1.di_OilFilterOk&quot;)"/>
+            </value>
+          </dynamicAttributes>
+          <widgetInstances widgetId="keplast.kvs.comboboxtext" name="comboboxOilFilterHedge" layoutConstraint="null">
+            <resolution width="345" height="29"/>
+            <position x="3" y="33"/>
+            <attributeValues key="Variable" value="OilMaintenance1.sv_FilterMode"/>
+            <attributeValues key="PreferredSizeComboBox" value="140, 29"/>
+          </widgetInstances>
+          <widgetInstances widgetId="keplast.kvs.numfieldtext" name="numfieldOilFilter" layoutConstraint="null">
+            <resolution width="345" height="29"/>
+            <position x="3" y="62"/>
+            <attributeValues key="Variable" value="OilMaintenance1.sv_dFilterAlarmTime"/>
+          </widgetInstances>
+          <layout layoutID="kvs.layout.GridLayout" name="GridLayout">
+            <attributeValues key="Rows" value="3"/>
+            <attributeValues key="Columns" value="1"/>
+          </layout>
+        </widgetInstances>
+        <widgetInstances xsi:type="base:ContainerWidgetInstance" widgetId="keplast.kvs.borderpanelsmall" name="panelOilLevel" layoutConstraint="null">
+          <resolution width="351" height="124"/>
+          <position y="127"/>
+          <attributeValues key="Title" value="Oil level"/>
+          <dynamicAttributes key="Create">
+            <value function="doesVariableExist : UserFunctions" equal="true" unequal="false">
+              <parameter key="1" value="variableasstring; PlastFunctionUtils.createVariableString(&quot;OilMaintenance1.di_OilLevelOk&quot;)"/>
+            </value>
+          </dynamicAttributes>
+          <widgetInstances widgetId="keplast.kvs.comboboxtext" name="comboboxOilLevelHedge" layoutConstraint="null">
+            <resolution width="345" height="29"/>
+            <position x="3" y="33"/>
+            <attributeValues key="Variable" value="OilMaintenance1.sv_OilLevelMode"/>
+            <attributeValues key="PreferredSizeComboBox" value="140, 29"/>
+          </widgetInstances>
+          <widgetInstances widgetId="keplast.kvs.numfieldtext" name="numfieldOilLevel" layoutConstraint="null">
+            <resolution width="345" height="29"/>
+            <position x="3" y="62"/>
+            <attributeValues key="Variable" value="OilMaintenance1.sv_dOilLevelTime"/>
+          </widgetInstances>
+          <layout layoutID="kvs.layout.GridLayout" name="GridLayout">
+            <attributeValues key="Rows" value="3"/>
+            <attributeValues key="Columns" value="1"/>
+          </layout>
+        </widgetInstances>
+        <widgetInstances xsi:type="base:ContainerWidgetInstance" widgetId="keplast.kvs.borderpanelsmall" name="panelReturnLineOilFilter" layoutConstraint="null">
+          <resolution width="351" height="124"/>
+          <position y="254"/>
+          <attributeValues key="Title" value="Return line oil filter"/>
+          <dynamicAttributes key="Create">
+            <value function="doesVariableExist : UserFunctions" equal="true" unequal="false">
+              <parameter key="1" value="variableasstring; PlastFunctionUtils.createVariableString(&quot;OilMaintenance1.di_ReturnLineOilFilter&quot;)"/>
+            </value>
+          </dynamicAttributes>
+          <widgetInstances widgetId="keplast.kvs.checkboxtext" name="chkboxReturnLineOilFilterUsed" layoutConstraint="null">
+            <resolution width="345" height="29"/>
+            <position x="3" y="33"/>
+            <attributeValues key="Variable" value="OilMaintenance1.sv_bUseReturnLineFilter"/>
+          </widgetInstances>
+          <widgetInstances widgetId="keplast.kvs.numfieldtext" name="numfieldReturnLineOilFilter" layoutConstraint="null">
+            <resolution width="345" height="29"/>
+            <position x="3" y="62"/>
+            <attributeValues key="Variable" value="OilMaintenance1.sv_dReturnLineFilterAlarmTime"/>
+            <attributeValues key="Editable" value="false"/>
+            <dynamicAttributes key="Editable">
+              <value function="b1_EQ_true : ViewEditFunctions" equal="true" unequal="false">
+                <parameter key="1" value="kvariable; OilMaintenance1.sv_bUseReturnLineFilter"/>
+              </value>
+            </dynamicAttributes>
+          </widgetInstances>
+          <layout layoutID="kvs.layout.GridLayout" name="GridLayout">
+            <attributeValues key="Rows" value="3"/>
+            <attributeValues key="Columns" value="1"/>
+          </layout>
+        </widgetInstances>
+        <layout layoutID="kvs.layout.VerticalFlowLayout" name="VerticalFlowLayout">
+          <attributeValues key="Hgap" value="0"/>
+          <attributeValues key="Vgap" value="3"/>
+          <attributeValues key="OuterGaps" value="false"/>
+        </layout>
+      </widgetInstances>
+      <widgetInstances xsi:type="base:ContainerWidgetInstance" widgetId="kvs.panel" name="panelRightExtended" layoutConstraint="RIGHT">
+        <resolution width="351" height="440"/>
+        <position x="360"/>
+        <attributeValues key="PreferredSize" value="351, 521"/>
+        <widgetInstances xsi:type="base:ContainerWidgetInstance" widgetId="keplast.kvs.borderpanelsmall" name="panelEuromap" layoutConstraint="null">
+          <resolution width="351" height="153"/>
+          <position/>
+          <attributeValues key="Title" value="Euromap"/>
+          <dynamicAttributes key="Create">
+            <value function="doesDeviceExist : UserFunctions" equal="true" unequal="false">
+              <parameter key="1" value="devicename; PlastFunctionUtils.createDeviceName(&quot;Euromap&quot;)"/>
+            </value>
+          </dynamicAttributes>
+          <widgetInstances widgetId="keplast.kvs.comboboxtext" name="comboboxEuromapType" layoutConstraint="null">
+            <resolution width="345" height="29"/>
+            <position x="3" y="33"/>
+            <attributeValues key="Variable" value="Euromap.sv_InterfaceType"/>
+            <dynamicAttributes key="Enabled">
+              <value function="n1_LT_const : ViewEditFunctions" equal="true" unequal="false">
+                <parameter key="1" value="kvariable;system.sv_OperationMode"/>
+                <parameter key="2" value="double;system.sv_OperationMode;nHalfAutomatic"/>
+              </value>
+            </dynamicAttributes>
+          </widgetInstances>
+          <widgetInstances xsi:type="base:ContainerWidgetInstance" widgetId="kvs.panel" name="cIntermediatePosition" layoutConstraint="null">
+            <resolution width="345" height="29"/>
+            <position x="3" y="62"/>
+            <dynamicAttributes key="Visible">
+              <value function="n1_GT_const : ViewEditFunctions" equal="true" unequal="false">
+                <parameter key="1" value="kvariable;Euromap.sv_InterfaceType"/>
+                <parameter key="2" value="double;Euromap.sv_InterfaceType;nSwitchedOff"/>
+              </value>
+            </dynamicAttributes>
+            <widgetInstances widgetId="kvs.varlabel" name="lblOpenInterPos" layoutConstraint="1, 0, 53, 100">
+              <resolution width="182" height="29"/>
+              <position x="3"/>
+              <attributeValues key="Variable" value="Mold1.sv_rIntermedMoldOpenPosRobot"/>
+              <attributeValues key="LabelType" value="Short Variable Label"/>
+              <attributeValues key="Alignment" value="MIDDLE/LEFT"/>
+            </widgetInstances>
+            <widgetInstances widgetId="kvs.plausnumfield" name="numFieldInterPos" layoutConstraint="72,0,17,100">
+              <resolution width="58" height="29"/>
+              <position x="248"/>
+              <attributeValues key="Variable" value="Mold1.sv_rIntermedMoldOpenPosRobot"/>
+              <attributeValues key="PreferredSize" value="34, 30"/>
+              <dynamicAttributes key="Enabled">
+                <value function="n1_LT_const : ViewEditFunctions" equal="true" unequal="false">
+                  <parameter key="1" value="kvariable;system.sv_OperationMode"/>
+                  <parameter key="2" value="double;system.sv_OperationMode;nHalfAutomatic"/>
+                </value>
+              </dynamicAttributes>
+            </widgetInstances>
+            <widgetInstances widgetId="kvs.checkbox" name="cbxUseInterPos" layoutConstraint="54, 0, 12, 100">
+              <resolution width="41" height="29"/>
+              <position x="186"/>
+              <attributeValues key="Variable" value="Euromap.sv_bUseIntermediatePos"/>
+              <dynamicAttributes key="Enabled">
+                <value function="n1_LT_const : ViewEditFunctions" equal="true" unequal="false">
+                  <parameter key="1" value="kvariable;system.sv_OperationMode"/>
+                  <parameter key="2" value="double;system.sv_OperationMode;nHalfAutomatic"/>
+                </value>
+              </dynamicAttributes>
+            </widgetInstances>
+            <widgetInstances widgetId="kvs.varlabel" name="lblUnitInterPos" layoutConstraint="88, 0, 11, 97">
+              <resolution width="37" height="28"/>
+              <position x="303"/>
+              <attributeValues key="Variable" value="Mold1.sv_rIntermedMoldOpenPosRobot"/>
+              <attributeValues key="Alignment" value="MIDDLE/LEFT"/>
+            </widgetInstances>
+            <layout layoutID="kvs.layout.PercentLayout" name="PercentLayout"/>
+          </widgetInstances>
+          <widgetInstances widgetId="keplast.kvs.comboboxtext" name="comboboxCore1Signal" layoutConstraint="null">
+            <resolution width="345" height="29"/>
+            <position x="3" y="91"/>
+            <attributeValues key="Variable" value="Euromap.sv_iCoreSignal1Connection"/>
+            <attributeValues key="ShowInvalidValues" value="false"/>
+            <dynamicAttributes key="Visible">
+              <value function="n1_GE_const : ViewEditFunctions" equal="true" unequal="false">
+                <parameter key="1" value="kvariable;Euromap.sv_InterfaceType"/>
+                <parameter key="2" value="double;Euromap.sv_InterfaceType;nEuromap12"/>
+              </value>
+            </dynamicAttributes>
+            <dynamicAttributes key="Enabled">
+              <value function="n1_LT_const : ViewEditFunctions" equal="true" unequal="false">
+                <parameter key="1" value="kvariable;system.sv_OperationMode"/>
+                <parameter key="2" value="double;system.sv_OperationMode;nHalfAutomatic"/>
+              </value>
+            </dynamicAttributes>
+          </widgetInstances>
+          <widgetInstances widgetId="keplast.kvs.comboboxtext" name="coboboxText1" layoutConstraint="null">
+            <resolution width="345" height="29"/>
+            <position x="3" y="120"/>
+            <attributeValues key="Variable" value="Euromap.sv_iCoreSignal2Connection"/>
+            <attributeValues key="ShowInvalidValues" value="false"/>
+            <dynamicAttributes key="Visible">
+              <value function="n1_GE_const : ViewEditFunctions" equal="true" unequal="false">
+                <parameter key="1" value="kvariable;Euromap.sv_InterfaceType"/>
+                <parameter key="2" value="double;Euromap.sv_InterfaceType;nEuromap67"/>
+              </value>
+            </dynamicAttributes>
+            <dynamicAttributes key="Enabled">
+              <value function="n1_LT_const : ViewEditFunctions" equal="true" unequal="false">
+                <parameter key="1" value="kvariable;system.sv_OperationMode"/>
+                <parameter key="2" value="double;system.sv_OperationMode;nHalfAutomatic"/>
+              </value>
+            </dynamicAttributes>
+          </widgetInstances>
+          <layout layoutID="kvs.layout.GridLayout" name="GridLayout">
+            <attributeValues key="Rows" value="4"/>
+            <attributeValues key="Columns" value="1"/>
+          </layout>
+        </widgetInstances>
+        <widgetInstances xsi:type="base:ContainerWidgetInstance" widgetId="keplast.kvs.borderpanelsmall" name="panelEuromap_Eco" layoutConstraint="null">
+          <resolution width="351" height="66"/>
+          <position y="156"/>
+          <attributeValues key="Title" value="Euromap"/>
+          <dynamicAttributes key="Create">
+            <value function="doesDeviceExist : UserFunctions" equal="true" unequal="false">
+              <parameter key="1" value="devicename; PlastFunctionUtils.createDeviceName(&quot;EcoRobot&quot;)"/>
+            </value>
+          </dynamicAttributes>
+          <widgetInstances widgetId="keplast.kvs.checkboxtext" name="checkboxEuromapEco" layoutConstraint="null">
+            <resolution width="345" height="29"/>
+            <position x="3" y="33"/>
+            <attributeValues key="Variable" value="EcoRobot.sv_bUseEcoRobot"/>
+          </widgetInstances>
+          <layout layoutID="kvs.layout.GridLayout" name="GridLayout">
+            <attributeValues key="Rows" value="1"/>
+            <attributeValues key="Columns" value="1"/>
+          </layout>
+        </widgetInstances>
+        <widgetInstances xsi:type="base:ContainerWidgetInstance" widgetId="keplast.kvs.borderpanelsmall" name="panelAccumulator" layoutConstraint="null">
+          <resolution width="351" height="124"/>
+          <position y="225"/>
+          <attributeValues key="Title" value="Accumulator"/>
+          <dynamicAttributes key="Create">
+            <value function="doesDeviceExist : UserFunctions" equal="true" unequal="false">
+              <parameter key="1" value="devicename; PlastFunctionUtils.createDeviceName(&quot;Accumulator1&quot;)"/>
+            </value>
+          </dynamicAttributes>
+          <widgetInstances widgetId="keplast.kvs.checkboxtext" name="chkboxUseAccu" layoutConstraint="null">
+            <resolution width="345" height="29"/>
+            <position x="3" y="33"/>
+            <attributeValues key="Variable" value="Accumulator1.sv_bUseAccumulator"/>
+          </widgetInstances>
+          <widgetInstances widgetId="keplast.kvs.numfieldtext" name="numfieldAccumulatorPressure" layoutConstraint="null">
+            <resolution width="345" height="29"/>
+            <position x="3" y="62"/>
+            <attributeValues key="Variable" value="Accumulator1.sv_ConstAccuRecharge.Pressure.Output.rOutputValue"/>
+          </widgetInstances>
+          <widgetInstances widgetId="keplast.kvs.numfieldtext" name="numfieldAccumulatorFlow" layoutConstraint="null">
+            <resolution width="345" height="29"/>
+            <position x="3" y="91"/>
+            <attributeValues key="Variable" value="Accumulator1.sv_ConstAccuRecharge.Velocity.Output.rOutputValue"/>
+          </widgetInstances>
+          <layout layoutID="kvs.layout.GridLayout" name="GridLayout">
+            <attributeValues key="Rows" value="3"/>
+            <attributeValues key="Columns" value="1"/>
+          </layout>
+        </widgetInstances>
+        <widgetInstances xsi:type="base:ContainerWidgetInstance" widgetId="keplast.kvs.borderpanelsmall" name="panelBuzzer" layoutConstraint="null">
+          <resolution width="351" height="124"/>
+          <position x="351"/>
+          <attributeValues key="Title" value="Buzzer"/>
+          <dynamicAttributes key="Create">
+            <value function="doesVariableExist : UserFunctions" equal="true" unequal="false">
+              <parameter key="1" value="variableasstring; PlastFunctionUtils.createVariableString(&quot;OperationMode1.do_Buzzer&quot;)"/>
+            </value>
+          </dynamicAttributes>
+          <widgetInstances widgetId="keplast.kvs.numfieldtext" name="numfieldBuzzerTime" layoutConstraint="null">
+            <resolution width="345" height="29"/>
+            <position x="3" y="33"/>
+            <attributeValues key="Variable" value="OperationMode1.sv_dBuzzerTime"/>
+          </widgetInstances>
+          <widgetInstances widgetId="keplast.kvs.numfieldtext" name="numfieldBuzzerRingTime" layoutConstraint="null">
+            <resolution width="345" height="29"/>
+            <position x="3" y="62"/>
+            <attributeValues key="Variable" value="OperationMode1.sv_dBuzzerPulseTime"/>
+          </widgetInstances>
+          <layout layoutID="kvs.layout.GridLayout" name="GridLayout">
+            <attributeValues key="Rows" value="3"/>
+            <attributeValues key="Columns" value="1"/>
+          </layout>
+        </widgetInstances>
+        <layout layoutID="kvs.layout.VerticalFlowLayout" name="VerticalFlowLayout">
+          <attributeValues key="Hgap" value="0"/>
+          <attributeValues key="Vgap" value="3"/>
+          <attributeValues key="OuterGaps" value="false"/>
+        </layout>
+      </widgetInstances>
+      <layout layoutID="keplast.kvs.layout.horizontalsplitlayout" name="HorizontalSplitLayout"/>
+    </pages>
+    <pages widgetId="keplast.kvs.tabpanelplast.container" name="Tab3">
+      <resolution width="714" height="446"/>
+      <position/>
+      <attributeValues key="Background" value="BG_Panel:220,220,220"/>
+      <attributeValues key="HelpSubID" value="ext2"/>
+      <widgetInstances xsi:type="base:ContainerWidgetInstance" widgetId="kvs.panel" name="panelLeftExtended2" layoutConstraint="LEFT">
+        <resolution width="351" height="440"/>
+        <position x="3"/>
+        <attributeValues key="PreferredSize" value="351, 495"/>
+        <widgetInstances xsi:type="base:ContainerWidgetInstance" widgetId="keplast.kvs.borderpanelsmall" name="panelOilPreHeating" layoutConstraint="null">
+          <resolution width="351" height="124"/>
+          <position/>
+          <attributeValues key="Title" value="Oil pre heating"/>
+          <dynamicAttributes key="Create">
+            <value function="doesDeviceExist : UserFunctions" equal="true" unequal="false">
+              <parameter key="1" value="devicename; PlastFunctionUtils.createDeviceName(&quot;OilPreHeating1&quot;)"/>
+            </value>
+          </dynamicAttributes>
+          <widgetInstances widgetId="keplast.kvs.numfieldtext" name="numfieldVelocity" layoutConstraint="null">
+            <resolution width="345" height="29"/>
+            <position x="3" y="33"/>
+            <attributeValues key="Variable" value="OilPreHeating1.sv_OilPreHeatingConstVis.Velocity.Output.rOutputValue"/>
+          </widgetInstances>
+          <widgetInstances widgetId="keplast.kvs.numfieldtext" name="numfieldPressure" layoutConstraint="null">
+            <resolution width="345" height="29"/>
+            <position x="3" y="62"/>
+            <attributeValues key="Variable" value="OilPreHeating1.sv_OilPreHeatingConstVis.Pressure.Output.rOutputValue"/>
+          </widgetInstances>
+          <layout layoutID="kvs.layout.GridLayout" name="GridLayout">
+            <attributeValues key="Rows" value="3"/>
+            <attributeValues key="Columns" value="1"/>
+          </layout>
+        </widgetInstances>
+        <widgetInstances xsi:type="base:ContainerWidgetInstance" widgetId="keplast.kvs.borderpanelsmall" name="panelMoldPressureSensor" layoutConstraint="null">
+          <resolution width="351" height="124"/>
+          <position y="127"/>
+          <attributeValues key="Title" value="Cavity pressure sensors"/>
+          <dynamicAttributes key="Create">
+            <value function="doesVariableExist : UserFunctions" equal="true" unequal="false">
+              <parameter key="1" value="variableasstring; PlastFunctionUtils.createVariableString(&quot;Mold1.ai_CavityPressure1&quot;)"/>
+            </value>
+          </dynamicAttributes>
+          <widgetInstances widgetId="keplast.kvs.numfieldtext" name="numfieldMoldPressure" layoutConstraint="null">
+            <resolution width="345" height="29"/>
+            <position x="3" y="33"/>
+            <attributeValues key="Variable" value="Injection1.sv_iSelCavityPressureSensor"/>
+          </widgetInstances>
+          <widgetInstances widgetId="keplast.kvs.checkboxtext" name="checkboxCavityPressMeasEnabled" layoutConstraint="null">
+            <resolution width="345" height="29"/>
+            <position x="3" y="62"/>
+            <attributeValues key="Variable" value="Mold1.sv_bActivateCavityPressMeas"/>
+          </widgetInstances>
+          <layout layoutID="kvs.layout.GridLayout" name="GridLayout">
+            <attributeValues key="Rows" value="3"/>
+            <attributeValues key="Columns" value="1"/>
+          </layout>
+        </widgetInstances>
+        <widgetInstances xsi:type="base:ContainerWidgetInstance" widgetId="keplast.kvs.borderpanelsmall" name="panelPhotosensor" layoutConstraint="null">
+          <resolution width="351" height="124"/>
+          <position y="254"/>
+          <attributeValues key="Title" value="Photosensor"/>
+          <dynamicAttributes key="Create">
+            <value function="doesVariableExist : UserFunctions" equal="true" unequal="false">
+              <parameter key="1" value="variableasstring; PlastFunctionUtils.createVariableString(&quot;PartDetection1.di_PhotoSensor&quot;)"/>
+            </value>
+          </dynamicAttributes>
+          <widgetInstances widgetId="keplast.kvs.checkboxtext" name="chkboxUsePhotosensor" layoutConstraint="null">
+            <resolution width="345" height="29"/>
+            <position x="3" y="33"/>
+            <attributeValues key="Variable" value="PartDetection1.sv_bUsePhotoSensor"/>
+          </widgetInstances>
+          <widgetInstances widgetId="keplast.kvs.actsetnumfieldtext" name="numfieldPhotosensorTimeout" layoutConstraint="null">
+            <resolution width="345" height="29"/>
+            <position x="3" y="62"/>
+            <attributeValues key="Variable" value="PartDetection1.sv_dPhotoSensorTimeoutSet"/>
+            <attributeValues key="VariableActual" value="PartDetection1.sv_dPhotoSensorTimeoutAct"/>
+            <dynamicAttributes key="Enabled">
+              <value function="b1_EQ_true : ViewEditFunctions" equal="true" unequal="false">
+                <parameter key="1" value="kvariable; PartDetection1.sv_bUsePhotoSensor"/>
+              </value>
+            </dynamicAttributes>
+          </widgetInstances>
+          <layout layoutID="kvs.layout.GridLayout" name="GridLayout">
+            <attributeValues key="Rows" value="3"/>
+            <attributeValues key="Columns" value="1"/>
+          </layout>
+        </widgetInstances>
+        <layout layoutID="kvs.layout.VerticalFlowLayout" name="VerticalFlowLayout">
+          <attributeValues key="Hgap" value="0"/>
+          <attributeValues key="Vgap" value="3"/>
+          <attributeValues key="OuterGaps" value="false"/>
+        </layout>
+      </widgetInstances>
+      <widgetInstances xsi:type="base:ContainerWidgetInstance" widgetId="kvs.panel" name="panelRightExtended2" layoutConstraint="RIGHT">
+        <resolution width="351" height="440"/>
+        <position x="360"/>
+        <attributeValues key="PreferredSize" value="351, 568"/>
+        <widgetInstances xsi:type="base:ContainerWidgetInstance" widgetId="keplast.kvs.borderpanelsmall" name="panelServoValveInject" layoutConstraint="null">
+          <resolution width="351" height="124"/>
+          <position/>
+          <attributeValues key="Title" value="Servo valve inject"/>
+          <attributeValues key="PreferredSize" value="351, 124"/>
+          <dynamicAttributes key="Create">
+            <value function="doesDeviceExist : UserFunctions" equal="true" unequal="false">
+              <parameter key="1" value="devicename;PlastFunctionUtils.createDeviceName(&quot;ValveServoInj1&quot;)"/>
+            </value>
+          </dynamicAttributes>
+          <widgetInstances widgetId="keplast.kvs.checkboxtext" name="chkboxServoValveFwdWithPB" layoutConstraint="null">
+            <resolution width="345" height="29"/>
+            <position x="3" y="33"/>
+            <attributeValues key="Variable" value="ValveServoInj1.sv_bServoValveFwdWithPB"/>
+            <attributeValues key="TextLabelType" value="Long Variable Label"/>
+          </widgetInstances>
+          <widgetInstances widgetId="keplast.kvs.numfieldtext" name="numfieldServoValveMinVoltage" layoutConstraint="null">
+            <resolution width="345" height="29"/>
+            <position x="3" y="62"/>
+            <attributeValues key="Variable" value="ValveServoInj1.sv_rServoMinVoltage"/>
+          </widgetInstances>
+          <widgetInstances widgetId="keplast.kvs.numfieldtext" name="numfieldServoValveMaxVoltage" layoutConstraint="null">
+            <resolution width="345" height="29"/>
+            <position x="3" y="91"/>
+            <attributeValues key="Variable" value="ValveServoInj1.sv_rServoMaxVoltage"/>
+          </widgetInstances>
+          <layout layoutID="kvs.layout.GridLayout" name="GridLayout">
+            <attributeValues key="Rows" value="3"/>
+            <attributeValues key="Columns" value="1"/>
+            <attributeValues key="Vgap" value="0"/>
+            <attributeValues key="Hgap" value="0"/>
+          </layout>
+        </widgetInstances>
+        <layout layoutID="kvs.layout.VerticalFlowLayout" name="VerticalFlowLayout">
+          <attributeValues key="Hgap" value="0"/>
+          <attributeValues key="Vgap" value="3"/>
+          <attributeValues key="OuterGaps" value="false"/>
+        </layout>
+      </widgetInstances>
+      <layout layoutID="keplast.kvs.layout.horizontalsplitlayout" name="HorizontalSplitLayout"/>
+    </pages>
+    <pages widgetId="keplast.kvs.tabpanelplast.container" name="Tab4">
+      <resolution width="714" height="446"/>
+      <position/>
+      <attributeValues key="Background" value="BG_Panel:220,220,220"/>
+      <attributeValues key="HelpSubID" value="pumpsel1"/>
+      <dynamicAttributes key="Create">
+        <value function="hasAnyPump : UserFunctions" equal="true" unequal="false"/>
+      </dynamicAttributes>
+      <widgetInstances xsi:type="base:CompositeWidgetInstance" widgetId="b6f97dfc-3f94-4853-8cef-07f0c66e011d" name="pumpSelectionpanel1" layoutConstraint="LEFT">
+        <resolution width="351" height="414"/>
+        <position x="3"/>
+        <attributeValues key="IdxMin" value="1"/>
+        <attributeValues key="IdxMax" value="12"/>
+      </widgetInstances>
+      <widgetInstances xsi:type="base:CompositeWidgetInstance" widgetId="b6f97dfc-3f94-4853-8cef-07f0c66e011d" name="pumpSelectionpanel2" layoutConstraint="RIGHT">
+        <resolution width="351" height="414"/>
+        <position x="360"/>
+        <attributeValues key="IdxMin" value="13"/>
+        <attributeValues key="IdxMax" value="24"/>
+        <dynamicAttributes key="Create">
+          <value function="n1_GE_const : ViewEditFunctions" equal="true" unequal="false">
+            <parameter key="1" value="kvariable;system.sv_PumpConnectionList.iCount"/>
+            <parameter key="2" value="double;13.0"/>
+          </value>
+        </dynamicAttributes>
+      </widgetInstances>
+      <layout layoutID="keplast.kvs.layout.horizontalsplitlayout" name="HorizontalSplitLayout"/>
+    </pages>
+    <pages widgetId="keplast.kvs.tabpanelplast.container" name="Tab5">
+      <resolution width="714" height="446"/>
+      <position/>
+      <attributeValues key="Background" value="BG_Panel:220,220,220"/>
+      <attributeValues key="HelpSubID" value="pumpsel2"/>
+      <dynamicAttributes key="Create">
+        <value function="hasAnyPump_AND_n1_GE_const : UserFunctions" equal="true" unequal="false">
+          <parameter key="1" value="kvariable;system.sv_PumpConnectionList.iCount"/>
+          <parameter key="2" value="double;25.0"/>
+        </value>
+      </dynamicAttributes>
+      <widgetInstances xsi:type="base:CompositeWidgetInstance" widgetId="b6f97dfc-3f94-4853-8cef-07f0c66e011d" name="pumpSelectionpanel3" layoutConstraint="LEFT">
+        <resolution width="351" height="414"/>
+        <position x="3"/>
+        <attributeValues key="IdxMin" value="25"/>
+        <attributeValues key="IdxMax" value="36"/>
+      </widgetInstances>
+      <widgetInstances xsi:type="base:CompositeWidgetInstance" widgetId="b6f97dfc-3f94-4853-8cef-07f0c66e011d" name="pumpSelectionpanel4" layoutConstraint="RIGHT">
+        <resolution width="351" height="414"/>
+        <position x="360"/>
+        <attributeValues key="IdxMin" value="37"/>
+        <attributeValues key="IdxMax" value="48"/>
+        <dynamicAttributes key="Create">
+          <value function="n1_GE_const : ViewEditFunctions" equal="true" unequal="false">
+            <parameter key="1" value="kvariable;system.sv_PumpConnectionList.iCount"/>
+            <parameter key="2" value="double;37.0"/>
+          </value>
+        </dynamicAttributes>
+      </widgetInstances>
+      <layout layoutID="keplast.kvs.layout.horizontalsplitlayout" name="HorizontalSplitLayout"/>
+    </pages>
+    <pages widgetId="keplast.kvs.tabpanelplast.container" name="Tab6">
+      <resolution width="714" height="446"/>
+      <position/>
+      <attributeValues key="Background" value="BG_Panel:220,220,220"/>
+      <attributeValues key="HelpSubID" value="pumpsel3"/>
+      <dynamicAttributes key="Create">
+        <value function="hasAnyPump_AND_n1_GE_const : UserFunctions" equal="true" unequal="false">
+          <parameter key="1" value="kvariable;system.sv_PumpConnectionList.iCount"/>
+          <parameter key="2" value="double;49.0"/>
+        </value>
+      </dynamicAttributes>
+      <widgetInstances xsi:type="base:CompositeWidgetInstance" widgetId="b6f97dfc-3f94-4853-8cef-07f0c66e011d" name="pumpSelectionpanel5" layoutConstraint="LEFT">
+        <resolution width="351" height="414"/>
+        <position x="3"/>
+        <attributeValues key="IdxMin" value="49"/>
+        <attributeValues key="IdxMax" value="60"/>
+      </widgetInstances>
+      <layout layoutID="keplast.kvs.layout.horizontalsplitlayout" name="HorizontalSplitLayout"/>
+    </pages>
+    <layout layoutID="kvs.layout.xylayout" name="null"/>
+    <contentPanePosition y="30"/>
+    <contentPaneResolution width="714" height="446"/>
+  </widgetInstances>
+  <layout layoutID="kvs.layout.BorderLayout" name="BorderLayout"/>
+</base:Mask>

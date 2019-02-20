@@ -1,0 +1,852 @@
+(*
+
+
+
+This postupdate algorithm reacts on changes of the autopurge button.
+*)
+
+IMPORT_OVER_LISTFILE
+ cCompInjection
+, tsMoveData
+, FBManualButtonKeep
+, tevPanelButtonRegister
+, tsDeviceId
+, tyPanelButton
+, tevPanelButtonRegisterData
+, tsPanelButton
+, FBCheckReady
+
+END_IMPORT
+
+ALGORITHM_BLOCK ABManualButton #DUMMY_EDIT_BLOCK
+
+SYSTEM_VAR
+ sv_MoveAutoPurge : tsMoveData;
+ di_ButtonAutoPurge : BOOL;
+ sv_bInitStart : BOOL;
+ sv_bButtonAutoPurge : BOOL;
+ sv_bDeviceReady : BOOL;
+ sv_bHMILedAutoPurge_ledAttr : BYTE (* Panel LED Attr *);
+ sv_bHMILedAutoPurge : BOOL;
+ sv_bLedAutoPurge_ledAttr : BYTE (* Panel LED Attr *);
+ sv_bLedAutoPurge : BOOL;
+ sv_bInitDone : BOOL;
+ di_ButtonGeneral1 : BOOL;
+ di_ButtonGeneral2 : BOOL;
+ sv_iPanelMovementSelector : DINT;
+ sv_DeviceId : tsDeviceId;
+ sv_PanelButtons : tyPanelButton;
+END_VAR
+
+SYSTEM_OBJECT
+ PU_Task_7 : TASK;
+ PU_Task_13 : TASK;
+ evPanelButtonRegister : tevPanelButtonRegister;
+END_OBJECT
+
+VAR
+ fbManualButton : FBManualButtonKeep;
+ mpbInjectionUnitReady : REFTO BOOL;
+ evPanelButtonRegisterData : tevPanelButtonRegisterData;
+ mpbButtonGeneralAutoPurge1 : REFTO BOOL;
+ mpbButtonGeneralAutoPurge2 : REFTO BOOL;
+ mbDIButtonAutoPurgeLinked : BOOL;
+ mbDIButtonGeneral1Linked : BOOL;
+ mbDIButtonGeneral2Linked : BOOL;
+ mpiPanelMovementSelector : REFTO DINT;
+END_VAR
+
+VAR CONSTANT
+ cButtonAutoPurge : DINT := 1;
+END_VAR
+
+ALGORITHM aButtonAutoPurge
+
+
+VAR_INPUT
+ bButton : BOOL;
+END_VAR
+#BEGIN_EDIT_BLOCK
+(**************************************** WARNING ********************************************
+ *** The KEBA Kemro K2 System including software is not intended for safety control tasks! ***
+ ***                       For further information see Comment tab!                        ***
+ *********************************************************************************************)
+
+IF bButton AND sv_bDeviceReady AND mpbInjectionUnitReady <> EMPTY AND NOT mpbInjectionUnitReady^ THEN
+    // purge should be started and movement of injection function unit active -> ignore manual button
+    RETURN;
+END_IF;
+
+fbManualButton(bButton := bButton, MoveId := sv_MoveAutoPurge.MoveId, MoveDir := sv_MoveAutoPurge.MoveDir);
+   
+
+
+;#END_EDIT_BLOCK END_ALGORITHM
+
+POSTUPDATE_ALGORITHM pButtonAutoPurge ON PU_Task_7 WITH di_ButtonAutoPurge,sv_bButtonAutoPurge,mpbButtonGeneralAutoPurge1^,mpbButtonGeneralAutoPurge2^
+
+
+VAR
+ bButton : BOOL;
+END_VAR
+#BEGIN_EDIT_BLOCK
+(**************************************** WARNING ********************************************
+ *** The KEBA Kemro K2 System including software is not intended for safety control tasks! ***
+ ***                       For further information see Comment tab!                        ***
+ *********************************************************************************************)
+
+// soft panel button
+bButton := sv_bButtonAutoPurge;
+
+// hw panel button
+IF mbDIButtonAutoPurgeLinked THEN
+    bButton := bButton OR di_ButtonAutoPurge;    
+END_IF;
+
+// external panel button
+IF CHECK_REF(mpbButtonGeneralAutoPurge1^) THEN
+    bButton := bButton OR mpbButtonGeneralAutoPurge1^;
+END_IF;
+IF CHECK_REF(mpbButtonGeneralAutoPurge2^) THEN
+    bButton := bButton OR mpbButtonGeneralAutoPurge2^;
+END_IF;
+
+
+aButtonAutoPurge(bButton := bButton);
+
+
+;#END_EDIT_BLOCK END_ALGORITHM
+
+POSTUPDATE_ALGORITHM pRegisterButtons ON PU_Task_13 WITH sv_bInitStart
+
+#BEGIN_EDIT_BLOCK
+(**************************************** WARNING ********************************************
+ *** The KEBA Kemro K2 System including software is not intended for safety control tasks! ***
+ ***                       For further information see Comment tab!                        ***
+ *********************************************************************************************)
+
+mpbButtonGeneralAutoPurge1 := EMPTY;
+mpbButtonGeneralAutoPurge2 := EMPTY;
+
+mbDIButtonAutoPurgeLinked := IS_LINKED(di_ButtonAutoPurge);
+
+mbDIButtonGeneral1Linked := IS_LINKED(di_ButtonGeneral1);
+mbDIButtonGeneral2Linked := IS_LINKED(di_ButtonGeneral2);
+IF (mbDIButtonGeneral1Linked AND mbDIButtonGeneral2Linked) THEN
+    mpiPanelMovementSelector := @sv_iPanelMovementSelector;
+END_IF;
+
+evPanelButtonRegisterData.Button.nPanelButtonType := nPanelButtonMovement; 
+evPanelButtonRegisterData.Button.iCompId := sv_DeviceId.CompId;
+evPanelButtonRegisterData.Button.iIndexId := sv_DeviceId.IndexId;
+evPanelButtonRegisterData.Button.iButtonId := cButtonAutoPurge;
+evPanelButtonRegisterData.Button.pbActionVar1 := @sv_bButtonAutoPurge;
+evPanelButtonRegisterData.Button.pbActionVar2 := @sv_bButtonAutoPurge;
+evPanelButtonRegisterData.Button.Optional.pbLedVar := @sv_bHMILedAutoPurge;
+evPanelButtonRegisterData.Button.Optional.piLedVarAttr := @sv_bHMILedAutoPurge_ledAttr;
+
+SET_EVENT(evPanelButtonRegister, evPanelButtonRegisterData);
+
+
+;#END_EDIT_BLOCK END_ALGORITHM
+
+POSTUPDATE_ALGORITHM pMoveSelectorChanged ON PU_Task_7 WITH mpiPanelMovementSelector^
+
+
+VAR
+ Button : tsPanelButton;
+END_VAR
+#BEGIN_EDIT_BLOCK
+(**************************************** WARNING ********************************************
+ *** The KEBA Kemro K2 System including software is not intended for safety control tasks! ***
+ ***                       For further information see Comment tab!                        ***
+ *********************************************************************************************)
+
+mpbButtonGeneralAutoPurge1 := EMPTY;
+mpbButtonGeneralAutoPurge2 := EMPTY;
+
+IF (NOT sv_bDeviceReady) THEN
+    // stop active movements
+    aButtonAutoPurge(bButton := FALSE);
+END_IF;
+
+IF (sv_iPanelMovementSelector > 0) THEN                        
+    Button := sv_PanelButtons[sv_iPanelMovementSelector];
+    IF Button.iCompId = sv_DeviceId.CompId AND 
+        Button.iIndexId = sv_DeviceId.IndexId THEN
+        
+        IF Button.iButtonId = cButtonAutoPurge THEN
+            mpbButtonGeneralAutoPurge1 := @di_ButtonGeneral1;
+            mpbButtonGeneralAutoPurge2 := @di_ButtonGeneral2;            
+        END_IF;    
+    END_IF;
+END_IF;
+                 
+
+
+;#END_EDIT_BLOCK END_ALGORITHM
+
+POSTUPDATE_ALGORITHM pLedControl ON PU_Task_7 WITH sv_bDeviceReady
+
+
+VAR
+ bInitDone : BOOL;
+ mbLedAutoPurgeExists : BOOL := FALSE;
+END_VAR
+#BEGIN_EDIT_BLOCK
+IF NOT bInitDone THEN
+    sv_bHMILedAutoPurge_ledAttr := 16#3;
+    IF IS_LINKED(sv_bLedAutoPurge) AND IS_LINKED(sv_bLedAutoPurge_ledAttr) THEN
+        sv_bLedAutoPurge_ledAttr := sv_bHMILedAutoPurge_ledAttr;
+        mbLedAutoPurgeExists := TRUE;
+    ELSE
+        mbLedAutoPurgeExists := FALSE;
+    END_IF;
+    
+    bInitDone := TRUE;
+END_IF;
+
+
+IF NOT sv_bDeviceReady THEN
+   //led should be on if purging is active
+   sv_bHMILedAutoPurge := TRUE;
+ELSE
+   //switch off 
+   sv_bHMILedAutoPurge := FALSE;
+END_IF;
+    
+IF mbLedAutoPurgeExists THEN
+   sv_bLedAutoPurge := sv_bHMILedAutoPurge;
+END_IF;
+
+
+
+;#END_EDIT_BLOCK END_ALGORITHM
+
+POSTUPDATE_ALGORITHM pInitDone ON PU_Task_7(10) WITH sv_bInitDone
+
+
+VAR
+ fbCheckInjectionReady : FBCheckReady;
+ DeviceIdInjection : tsDeviceId;
+END_VAR
+#BEGIN_EDIT_BLOCK
+(**************************************** WARNING ********************************************
+ *** The KEBA Kemro K2 System including software is not intended for safety control tasks! ***
+ ***                       For further information see Comment tab!                        ***
+ *********************************************************************************************)
+
+//get reference to ready flag of injection function unit
+DeviceIdInjection.CompId := cCompInjection;
+DeviceIdInjection.IndexId := sv_DeviceId.IndexId;
+
+fbCheckInjectionReady(DeviceId := DeviceIdInjection);
+mpbInjectionUnitReady := fbCheckInjectionReady.pbReady;
+
+
+
+;#END_EDIT_BLOCK END_ALGORITHM
+
+
+
+END_ALGORITHM_BLOCK
+
+
+
+#END_OF_IEC_PART
+
+@Puma @IecEditor 6 114 @Pou 25 
+@@@BEG_Comment@@@
+
+
+
+This postupdate algorithm reacts on changes of the autopurge button.
+@@@END_Comment@@@
+
+@BEG_Contents 
+
+@BEG_Func 
+@RT(17)FuncTreeContainer 
+0 
+@END_Func 
+
+@BEG_Const 
+@RT(18)ConstTreeContainer 
+1 
+@Var @RT(14)cCompInjection @RT(0) @T @F @DT @RT(4)DINT @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+0 @RT(3)104 @RT(19)Component Injection 
+@END_Attrib 
+1 1 @F @F @F @F 
+
+@END_Const 
+
+@BEG_Export 
+
+@BEG_Kind 
+@ALGORITHM_BLOCK @RT(14)ABManualButton @STRUCTURED_TEXT 
+@RT(0) @RT(0) @RT(0) 
+@END_Kind 
+
+@BEG_Dcl 
+@RT(16)DclTreeContainer 
+28 
+@Var @RT(16)sv_MoveAutoPurge @RT(0) @T @T @DERIVED 0 @T @T @DT @RT(10)tsMoveData @RT(0) @T @T @UNKNOWN 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 8 @F @F @F @F 
+
+@Var @RT(18)di_ButtonAutoPurge @RT(0) @T @F @DT @RT(4)BOOL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 8 @F @F @F @F 
+
+@Var @RT(13)sv_bInitStart @RT(0) @T @F @DT @RT(4)BOOL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 8 @F @F @F @F 
+
+@Var @RT(19)sv_bButtonAutoPurge @RT(0) @T @F @DT @RT(4)BOOL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 8 @F @F @F @F 
+
+@Var @RT(15)sv_bDeviceReady @RT(0) @T @F @DT @RT(4)BOOL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 8 @F @F @F @F 
+
+@Var @RT(27)sv_bHMILedAutoPurge_ledAttr @RT(0) @T @F @DT @RT(4)BYTE @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(14)Panel LED Attr @RT(0) 
+@END_Attrib 
+1 8 @F @F @F @F 
+
+@Var @RT(19)sv_bHMILedAutoPurge @RT(0) @T @F @DT @RT(4)BOOL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 8 @F @F @F @F 
+
+@Var @RT(24)sv_bLedAutoPurge_ledAttr @RT(0) @T @F @DT @RT(4)BYTE @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(14)Panel LED Attr @RT(0) 
+@END_Attrib 
+1 8 @F @F @F @F 
+
+@Var @RT(16)sv_bLedAutoPurge @RT(0) @T @F @DT @RT(4)BOOL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 8 @F @F @F @F 
+
+@Var @RT(12)sv_bInitDone @RT(0) @T @F @DT @RT(4)BOOL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 8 @F @F @F @F 
+
+@Var @RT(9)PU_Task_7 @RT(0) @T @F @DT @RT(4)TASK @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 7 @F @F @F @F 
+
+@Var @RT(10)PU_Task_13 @RT(0) @T @F @DT @RT(4)TASK @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 7 @F @F @F @F 
+
+@Var @RT(14)fbManualButton @RT(0) @T @T @DERIVED 0 @T @T @DT @RT(18)FBManualButtonKeep @RT(0) @T @T @UNKNOWN 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(21)mpbInjectionUnitReady @RT(0) @T @T @REFTO 0 @T @DT @RT(4)BOOL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(21)evPanelButtonRegister @RT(0) @T @T @DERIVED 0 @T @T @DT @RT(22)tevPanelButtonRegister @RT(0) @T @T @UNKNOWN 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 7 @F @F @F @F 
+
+@Var @RT(17)di_ButtonGeneral1 @RT(0) @T @F @DT @RT(4)BOOL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 8 @F @F @F @F 
+
+@Var @RT(17)di_ButtonGeneral2 @RT(0) @T @F @DT @RT(4)BOOL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 8 @F @F @F @F 
+
+@Var @RT(25)sv_iPanelMovementSelector @RT(0) @T @F @DT @RT(4)DINT @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 8 @F @F @F @F 
+
+@Var @RT(11)sv_DeviceId @RT(0) @T @T @DERIVED 0 @T @T @DT @RT(10)tsDeviceId @RT(0) @T @T @UNKNOWN 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 8 @F @F @F @F 
+
+@Var @RT(15)sv_PanelButtons @RT(0) @T @T @DERIVED 0 @T @T @DT @RT(13)tyPanelButton @RT(0) @T @T @UNKNOWN 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 8 @F @F @F @F 
+
+@Var @RT(25)evPanelButtonRegisterData @RT(0) @T @T @DERIVED 0 @T @T @DT @RT(26)tevPanelButtonRegisterData @RT(0) @T @T @UNKNOWN 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(26)mpbButtonGeneralAutoPurge1 @RT(0) @T @T @REFTO 0 @T @DT @RT(4)BOOL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(26)mpbButtonGeneralAutoPurge2 @RT(0) @T @T @REFTO 0 @T @DT @RT(4)BOOL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(25)mbDIButtonAutoPurgeLinked @RT(0) @T @F @DT @RT(4)BOOL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(24)mbDIButtonGeneral1Linked @RT(0) @T @F @DT @RT(4)BOOL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(24)mbDIButtonGeneral2Linked @RT(0) @T @F @DT @RT(4)BOOL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(16)cButtonAutoPurge @RT(0) @T @F @DT @RT(4)DINT @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(1)1 @RT(0) @RT(0) 
+@END_Attrib 
+1 15 @F @F @F @F 
+
+@Var @RT(24)mpiPanelMovementSelector @RT(0) @T @T @REFTO 0 @T @DT @RT(4)DINT @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@END_Dcl 
+
+@END_Export 
+
+@BEG_Body 
+
+6 
+
+@BEG_Export 
+
+@BEG_Algo 
+@ALGORITHM @RT(16)aButtonAutoPurge @STRUCTURED_TEXT 
+@RT(0) @RT(0) @RT(0) @F @F 
+@END_Algo 
+
+@BEG_Dcl 
+@RT(16)DclTreeContainer 
+1 
+@Var @RT(7)bButton @RT(0) @T @F @DT @RT(4)BOOL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 1 @F @F @F @F 
+
+@END_Dcl 
+
+@END_Export 
+
+@BEG_Export 
+
+@BEG_Algo 
+@POSTUPDATE_ALGORITHM @RT(16)pButtonAutoPurge @STRUCTURED_TEXT 
+@RT(0) @RT(94)di_ButtonAutoPurge,sv_bButtonAutoPurge,mpbButtonGeneralAutoPurge1^,mpbButtonGeneralAutoPurge2^ @RT(9)PU_Task_7 @F @F 
+@END_Algo 
+
+@BEG_Dcl 
+@RT(16)DclTreeContainer 
+1 
+@Var @RT(7)bButton @RT(0) @T @F @DT @RT(4)BOOL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@END_Dcl 
+
+@END_Export 
+
+@BEG_Export 
+
+@BEG_Algo 
+@POSTUPDATE_ALGORITHM @RT(16)pRegisterButtons @STRUCTURED_TEXT 
+@RT(0) @RT(13)sv_bInitStart @RT(10)PU_Task_13 @F @F 
+@END_Algo 
+
+@BEG_Dcl 
+@RT(16)DclTreeContainer 
+0 
+@END_Dcl 
+
+@END_Export 
+
+@BEG_Export 
+
+@BEG_Algo 
+@POSTUPDATE_ALGORITHM @RT(20)pMoveSelectorChanged @STRUCTURED_TEXT 
+@RT(0) @RT(25)mpiPanelMovementSelector^ @RT(9)PU_Task_7 @F @F 
+@END_Algo 
+
+@BEG_Dcl 
+@RT(16)DclTreeContainer 
+1 
+@Var @RT(6)Button @RT(0) @T @T @DERIVED 0 @T @T @DT @RT(13)tsPanelButton @RT(0) @T @T @UNKNOWN 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@END_Dcl 
+
+@END_Export 
+
+@BEG_Export 
+
+@BEG_Algo 
+@POSTUPDATE_ALGORITHM @RT(11)pLedControl @STRUCTURED_TEXT 
+@RT(0) @RT(15)sv_bDeviceReady @RT(9)PU_Task_7 @F @F 
+@END_Algo 
+
+@BEG_Dcl 
+@RT(16)DclTreeContainer 
+2 
+@Var @RT(9)bInitDone @RT(0) @T @F @DT @RT(4)BOOL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(20)mbLedAutoPurgeExists @RT(0) @T @F @DT @RT(4)BOOL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(5)FALSE @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@END_Dcl 
+
+@END_Export 
+
+@BEG_Export 
+
+@BEG_Algo 
+@POSTUPDATE_ALGORITHM @RT(9)pInitDone @STRUCTURED_TEXT 
+@RT(0) @RT(12)sv_bInitDone @RT(13)PU_Task_7(10) @F @F 
+@END_Algo 
+
+@BEG_Dcl 
+@RT(16)DclTreeContainer 
+2 
+@Var @RT(21)fbCheckInjectionReady @RT(0) @T @T @DERIVED 0 @T @T @DT @RT(12)FBCheckReady @RT(0) @T @T @UNKNOWN 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(17)DeviceIdInjection @RT(0) @T @T @DERIVED 0 @T @T @DT @RT(10)tsDeviceId @RT(0) @T @T @UNKNOWN 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@END_Dcl 
+
+@END_Export 
+
+@BEG_Body 
+@TL(13)
+(**************************************** WARNING ********************************************
+ *** The KEBA Kemro K2 System including software is not intended for safety control tasks! ***
+ ***                       For further information see Comment tab!                        ***
+ *********************************************************************************************)
+
+IF bButton AND sv_bDeviceReady AND mpbInjectionUnitReady <> EMPTY AND NOT mpbInjectionUnitReady^ THEN
+    // purge should be started and movement of injection function unit active -> ignore manual button
+    RETURN;
+END_IF;
+
+fbManualButton(bButton := bButton, MoveId := sv_MoveAutoPurge.MoveId, MoveDir := sv_MoveAutoPurge.MoveDir);
+   
+
+@END_Body 
+
+@@@BEG_Comment@@@ 
+@TL(0)
+
+@@@END_Comment@@@ 
+
+@BEG_Body 
+@TL(24)
+(**************************************** WARNING ********************************************
+ *** The KEBA Kemro K2 System including software is not intended for safety control tasks! ***
+ ***                       For further information see Comment tab!                        ***
+ *********************************************************************************************)
+
+// soft panel button
+bButton := sv_bButtonAutoPurge;
+
+// hw panel button
+IF mbDIButtonAutoPurgeLinked THEN
+    bButton := bButton OR di_ButtonAutoPurge;    
+END_IF;
+
+// external panel button
+IF CHECK_REF(mpbButtonGeneralAutoPurge1^) THEN
+    bButton := bButton OR mpbButtonGeneralAutoPurge1^;
+END_IF;
+IF CHECK_REF(mpbButtonGeneralAutoPurge2^) THEN
+    bButton := bButton OR mpbButtonGeneralAutoPurge2^;
+END_IF;
+
+
+aButtonAutoPurge(bButton := bButton);
+
+@END_Body 
+
+@@@BEG_Comment@@@ 
+@TL(0)
+
+@@@END_Comment@@@ 
+
+@BEG_Body 
+@TL(27)
+(**************************************** WARNING ********************************************
+ *** The KEBA Kemro K2 System including software is not intended for safety control tasks! ***
+ ***                       For further information see Comment tab!                        ***
+ *********************************************************************************************)
+
+mpbButtonGeneralAutoPurge1 := EMPTY;
+mpbButtonGeneralAutoPurge2 := EMPTY;
+
+mbDIButtonAutoPurgeLinked := IS_LINKED(di_ButtonAutoPurge);
+
+mbDIButtonGeneral1Linked := IS_LINKED(di_ButtonGeneral1);
+mbDIButtonGeneral2Linked := IS_LINKED(di_ButtonGeneral2);
+IF (mbDIButtonGeneral1Linked AND mbDIButtonGeneral2Linked) THEN
+    mpiPanelMovementSelector := @sv_iPanelMovementSelector;
+END_IF;
+
+evPanelButtonRegisterData.Button.nPanelButtonType := nPanelButtonMovement; 
+evPanelButtonRegisterData.Button.iCompId := sv_DeviceId.CompId;
+evPanelButtonRegisterData.Button.iIndexId := sv_DeviceId.IndexId;
+evPanelButtonRegisterData.Button.iButtonId := cButtonAutoPurge;
+evPanelButtonRegisterData.Button.pbActionVar1 := @sv_bButtonAutoPurge;
+evPanelButtonRegisterData.Button.pbActionVar2 := @sv_bButtonAutoPurge;
+evPanelButtonRegisterData.Button.Optional.pbLedVar := @sv_bHMILedAutoPurge;
+evPanelButtonRegisterData.Button.Optional.piLedVarAttr := @sv_bHMILedAutoPurge_ledAttr;
+
+SET_EVENT(evPanelButtonRegister, evPanelButtonRegisterData);
+
+@END_Body 
+
+@@@BEG_Comment@@@ 
+@TL(0)
+
+@@@END_Comment@@@ 
+
+@BEG_Body 
+@TL(26)
+(**************************************** WARNING ********************************************
+ *** The KEBA Kemro K2 System including software is not intended for safety control tasks! ***
+ ***                       For further information see Comment tab!                        ***
+ *********************************************************************************************)
+
+mpbButtonGeneralAutoPurge1 := EMPTY;
+mpbButtonGeneralAutoPurge2 := EMPTY;
+
+IF (NOT sv_bDeviceReady) THEN
+    // stop active movements
+    aButtonAutoPurge(bButton := FALSE);
+END_IF;
+
+IF (sv_iPanelMovementSelector > 0) THEN                        
+    Button := sv_PanelButtons[sv_iPanelMovementSelector];
+    IF Button.iCompId = sv_DeviceId.CompId AND 
+        Button.iIndexId = sv_DeviceId.IndexId THEN
+        
+        IF Button.iButtonId = cButtonAutoPurge THEN
+            mpbButtonGeneralAutoPurge1 := @di_ButtonGeneral1;
+            mpbButtonGeneralAutoPurge2 := @di_ButtonGeneral2;            
+        END_IF;    
+    END_IF;
+END_IF;
+                 
+
+@END_Body 
+
+@@@BEG_Comment@@@ 
+@TL(0)
+
+@@@END_Comment@@@ 
+
+@BEG_Body 
+@TL(26)
+IF NOT bInitDone THEN
+    sv_bHMILedAutoPurge_ledAttr := 16#3;
+    IF IS_LINKED(sv_bLedAutoPurge) AND IS_LINKED(sv_bLedAutoPurge_ledAttr) THEN
+        sv_bLedAutoPurge_ledAttr := sv_bHMILedAutoPurge_ledAttr;
+        mbLedAutoPurgeExists := TRUE;
+    ELSE
+        mbLedAutoPurgeExists := FALSE;
+    END_IF;
+    
+    bInitDone := TRUE;
+END_IF;
+
+
+IF NOT sv_bDeviceReady THEN
+   //led should be on if purging is active
+   sv_bHMILedAutoPurge := TRUE;
+ELSE
+   //switch off 
+   sv_bHMILedAutoPurge := FALSE;
+END_IF;
+    
+IF mbLedAutoPurgeExists THEN
+   sv_bLedAutoPurge := sv_bHMILedAutoPurge;
+END_IF;
+
+
+@END_Body 
+
+@@@BEG_Comment@@@ 
+@TL(0)
+
+@@@END_Comment@@@ 
+
+@BEG_Body 
+@TL(13)
+(**************************************** WARNING ********************************************
+ *** The KEBA Kemro K2 System including software is not intended for safety control tasks! ***
+ ***                       For further information see Comment tab!                        ***
+ *********************************************************************************************)
+
+//get reference to ready flag of injection function unit
+DeviceIdInjection.CompId := cCompInjection;
+DeviceIdInjection.IndexId := sv_DeviceId.IndexId;
+
+fbCheckInjectionReady(DeviceId := DeviceIdInjection);
+mpbInjectionUnitReady := fbCheckInjectionReady.pbReady;
+
+
+@END_Body 
+
+@@@BEG_Comment@@@ 
+@TL(0)
+
+@@@END_Comment@@@ 
+@END_Body 
+
+@END_Contents 

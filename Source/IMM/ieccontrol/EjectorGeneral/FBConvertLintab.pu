@@ -1,0 +1,277 @@
+(*
+@h    ! WARNING !
+@h    The Kemro K2 system (including software) only meets category B according to EN 954-1,
+@h    thus it is not intended for usage in safety-relevant control applications in the field 
+@h    of personal safety (e.g. emergency stop).
+@h    To implement potentially necessary safety-relevant control tasks, always use additional 
+@h    external safety devices that are intended for the particular purpose, and meet the necessary 
+@h    functional safety.
+@h    For further information see EN 954-1 (EN ISO 13849-1) and/or the K2-x00 user manual, chapter 
+@h    "CE conformity, directives and standards".
+
+converts "relative" lintabs edited by the user into "absolute" linetabs used by the profile block.
+difference between "absolute" and "relative" positions are limit offset and limit distance.
+
+@FunctionID: S_KPIEC_PREJEC_EL_01
+@FunctionID: A-ALLG-3
+
+*)
+
+IMPORT_OVER_LISTFILE
+ TVisProfile
+, FBChangeNoOfProfileSteps
+
+END_IMPORT
+
+FUNCTION_BLOCK FBConvertLintab #DUMMY_EDIT_BLOCK
+
+VAR_INPUT
+ bForward : BOOL (* forward or backward profile *);
+END_VAR
+
+VAR_IN_OUT
+ LintabVis : TVisProfile (* "relative" lintab (displayed on hmi) *);
+ LintabVisAbs : TVisProfile (* "absolute" lintab (for movement control) *);
+END_VAR
+
+VAR_INPUT
+ rEjectorOfs : REAL (* offset between absolute and relative positions *);
+ rEjectorDist : REAL (* max. ejector stroke *);
+ bOpenEndProfile : BOOL := FALSE;
+ bUseStartPosProfiles : BOOL;
+ bDataStateIsReady : BOOL;
+END_VAR
+
+VAR_TEMP
+ i : UDINT;
+END_VAR
+
+VAR
+ rDif : REAL;
+ fbChangeNoOfProfileSteps : FBChangeNoOfProfileSteps;
+END_VAR
+#BEGIN_EDIT_BLOCK
+(**************************************** WARNING ********************************************
+ *** The KEBA Kemro K2 System including software is not intended for safety control tasks! ***
+ ***                       For further information see Comment tab!                        ***
+ *********************************************************************************************)
+
+// first element in fwd profile is 0
+// first element in bwd profile is dist
+ 
+fbChangeNoOfProfileSteps(ProfileVis := LintabVis, 
+                         bUseStartPosProfiles := bUseStartPosProfiles, 
+                         bOpenEndProfile := bOpenEndProfile, 
+                         bDataStateIsReady := bDataStateIsReady);
+    
+
+IF NOT bForward THEN
+   LintabVis.Points[1].rStartPos:=rEjectorDist;
+END_IF;
+
+// first check vis lintab for plausibility and correct all points out of range
+FOR i:=1 TO LintabVis.iNoOfPoints+1 DO                          
+   // points must not be equal, so use a minimum difference of 0.1 between 2 points!
+   IF bForward THEN
+      rDif:=UDINT_TO_REAL((LintabVis.iNoOfPoints+1-i))*0.1;
+   ELSE
+      rDif:=UDINT_TO_REAL((i-1))*0.1;      
+   END_IF;
+   LintabVis.Points[i].rStartPos:=MIN(LintabVis.Points[i].rStartPos, rEjectorDist - rDif);
+END_FOR;
+
+// copy lintab values 
+LintabVisAbs.iNoOfPoints:=LintabVis.iNoOfPoints;
+LintabVisAbs.Points:=LintabVis.Points;
+
+// calc absolute lintab, plausibility must be guaranteed by hmi 
+LintabVisAbs.iNoOfPoints:=LintabVis.iNoOfPoints;
+FOR i:=1 TO LintabVis.iNoOfPoints+1 DO                          
+  LintabVisAbs.Points[i].rStartPos:=LintabVis.Points[i].rStartPos+rEjectorOfs;
+END_FOR;
+
+
+;#END_EDIT_BLOCK END_FUNCTION_BLOCK
+
+
+
+#END_OF_IEC_PART
+
+@Puma @IecEditor 6 103 @Pou 25 
+@@@BEG_Comment@@@
+@h    ! WARNING !
+@h    The Kemro K2 system (including software) only meets category B according to EN 954-1,
+@h    thus it is not intended for usage in safety-relevant control applications in the field 
+@h    of personal safety (e.g. emergency stop).
+@h    To implement potentially necessary safety-relevant control tasks, always use additional 
+@h    external safety devices that are intended for the particular purpose, and meet the necessary 
+@h    functional safety.
+@h    For further information see EN 954-1 (EN ISO 13849-1) and/or the K2-x00 user manual, chapter 
+@h    "CE conformity, directives and standards".
+
+converts "relative" lintabs edited by the user into "absolute" linetabs used by the profile block.
+difference between "absolute" and "relative" positions are limit offset and limit distance.
+
+@FunctionID: S_KPIEC_PREJEC_EL_01
+@FunctionID: A-ALLG-3
+
+@@@END_Comment@@@
+
+@BEG_Contents 
+
+@BEG_Func 
+@RT(17)FuncTreeContainer 
+0 
+@END_Func 
+
+@BEG_Const 
+@RT(18)ConstTreeContainer 
+0 
+@END_Const 
+
+@BEG_Export 
+
+@BEG_Kind 
+@FUNCTION_BLOCK @RT(15)FBConvertLintab @STRUCTURED_TEXT 
+@RT(0) @RT(0) @RT(0) 
+@END_Kind 
+
+@BEG_Dcl 
+@RT(16)DclTreeContainer 
+11 
+@Var @RT(8)bForward @RT(0) @T @F @DT @RT(4)BOOL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(27)forward or backward profile @RT(0) 
+@END_Attrib 
+1 1 @F @F @F @F 
+
+@Var @RT(9)LintabVis @RT(0) @T @T @DERIVED 0 @T @T @DT @RT(11)TVisProfile @RT(0) @T @T @UNKNOWN 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(36)"relative" lintab (displayed on hmi) @RT(0) 
+@END_Attrib 
+1 2 @F @F @F @F 
+
+@Var @RT(12)LintabVisAbs @RT(0) @T @T @DERIVED 0 @T @T @DT @RT(11)TVisProfile @RT(0) @T @T @UNKNOWN 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(40)"absolute" lintab (for movement control) @RT(0) 
+@END_Attrib 
+1 2 @F @F @F @F 
+
+@Var @RT(11)rEjectorOfs @RT(0) @T @F @DT @RT(4)REAL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(46)offset between absolute and relative positions @RT(0) 
+@END_Attrib 
+1 1 @F @F @F @F 
+
+@Var @RT(12)rEjectorDist @RT(0) @T @F @DT @RT(4)REAL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(19)max. ejector stroke @RT(0) 
+@END_Attrib 
+1 1 @F @F @F @F 
+
+@Var @RT(15)bOpenEndProfile @RT(0) @T @F @DT @RT(4)BOOL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(5)FALSE @RT(0) @RT(0) 
+@END_Attrib 
+1 1 @F @F @F @F 
+
+@Var @RT(20)bUseStartPosProfiles @RT(0) @T @F @DT @RT(4)BOOL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 1 @F @F @F @F 
+
+@Var @RT(17)bDataStateIsReady @RT(0) @T @F @DT @RT(4)BOOL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 1 @F @F @F @F 
+
+@Var @RT(1)i @RT(0) @T @F @DT @RT(5)UDINT @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 4 @F @F @F @F 
+
+@Var @RT(4)rDif @RT(0) @T @F @DT @RT(4)REAL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(24)fbChangeNoOfProfileSteps @RT(0) @T @T @DERIVED 0 @T @T @DT @RT(24)FBChangeNoOfProfileSteps @RT(0) @T @T @UNKNOWN 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@END_Dcl 
+
+@END_Export 
+
+@BEG_Body 
+@TL(39)
+(**************************************** WARNING ********************************************
+ *** The KEBA Kemro K2 System including software is not intended for safety control tasks! ***
+ ***                       For further information see Comment tab!                        ***
+ *********************************************************************************************)
+
+// first element in fwd profile is 0
+// first element in bwd profile is dist
+ 
+fbChangeNoOfProfileSteps(ProfileVis := LintabVis, 
+                         bUseStartPosProfiles := bUseStartPosProfiles, 
+                         bOpenEndProfile := bOpenEndProfile, 
+                         bDataStateIsReady := bDataStateIsReady);
+    
+
+IF NOT bForward THEN
+   LintabVis.Points[1].rStartPos:=rEjectorDist;
+END_IF;
+
+// first check vis lintab for plausibility and correct all points out of range
+FOR i:=1 TO LintabVis.iNoOfPoints+1 DO                          
+   // points must not be equal, so use a minimum difference of 0.1 between 2 points!
+   IF bForward THEN
+      rDif:=UDINT_TO_REAL((LintabVis.iNoOfPoints+1-i))*0.1;
+   ELSE
+      rDif:=UDINT_TO_REAL((i-1))*0.1;      
+   END_IF;
+   LintabVis.Points[i].rStartPos:=MIN(LintabVis.Points[i].rStartPos, rEjectorDist - rDif);
+END_FOR;
+
+// copy lintab values 
+LintabVisAbs.iNoOfPoints:=LintabVis.iNoOfPoints;
+LintabVisAbs.Points:=LintabVis.Points;
+
+// calc absolute lintab, plausibility must be guaranteed by hmi 
+LintabVisAbs.iNoOfPoints:=LintabVis.iNoOfPoints;
+FOR i:=1 TO LintabVis.iNoOfPoints+1 DO                          
+  LintabVisAbs.Points[i].rStartPos:=LintabVis.Points[i].rStartPos+rEjectorOfs;
+END_FOR;
+
+@END_Body 
+
+@END_Contents 

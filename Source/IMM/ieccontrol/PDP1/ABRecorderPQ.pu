@@ -1,0 +1,810 @@
+(*
+@h    ! WARNING !
+@h    The Kemro K2 system (including software) only meets category B according to EN 954-1,
+@h    thus it is not intended for usage in safety-relevant control applications in the field 
+@h    of personal safety (e.g. emergency stop).
+@h    To implement potentially necessary safety-relevant control tasks, always use additional 
+@h    external safety devices that are intended for the particular purpose, and meet the necessary 
+@h    functional safety.
+@h    For further information see EN 954-1 (EN ISO 13849-1) and/or the K2-x00 user manual, chapter 
+@h    "CE conformity, directives and standards".
+
+
+*)
+
+IMPORT_OVER_LISTFILE
+ START_PROCESS_ALGORITHM
+, STOP_PROCESS_ALGORITHM
+, GET_SYNC_REFTO
+, cCompMold
+, tyMovementTrigger
+, tevMovementState
+, tnOperationMode 
+, KMB_MeasureBlock2
+, KMB_Status
+, KMB_CurveResult
+, KMB_Curve
+, KMB_CreateProfileData
+, KSYS_Status
+, tevMovementStateData
+, KMB_ProfileInfo
+
+END_IMPORT
+
+ALGORITHM_BLOCK ABRecorderPQ #DUMMY_EDIT_BLOCK
+
+SYSTEM_VAR
+ sv_TriggerIdxRecPQ : UDINT;
+ sv_OperationMode : tnOperationMode ;
+ sv_bPQChartHoldRun : BOOL (* PQ chart hold / run *);
+END_VAR
+
+SYSTEM_OBJECT
+ TaskVis : TASK;
+ TaskInject : TASK;
+ evMovementState : tevMovementState;
+END_OBJECT
+
+VAR
+ myMovementTrigger : tyMovementTrigger;
+ mevStart : tevMovementState;
+ mpbPumpDeviceReady : REFTO BOOL;
+ abMeasure : KMB_MeasureBlock2;
+ mpiTriggerIdx : REFTO UDINT;
+END_VAR
+
+FUNCTION fStartInit : BOOL
+ #DUMMY_EDIT_BLOCK
+#BEGIN_EDIT_BLOCK
+(**************************************** WARNING ********************************************
+ *** The KEBA Kemro K2 System including software is not intended for safety control tasks! ***
+ ***                       For further information see Comment tab!                        ***
+ *********************************************************************************************)
+
+fStartInit := FALSE; //suppress warning about unused formal parameter
+START_PROCESS_ALGORITHM(paInit);
+
+
+;#END_EDIT_BLOCK END_FUNCTION
+
+PROCESS_ALGORITHM paInit ON TaskVis
+
+
+VAR
+ status : KMB_Status;
+ curveStatus : KMB_CurveResult;
+ curve : KMB_Curve;
+ bCreated : BOOL;
+ profileData : KMB_CreateProfileData := (ProfileName:='ChartPQ',Type:=KMB_ProfileKind_PDSC,ElementCount:=10000,DataPath:='/protocol/datalogger/',CfgPath:='/workspace/data/ms_config/',ThreadPriority:=6);
+ s : KSYS_Status;
+END_VAR
+#BEGIN_EDIT_BLOCK
+(**************************************** WARNING ********************************************
+ *** The KEBA Kemro K2 System including software is not intended for safety control tasks! ***
+ ***                       For further information see Comment tab!                        ***
+ *********************************************************************************************)
+
+// create and init profile 'ChartPQ' of type Mic / 10000  elements 
+IF (NOT bCreated) THEN
+   // create and configure profile for 4 ms cyclic measure
+   status := abMeasure.CreateProfile(profileData);
+   status := abMeasure.DisableProfileFlashPersistence(); 
+   status := abMeasure.DisableAutoSaveConfig(); 
+   status := abMeasure.SetMeasureTime(T#4ms);
+   bCreated := TRUE;
+END_IF;
+
+(* add variables 0 .. 3: movement states *)
+curve.VariableY := "Mold1.sv_bCloseActive";
+curveStatus := abMeasure.AddCurve(curve); 
+
+IF (curveStatus.Status = KMB_Status_Not_Connected) THEN
+   // see iec library doc and CR_0053873 "KMB_MeasureBlock2: curve is added twice"
+   // if a profile has been created it will be installed async. to the IEC task
+   // so it may happen that installation of profile has not been finished. 
+   // we have to repeat here until Status different to "not connected" 
+   RETURN; 
+END_IF;      
+
+curve.VariableY := "Mold1.sv_bOpenActive";
+curveStatus := abMeasure.AddCurve(curve); 
+
+curve.VariableY := "Injection1.sv_bPlastActive";
+curveStatus := abMeasure.AddCurve(curve); 
+
+curve.VariableY := "Injection1.sv_bInjectionActive";
+curveStatus := abMeasure.AddCurve(curve); 
+
+(* add variables 4 .. 7: PQ set / act master *)
+curve.VariableY := "Pump1.sv_KHW_ServoMaster_setValue.rVeloc";
+curveStatus := abMeasure.AddCurve(curve); 
+
+curve.VariableY := "Pump1.sv_KHW_ServoMaster_actValue.rVeloc";
+curveStatus := abMeasure.AddCurve(curve); 
+
+curve.VariableY := "Pump1.sv_KHW_ServoMaster_setValue.rAux[1]";
+curveStatus := abMeasure.AddCurve(curve); 
+
+curve.VariableY := "Pump1.sv_KHW_ServoMaster_actValue.rAux[1]";
+curveStatus := abMeasure.AddCurve(curve); 
+
+(* add optional variable 8: Q set slave 1 *)
+curve.VariableY := "Pump1.sv_KHW_ServoSlave1_actValue.rVeloc";
+curveStatus := abMeasure.AddCurve(curve); 
+
+(* add optional variable 9: Q set slave 2 *)
+curve.VariableY := "Pump1.sv_KHW_ServoSlave2_actValue.rVeloc";
+curveStatus := abMeasure.AddCurve(curve); 
+                   
+//////////////////////////////////////////////////////////
+
+// init trigger variables
+mpbPumpDeviceReady := GET_SYNC_REFTO("Pump1.sv_bDeviceReady", t#0s, s);
+mpiTriggerIdx := @sv_TriggerIdxRecPQ;
+
+//desciption of device and movement id
+    
+// mold fwd
+myMovementTrigger[1].DeviceId.CompId := cCompMold;
+myMovementTrigger[1].DeviceId.IndexId := 1;
+myMovementTrigger[1].MoveId := cMoveFwd; 
+myMovementTrigger[1].MoveDir := cMoveFwd;
+    
+// mold bwd
+myMovementTrigger[2].DeviceId.CompId := cCompMold;
+myMovementTrigger[2].DeviceId.IndexId := 1;
+myMovementTrigger[2].MoveId := cMoveBwd; 
+myMovementTrigger[2].MoveDir := cMoveBwd;
+    
+// Inject
+myMovementTrigger[3].DeviceId.CompId := cCompInjection;
+myMovementTrigger[3].DeviceId.IndexId := 1;
+myMovementTrigger[3].MoveId := cMoveInject; 
+myMovementTrigger[3].MoveDir := cMoveFwd;
+    
+// Plast
+myMovementTrigger[4].DeviceId.CompId := cCompInjection;
+myMovementTrigger[4].DeviceId.IndexId := 1;
+myMovementTrigger[4].MoveId := cMovePlast; 
+myMovementTrigger[4].MoveDir := cMoveBwd;
+                        
+STOP_PROCESS_ALGORITHM();
+
+   
+
+
+
+;#END_EDIT_BLOCK END_ALGORITHM
+
+EVENT_ALGORITHM evaMovementStart ON TaskInject WITH mevStart
+
+
+VAR_INPUT
+ evMovementStateData : tevMovementStateData;
+END_VAR
+
+VAR
+ status : KMB_Status;
+END_VAR
+#BEGIN_EDIT_BLOCK
+(**************************************** WARNING ********************************************
+ *** The KEBA Kemro K2 System including software is not intended for safety control tasks! ***
+ ***                       For further information see Comment tab!                        ***
+ *********************************************************************************************)
+
+//Check if in full/half automatic mode
+IF sv_OperationMode < nHalfAutomatic THEN
+    RETURN;
+END_IF;    
+
+//Check the movement with the selection on the HMI and the Hold/Run state
+//1).Mold close
+//2).Mold open
+//3).Inject 
+//4).Plast
+IF (evMovementStateData.State = nActive) AND 
+    ((evMovementStateData.DeviceId = myMovementTrigger[sv_TriggerIdxRecPQ].DeviceId            //movement 1)-> 4)
+    AND evMovementStateData.MoveId = myMovementTrigger[sv_TriggerIdxRecPQ].MoveId 
+    AND evMovementStateData.MoveDir = myMovementTrigger[sv_TriggerIdxRecPQ].MoveDir) OR        //mold close interposition
+    (sv_TriggerIdxRecPQ = 1 AND evMovementStateData.DeviceId.CompId = cCompMold AND            
+     evMovementStateData.DeviceId.IndexId =1 AND evMovementStateData.MoveId = cMoveFwdInterPos AND
+     evMovementStateData.MoveDir = cMoveFwd) OR                                           //mold open interposition
+    (sv_TriggerIdxRecPQ = 2 AND evMovementStateData.DeviceId.CompId = cCompMold AND            
+     evMovementStateData.DeviceId.IndexId =1 AND evMovementStateData.MoveId = cMoveBwdInterPos AND
+     evMovementStateData.MoveDir = cMoveBwd)) AND (NOT sv_bPQChartHoldRun) THEN    
+   
+    // start measure
+    status := abMeasure.StartMeasure(0);
+END_IF;    
+
+
+;#END_EDIT_BLOCK END_ALGORITHM
+
+POSTUPDATE_ALGORITHM pActivateAutoMode ON TaskVis WITH mpiTriggerIdx^
+
+
+VAR
+ status : KMB_Status;
+END_VAR
+#BEGIN_EDIT_BLOCK
+(**************************************** WARNING ********************************************
+ *** The KEBA Kemro K2 System including software is not intended for safety control tasks! ***
+ ***                       For further information see Comment tab!                        ***
+ *********************************************************************************************)
+
+//check if trigger is selected
+IF (sv_TriggerIdxRecPQ = 0) THEN
+    mevStart := EMPTY;
+ELSE
+    status := abMeasure.StopMeasure();
+    mevStart := evMovementState;
+END_IF;    
+
+
+;#END_EDIT_BLOCK END_ALGORITHM
+
+POSTUPDATE_ALGORITHM pActivateManualMode ON TaskInject WITH mpbPumpDeviceReady^
+
+
+VAR
+ status : KMB_Status;
+ profileInfo : KMB_ProfileInfo;
+END_VAR
+#BEGIN_EDIT_BLOCK
+(**************************************** WARNING ********************************************
+ *** The KEBA Kemro K2 System including software is not intended for safety control tasks! ***
+ ***                       For further information see Comment tab!                        ***
+ *********************************************************************************************)
+
+// trigger for manual/setup mode ... any movement 
+IF (sv_OperationMode <= nManual) THEN
+    //Check the pump output and Hold/Run function
+    IF (NOT mpbPumpDeviceReady^) AND (NOT sv_bPQChartHoldRun)THEN 
+         profileInfo := abMeasure.GetProfileInfo();
+         // if measure still active just keep running ...
+         IF (profileInfo.MeasureState = KMB_MeasureState_Inactive) THEN 
+            status := abMeasure.StartMeasure(0);
+         END_IF;
+    END_IF;    
+END_IF;    
+
+
+;#END_EDIT_BLOCK END_ALGORITHM
+
+
+
+END_ALGORITHM_BLOCK
+
+
+
+#END_OF_IEC_PART
+
+@Puma @IecEditor 6 131 @Pou 25 
+@@@BEG_Comment@@@
+@h    ! WARNING !
+@h    The Kemro K2 system (including software) only meets category B according to EN 954-1,
+@h    thus it is not intended for usage in safety-relevant control applications in the field 
+@h    of personal safety (e.g. emergency stop).
+@h    To implement potentially necessary safety-relevant control tasks, always use additional 
+@h    external safety devices that are intended for the particular purpose, and meet the necessary 
+@h    functional safety.
+@h    For further information see EN 954-1 (EN ISO 13849-1) and/or the K2-x00 user manual, chapter 
+@h    "CE conformity, directives and standards".
+
+
+@@@END_Comment@@@
+
+@BEG_Contents 
+
+@BEG_Func 
+@RT(17)FuncTreeContainer 
+3 
+@Var @RT(23)START_PROCESS_ALGORITHM @RT(0) @T @T @DERIVED 0 @F @RT(23)KEBA_STANDARD_PROCEDURE @F 
+@T 
+@BEG_Attrib 
+0 @RT(0) @RT(0) 
+@END_Attrib 
+1 1 @F @F @F @F 
+
+@Var @RT(22)STOP_PROCESS_ALGORITHM @RT(0) @T @T @DERIVED 0 @F @RT(23)KEBA_STANDARD_PROCEDURE @F 
+@T 
+@BEG_Attrib 
+0 @RT(0) @RT(0) 
+@END_Attrib 
+1 1 @F @F @F @F 
+
+@Var @RT(14)GET_SYNC_REFTO @RT(0) @T @T @DERIVED 0 @F @RT(22)KEBA_STANDARD_FUNCTION @F 
+@T 
+@BEG_Attrib 
+0 @RT(0) @RT(0) 
+@END_Attrib 
+1 1 @F @F @F @F 
+
+@END_Func 
+
+@BEG_Const 
+@RT(18)ConstTreeContainer 
+1 
+@Var @RT(9)cCompMold @RT(0) @T @F @DT @RT(4)DINT @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+0 @RT(3)101 @RT(14)Component Mold 
+@END_Attrib 
+1 1 @F @F @F @F 
+
+@END_Const 
+
+@BEG_Export 
+
+@BEG_Kind 
+@ALGORITHM_BLOCK @RT(12)ABRecorderPQ @STRUCTURED_TEXT 
+@RT(0) @RT(0) @RT(0) 
+@END_Kind 
+
+@BEG_Dcl 
+@RT(16)DclTreeContainer 
+11 
+@Var @RT(7)TaskVis @RT(0) @T @T @RENAMED 0 @T @T @DT @RT(4)TASK @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 7 @F @F @F @F 
+
+@Var @RT(10)TaskInject @RT(0) @T @T @RENAMED 0 @T @T @DT @RT(4)TASK @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 7 @F @F @F @F 
+
+@Var @RT(17)myMovementTrigger @RT(0) @T @T @DERIVED 0 @T @T @DT @RT(17)tyMovementTrigger @RT(0) @T @T @UNKNOWN 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(15)evMovementState @RT(0) @T @T @DERIVED 0 @T @T @DT @RT(16)tevMovementState @RT(0) @T @T @UNKNOWN 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 7 @F @F @F @F 
+
+@Var @RT(18)sv_TriggerIdxRecPQ @RT(0) @T @F @DT @RT(5)UDINT @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 8 @F @F @F @F 
+
+@Var @RT(16)sv_OperationMode @RT(0) @T @T @DERIVED 0 @T @T @DT @RT(16)tnOperationMode  @RT(0) @T @T @UNKNOWN 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 8 @F @F @F @F 
+
+@Var @RT(18)sv_bPQChartHoldRun @RT(0) @T @F @DT @RT(4)BOOL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(19)PQ chart hold / run @RT(0) 
+@END_Attrib 
+1 8 @F @F @F @F 
+
+@Var @RT(8)mevStart @RT(0) @T @T @DERIVED 0 @T @T @DT @RT(16)tevMovementState @RT(0) @T @T @UNKNOWN 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(18)mpbPumpDeviceReady @RT(0) @T @T @REFTO 0 @T @DT @RT(4)BOOL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(9)abMeasure @RT(0) @T @T @DERIVED 0 @T @T @DT @RT(17)KMB_MeasureBlock2 @RT(0) @T @T @UNKNOWN 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(13)mpiTriggerIdx @RT(0) @T @T @REFTO 0 @T @DT @RT(5)UDINT @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@END_Dcl 
+
+@END_Export 
+
+@BEG_Body 
+
+5 
+
+@BEG_Export 
+
+@BEG_Algo 
+@FUNCTION @RT(10)fStartInit @STRUCTURED_TEXT 
+@RT(4)BOOL @RT(0) @RT(0) @F @F 
+@END_Algo 
+
+@BEG_Dcl 
+@RT(16)DclTreeContainer 
+0 
+@END_Dcl 
+
+@END_Export 
+
+@BEG_Export 
+
+@BEG_Algo 
+@PROCESS_ALGORITHM @RT(6)paInit @STRUCTURED_TEXT 
+@RT(0) @RT(0) @RT(7)TaskVis @F @F 
+@END_Algo 
+
+@BEG_Dcl 
+@RT(16)DclTreeContainer 
+6 
+@Var @RT(6)status @RT(0) @T @T @DERIVED 0 @T @T @DT @RT(10)KMB_Status @RT(0) @T @T @UNKNOWN 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(11)curveStatus @RT(0) @T @T @DERIVED 0 @T @T @DT @RT(15)KMB_CurveResult @RT(0) @T @T @UNKNOWN 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(5)curve @RT(0) @T @T @DERIVED 0 @T @T @DT @RT(9)KMB_Curve @RT(0) @T @T @UNKNOWN 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(8)bCreated @RT(0) @T @T @RENAMED 0 @T @T @DT @RT(4)BOOL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(11)profileData @RT(0) @T @T @DERIVED 0 @T @T @DT @RT(21)KMB_CreateProfileData @RT(0) @T @T @UNKNOWN 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(161)(ProfileName:='ChartPQ',Type:=KMB_ProfileKind_PDSC,ElementCount:=10000,DataPath:='/protocol/datalogger/',CfgPath:='/workspace/data/ms_config/',ThreadPriority:=6) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(1)s @RT(0) @T @T @DERIVED 0 @T @T @DT @RT(11)KSYS_Status @RT(0) @T @T @UNKNOWN 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@END_Dcl 
+
+@END_Export 
+
+@BEG_Export 
+
+@BEG_Algo 
+@EVENT_ALGORITHM @RT(16)evaMovementStart @STRUCTURED_TEXT 
+@RT(0) @RT(8)mevStart @RT(10)TaskInject @F @F 
+@END_Algo 
+
+@BEG_Dcl 
+@RT(16)DclTreeContainer 
+2 
+@Var @RT(19)evMovementStateData @RT(0) @T @T @DERIVED 0 @T @T @DT @RT(20)tevMovementStateData @RT(0) @T @T @UNKNOWN 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 1 @F @F @F @F 
+
+@Var @RT(6)status @RT(0) @T @T @DERIVED 0 @T @T @DT @RT(10)KMB_Status @RT(0) @T @T @UNKNOWN 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@END_Dcl 
+
+@END_Export 
+
+@BEG_Export 
+
+@BEG_Algo 
+@POSTUPDATE_ALGORITHM @RT(17)pActivateAutoMode @STRUCTURED_TEXT 
+@RT(0) @RT(14)mpiTriggerIdx^ @RT(7)TaskVis @F @F 
+@END_Algo 
+
+@BEG_Dcl 
+@RT(16)DclTreeContainer 
+1 
+@Var @RT(6)status @RT(0) @T @T @DERIVED 0 @T @T @DT @RT(10)KMB_Status @RT(0) @T @T @UNKNOWN 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@END_Dcl 
+
+@END_Export 
+
+@BEG_Export 
+
+@BEG_Algo 
+@POSTUPDATE_ALGORITHM @RT(19)pActivateManualMode @STRUCTURED_TEXT 
+@RT(0) @RT(19)mpbPumpDeviceReady^ @RT(10)TaskInject @F @F 
+@END_Algo 
+
+@BEG_Dcl 
+@RT(16)DclTreeContainer 
+2 
+@Var @RT(6)status @RT(0) @T @T @DERIVED 0 @T @T @DT @RT(10)KMB_Status @RT(0) @T @T @UNKNOWN 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(11)profileInfo @RT(0) @T @T @DERIVED 0 @T @T @DT @RT(15)KMB_ProfileInfo @RT(0) @T @T @UNKNOWN 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@END_Dcl 
+
+@END_Export 
+
+@BEG_Body 
+@TL(8)
+(**************************************** WARNING ********************************************
+ *** The KEBA Kemro K2 System including software is not intended for safety control tasks! ***
+ ***                       For further information see Comment tab!                        ***
+ *********************************************************************************************)
+
+fStartInit := FALSE; //suppress warning about unused formal parameter
+START_PROCESS_ALGORITHM(paInit);
+
+@END_Body 
+
+@@@BEG_Comment@@@ 
+@TL(0)
+
+@@@END_Comment@@@ 
+
+@BEG_Body 
+@TL(94)
+(**************************************** WARNING ********************************************
+ *** The KEBA Kemro K2 System including software is not intended for safety control tasks! ***
+ ***                       For further information see Comment tab!                        ***
+ *********************************************************************************************)
+
+// create and init profile 'ChartPQ' of type Mic / 10000  elements 
+IF (NOT bCreated) THEN
+   // create and configure profile for 4 ms cyclic measure
+   status := abMeasure.CreateProfile(profileData);
+   status := abMeasure.DisableProfileFlashPersistence(); 
+   status := abMeasure.DisableAutoSaveConfig(); 
+   status := abMeasure.SetMeasureTime(T#4ms);
+   bCreated := TRUE;
+END_IF;
+
+(* add variables 0 .. 3: movement states *)
+curve.VariableY := "Mold1.sv_bCloseActive";
+curveStatus := abMeasure.AddCurve(curve); 
+
+IF (curveStatus.Status = KMB_Status_Not_Connected) THEN
+   // see iec library doc and CR_0053873 "KMB_MeasureBlock2: curve is added twice"
+   // if a profile has been created it will be installed async. to the IEC task
+   // so it may happen that installation of profile has not been finished. 
+   // we have to repeat here until Status different to "not connected" 
+   RETURN; 
+END_IF;      
+
+curve.VariableY := "Mold1.sv_bOpenActive";
+curveStatus := abMeasure.AddCurve(curve); 
+
+curve.VariableY := "Injection1.sv_bPlastActive";
+curveStatus := abMeasure.AddCurve(curve); 
+
+curve.VariableY := "Injection1.sv_bInjectionActive";
+curveStatus := abMeasure.AddCurve(curve); 
+
+(* add variables 4 .. 7: PQ set / act master *)
+curve.VariableY := "Pump1.sv_KHW_ServoMaster_setValue.rVeloc";
+curveStatus := abMeasure.AddCurve(curve); 
+
+curve.VariableY := "Pump1.sv_KHW_ServoMaster_actValue.rVeloc";
+curveStatus := abMeasure.AddCurve(curve); 
+
+curve.VariableY := "Pump1.sv_KHW_ServoMaster_setValue.rAux[1]";
+curveStatus := abMeasure.AddCurve(curve); 
+
+curve.VariableY := "Pump1.sv_KHW_ServoMaster_actValue.rAux[1]";
+curveStatus := abMeasure.AddCurve(curve); 
+
+(* add optional variable 8: Q set slave 1 *)
+curve.VariableY := "Pump1.sv_KHW_ServoSlave1_actValue.rVeloc";
+curveStatus := abMeasure.AddCurve(curve); 
+
+(* add optional variable 9: Q set slave 2 *)
+curve.VariableY := "Pump1.sv_KHW_ServoSlave2_actValue.rVeloc";
+curveStatus := abMeasure.AddCurve(curve); 
+                   
+//////////////////////////////////////////////////////////
+
+// init trigger variables
+mpbPumpDeviceReady := GET_SYNC_REFTO("Pump1.sv_bDeviceReady", t#0s, s);
+mpiTriggerIdx := @sv_TriggerIdxRecPQ;
+
+//desciption of device and movement id
+    
+// mold fwd
+myMovementTrigger[1].DeviceId.CompId := cCompMold;
+myMovementTrigger[1].DeviceId.IndexId := 1;
+myMovementTrigger[1].MoveId := cMoveFwd; 
+myMovementTrigger[1].MoveDir := cMoveFwd;
+    
+// mold bwd
+myMovementTrigger[2].DeviceId.CompId := cCompMold;
+myMovementTrigger[2].DeviceId.IndexId := 1;
+myMovementTrigger[2].MoveId := cMoveBwd; 
+myMovementTrigger[2].MoveDir := cMoveBwd;
+    
+// Inject
+myMovementTrigger[3].DeviceId.CompId := cCompInjection;
+myMovementTrigger[3].DeviceId.IndexId := 1;
+myMovementTrigger[3].MoveId := cMoveInject; 
+myMovementTrigger[3].MoveDir := cMoveFwd;
+    
+// Plast
+myMovementTrigger[4].DeviceId.CompId := cCompInjection;
+myMovementTrigger[4].DeviceId.IndexId := 1;
+myMovementTrigger[4].MoveId := cMovePlast; 
+myMovementTrigger[4].MoveDir := cMoveBwd;
+                        
+STOP_PROCESS_ALGORITHM();
+
+   
+
+
+@END_Body 
+
+@@@BEG_Comment@@@ 
+@TL(0)
+
+@@@END_Comment@@@ 
+
+@BEG_Body 
+@TL(30)
+(**************************************** WARNING ********************************************
+ *** The KEBA Kemro K2 System including software is not intended for safety control tasks! ***
+ ***                       For further information see Comment tab!                        ***
+ *********************************************************************************************)
+
+//Check if in full/half automatic mode
+IF sv_OperationMode < nHalfAutomatic THEN
+    RETURN;
+END_IF;    
+
+//Check the movement with the selection on the HMI and the Hold/Run state
+//1).Mold close
+//2).Mold open
+//3).Inject 
+//4).Plast
+IF (evMovementStateData.State = nActive) AND 
+    ((evMovementStateData.DeviceId = myMovementTrigger[sv_TriggerIdxRecPQ].DeviceId            //movement 1)-> 4)
+    AND evMovementStateData.MoveId = myMovementTrigger[sv_TriggerIdxRecPQ].MoveId 
+    AND evMovementStateData.MoveDir = myMovementTrigger[sv_TriggerIdxRecPQ].MoveDir) OR        //mold close interposition
+    (sv_TriggerIdxRecPQ = 1 AND evMovementStateData.DeviceId.CompId = cCompMold AND            
+     evMovementStateData.DeviceId.IndexId =1 AND evMovementStateData.MoveId = cMoveFwdInterPos AND
+     evMovementStateData.MoveDir = cMoveFwd) OR                                           //mold open interposition
+    (sv_TriggerIdxRecPQ = 2 AND evMovementStateData.DeviceId.CompId = cCompMold AND            
+     evMovementStateData.DeviceId.IndexId =1 AND evMovementStateData.MoveId = cMoveBwdInterPos AND
+     evMovementStateData.MoveDir = cMoveBwd)) AND (NOT sv_bPQChartHoldRun) THEN    
+   
+    // start measure
+    status := abMeasure.StartMeasure(0);
+END_IF;    
+
+@END_Body 
+
+@@@BEG_Comment@@@ 
+@TL(0)
+
+@@@END_Comment@@@ 
+
+@BEG_Body 
+@TL(13)
+(**************************************** WARNING ********************************************
+ *** The KEBA Kemro K2 System including software is not intended for safety control tasks! ***
+ ***                       For further information see Comment tab!                        ***
+ *********************************************************************************************)
+
+//check if trigger is selected
+IF (sv_TriggerIdxRecPQ = 0) THEN
+    mevStart := EMPTY;
+ELSE
+    status := abMeasure.StopMeasure();
+    mevStart := evMovementState;
+END_IF;    
+
+@END_Body 
+
+@@@BEG_Comment@@@ 
+@TL(0)
+
+@@@END_Comment@@@ 
+
+@BEG_Body 
+@TL(17)
+(**************************************** WARNING ********************************************
+ *** The KEBA Kemro K2 System including software is not intended for safety control tasks! ***
+ ***                       For further information see Comment tab!                        ***
+ *********************************************************************************************)
+
+// trigger for manual/setup mode ... any movement 
+IF (sv_OperationMode <= nManual) THEN
+    //Check the pump output and Hold/Run function
+    IF (NOT mpbPumpDeviceReady^) AND (NOT sv_bPQChartHoldRun)THEN 
+         profileInfo := abMeasure.GetProfileInfo();
+         // if measure still active just keep running ...
+         IF (profileInfo.MeasureState = KMB_MeasureState_Inactive) THEN 
+            status := abMeasure.StartMeasure(0);
+         END_IF;
+    END_IF;    
+END_IF;    
+
+@END_Body 
+
+@@@BEG_Comment@@@ 
+@TL(0)
+
+@@@END_Comment@@@ 
+@END_Body 
+
+@END_Contents 

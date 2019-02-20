@@ -1,0 +1,623 @@
+IMPORT_OVER_LISTFILE
+ GET_ALARM_COUNT
+, SET_EVENT
+, tevAlarmConfirm
+, tevPanelButtonRegisterData
+, tevPanelButtonRegister
+, tsDeviceId
+, tevAlarmConfirmData
+
+END_IMPORT
+
+ALGORITHM_BLOCK ABAlarmHandler #DUMMY_EDIT_BLOCK
+
+SYSTEM_VAR
+ sv_iPendingAlarms : DINT;
+ sv_iPendingMessages : DINT;
+ di_ButtonAlarmConfirm : BOOL;
+ sv_bLedAlarmConfirm_ledAttr : BYTE (* Panel LED *);
+ sv_bLedAlarmConfirm : BOOL;
+ sv_bHMILedAlarmConfirm_ledAttr : BYTE (* HMI LED *);
+ sv_bHMILedAlarmConfirm : BOOL;
+ sv_bAlarmConfirmVis : BOOL;
+ sv_bButtonAlarmConfirm : BOOL;
+ sv_bInitStart : BOOL;
+ sv_DeviceId : tsDeviceId;
+END_VAR
+
+SYSTEM_OBJECT
+ TaskVis : TASK;
+ PU_Task_13 : TASK;
+ evAlarmConfirm : tevAlarmConfirm;
+ evPanelButtonRegister : tevPanelButtonRegister;
+END_OBJECT
+
+VAR
+ mAlarmConfirmLedExists : BOOL;
+ evPanelButtonRegisterData : tevPanelButtonRegisterData;
+ mDIButtonAlarmConfirmLinked : BOOL;
+END_VAR
+
+VAR CONSTANT
+ cButtonAlarmConfirm : DINT := 5;
+END_VAR
+
+POSTUPDATE_ALGORITHM pRegisterButtons ON PU_Task_13 WITH sv_bInitStart
+
+#BEGIN_EDIT_BLOCK
+
+evPanelButtonRegisterData.Button.nPanelButtonType := nPanelButtonAction; 
+evPanelButtonRegisterData.Button.iCompId := sv_DeviceId.CompId;
+evPanelButtonRegisterData.Button.iIndexId := sv_DeviceId.IndexId;
+evPanelButtonRegisterData.Button.iButtonId := cButtonAlarmConfirm;
+evPanelButtonRegisterData.Button.pbActionVar1 := @sv_bButtonAlarmConfirm;
+evPanelButtonRegisterData.Button.Optional.pbLedVar := @sv_bHMILedAlarmConfirm;
+evPanelButtonRegisterData.Button.Optional.piLedVarAttr := @sv_bHMILedAlarmConfirm_ledAttr;
+SET_EVENT(evPanelButtonRegister, evPanelButtonRegisterData);
+
+mDIButtonAlarmConfirmLinked := IS_LINKED(di_ButtonAlarmConfirm);
+
+
+;#END_EDIT_BLOCK END_ALGORITHM
+
+PROCESS_ALGORITHM paAlarmCounter ON TaskVis AUTOSTART
+
+
+VAR
+ iChangeCount : DINT;
+ iChangeCountOld : DINT;
+END_VAR
+#BEGIN_EDIT_BLOCK
+(**************************************** WARNING ********************************************
+ *** The KEBA Kemro K2 System including software is not intended for safety control tasks! ***
+ ***                       For further information see Comment tab!                        ***
+ *********************************************************************************************)
+
+iChangeCount := GET_ALARM_MODIFICATION_COUNT();
+IF iChangeCount <> iChangeCountOld THEN
+   sv_iPendingAlarms := (GET_ALARM_COUNT(1)+GET_ALARM_COUNT(2)+GET_ALARM_COUNT(3));
+   sv_iPendingMessages := GET_ALARM_COUNT() - sv_iPendingAlarms;
+END_IF;
+iChangeCountOld := iChangeCount;
+
+
+
+
+
+;#END_EDIT_BLOCK END_ALGORITHM
+
+POSTUPDATE_ALGORITHM pAlarmConfirmButton ON PU_Task_13 WITH di_ButtonAlarmConfirm,sv_bButtonAlarmConfirm,sv_bAlarmConfirmVis
+
+
+VAR
+ evAlarmConfirmData : tevAlarmConfirmData;
+ bButtonAlarmConfirm : BOOL;
+END_VAR
+#BEGIN_EDIT_BLOCK
+(**************************************** WARNING ********************************************
+ *** The KEBA Kemro K2 System including software is not intended for safety control tasks! ***
+ ***                       For further information see Comment tab!                        ***
+ *********************************************************************************************)
+
+bButtonAlarmConfirm := sv_bButtonAlarmConfirm;
+
+IF mDIButtonAlarmConfirmLinked THEN
+    bButtonAlarmConfirm := bButtonAlarmConfirm OR di_ButtonAlarmConfirm;
+END_IF;
+
+IF (bButtonAlarmConfirm) THEN
+    //confirm button on the panel was pressed
+    
+    //confirm all alarms
+    QUIT_ALARM(Name := ANY,
+               SubID1 := ANY,
+               SubID2 := ANY,
+               SubID3 := ANY,
+               SubID4 := ANY);
+    
+    //set error confirm event
+    evAlarmConfirmData := nConfirmedByPanel;    
+    SET_EVENT(evAlarmConfirm, evAlarmConfirmData);    
+
+ELSIF sv_bAlarmConfirmVis THEN
+    //alarms have been confirmed in hmi
+    
+    //set error confirm event
+    evAlarmConfirmData := nConfirmedByVis;    
+    SET_EVENT(evAlarmConfirm, evAlarmConfirmData);
+    sv_bAlarmConfirmVis := FALSE;
+END_IF;
+
+
+;#END_EDIT_BLOCK END_ALGORITHM
+
+POSTUPDATE_ALGORITHM pLedControl ON PU_Task_13 WITH sv_iPendingAlarms
+
+
+VAR
+ bInitDone : BOOL;
+END_VAR
+#BEGIN_EDIT_BLOCK
+(**************************************** WARNING ********************************************
+ *** The KEBA Kemro K2 System including software is not intended for safety control tasks! ***
+ ***                       For further information see Comment tab!                        ***
+ *********************************************************************************************)
+
+IF NOT bInitDone THEN
+    sv_bHMILedAlarmConfirm_ledAttr := 16#1;
+    sv_bHMILedAlarmConfirm := FALSE;
+
+    IF (IS_LINKED(sv_bLedAlarmConfirm_ledAttr) AND IS_LINKED(sv_bLedAlarmConfirm)) THEN
+        sv_bLedAlarmConfirm_ledAttr := sv_bHMILedAlarmConfirm_ledAttr;
+        sv_bLedAlarmConfirm := sv_bHMILedAlarmConfirm;
+        mAlarmConfirmLedExists := TRUE;
+    ELSE
+        mAlarmConfirmLedExists := FALSE;
+    END_IF;
+    bInitDone := TRUE;
+END_IF;
+
+// set the hmi button led
+IF sv_iPendingAlarms = 0 THEN
+    sv_bHMILedAlarmConfirm := FALSE;
+ELSE
+    sv_bHMILedAlarmConfirm := TRUE;
+END_IF;
+
+
+IF NOT mAlarmConfirmLedExists THEN
+    RETURN;
+END_IF;
+
+// set the hw led
+IF sv_iPendingAlarms = 0 THEN
+    sv_bLedAlarmConfirm := FALSE;
+ELSE
+    sv_bLedAlarmConfirm := TRUE;
+END_IF;
+
+
+;#END_EDIT_BLOCK END_ALGORITHM
+
+
+
+END_ALGORITHM_BLOCK
+
+
+
+#END_OF_IEC_PART
+
+@Puma @IecEditor 6 68 @Pou 25 
+@@@BEG_Comment@@@
+
+@@@END_Comment@@@
+
+@BEG_Contents 
+
+@BEG_Func 
+@RT(17)FuncTreeContainer 
+2 
+@Var @RT(15)GET_ALARM_COUNT @RT(0) @T @T @DERIVED 0 @F @RT(22)KEBA_STANDARD_FUNCTION @F 
+@T 
+@BEG_Attrib 
+0 @RT(0) @RT(0) 
+@END_Attrib 
+1 1 @F @F @F @F 
+
+@Var @RT(9)SET_EVENT @RT(0) @T @T @DERIVED 0 @F @RT(23)KEBA_STANDARD_PROCEDURE @F 
+@T 
+@BEG_Attrib 
+0 @RT(0) @RT(0) 
+@END_Attrib 
+1 1 @F @F @F @F 
+
+@END_Func 
+
+@BEG_Const 
+@RT(18)ConstTreeContainer 
+0 
+@END_Const 
+
+@BEG_Export 
+
+@BEG_Kind 
+@ALGORITHM_BLOCK @RT(14)ABAlarmHandler @STRUCTURED_TEXT 
+@RT(0) @RT(0) @RT(0) 
+@END_Kind 
+
+@BEG_Dcl 
+@RT(16)DclTreeContainer 
+19 
+@Var @RT(7)TaskVis @RT(0) @T @T @RENAMED 0 @T @T @DT @RT(4)TASK @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 7 @F @F @F @F 
+
+@Var @RT(17)sv_iPendingAlarms @RT(0) @T @F @DT @RT(4)DINT @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 8 @F @F @F @F 
+
+@Var @RT(19)sv_iPendingMessages @RT(0) @T @F @DT @RT(4)DINT @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 8 @F @F @F @F 
+
+@Var @RT(21)di_ButtonAlarmConfirm @RT(0) @T @F @DT @RT(4)BOOL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 8 @F @F @F @F 
+
+@Var @RT(10)PU_Task_13 @RT(0) @T @T @RENAMED 0 @T @T @DT @RT(4)TASK @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 7 @F @F @F @F 
+
+@Var @RT(27)sv_bLedAlarmConfirm_ledAttr @RT(0) @T @F @DT @RT(4)BYTE @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(9)Panel LED @RT(0) 
+@END_Attrib 
+1 8 @F @F @F @F 
+
+@Var @RT(19)sv_bLedAlarmConfirm @RT(0) @T @F @DT @RT(4)BOOL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 8 @F @F @F @F 
+
+@Var @RT(30)sv_bHMILedAlarmConfirm_ledAttr @RT(0) @T @F @DT @RT(4)BYTE @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(7)HMI LED @RT(0) 
+@END_Attrib 
+1 8 @F @F @F @F 
+
+@Var @RT(22)sv_bHMILedAlarmConfirm @RT(0) @T @F @DT @RT(4)BOOL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 8 @F @F @F @F 
+
+@Var @RT(22)mAlarmConfirmLedExists @RT(0) @T @F @DT @RT(4)BOOL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(19)sv_bAlarmConfirmVis @RT(0) @T @T @RENAMED 0 @T @T @DT @RT(4)BOOL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 8 @F @F @F @F 
+
+@Var @RT(22)sv_bButtonAlarmConfirm @RT(0) @T @F @DT @RT(4)BOOL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 8 @F @F @F @F 
+
+@Var @RT(14)evAlarmConfirm @RT(0) @T @T @DERIVED 0 @T @T @DT @RT(15)tevAlarmConfirm @RT(0) @T @T @UNKNOWN 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 7 @F @F @F @F 
+
+@Var @RT(25)evPanelButtonRegisterData @RT(0) @T @T @DERIVED 0 @T @T @DT @RT(26)tevPanelButtonRegisterData @RT(0) @T @T @UNKNOWN 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(21)evPanelButtonRegister @RT(0) @T @T @DERIVED 0 @T @T @DT @RT(22)tevPanelButtonRegister @RT(0) @T @T @UNKNOWN 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 7 @F @F @F @F 
+
+@Var @RT(13)sv_bInitStart @RT(0) @T @T @RENAMED 0 @T @T @DT @RT(4)BOOL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 8 @F @F @F @F 
+
+@Var @RT(11)sv_DeviceId @RT(0) @T @T @DERIVED 0 @T @T @DT @RT(10)tsDeviceId @RT(0) @T @T @UNKNOWN 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 8 @F @F @F @F 
+
+@Var @RT(27)mDIButtonAlarmConfirmLinked @RT(0) @T @F @DT @RT(4)BOOL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(19)cButtonAlarmConfirm @RT(0) @T @F @DT @RT(4)DINT @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(1)5 @RT(0) @RT(0) 
+@END_Attrib 
+1 15 @F @F @F @F 
+
+@END_Dcl 
+
+@END_Export 
+
+@BEG_Body 
+
+4 
+
+@BEG_Export 
+
+@BEG_Algo 
+@POSTUPDATE_ALGORITHM @RT(16)pRegisterButtons @STRUCTURED_TEXT 
+@RT(0) @RT(13)sv_bInitStart @RT(10)PU_Task_13 @F @F 
+@END_Algo 
+
+@BEG_Dcl 
+@RT(16)DclTreeContainer 
+0 
+@END_Dcl 
+
+@END_Export 
+
+@BEG_Export 
+
+@BEG_Algo 
+@PROCESS_ALGORITHM @RT(14)paAlarmCounter @STRUCTURED_TEXT 
+@RT(0) @RT(0) @RT(7)TaskVis @T @F 
+@END_Algo 
+
+@BEG_Dcl 
+@RT(16)DclTreeContainer 
+2 
+@Var @RT(12)iChangeCount @RT(0) @T @F @DT @RT(4)DINT @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(15)iChangeCountOld @RT(0) @T @F @DT @RT(4)DINT @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@END_Dcl 
+
+@END_Export 
+
+@BEG_Export 
+
+@BEG_Algo 
+@POSTUPDATE_ALGORITHM @RT(19)pAlarmConfirmButton @STRUCTURED_TEXT 
+@RT(0) @RT(64)di_ButtonAlarmConfirm,sv_bButtonAlarmConfirm,sv_bAlarmConfirmVis @RT(10)PU_Task_13 @F @F 
+@END_Algo 
+
+@BEG_Dcl 
+@RT(16)DclTreeContainer 
+2 
+@Var @RT(18)evAlarmConfirmData @RT(0) @T @T @DERIVED 0 @T @T @DT @RT(19)tevAlarmConfirmData @RT(0) @T @T @UNKNOWN 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(19)bButtonAlarmConfirm @RT(0) @T @F @DT @RT(4)BOOL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@END_Dcl 
+
+@END_Export 
+
+@BEG_Export 
+
+@BEG_Algo 
+@POSTUPDATE_ALGORITHM @RT(11)pLedControl @STRUCTURED_TEXT 
+@RT(0) @RT(17)sv_iPendingAlarms @RT(10)PU_Task_13 @F @F 
+@END_Algo 
+
+@BEG_Dcl 
+@RT(16)DclTreeContainer 
+1 
+@Var @RT(9)bInitDone @RT(0) @T @F @DT @RT(4)BOOL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@END_Dcl 
+
+@END_Export 
+
+@BEG_Body 
+@TL(12)
+
+evPanelButtonRegisterData.Button.nPanelButtonType := nPanelButtonAction; 
+evPanelButtonRegisterData.Button.iCompId := sv_DeviceId.CompId;
+evPanelButtonRegisterData.Button.iIndexId := sv_DeviceId.IndexId;
+evPanelButtonRegisterData.Button.iButtonId := cButtonAlarmConfirm;
+evPanelButtonRegisterData.Button.pbActionVar1 := @sv_bButtonAlarmConfirm;
+evPanelButtonRegisterData.Button.Optional.pbLedVar := @sv_bHMILedAlarmConfirm;
+evPanelButtonRegisterData.Button.Optional.piLedVarAttr := @sv_bHMILedAlarmConfirm_ledAttr;
+SET_EVENT(evPanelButtonRegister, evPanelButtonRegisterData);
+
+mDIButtonAlarmConfirmLinked := IS_LINKED(di_ButtonAlarmConfirm);
+
+@END_Body 
+
+@@@BEG_Comment@@@ 
+@TL(0)
+
+@@@END_Comment@@@ 
+
+@BEG_Body 
+@TL(15)
+(**************************************** WARNING ********************************************
+ *** The KEBA Kemro K2 System including software is not intended for safety control tasks! ***
+ ***                       For further information see Comment tab!                        ***
+ *********************************************************************************************)
+
+iChangeCount := GET_ALARM_MODIFICATION_COUNT();
+IF iChangeCount <> iChangeCountOld THEN
+   sv_iPendingAlarms := (GET_ALARM_COUNT(1)+GET_ALARM_COUNT(2)+GET_ALARM_COUNT(3));
+   sv_iPendingMessages := GET_ALARM_COUNT() - sv_iPendingAlarms;
+END_IF;
+iChangeCountOld := iChangeCount;
+
+
+
+
+@END_Body 
+
+@@@BEG_Comment@@@ 
+@TL(0)
+
+@@@END_Comment@@@ 
+
+@BEG_Body 
+@TL(34)
+(**************************************** WARNING ********************************************
+ *** The KEBA Kemro K2 System including software is not intended for safety control tasks! ***
+ ***                       For further information see Comment tab!                        ***
+ *********************************************************************************************)
+
+bButtonAlarmConfirm := sv_bButtonAlarmConfirm;
+
+IF mDIButtonAlarmConfirmLinked THEN
+    bButtonAlarmConfirm := bButtonAlarmConfirm OR di_ButtonAlarmConfirm;
+END_IF;
+
+IF (bButtonAlarmConfirm) THEN
+    //confirm button on the panel was pressed
+    
+    //confirm all alarms
+    QUIT_ALARM(Name := ANY,
+               SubID1 := ANY,
+               SubID2 := ANY,
+               SubID3 := ANY,
+               SubID4 := ANY);
+    
+    //set error confirm event
+    evAlarmConfirmData := nConfirmedByPanel;    
+    SET_EVENT(evAlarmConfirm, evAlarmConfirmData);    
+
+ELSIF sv_bAlarmConfirmVis THEN
+    //alarms have been confirmed in hmi
+    
+    //set error confirm event
+    evAlarmConfirmData := nConfirmedByVis;    
+    SET_EVENT(evAlarmConfirm, evAlarmConfirmData);
+    sv_bAlarmConfirmVis := FALSE;
+END_IF;
+
+@END_Body 
+
+@@@BEG_Comment@@@ 
+@TL(0)
+
+@@@END_Comment@@@ 
+
+@BEG_Body 
+@TL(38)
+(**************************************** WARNING ********************************************
+ *** The KEBA Kemro K2 System including software is not intended for safety control tasks! ***
+ ***                       For further information see Comment tab!                        ***
+ *********************************************************************************************)
+
+IF NOT bInitDone THEN
+    sv_bHMILedAlarmConfirm_ledAttr := 16#1;
+    sv_bHMILedAlarmConfirm := FALSE;
+
+    IF (IS_LINKED(sv_bLedAlarmConfirm_ledAttr) AND IS_LINKED(sv_bLedAlarmConfirm)) THEN
+        sv_bLedAlarmConfirm_ledAttr := sv_bHMILedAlarmConfirm_ledAttr;
+        sv_bLedAlarmConfirm := sv_bHMILedAlarmConfirm;
+        mAlarmConfirmLedExists := TRUE;
+    ELSE
+        mAlarmConfirmLedExists := FALSE;
+    END_IF;
+    bInitDone := TRUE;
+END_IF;
+
+// set the hmi button led
+IF sv_iPendingAlarms = 0 THEN
+    sv_bHMILedAlarmConfirm := FALSE;
+ELSE
+    sv_bHMILedAlarmConfirm := TRUE;
+END_IF;
+
+
+IF NOT mAlarmConfirmLedExists THEN
+    RETURN;
+END_IF;
+
+// set the hw led
+IF sv_iPendingAlarms = 0 THEN
+    sv_bLedAlarmConfirm := FALSE;
+ELSE
+    sv_bLedAlarmConfirm := TRUE;
+END_IF;
+
+@END_Body 
+
+@@@BEG_Comment@@@ 
+@TL(0)
+
+@@@END_Comment@@@ 
+@END_Body 
+
+@END_Contents 

@@ -1,0 +1,238 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<base:Mask xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xmlns:base="http://www.keba.at/viewedit.model.base" widgetId="kvs.mask" name="OperationOptionsMask">
+  <resolution width="714" height="476"/>
+  <position x="1" y="1"/>
+  <attributeValues key="Title" value="Operation options"/>
+  <attributeValues key="Icon" value="system/hmi/images/maskicons/iconFunktionSetup.gif"/>
+  <attributeValues key="Background" value="BG_Desktop:30,30,30"/>
+  <widgetInstances xsi:type="base:ContainerWidgetInstance" widgetId="kvs.panel" name="panelSouth" layoutConstraint="SOUTH">
+    <resolution width="714" height="213"/>
+    <position y="263"/>
+    <widgetInstances xsi:type="base:ContainerWidgetInstance" widgetId="keplast.kvs.borderpanelsmall" name="panelLubrication" layoutConstraint="null">
+      <resolution width="354" height="213"/>
+      <position/>
+      <attributeValues key="Title" value="Lubrication settings"/>
+      <widgetInstances widgetId="keplast.kvs.actsetnumfieldtext" name="numfieldInterval" layoutConstraint="null">
+        <resolution width="348" height="29"/>
+        <position x="3" y="35"/>
+        <attributeValues key="Variable" value="Lubrication1.sv_LubricationSetValues.iInterval"/>
+        <attributeValues key="VariableActual" value="Lubrication1.sv_LubricationActValues.iInterval"/>
+      </widgetInstances>
+      <widgetInstances widgetId="keplast.kvs.actsetnumfieldtext" name="numfieldLubricationTime" layoutConstraint="null">
+        <resolution width="348" height="29"/>
+        <position x="3" y="64"/>
+        <attributeValues key="Variable" value="Lubrication1.sv_LubricationSetValues.dLubTime"/>
+        <attributeValues key="VariableActual" value="Lubrication1.sv_LubricationActValues.dLubTime"/>
+      </widgetInstances>
+      <widgetInstances widgetId="keplast.kvs.actsetnumfieldtext" name="numfieldOnTime" layoutConstraint="null">
+        <resolution width="348" height="29"/>
+        <position x="3" y="93"/>
+        <attributeValues key="Variable" value="Lubrication1.sv_LubricationSetValues.dOnTime"/>
+        <attributeValues key="VariableActual" value="Lubrication1.sv_LubricationActValues.dOnTime"/>
+      </widgetInstances>
+      <widgetInstances widgetId="keplast.kvs.actsetnumfieldtext" name="numfieldOffTime" layoutConstraint="null">
+        <resolution width="348" height="29"/>
+        <position x="3" y="122"/>
+        <attributeValues key="Variable" value="Lubrication1.sv_LubricationSetValues.dOffTime"/>
+        <attributeValues key="VariableActual" value="Lubrication1.sv_LubricationActValues.dOffTime"/>
+      </widgetInstances>
+      <widgetInstances widgetId="keplast.kvs.startbuttonmarktext" name="startButtonMold" layoutConstraint="null">
+        <resolution width="348" height="29"/>
+        <position x="3" y="151"/>
+        <attributeValues key="Text" value="Start lubrication mold"/>
+        <attributeValues key="_TextWidth" value="184"/>
+        <attributeValues key="Variable" value="Lubrication1.sv_bLubClampSideActive"/>
+        <attributeValues key="ActionCommand" value="cmdStartButtonMold"/>
+        <dynamicAttributes key="Create">
+          <value function="isDeviceElectric : UserFunctions" equal="true" unequal="false">
+            <parameter key="1" value="devicename; PlastFunctionUtils.createDeviceName(&quot;Lubrication1&quot;)"/>
+          </value>
+        </dynamicAttributes>
+      </widgetInstances>
+      <widgetInstances widgetId="keplast.kvs.startbuttonmarktext" name="startButtonInject" layoutConstraint="null">
+        <resolution width="348" height="29"/>
+        <position x="3" y="180"/>
+        <attributeValues key="Text" value="Start lubrication inject"/>
+        <attributeValues key="_TextWidth" value="184"/>
+        <attributeValues key="Variable" value="Lubrication1.sv_bLubInjectSideActive"/>
+        <attributeValues key="ActionCommand" value="cmdStartButtonInject"/>
+        <dynamicAttributes key="Create">
+          <value function="isDeviceElectric : UserFunctions" equal="true" unequal="false">
+            <parameter key="1" value="devicename; PlastFunctionUtils.createDeviceName(&quot;Lubrication1&quot;)"/>
+          </value>
+        </dynamicAttributes>
+      </widgetInstances>
+      <layout layoutID="kvs.layout.VerticalFlowLayout" name="VerticalFlowLayout">
+        <attributeValues key="Hgap" value="0"/>
+        <attributeValues key="Vgap" value="0"/>
+        <attributeValues key="HorizontalFill" value="true"/>
+      </layout>
+    </widgetInstances>
+    <widgetInstances xsi:type="base:ContainerWidgetInstance" widgetId="keplast.kvs.borderpanelsmall" name="panelUser" layoutConstraint="null">
+      <resolution width="354" height="213"/>
+      <position x="360"/>
+      <attributeValues key="Title" value="User settings"/>
+      <widgetInstances xsi:type="base:ContainerWidgetInstance" widgetId="kvs.panel" name="panelFields" layoutConstraint="NORTH">
+        <resolution width="348" height="29"/>
+        <position x="3" y="35"/>
+        <widgetInstances widgetId="keplast.kvs.languageselectlist" name="languageSelectlist1" layoutConstraint="null">
+          <resolution width="338" height="29"/>
+          <position x="5"/>
+        </widgetInstances>
+        <layout layoutID="kvs.layout.VerticalFlowLayout" name="VerticalFlowLayout">
+          <attributeValues key="Vgap" value="0"/>
+        </layout>
+      </widgetInstances>
+      <widgetInstances xsi:type="base:ContainerWidgetInstance" widgetId="kvs.panel" name="panelButtons" layoutConstraint="SOUTH">
+        <resolution width="348" height="40"/>
+        <position x="3" y="169"/>
+        <widgetInstances widgetId="kvs.actionbutton" name="actionButtonUnitSetup" layoutConstraint="null">
+          <resolution width="114" height="40"/>
+          <position/>
+          <attributeValues key="ActionCommand" value="cmdUnitSetup"/>
+          <attributeValues key="Text" value="Unit setup"/>
+        </widgetInstances>
+        <widgetInstances xsi:type="base:ContainerWidgetInstance" widgetId="kvs.panel" name="containerDummy" layoutConstraint="null">
+          <resolution width="114" height="40"/>
+          <position x="117"/>
+          <layout layoutID="kvs.layout.PercentLayout" name="PercentLayout"/>
+        </widgetInstances>
+        <widgetInstances widgetId="kvs.actionbutton" name="actionButtonUser" layoutConstraint="null">
+          <resolution width="114" height="40"/>
+          <position x="234"/>
+          <attributeValues key="ActionCommand" value="cmdUser"/>
+          <attributeValues key="Text" value="User"/>
+        </widgetInstances>
+        <layout layoutID="kvs.layout.GridLayout" name="GridLayout">
+          <attributeValues key="Rows" value="1"/>
+          <attributeValues key="Columns" value="2"/>
+          <attributeValues key="Hgap" value="3"/>
+        </layout>
+      </widgetInstances>
+      <layout layoutID="kvs.layout.BorderLayout" name="BorderLayout"/>
+    </widgetInstances>
+    <layout layoutID="kvs.layout.GridLayout" name="GridLayout">
+      <attributeValues key="Rows" value="1"/>
+      <attributeValues key="Columns" value="2"/>
+      <attributeValues key="Hgap" value="6"/>
+    </layout>
+  </widgetInstances>
+  <widgetInstances xsi:type="base:ContainerWidgetInstance" widgetId="keplast.kvs.borderpanelsmall" name="panelMain" layoutConstraint="CENTER">
+    <resolution width="714" height="255"/>
+    <position/>
+    <attributeValues key="Title" value="ProductionSettings"/>
+    <widgetInstances xsi:type="base:ContainerWidgetInstance" widgetId="kvs.panel" name="panelSettingsRight" layoutConstraint="RIGHT">
+      <resolution width="344" height="87"/>
+      <position x="364" y="35"/>
+      <widgetInstances widgetId="keplast.kvs.numfieldtext" name="numfieldPowerOnTime" layoutConstraint="null">
+        <resolution width="344" height="29"/>
+        <position/>
+        <attributeValues key="Variable" value="system.sv_iPowerOnTime"/>
+        <attributeValues key="Editable" value="false"/>
+        <attributeValues key="PreferredSizeNumfield" value="120, 29"/>
+      </widgetInstances>
+      <widgetInstances widgetId="keplast.kvs.numfieldtext" name="numfieldFullAutoTime" layoutConstraint="null">
+        <resolution width="344" height="29"/>
+        <position y="29"/>
+        <attributeValues key="PreferredSizeNumfield" value="120, 29"/>
+        <attributeValues key="Variable" value="system.sv_iFullAutoTime"/>
+        <attributeValues key="Editable" value="false"/>
+      </widgetInstances>
+      <widgetInstances widgetId="keplast.kvs.numfieldtext" name="numfieldTotalShotCounter" layoutConstraint="null">
+        <resolution width="344" height="29"/>
+        <position y="58"/>
+        <attributeValues key="Variable" value="system.sv_iShotCounterRetain"/>
+        <attributeValues key="Editable" value="false"/>
+        <attributeValues key="PreferredSizeNumfield" value="120, 29"/>
+      </widgetInstances>
+      <layout layoutID="kvs.layout.VerticalFlowLayout" name="VerticalFlowLayout">
+        <attributeValues key="Vgap" value="0"/>
+        <attributeValues key="Hgap" value="0"/>
+        <attributeValues key="HorizontalFill" value="true"/>
+      </layout>
+    </widgetInstances>
+    <widgetInstances xsi:type="base:ContainerWidgetInstance" widgetId="kvs.panel" name="panelSettingsLeft" layoutConstraint="LEFT">
+      <resolution width="350" height="203"/>
+      <position x="6" y="35"/>
+      <widgetInstances widgetId="keplast.kvs.checkboxtext" name="chkboxShotLimitUsed" layoutConstraint="null">
+        <resolution width="350" height="29"/>
+        <position/>
+        <attributeValues key="Variable" value="system.sv_bUseProdCounter"/>
+      </widgetInstances>
+      <widgetInstances xsi:type="base:ContainerWidgetInstance" widgetId="kvs.panel" name="container1" layoutConstraint="null">
+        <resolution width="350" height="29"/>
+        <position y="29"/>
+        <attributeValues key="PreferredSize" value="350, 29"/>
+        <widgetInstances widgetId="kvs.varlabel" name="varLabel1" layoutConstraint="null">
+          <resolution width="249" height="25"/>
+          <position x="2" y="2"/>
+          <attributeValues key="Variable" value="system.sv_bResetShotCounter"/>
+          <attributeValues key="LabelType" value="Short Variable Label"/>
+          <attributeValues key="Alignment" value="MIDDLE/LEFT"/>
+          <attributeValues key="PreferredSize" value="249, 25"/>
+        </widgetInstances>
+        <widgetInstances widgetId="keplast.kvs.kactionbutton" name="actionButton1" layoutConstraint="null">
+          <resolution width="56" height="25"/>
+          <position x="253" y="2"/>
+          <attributeValues key="ActionCommand" value="cmdResetShotCounter"/>
+          <attributeValues key="PreferredSize" value="56, 25"/>
+          <attributeValues key="IconName" value="images/reset0_16.gif"/>
+        </widgetInstances>
+        <layout layoutID="kvs.layout.FlowLayout" name="FlowLayout">
+          <attributeValues key="Alignment" value="LEFT"/>
+          <attributeValues key="Hgap" value="2"/>
+          <attributeValues key="Vgap" value="2"/>
+        </layout>
+      </widgetInstances>
+      <widgetInstances widgetId="keplast.kvs.numfieldtext" name="numfieldCavity" layoutConstraint="null">
+        <resolution width="350" height="29"/>
+        <position y="58"/>
+        <attributeValues key="Variable" value="system.sv_iCavities"/>
+        <attributeValues key="UnitVisible" value="false"/>
+      </widgetInstances>
+      <widgetInstances widgetId="keplast.kvs.actsetnumfieldtext" name="actSetNumFieldText1" layoutConstraint="null">
+        <resolution width="350" height="29"/>
+        <position y="87"/>
+        <attributeValues key="Variable" value="system.sv_dCycleDelaySet"/>
+        <attributeValues key="VariableActual" value="system.sv_dCycleDelayAct"/>
+      </widgetInstances>
+      <widgetInstances widgetId="keplast.kvs.actsetnumfieldtext" name="actSetNumFieldText2" layoutConstraint="null">
+        <resolution width="350" height="29"/>
+        <position y="116"/>
+        <attributeValues key="Variable" value="system.sv_dMaxCycleTime"/>
+        <attributeValues key="VariableActual" value="system.sv_dCycleTime"/>
+      </widgetInstances>
+      <widgetInstances widgetId="keplast.kvs.numfieldtext" name="numFieldPartMass" layoutConstraint="null">
+        <resolution width="350" height="29"/>
+        <position y="145"/>
+        <attributeValues key="Variable" value="system.sv_rPartMass"/>
+        <dynamicAttributes key="Create">
+          <value function="hasSpeedPump : UserFunctions" equal="true" unequal="false"/>
+        </dynamicAttributes>
+      </widgetInstances>
+      <widgetInstances widgetId="keplast.kvs.enablemachinesequencerswitch" name="chkboxDisableCycleDesigner" layoutConstraint="null">
+        <resolution width="350" height="29"/>
+        <position y="174"/>
+        <dynamicAttributes key="Create">
+          <value function="hasMachineSequenzer : UserFunctions" equal="true" unequal="false"/>
+        </dynamicAttributes>
+      </widgetInstances>
+      <layout layoutID="kvs.layout.VerticalFlowLayout" name="VerticalFlowLayout">
+        <attributeValues key="Vgap" value="0"/>
+        <attributeValues key="Hgap" value="0"/>
+        <attributeValues key="HorizontalFill" value="true"/>
+      </layout>
+    </widgetInstances>
+    <widgetInstances widgetId="keplast.kvs.separator" name="separator1" layoutConstraint="SEPARATOR">
+      <resolution width="2" height="216"/>
+      <position x="359" y="35"/>
+    </widgetInstances>
+    <layout layoutID="keplast.kvs.layout.horizontalsplitlayout" name="HorizontalSplitLayout">
+      <attributeValues key="PercentLeft" value="53"/>
+      <attributeValues key="PercentRight" value="52"/>
+    </layout>
+  </widgetInstances>
+  <layout layoutID="kvs.layout.BorderLayout" name="BorderLayout">
+    <attributeValues key="Vgap" value="8"/>
+  </layout>
+</base:Mask>

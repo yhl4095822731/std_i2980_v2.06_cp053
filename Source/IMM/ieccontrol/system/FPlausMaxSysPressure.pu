@@ -1,0 +1,175 @@
+IMPORT_OVER_LISTFILE
+ GET_SYNC_REFTO
+, IS_LINKED
+, tsLimitDataReal
+, KSYS_Status
+, KAPPL_LintabData_2P
+
+END_IMPORT
+
+PLAUSIBILITY_FUNCTION FPlausMaxSysPressure : tsLimitDataReal
+
+VAR_INPUT
+ DeviceClass : INT;
+ Userlevel : INT;
+END_VAR
+
+VAR
+ Status : KSYS_Status;
+ prSysPress : REFTO REAL;
+ pSysPressureLintab : REFTO KAPPL_LintabData_2P;
+ bNoPlaus : BOOL;
+END_VAR
+#BEGIN_EDIT_BLOCK
+// set lower limit 0.0 (no negative pressure allowed)
+FPlausMaxSysPressure.rLowerLimit := 0.0;
+
+prSysPress := GET_SYNC_REFTO("Injection1.ai_SysPressure", T#0s, Status);
+IF Status = KSYS_Status_OK THEN
+   pSysPressureLintab := GET_SYNC_REFTO("Injection1.sv_SysPressureLintab", T#0s, Status);
+   IF Status = KSYS_Status_OK THEN
+      IF pSysPressureLintab^.LintabPoints.uNoOfPoints > 0 THEN
+         FPlausMaxSysPressure.rUpperLimit := pSysPressureLintab^.LintabPoints.Point[pSysPressureLintab^.LintabPoints.uNoOfPoints].rY;
+      ELSE
+         bNoPlaus := TRUE;
+      END_IF;
+   ELSE   
+      bNoPlaus := TRUE;
+   END_IF;
+ELSE   
+   bNoPlaus := TRUE;
+END_IF;
+IF bNoPlaus THEN
+   // set usefull limit, pressure higher 1000 bar problem with hydraulic hose, ...
+   FPlausMaxSysPressure.rUpperLimit := 999.0;
+END_IF;
+
+
+
+;#END_EDIT_BLOCK END_FUNCTION
+
+
+
+#END_OF_IEC_PART
+
+@Puma @IecEditor 6 131 @Pou 25 
+@@@BEG_Comment@@@
+
+@@@END_Comment@@@
+
+@BEG_Contents 
+
+@BEG_Func 
+@RT(17)FuncTreeContainer 
+2 
+@Var @RT(14)GET_SYNC_REFTO @RT(0) @T @T @DERIVED 0 @F @RT(22)KEBA_STANDARD_FUNCTION @F 
+@T 
+@BEG_Attrib 
+0 @RT(0) @RT(0) 
+@END_Attrib 
+1 1 @F @F @F @F 
+
+@Var @RT(9)IS_LINKED @RT(0) @T @T @DERIVED 0 @F @RT(22)KEBA_STANDARD_FUNCTION @F 
+@T 
+@BEG_Attrib 
+0 @RT(0) @RT(0) 
+@END_Attrib 
+1 1 @F @F @F @F 
+
+@END_Func 
+
+@BEG_Const 
+@RT(18)ConstTreeContainer 
+0 
+@END_Const 
+
+@BEG_Export 
+
+@BEG_Kind 
+@PLAUSIBILITY_FUNCTION @RT(20)FPlausMaxSysPressure @STRUCTURED_TEXT 
+@RT(15)tsLimitDataReal @RT(0) @RT(0) 
+@END_Kind 
+
+@BEG_Dcl 
+@RT(16)DclTreeContainer 
+6 
+@Var @RT(11)DeviceClass @RT(0) @T @F @DT @RT(3)INT @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+0 1 @F @F @F @F 
+
+@Var @RT(9)Userlevel @RT(0) @T @F @DT @RT(3)INT @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+0 1 @F @F @F @F 
+
+@Var @RT(6)Status @RT(0) @T @T @DERIVED 0 @T @T @DT @RT(11)KSYS_Status @RT(0) @T @T @UNKNOWN 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(10)prSysPress @RT(0) @T @T @REFTO 0 @T @DT @RT(4)REAL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(18)pSysPressureLintab @RT(0) @T @T @REFTO 0 @F @DERIVED 0 @F @RT(19)KAPPL_LintabData_2P @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(8)bNoPlaus @RT(0) @T @F @DT @RT(4)BOOL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@END_Dcl 
+
+@END_Export 
+
+@BEG_Body 
+@TL(24)
+// set lower limit 0.0 (no negative pressure allowed)
+FPlausMaxSysPressure.rLowerLimit := 0.0;
+
+prSysPress := GET_SYNC_REFTO("Injection1.ai_SysPressure", T#0s, Status);
+IF Status = KSYS_Status_OK THEN
+   pSysPressureLintab := GET_SYNC_REFTO("Injection1.sv_SysPressureLintab", T#0s, Status);
+   IF Status = KSYS_Status_OK THEN
+      IF pSysPressureLintab^.LintabPoints.uNoOfPoints > 0 THEN
+         FPlausMaxSysPressure.rUpperLimit := pSysPressureLintab^.LintabPoints.Point[pSysPressureLintab^.LintabPoints.uNoOfPoints].rY;
+      ELSE
+         bNoPlaus := TRUE;
+      END_IF;
+   ELSE   
+      bNoPlaus := TRUE;
+   END_IF;
+ELSE   
+   bNoPlaus := TRUE;
+END_IF;
+IF bNoPlaus THEN
+   // set usefull limit, pressure higher 1000 bar problem with hydraulic hose, ...
+   FPlausMaxSysPressure.rUpperLimit := 999.0;
+END_IF;
+
+
+@END_Body 
+
+@END_Contents 

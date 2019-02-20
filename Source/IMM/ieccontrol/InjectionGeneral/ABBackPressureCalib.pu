@@ -1,0 +1,2484 @@
+(*
+@h    ! WARNING !
+@h    The Kemro K2 system (including software) only meets category B according to EN 954-1,
+@h    thus it is not intended for usage in safety-relevant control applications in the field 
+@h    of personal safety (e.g. emergency stop).
+@h    To implement potentially necessary safety-relevant control tasks, always use additional 
+@h    external safety devices that are intended for the particular purpose, and meet the necessary 
+@h    functional safety.
+@h    For further information see EN 954-1 (EN ISO 13849-1) and/or the K2-x00 user manual, chapter 
+@h    "CE conformity, directives and standards".
+
+Do automatic hold pressure calibration
+*)
+
+IMPORT_OVER_LISTFILE
+ GET_MY_FU_NAME
+, KSWO_AddVariable
+, GET_TASK_INTERVAL
+, SET_ALARM
+, KFILE_Open
+, KFILE_WriteString
+, KFILE_Close
+, FReadLineFromFile
+, KMEM_ArrayGet
+, cMaxRecordedData
+, cApplPlasticsNoError
+, KFILE_Mode_ReadWriteDelete
+, KFILE_Mode_ReadOnly
+, KFILE_Status_OK
+, CALIB_FILE_PATH
+, tsCalculatedInjectData2
+, ABConstMovement
+, tyHalfArray
+, FBAutoCalibLog
+, KMEM_CreateData
+, tsVelPre
+, tMoveIdent
+, KSWO_Status
+, R_TRIG
+, TON
+, KMEM_Status
+, KFILE_Open_Data
+, KFILE_Status
+, FBAutoCalibInjectionInner2
+
+END_IMPORT
+
+ALGORITHM_BLOCK ABBackPressureCalib #DUMMY_EDIT_BLOCK
+
+SYSTEM_VAR
+ sv_TmpInjectionData : tsCalculatedInjectData2;
+ sv_bStartBackPTest : BOOL;
+END_VAR
+
+SYSTEM_OBJECT
+ erCalibrationNotEnoughValues : ALARM;
+ TaskSlow : TASK;
+ PU_Task_7 : TASK;
+ erCalibrationWarning : ALARM;
+ erCalibrationDataFailure : ALARM;
+ erPIDCalcPressureNotStable : ALARM;
+END_OBJECT
+
+VAR
+ abConstMovement : ABConstMovement;
+ CycleTime : TIME (* (of capturing) *);
+ RaisingInArray : tyHalfArray;
+ FallingInArray : tyHalfArray;
+ RaisingOutArray : tyHalfArray;
+ FallingOutArray : tyHalfArray;
+ RaisingArrayCount : DINT (* samples in raising edge array *);
+ FallingArrayCount : DINT (* samples in falling edge array *);
+ iCycleTimeInMs : DINT;
+ iMeanLength : DINT := 300 (* Length in ms for mean value calculation *);
+ mCalculationFinished : BOOL (* The calculation process algorithm has finished *);
+ iInjectCounter : DINT (* counter for repeating injection/calculation *);
+ mpbDebugCalibration : REFTO BOOL;
+ mError : BOOL;
+ fbLog : FBAutoCalibLog;
+ MeasuredOutputData : KMEM_CreateData (* To capture our output profile *);
+ MeasuredPresData : KMEM_CreateData;
+ iTimeReachedPos1 : DINT (* Array pos when we reached profile point 1 *);
+ iTimeReachedPos2 : DINT;
+ iTimeReachedEnd : DINT;
+ mprMaxPres : REFTO REAL (* maximum pressure for scaling *);
+ bStarted : BOOL;
+ mpConstant : REFTO tsVelPre;
+ rPlantAmp1 : REAL (* plant amplification for edge1 identification *);
+ rPlantAmp2 : REAL (* plant amplification for edge2 identification *);
+ mrSetPressure : REAL;
+ mrActPressure : REAL;
+ rSecurityFactor : REAL := 0.2;
+ iTimeAddDataPos : DINT := 41 (* number of data points before falling edge *);
+ msFuName : STRING(32);
+ msWorkPath : STRING(255);
+END_VAR
+
+VAR CONSTANT
+ rLowOutputFactor : REAL := 0.4;
+ rHighOutputFactor : REAL := 0.8;
+END_VAR
+
+ALGORITHM aInit
+
+
+VAR_INPUT
+ pConst : REFTO tsVelPre (* pointer to systemvariable that contains profile *);
+ MoveId : tMoveIdent (* moveId of constant movement *);
+ prMaxPressure : REFTO REAL;
+ MeasureTask : TASK (* Task used to measure variables with SWO-Server *);
+ pbDebugCalibration : REFTO BOOL;
+END_VAR
+
+VAR
+ swoState : KSWO_Status;
+ variableName : STRING(255);
+END_VAR
+#BEGIN_EDIT_BLOCK
+(**************************************** WARNING ********************************************
+ *** The KEBA Kemro K2 System including software is not intended for safety control tasks! ***
+ ***                       For further information see Comment tab!                        ***
+ *********************************************************************************************)
+
+mprMaxPres := prMaxPressure;
+
+mpConstant := pConst;
+mpConstant^.Pressure.Output.rOutputValue := rHighOutputFactor * mprMaxPres^;
+mpConstant^.Pressure.Output.rRamp := 800.0;
+mpConstant^.Velocity.Output.rOutputValue := 100.0;// in %
+mpConstant^.Velocity.Output.rRamp := 800.0;
+
+abConstMovement.aInit(pConst := pConst,
+                      MoveId := MoveId);
+mpbDebugCalibration := pbDebugCalibration;
+
+msFuName := GET_MY_FU_NAME();
+variableName := CONCAT(msFuName,'.HoldCalib.rActPressure bar');
+swoState := KSWO_AddVariable( Task := MeasureTask,
+                              Name := variableName,
+                              Variable := mrActPressure);
+variableName := CONCAT(msFuName,'.HoldCalib.rSetPressure bar');
+swoState := KSWO_AddVariable( Task := MeasureTask,
+                              Name := variableName,
+                              Variable := mrSetPressure);
+variableName := CONCAT(msFuName,'.HoldCalib.bStarted');
+swoState := KSWO_AddVariable( Task := MeasureTask,
+                              Name := variableName,
+                              Variable := bStarted);
+
+//get workpath
+msWorkPath := FGetCatConfigValueString('System.workPath', '/harddisk0/');
+
+
+
+;#END_EDIT_BLOCK END_ALGORITHM
+
+(*
+Output profile for back pressure calibration
+and measure the pressure input
+*)
+
+ALGORITHM aRun
+
+
+VAR_INPUT
+ bStart : BOOL (* start constant calib block *);
+ bStop : BOOL (* stop constant calib block *);
+ rPressure : REAL;
+ dDelayTimeOn : TIME (* Delay Time between preoutput and  constoutput *);
+ dDelayTimeOff : TIME (* Delay Time between pump stop and bActive FALSE *);
+END_VAR
+
+VAR_OUTPUT
+ bActive : BOOL (* movement is active *);
+ rOutputPre : REAL (* pressure output *);
+ rOutputVel : REAL (* velocity output *);
+ bPreOutputReached : BOOL (* preoutput ready *);
+ bError : BOOL (* flag to indicate if error occured *);
+ iErrorInfo : DINT (* additional error info *);
+END_VAR
+
+VAR
+ fbREdge_Start : R_TRIG;
+ dWantedSectionTime : TIME := t#5s;
+ bRampDown : BOOL;
+ iMeasurePos : DINT (* index for capturing data *);
+ iStage : DINT;
+ fbDelayTimer : TON;
+ s : KMEM_Status;
+ rTmp : REAL;
+END_VAR
+#BEGIN_EDIT_BLOCK
+(**************************************** WARNING ********************************************
+ *** The KEBA Kemro K2 System including software is not intended for safety control tasks! ***
+ ***                       For further information see Comment tab!                        ***
+ *********************************************************************************************)
+ 
+fbREdge_Start(CLK := bStart);
+IF fbREdge_Start.Q THEN
+    //tCalibMode := tnCalibMode_Both;// calculate raising and falling edge
+   
+    //get handles to dynamic arrays
+    MeasuredPresData := KMEM_GetHandle(cCalibMeasuredPres);
+    MeasuredOutputData := KMEM_GetHandle(cCalibMeasuredOutput);
+    IF (MeasuredOutputData.Status <> KMEM_Status_OK) OR (MeasuredPresData.Status <> KMEM_Status_OK) THEN
+       bError := TRUE;
+       iErrorInfo := cCalibInvalidHandle;
+       RETURN;
+    END_IF;
+   
+    bRampDown := FALSE;
+    iStage := 0;
+    bStarted := TRUE;
+    iMeasurePos := 1;
+    abConstMovement.aRun(bStart := FALSE);
+    sv_TmpInjectionData.bValid := FALSE;
+    sv_TmpInjectionData.bInvalid := FALSE;
+    CycleTime := GET_TASK_INTERVAL();
+    fbDelayTimer(IN := FALSE, PT:= dWantedSectionTime);
+END_IF;
+
+IF bStop THEN
+    bStarted := FALSE;
+END_IF;
+
+IF bStarted THEN
+   fbDelayTimer(IN := TRUE);
+   IF fbDelayTimer.Q THEN
+      iStage := iStage + 1;
+      fbDelayTimer(IN := FALSE);
+      
+      IF iStage = 1 THEN // falling edge
+         iTimeReachedPos1 := iMeasurePos;
+      ELSIF iStage = 2 THEN
+         iTimeReachedPos2 := iMeasurePos;   
+      ELSIF iStage = 3 THEN // done measuring
+         bRampDown := TRUE;
+         iTimeReachedEnd := iMeasurePos;
+         fbLog('Hold PID calib ');
+         START_PROCESS_ALGORITHM(paCalculate1);
+      END_IF;
+   END_IF;
+END_IF;
+
+
+IF bStarted THEN
+   //call const movement block
+   abConstMovement.aRun(bStart := bStart,
+                     bStop := bStop OR bRampDown,
+                     bUsePosDetect := FALSE,
+                     rStartOutputPre := 0.0,
+                     rStartOutputVel := 0.0,
+                     dDelayTimeOn := dDelayTimeOn,
+                     dDelayTimeOff := dDelayTimeOff);
+
+
+   (* to do a jump without a ramp we directly output the low value *)
+   IF iStage = 1 THEN    
+      rOutputPre := rLowOutputFactor * mprMaxPres^;    
+   ELSE
+      rOutputPre := abConstMovement.aRun.rOutputPre;
+   END_IF;
+   rOutputVel := abConstMovement.aRun.rOutputVel;
+   bPreOutputReached := abConstMovement.aRun.bPreOutputReached;
+   bActive := abConstMovement.aRun.bActive;
+   bError := abConstMovement.aRun.bError;
+ELSE
+   // not started
+   rOutputVel := 0.0;
+   bPreOutputReached := TRUE;
+   bActive := FALSE;
+   bError := FALSE;
+END_IF;
+   
+//finished ramping down -> switch off
+IF bStarted AND bRampDown AND NOT abConstMovement.aRun.bActive THEN
+   bStarted := FALSE;
+END_IF;
+
+
+IF bStarted AND NOT bRampDown THEN
+    IF iMeasurePos > cMaxRecordedData THEN
+        bError := TRUE;
+        iErrorInfo :=  123;//FIXME: use proper error
+        bActive := FALSE;
+        bStarted := FALSE;
+        RETURN;    
+    END_IF;
+    (* record values *)
+    rTmp := rOutputPre;
+    s := KMEM_ArraySet(MeasuredOutputData.Handle, rTmp, DINT_TO_UDINT(iMeasurePos));
+    rTmp := rPressure;
+    s := KMEM_ArraySet(MeasuredPresData.Handle, rTmp, DINT_TO_UDINT(iMeasurePos));
+    iMeasurePos := iMeasurePos + 1;
+    
+END_IF;
+
+IF abConstMovement.aRun.bError THEN
+    IF abConstMovement.aRun.iErrorInfo.Pressure <> cApplPlasticsNoError THEN
+        iErrorInfo := abConstMovement.aRun.iErrorInfo.Pressure;
+    ELSE
+        iErrorInfo := abConstMovement.aRun.iErrorInfo.Velocity;
+    END_IF;
+ELSIF NOT bError THEN
+    iErrorInfo := cApplPlasticsNoError;
+END_IF;
+
+mrSetPressure := rOutputPre;
+mrActPressure := rPressure;
+
+
+;#END_EDIT_BLOCK END_ALGORITHM
+
+(*
+preprocess data for hold pressure calibration
+normalize and split into raising and falling edge
+writes a log file to /workspace/data when mpbDebugCalibration is enabled
+*)
+
+PROCESS_ALGORITHM paCalculate1 ON TaskSlow
+
+
+VAR_TEMP
+ i : DINT;
+ j : DINT;
+END_VAR
+
+VAR
+ ThirdStageData : KMEM_CreateData (* after butterworth backward *);
+ tmpstr : STRING(255);
+ reallywritten : DINT;
+ open : KFILE_Open_Data;
+ rMeanTmp : REAL;
+ rMeanTmpSet : REAL;
+ rMeanHigher1 : REAL (* mean value at 80% (left side) *);
+ rMeanHigherSet1 : REAL (* mean value at 80% (left side) *);
+ rMeanHigher2 : REAL (* mean value at 80% (right side) *);
+ rMeanHigherSet2 : REAL (* mean value at 80% (right side) *);
+ rMeanLower : REAL (* mean value at 40% *);
+ rMeanLowerSet : REAL (* mean value at 40% *);
+ rPT1LookalikeCutoffFactor : REAL := 0.5 (* factor from 0-1, which says where to cut off data collection, as plant does not act as a PT1 anymore *);
+ bPT1LookalikeCutoffEnable : BOOL := TRUE;
+ status : KFILE_Status;
+ bIsDir : BOOL;
+ sPath : STRING(255);
+ s : KMEM_Status;
+ rTmpThirdStage : REAL;
+ rTmpPres : REAL;
+ rTmpOutput : REAL;
+END_VAR
+#BEGIN_EDIT_BLOCK
+(**************************************** WARNING ********************************************
+ *** The KEBA Kemro K2 System including software is not intended for safety control tasks! ***
+ ***                       For further information see Comment tab!                        ***
+ *********************************************************************************************)
+
+(* this algo needs package version 4.88 so the filter can work*)
+
+fbLog('Hold PID calib calculation stage1 started');
+
+ThirdStageData := KMEM_GetHandle(cCalibThirdStage);
+
+mCalculationFinished := FALSE;
+
+iCycleTimeInMs := LINT_TO_DINT(TIME_TO_LINT(CycleTime)/1000);
+
+(* FIXME: check if enough samples *)
+IF(iTimeReachedEnd < 500 OR iTimeReachedPos1 < 50) THEN
+   mError := TRUE;
+   SET_ALARM(Name := erCalibrationNotEnoughValues);//maybe add how much we need?
+   sv_TmpInjectionData.bInvalid := TRUE;
+   STOP_PROCESS_ALGORITHM();
+   RETURN;
+END_IF;
+
+//copy
+FOR i := iTimeReachedEnd TO 1 BY -1 DO
+   s := KMEM_ArrayGet(MeasuredPresData.Handle, rTmpPres, DINT_TO_UDINT(i));
+   s := KMEM_ArraySet(ThirdStageData.Handle, rTmpPres, DINT_TO_UDINT(i));
+END_FOR;
+
+
+(* mean value of 300 ms before Pos1 (80% left)*)
+// By calculating the mean value of the set pressure
+// it is possible to check the difference between 
+// the set and the actual pressure.
+// Perhaps we should make a security test  
+rMeanTmp := 0.0;
+rMeanTmpSet := 0.0;
+j:= 0;
+FOR i:= MAX(50,iTimeReachedPos1 - (iMeanLength /iCycleTimeInMs)) TO iTimeReachedPos1-1 DO//drop the first 50 values
+   j := j+1;
+   s := KMEM_ArrayGet(ThirdStageData.Handle, rTmpThirdStage, DINT_TO_UDINT(i));
+   rMeanTmp := rMeanTmp + rTmpThirdStage;
+   s := KMEM_ArrayGet(MeasuredOutputData.Handle, rTmpPres, DINT_TO_UDINT(i));
+   rMeanTmpSet := rMeanTmpSet + rTmpPres;
+END_FOR;
+IF j = 0 THEN
+   mError := TRUE;
+   SET_ALARM(Name := erCalibrationNotEnoughValues);//maybe add how much we need?
+   sv_TmpInjectionData.bInvalid := TRUE;
+   STOP_PROCESS_ALGORITHM();
+   RETURN;
+END_IF;
+rMeanHigher1 := rMeanTmp / DINT_TO_REAL(j);
+rMeanHigherSet1 := rMeanTmpSet / DINT_TO_REAL(j); 
+
+(* mean value of 300 ms before Pos2 (40 %)*)
+rMeanTmp := 0.0;
+rMeanTmpSet := 0.0;
+j:= 0;
+FOR i:= iTimeReachedPos2 - (iMeanLength /iCycleTimeInMs) TO iTimeReachedPos2-1 DO
+   j := j+1;
+   s := KMEM_ArrayGet(ThirdStageData.Handle, rTmpThirdStage, DINT_TO_UDINT(i));
+   rMeanTmp := rMeanTmp + rTmpThirdStage;
+   s := KMEM_ArrayGet(MeasuredOutputData.Handle, rTmpPres, DINT_TO_UDINT(i));
+   rMeanTmpSet := rMeanTmpSet + rTmpPres;
+END_FOR;
+IF j = 0 THEN
+   mError := TRUE;
+   SET_ALARM(Name := erCalibrationNotEnoughValues);//maybe add how much we need?
+   sv_TmpInjectionData.bInvalid := TRUE;
+   STOP_PROCESS_ALGORITHM();
+   RETURN;
+END_IF;
+rMeanLower := rMeanTmp / DINT_TO_REAL(j);
+rMeanLowerSet := rMeanTmpSet / DINT_TO_REAL(j);
+
+(* mean value of 300 ms before end pos(-20) 80% right)*)
+// This is not needed, but perhaps in future
+rMeanTmp := 0.0;
+j:= 0;
+rMeanTmpSet := 0.0;
+FOR i:= MAX((iTimeReachedEnd - 20) - (iMeanLength /iCycleTimeInMs), iTimeReachedPos2) TO iTimeReachedEnd - 20(*MIN(iTimeReachedEnd - 20,maxHalfSize)*) DO
+   j := j+1;
+   s := KMEM_ArrayGet(ThirdStageData.Handle, rTmpThirdStage, DINT_TO_UDINT(i));
+   rMeanTmp := rMeanTmp + rTmpThirdStage;
+   s := KMEM_ArrayGet(MeasuredOutputData.Handle, rTmpPres, DINT_TO_UDINT(i));
+   rMeanTmpSet := rMeanTmpSet + rTmpPres;
+END_FOR;
+
+IF j = 0 THEN
+   mError := TRUE;
+   SET_ALARM(Name := erCalibrationNotEnoughValues);//maybe add how much we need?
+   sv_TmpInjectionData.bInvalid := TRUE;
+   STOP_PROCESS_ALGORITHM();
+   RETURN;
+END_IF;
+
+rMeanHigher2:= rMeanTmp / DINT_TO_REAL(j);
+rMeanHigherSet2:= rMeanTmpSet / DINT_TO_REAL(j);
+
+IF rMeanHigher1 = rMeanLower OR rMeanHigher2 = rMeanLower 
+   OR rMeanHigherSet1 = rMeanLowerSet OR rMeanHigherSet2 = rMeanLowerSet THEN
+   SET_ALARM(Name := erCalibrationDataFailure); 
+   sv_TmpInjectionData.bInvalid := TRUE;
+   fbLog('lower mean value equals higher mean value -> impossible');
+   STOP_PROCESS_ALGORITHM();
+   RETURN;
+END_IF;
+
+IF (ABS(rMeanHigher1 - rMeanHigherSet1)/rMeanHigherSet1 > rSecurityFactor) OR
+   (ABS(rMeanHigher2 - rMeanHigherSet2)/rMeanHigherSet2 > rSecurityFactor) OR
+   (ABS(rMeanLower - rMeanLowerSet)/rMeanLowerSet > rSecurityFactor)THEN
+   // High difference between set and actual pressure
+   // Perhaps wrong calibration or no calibration done
+   sv_TmpInjectionData.bInvalid := TRUE;
+   SET_ALARM(Name := erCalibrationDataFailure); 
+   fbLog('Please check calibration of pump pressure, perhaps it has not done.');
+   STOP_PROCESS_ALGORITHM();
+   RETURN;
+END_IF;
+     
+(* calc normalized  array *)
+(* skip at least the first 80 points as they are problematic *)
+(* begin iTimeAddDataPoints (41) points before reaching position 1 *)
+(* This shows good results on Haitian HTF120W and Haitian HTF58X1*)
+(* Be careful by increasing maximal deadTime over 30 Steps*) 
+
+j:= 1;
+FOR i:= MAX(80, iTimeReachedPos1 - iTimeAddDataPos) TO iTimeReachedPos2 - (iMeanLength / iCycleTimeInMs) DO
+   s := KMEM_ArrayGet(ThirdStageData.Handle, rTmpThirdStage, DINT_TO_UDINT(i));
+   RaisingOutArray[j] := (rTmpThirdStage - rMeanLower) * (rHighOutputFactor - rLowOutputFactor) / (rMeanHigher1 - rMeanLower) + rLowOutputFactor;
+   s := KMEM_ArrayGet(MeasuredOutputData.Handle, rTmpOutput, DINT_TO_UDINT(i));
+   RaisingInArray[j] := (rTmpOutput - rMeanLowerSet) * (rHighOutputFactor - rLowOutputFactor) / (rMeanHigherSet1 - rMeanLowerSet) + rLowOutputFactor;
+   // end array after 50% of jump, as it does not look like a PR1 anymore after that
+   // but take more than iTimeAddDataPos points after the falling edge, because otherwise 
+   // there are only a few or no points for the determination of the deadTime , take not more points as 
+   // possible 
+   IF bPT1LookalikeCutoffEnable AND 
+       RaisingOutArray[j] <= ((rHighOutputFactor + rLowOutputFactor)* rPT1LookalikeCutoffFactor) 
+       // perhaps it is necessary to have mor points, than use:
+       AND j >= MIN (2*iTimeAddDataPos+1,iTimeReachedPos2-iTimeReachedPos1-1) THEN
+       EXIT; //FOR-Loop
+   END_IF;
+   j := j + 1;
+END_FOR;
+RaisingArrayCount := j - 1;
+rPlantAmp1 := 1.0; //(rHighOutputFactor - rLowOutputFactor) / (rMeanHigher1 - rMeanLower);
+
+(* calc normalized  array *)
+(* skip the last 20 points as the are prolematic *)
+// This is not used at the moment
+j:= 1;
+FOR i:= iTimeReachedPos2 TO iTimeReachedEnd - 20 DO
+   s := KMEM_ArrayGet(ThirdStageData.Handle, rTmpThirdStage, DINT_TO_UDINT(i));
+   FallingOutArray[j] := (rTmpThirdStage - rMeanLower) * (rHighOutputFactor - rLowOutputFactor) / (rMeanHigher2 - rMeanLower) + rLowOutputFactor;
+   s := KMEM_ArrayGet(MeasuredOutputData.Handle, rTmpOutput, DINT_TO_UDINT(i));
+   FallingInArray[j] := (rTmpOutput - rMeanLowerSet) * (rHighOutputFactor - rLowOutputFactor) / (rMeanHigherSet2 - rMeanLowerSet) + rLowOutputFactor;
+   //end array after 50% of jump
+   IF bPT1LookalikeCutoffEnable AND FallingOutArray[j] >= ((rHighOutputFactor + rLowOutputFactor)* rPT1LookalikeCutoffFactor) THEN
+      EXIT;
+   END_IF;
+
+   j := j + 1;
+END_FOR;
+FallingArrayCount := j - 1;
+rPlantAmp2 := 1.0; //(rHighOutputFactor - rLowOutputFactor) / (rMeanHigher2 - rMeanLower);
+(* from here on we only have values normalize to 0.0 - 1.0 *)
+(* but the values may be outside of this limit when overshooting*)
+
+
+(* output whole injection array to file *)
+IF(mpbDebugCalibration^) THEN
+   sPath := CONCAT(msWorkPath, CALIB_FILE_PATH, msFuName, '/');
+   status := KFILE_IsDir (Name := sPath, IsDirectory := bIsDir);
+   IF status = KFILE_Status_NOTOK THEN
+      status := KFILE_MakeDir (Path := sPath);
+   END_IF;
+   
+   open := KFILE_Open(Name:= CONCAT(sPath, 'hold',DINT_TO_STRING(iInjectCounter), '_full.txt'), Mode := KFILE_Mode_ReadWriteDelete);
+   
+   tmpstr := 'count;measuredpres;outpres$N';
+   reallywritten := KFILE_WriteString(Token := open.Token, Length := 0, Buffer := tmpstr);
+       
+   (* FOR i:=1 TO RaisingArrayCount DO
+       tmpstr := CONCAT(DINT_TO_STRING(i), ';', REAL_TO_STRING(RaisingInArray[i]), ';',REAL_TO_STRING(RaisingOutArray[i]), ';', '$N');
+       reallywritten := KFILE_WriteString(Token := open.Token, Length := 0, Buffer := tmpstr);
+   END_FOR;
+   *)
+   FOR i:=1 TO iTimeReachedEnd DO
+      s := KMEM_ArrayGet(MeasuredPresData.Handle, rTmpPres, DINT_TO_UDINT(i));
+      s := KMEM_ArrayGet(MeasuredOutputData.Handle, rTmpOutput, DINT_TO_UDINT(i));
+      tmpstr := CONCAT(DINT_TO_STRING(i), ';', REAL_TO_STRING(rTmpPres), ';', REAL_TO_STRING(rTmpOutput), ';', '$N');
+      reallywritten := KFILE_WriteString(Token := open.Token, Length := 0, Buffer := tmpstr);
+   END_FOR;
+   status := KFILE_Close(Token := open.Token);   
+END_IF;
+
+(* start identifying normalized data *)
+START_PROCESS_ALGORITHM(paCalculate2);
+STOP_PROCESS_ALGORITHM();
+
+
+
+
+;#END_EDIT_BLOCK END_ALGORITHM
+
+PROCESS_ALGORITHM paCalculate2 ON TaskSlow
+
+
+VAR
+ fbCalibInjectionInner : FBAutoCalibInjectionInner2;
+ debugprefix : STRING(255);
+ sPath : STRING(255);
+END_VAR
+#BEGIN_EDIT_BLOCK
+(**************************************** WARNING ********************************************
+ *** The KEBA Kemro K2 System including software is not intended for safety control tasks! ***
+ ***                       For further information see Comment tab!                        ***
+ *********************************************************************************************)
+
+sPath := CONCAT(msWorkPath, CALIB_FILE_PATH, msFuName, '/');
+
+fbLog('Hold PID calib calculation stage2 started');
+(* calculate first edge: sv_TmpInjectionData.CalibMode = tnCalibMode_Raising*)
+debugprefix := CONCAT(sPath, 'hold', DINT_TO_STRING(iInjectCounter),'_r_');
+fbCalibInjectionInner(InArray:= RaisingInArray, OutArray:=RaisingOutArray,
+                     CycleTime := CycleTime, iPointCount:=RaisingArrayCount,
+                     rPlantAmp := rPlantAmp1,
+                     DebugPrefix := debugprefix,
+                     rHighOutputFactor := rHighOutputFactor,
+                     iTimeStartPos := iTimeAddDataPos+1,
+                     bDebugCalibration := mpbDebugCalibration^,
+                     rPhasemargin:=sv_TmpInjectionData.rPhasemargin,
+                     rPhasemarginMin3dB:=sv_TmpInjectionData.rPhasemarginMin3dB); // mormalized to mean(p_act)
+
+sv_TmpInjectionData.Raising := fbCalibInjectionInner.CalculatedParams;
+iInjectCounter := iInjectCounter + 1;
+mCalculationFinished := TRUE;
+sv_TmpInjectionData.bValid := fbCalibInjectionInner.bValid;
+sv_TmpInjectionData.bInvalid := NOT fbCalibInjectionInner.bValid;
+
+IF sv_TmpInjectionData.bValid AND fbCalibInjectionInner.iErrorInfo = 0 THEN
+   fbLog('Hold PID calib Done -> Data valid');
+ELSIF sv_TmpInjectionData.bValid AND fbCalibInjectionInner.iErrorInfo <> 0 THEN
+   fbLog('Hold PID calib Done -> Data valid, but result might be problematic');
+   SET_ALARM(Name := erCalibrationWarning); 
+ELSE    
+   fbLog('Hold PID calib Done -> Data invalid');
+   SET_ALARM(Name := erPIDCalcPressureNotStable);
+END_IF;
+
+STOP_PROCESS_ALGORITHM();
+
+
+;#END_EDIT_BLOCK END_ALGORITHM
+
+POSTUPDATE_ALGORITHM pStartTestRun ON TaskSlow WITH sv_bStartBackPTest
+
+#BEGIN_EDIT_BLOCK
+(* algo for debugging. Reads data from '/Messwerte.txt' *)
+(* then caclulates the controller like the standard version *)
+
+CycleTime := t#2ms;//GET_TASK_INTERVAL();
+(* Start Process algo, as this needs longer and we are in a POSTUPDATE *)
+START_PROCESS_ALGORITHM(paTestRun);
+
+
+;#END_EDIT_BLOCK END_ALGORITHM
+
+PROCESS_ALGORITHM paTestRun ON TaskSlow
+
+
+VAR
+ file : KFILE_Open_Data;
+ filestr : STRING(255);
+ out : STRING(255);
+ in : STRING(255);
+ tabpos : INT;
+ printtmp : DINT;
+ iCounter : DINT;
+ comma : DINT;
+ status : KFILE_Status;
+ // rTmpScresSimulationPos : REAL;
+ mFoundRE : BOOL;
+ mDivide : BOOL;
+ rOut : REAL;
+ rIn : REAL;
+ mFindDone : BOOL;
+ s : KMEM_Status;
+ rTmp : REAL;
+END_VAR
+#BEGIN_EDIT_BLOCK
+(* algo for debugging. Reads data from 'workspace/data/messwerte.txt' *)
+(* then caclulates the controller like the standard version *)
+
+iInjectCounter := 1;
+//tsCalibMode := sv_tCalibMode;
+mFoundRE := FALSE;
+mDivide := FALSE;
+mFindDone := FALSE;
+
+fbLog('Backpressure calib calculation simulation started'); 
+
+file := KFILE_Open(Name := '/workspace/data/messwerte.txt', Mode :=KFILE_Mode_ReadOnly);
+IF(file.Status <> KFILE_Status_OK) THEN
+   printtmp := Print('could not open file: /workspace/data/messwerte.txt');
+   RETURN;
+END_IF;
+
+iCounter := 1;
+(* loop throught every line of the file and read in/out data *)
+(* convert to real and store in arrays *)
+WHILE iCounter <= cMaxRecordedData DO
+
+   filestr := FReadLineFromFile(File := file);//FIXME: returns an empty string every second time?
+         
+   IF( filestr = 'EOF_REACHED') THEN
+      EXIT;
+   END_IF;
+   (* values seperated by tab *)
+   tabpos := FIND(filestr, '$T');
+   IF tabpos = 0 THEN
+      tabpos := FIND(filestr, ';');
+   END_IF;
+   
+   IF(tabpos > 1) THEN// tab at beginning of line is not allowed!
+      out := LEFT(filestr, tabpos - 1);                 //measured output <tab> measured input
+      in := MID(filestr, 999999, tabpos+1);
+      
+      (* replace ',' with '.' so REAL_TO_STRING can read it *)
+      comma := FIND(in, ',');
+      IF(comma <> 0) THEN
+         in := REPLACE(in, '.', 1, comma);
+      END_IF;
+       
+      (* replace ',' with '.' so REAL_TO_STRING can read it *)
+      comma := FIND(out, ',');
+      IF(comma <> 0) THEN
+         out := REPLACE(out, '.', 1, comma);
+      END_IF;
+      rIn := STRING_TO_REAL(in);
+      rOut := STRING_TO_REAL(out);
+       
+      IF NOT mFoundRE AND (rOut = 0.4 OR rOut = 40.0) THEN    //RE is actually a falling edge
+         iTimeReachedPos1 := iCounter;
+         mFoundRE := TRUE;
+      END_IF;
+      IF mFoundRE AND NOT mFindDone AND (rOut = 0.8 OR rOut = 80.0) THEN
+         iTimeReachedPos2 := iCounter;
+         mFindDone := TRUE;
+      END_IF;
+
+      IF(rOut = 40.0 OR rOut = 80.0) THEN
+         mDivide := TRUE;    
+      END_IF; 
+       
+      s := KMEM_ArraySet(MeasuredOutputData.Handle, rOut, DINT_TO_UDINT(iCounter));
+      IF mDivide THEN
+         s := KMEM_ArrayGet(MeasuredOutputData.Handle, rTmp, DINT_TO_UDINT(iCounter));
+         rTmp := rTmp / 100.0;
+         s := KMEM_ArraySet(MeasuredOutputData.Handle, rTmp, DINT_TO_UDINT(iCounter));
+      END_IF;
+      s := KMEM_ArraySet(MeasuredPresData.Handle, rIn, DINT_TO_UDINT(iCounter));
+      iCounter := iCounter +1;
+   END_IF;
+END_WHILE;
+
+iTimeReachedEnd := iCounter;
+status := KFILE_Close(file.Token);
+
+    
+(* create jump for testing *)
+(* in and out are the same *)
+//rTmpScresSimulationPos := 1000.0;
+//FOR iCounter := 1 TO 1000 DO
+//   IF(iCounter >= 300 AND iCounter <600)THEN
+//      MeasuredOutput[iCounter] := 0.9;
+//      rTmpScresSimulationPos := rTmpScresSimulationPos - 0.9;
+//      MeasuredScrewPos[iCounter] := rTmpScresSimulationPos;
+//   ELSE
+//      MeasuredOutput[iCounter] := 0.1;
+//      rTmpScresSimulationPos := rTmpScresSimulationPos - 0.1;
+//      MeasuredScrewPos[iCounter] := rTmpScresSimulationPos;
+//   END_IF;  
+//END_FOR;
+//iMeasurePos := 1000;
+//iTimeReachedPos1 :=300;
+//iTimeReachedPos2 :=600;
+
+START_PROCESS_ALGORITHM(paCalculate1);
+STOP_PROCESS_ALGORITHM();
+
+
+
+;#END_EDIT_BLOCK END_ALGORITHM
+
+POSTUPDATE_ALGORITHM pMaxPreChanged ON PU_Task_7 WITH mprMaxPres^
+
+#BEGIN_EDIT_BLOCK
+(**************************************** WARNING ********************************************
+ *** The KEBA Kemro K2 System including software is not intended for safety control tasks! ***
+ ***                       For further information see Comment tab!                        ***
+ *********************************************************************************************)
+
+// update maximum pressure
+mpConstant^.Pressure.Output.rOutputValue := rHighOutputFactor * mprMaxPres^;
+
+
+
+
+;#END_EDIT_BLOCK END_ALGORITHM
+
+
+
+END_ALGORITHM_BLOCK
+
+
+
+#END_OF_IEC_PART
+
+@Puma @IecEditor 6 97 @Pou 25 
+@@@BEG_Comment@@@
+@h    ! WARNING !
+@h    The Kemro K2 system (including software) only meets category B according to EN 954-1,
+@h    thus it is not intended for usage in safety-relevant control applications in the field 
+@h    of personal safety (e.g. emergency stop).
+@h    To implement potentially necessary safety-relevant control tasks, always use additional 
+@h    external safety devices that are intended for the particular purpose, and meet the necessary 
+@h    functional safety.
+@h    For further information see EN 954-1 (EN ISO 13849-1) and/or the K2-x00 user manual, chapter 
+@h    "CE conformity, directives and standards".
+
+Do automatic hold pressure calibration
+@@@END_Comment@@@
+
+@BEG_Contents 
+
+@BEG_Func 
+@RT(17)FuncTreeContainer 
+9 
+@Var @RT(14)GET_MY_FU_NAME @RT(0) @T @T @DERIVED 0 @F @RT(22)KEBA_STANDARD_FUNCTION @F 
+@T 
+@BEG_Attrib 
+0 @RT(0) @RT(0) 
+@END_Attrib 
+1 1 @F @F @F @F 
+
+@Var @RT(16)KSWO_AddVariable @RT(0) @T @T @DERIVED 0 @F @RT(22)KEBA_STANDARD_FUNCTION @F 
+@T 
+@BEG_Attrib 
+0 @RT(0) @RT(0) 
+@END_Attrib 
+1 1 @F @F @F @F 
+
+@Var @RT(17)GET_TASK_INTERVAL @RT(0) @T @T @DERIVED 0 @F @RT(22)KEBA_STANDARD_FUNCTION @F 
+@T 
+@BEG_Attrib 
+0 @RT(0) @RT(0) 
+@END_Attrib 
+1 1 @F @F @F @F 
+
+@Var @RT(9)SET_ALARM @RT(0) @T @T @DERIVED 0 @F @RT(23)KEBA_STANDARD_PROCEDURE @F 
+@T 
+@BEG_Attrib 
+0 @RT(0) @RT(0) 
+@END_Attrib 
+1 1 @F @F @F @F 
+
+@Var @RT(10)KFILE_Open @RT(0) @T @T @DERIVED 0 @F @RT(22)KEBA_STANDARD_FUNCTION @F 
+@T 
+@BEG_Attrib 
+0 @RT(0) @RT(0) 
+@END_Attrib 
+1 1 @F @F @F @F 
+
+@Var @RT(17)KFILE_WriteString @RT(0) @T @T @DERIVED 0 @F @RT(22)KEBA_STANDARD_FUNCTION @F 
+@T 
+@BEG_Attrib 
+0 @RT(0) @RT(0) 
+@END_Attrib 
+1 1 @F @F @F @F 
+
+@Var @RT(11)KFILE_Close @RT(0) @T @T @DERIVED 0 @F @RT(22)KEBA_STANDARD_FUNCTION @F 
+@T 
+@BEG_Attrib 
+0 @RT(0) @RT(0) 
+@END_Attrib 
+1 1 @F @F @F @F 
+
+@Var @RT(17)FReadLineFromFile @RT(0) @T @T @DERIVED 0 @F @RT(8)FUNCTION @F 
+@T 
+@BEG_Attrib 
+0 @RT(0) @RT(0) 
+@END_Attrib 
+1 1 @F @F @F @F 
+
+@Var @RT(13)KMEM_ArrayGet @RT(0) @T @T @DERIVED 0 @F @RT(22)KEBA_STANDARD_FUNCTION @F 
+@T 
+@BEG_Attrib 
+0 @RT(0) @RT(0) 
+@END_Attrib 
+1 1 @F @F @F @F 
+
+@END_Func 
+
+@BEG_Const 
+@RT(18)ConstTreeContainer 
+6 
+@Var @RT(16)cMaxRecordedData @RT(0) @T @F @DT @RT(4)DINT @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+0 @RT(5)16000 @RT(65)size of measurement array. minimum cycle time = 2ms -> 10 seconds 
+@END_Attrib 
+1 1 @F @F @F @F 
+
+@Var @RT(20)cApplPlasticsNoError @RT(0) @T @F @DT @RT(4)DINT @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+0 @RT(1)0 @RT(8)No Error 
+@END_Attrib 
+1 1 @F @F @F @F 
+
+@Var @RT(26)KFILE_Mode_ReadWriteDelete @RT(0) @T @T @DERIVED 0 @F @RT(10)KFILE_Mode @F 
+@T 
+@BEG_Attrib 
+0 @RT(1)3 @RT(102)opens for reading and writing, if file doesn't exist, it will be created, its contents will be deleted 
+@END_Attrib 
+1 1 @F @F @F @F 
+
+@Var @RT(19)KFILE_Mode_ReadOnly @RT(0) @T @T @DERIVED 0 @F @RT(10)KFILE_Mode @F 
+@T 
+@BEG_Attrib 
+0 @RT(1)0 @RT(22)opens for reading only 
+@END_Attrib 
+1 1 @F @F @F @F 
+
+@Var @RT(15)KFILE_Status_OK @RT(0) @T @T @DERIVED 0 @F @RT(12)KFILE_Status @F 
+@T 
+@BEG_Attrib 
+0 @RT(1)1 @RT(18)command successful 
+@END_Attrib 
+1 1 @F @F @F @F 
+
+@Var @RT(15)CALIB_FILE_PATH @RT(0) @T @F @DT @RT(11)STRING(255) @RT(0) @T @T @STRING 0 @F @RT(3)255 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+0 @RT(26)'/protocol/log/autocalib/' @RT(0) 
+@END_Attrib 
+1 1 @F @F @F @F 
+
+@END_Const 
+
+@BEG_Export 
+
+@BEG_Kind 
+@ALGORITHM_BLOCK @RT(19)ABBackPressureCalib @STRUCTURED_TEXT 
+@RT(0) @RT(0) @RT(0) 
+@END_Kind 
+
+@BEG_Dcl 
+@RT(16)DclTreeContainer 
+41 
+@Var @RT(19)sv_TmpInjectionData @RT(0) @T @T @DERIVED 0 @T @T @DT @RT(23)tsCalculatedInjectData2 @RT(0) @T @T @UNKNOWN 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 8 @F @F @F @F 
+
+@Var @RT(18)sv_bStartBackPTest @RT(0) @T @F @DT @RT(4)BOOL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 8 @F @F @F @F 
+
+@Var @RT(28)erCalibrationNotEnoughValues @RT(0) @T @F @DT @RT(5)ALARM @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 7 @F @F @F @F 
+
+@Var @RT(8)TaskSlow @RT(0) @T @F @DT @RT(4)TASK @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 7 @F @F @F @F 
+
+@Var @RT(9)PU_Task_7 @RT(0) @T @F @DT @RT(4)TASK @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 7 @F @F @F @F 
+
+@Var @RT(15)abConstMovement @RT(0) @T @T @DERIVED 0 @T @T @DT @RT(15)ABConstMovement @RT(0) @T @T @UNKNOWN 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(9)CycleTime @RT(0) @T @F @DT @RT(4)TIME @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(14)(of capturing) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(14)RaisingInArray @RT(0) @T @T @DERIVED 0 @T @T @DT @RT(11)tyHalfArray @RT(0) @T @T @UNKNOWN 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(14)FallingInArray @RT(0) @T @T @DERIVED 0 @T @T @DT @RT(11)tyHalfArray @RT(0) @T @T @UNKNOWN 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(15)RaisingOutArray @RT(0) @T @T @DERIVED 0 @T @T @DT @RT(11)tyHalfArray @RT(0) @T @T @UNKNOWN 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(15)FallingOutArray @RT(0) @T @T @DERIVED 0 @T @T @DT @RT(11)tyHalfArray @RT(0) @T @T @UNKNOWN 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(17)RaisingArrayCount @RT(0) @T @F @DT @RT(4)DINT @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(29)samples in raising edge array @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(17)FallingArrayCount @RT(0) @T @F @DT @RT(4)DINT @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(29)samples in falling edge array @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(14)iCycleTimeInMs @RT(0) @T @F @DT @RT(4)DINT @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(11)iMeanLength @RT(0) @T @F @DT @RT(4)DINT @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(3)300 @RT(39)Length in ms for mean value calculation @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(20)mCalculationFinished @RT(0) @T @F @DT @RT(4)BOOL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(46)The calculation process algorithm has finished @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(14)iInjectCounter @RT(0) @T @F @DT @RT(4)DINT @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(43)counter for repeating injection/calculation @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(19)mpbDebugCalibration @RT(0) @T @T @REFTO 0 @T @DT @RT(4)BOOL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(6)mError @RT(0) @T @F @DT @RT(4)BOOL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(5)fbLog @RT(0) @T @T @DERIVED 0 @T @T @DT @RT(14)FBAutoCalibLog @RT(0) @T @T @UNKNOWN 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(18)MeasuredOutputData @RT(0) @T @T @DERIVED 0 @T @T @DT @RT(15)KMEM_CreateData @RT(0) @T @T @UNKNOWN 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(29)To capture our output profile @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(16)MeasuredPresData @RT(0) @T @T @DERIVED 0 @T @T @DT @RT(15)KMEM_CreateData @RT(0) @T @T @UNKNOWN 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(16)iTimeReachedPos1 @RT(0) @T @F @DT @RT(4)DINT @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(41)Array pos when we reached profile point 1 @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(16)iTimeReachedPos2 @RT(0) @T @F @DT @RT(4)DINT @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(15)iTimeReachedEnd @RT(0) @T @F @DT @RT(4)DINT @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(10)mprMaxPres @RT(0) @T @T @REFTO 0 @T @DT @RT(4)REAL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(28)maximum pressure for scaling @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(8)bStarted @RT(0) @T @F @DT @RT(4)BOOL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(10)mpConstant @RT(0) @T @T @REFTO 0 @F @DERIVED 0 @T @T @DT @RT(8)tsVelPre @RT(0) @T @T @UNKNOWN 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(10)rPlantAmp1 @RT(0) @T @F @DT @RT(4)REAL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(44)plant amplification for edge1 identification @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(10)rPlantAmp2 @RT(0) @T @F @DT @RT(4)REAL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(44)plant amplification for edge2 identification @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(13)mrSetPressure @RT(0) @T @F @DT @RT(4)REAL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(13)mrActPressure @RT(0) @T @F @DT @RT(4)REAL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(15)rSecurityFactor @RT(0) @T @F @DT @RT(4)REAL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(3)0.2 @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(15)iTimeAddDataPos @RT(0) @T @F @DT @RT(4)DINT @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(2)41 @RT(41)number of data points before falling edge @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(16)rLowOutputFactor @RT(0) @T @F @DT @RT(4)REAL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(3)0.4 @RT(0) @RT(0) 
+@END_Attrib 
+1 15 @F @F @F @F 
+
+@Var @RT(17)rHighOutputFactor @RT(0) @T @F @DT @RT(4)REAL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(3)0.8 @RT(0) @RT(0) 
+@END_Attrib 
+1 15 @F @F @F @F 
+
+@Var @RT(20)erCalibrationWarning @RT(0) @T @F @DT @RT(5)ALARM @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 7 @F @F @F @F 
+
+@Var @RT(24)erCalibrationDataFailure @RT(0) @T @F @DT @RT(5)ALARM @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 7 @F @F @F @F 
+
+@Var @RT(26)erPIDCalcPressureNotStable @RT(0) @T @F @DT @RT(5)ALARM @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 7 @F @F @F @F 
+
+@Var @RT(8)msFuName @RT(0) @T @F @DT @RT(10)STRING(32) @RT(0) @T @T @STRING 0 @F @RT(2)32 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(10)msWorkPath @RT(0) @T @F @DT @RT(11)STRING(255) @RT(0) @T @T @STRING 0 @F @RT(3)255 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@END_Dcl 
+
+@END_Export 
+
+@BEG_Body 
+
+7 
+
+@BEG_Export 
+
+@BEG_Algo 
+@ALGORITHM @RT(5)aInit @STRUCTURED_TEXT 
+@RT(0) @RT(0) @RT(0) @F @F 
+@END_Algo 
+
+@BEG_Dcl 
+@RT(16)DclTreeContainer 
+7 
+@Var @RT(6)pConst @RT(0) @T @T @REFTO 0 @F @DERIVED 0 @T @T @DT @RT(8)tsVelPre @RT(0) @T @T @UNKNOWN 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(47)pointer to systemvariable that contains profile @RT(0) 
+@END_Attrib 
+1 1 @F @F @F @F 
+
+@Var @RT(6)MoveId @RT(0) @T @T @DERIVED 0 @T @T @DT @RT(10)tMoveIdent @RT(0) @T @T @UNKNOWN 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(27)moveId of constant movement @RT(0) 
+@END_Attrib 
+1 1 @F @F @F @F 
+
+@Var @RT(13)prMaxPressure @RT(0) @T @T @REFTO 0 @T @DT @RT(4)REAL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 1 @F @F @F @F 
+
+@Var @RT(11)MeasureTask @RT(0) @T @F @DT @RT(4)TASK @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(46)Task used to measure variables with SWO-Server @RT(0) 
+@END_Attrib 
+1 1 @F @F @F @F 
+
+@Var @RT(8)swoState @RT(0) @T @T @DERIVED 0 @T @T @DT @RT(11)KSWO_Status @RT(0) @T @T @UNKNOWN 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(12)variableName @RT(0) @T @F @DT @RT(11)STRING(255) @RT(0) @T @T @STRING 0 @F @RT(3)255 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(18)pbDebugCalibration @RT(0) @T @T @REFTO 0 @T @DT @RT(4)BOOL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 1 @F @F @F @F 
+
+@END_Dcl 
+
+@END_Export 
+
+@BEG_Export 
+
+@BEG_Algo 
+@ALGORITHM @RT(4)aRun @STRUCTURED_TEXT 
+@RT(0) @RT(0) @RT(0) @F @F 
+@END_Algo 
+
+@BEG_Dcl 
+@RT(16)DclTreeContainer 
+19 
+@Var @RT(6)bStart @RT(0) @T @F @DT @RT(4)BOOL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(26)start constant calib block @RT(0) 
+@END_Attrib 
+1 1 @F @F @F @F 
+
+@Var @RT(5)bStop @RT(0) @T @F @DT @RT(4)BOOL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(25)stop constant calib block @RT(0) 
+@END_Attrib 
+1 1 @F @F @F @F 
+
+@Var @RT(9)rPressure @RT(0) @T @F @DT @RT(4)REAL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 1 @F @F @F @F 
+
+@Var @RT(12)dDelayTimeOn @RT(0) @T @F @DT @RT(4)TIME @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(45)Delay Time between preoutput and  constoutput @RT(0) 
+@END_Attrib 
+1 1 @F @F @F @F 
+
+@Var @RT(13)dDelayTimeOff @RT(0) @T @F @DT @RT(4)TIME @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(46)Delay Time between pump stop and bActive FALSE @RT(0) 
+@END_Attrib 
+1 1 @F @F @F @F 
+
+@Var @RT(7)bActive @RT(0) @T @F @DT @RT(4)BOOL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(18)movement is active @RT(0) 
+@END_Attrib 
+1 3 @F @F @F @F 
+
+@Var @RT(10)rOutputPre @RT(0) @T @F @DT @RT(4)REAL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(15)pressure output @RT(0) 
+@END_Attrib 
+1 3 @F @F @F @F 
+
+@Var @RT(10)rOutputVel @RT(0) @T @F @DT @RT(4)REAL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(15)velocity output @RT(0) 
+@END_Attrib 
+1 3 @F @F @F @F 
+
+@Var @RT(17)bPreOutputReached @RT(0) @T @F @DT @RT(4)BOOL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(15)preoutput ready @RT(0) 
+@END_Attrib 
+1 3 @F @F @F @F 
+
+@Var @RT(6)bError @RT(0) @T @F @DT @RT(4)BOOL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(33)flag to indicate if error occured @RT(0) 
+@END_Attrib 
+1 3 @F @F @F @F 
+
+@Var @RT(10)iErrorInfo @RT(0) @T @F @DT @RT(4)DINT @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(21)additional error info @RT(0) 
+@END_Attrib 
+1 3 @F @F @F @F 
+
+@Var @RT(13)fbREdge_Start @RT(0) @T @T @DERIVED 0 @T @T @DT @RT(6)R_TRIG @RT(0) @T @T @UNKNOWN 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(18)dWantedSectionTime @RT(0) @T @F @DT @RT(4)TIME @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(4)t#5s @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(9)bRampDown @RT(0) @T @F @DT @RT(4)BOOL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(11)iMeasurePos @RT(0) @T @F @DT @RT(4)DINT @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(24)index for capturing data @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(6)iStage @RT(0) @T @F @DT @RT(4)DINT @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(12)fbDelayTimer @RT(0) @T @T @DERIVED 0 @T @T @DT @RT(3)TON @RT(0) @T @T @UNKNOWN 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(1)s @RT(0) @T @T @DERIVED 0 @T @T @DT @RT(11)KMEM_Status @RT(0) @T @T @UNKNOWN 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(4)rTmp @RT(0) @T @F @DT @RT(4)REAL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@END_Dcl 
+
+@END_Export 
+
+@BEG_Export 
+
+@BEG_Algo 
+@PROCESS_ALGORITHM @RT(12)paCalculate1 @STRUCTURED_TEXT 
+@RT(0) @RT(0) @RT(8)TaskSlow @F @F 
+@END_Algo 
+
+@BEG_Dcl 
+@RT(16)DclTreeContainer 
+23 
+@Var @RT(1)i @RT(0) @T @F @DT @RT(4)DINT @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 4 @F @F @F @F 
+
+@Var @RT(1)j @RT(0) @T @F @DT @RT(4)DINT @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 4 @F @F @F @F 
+
+@Var @RT(14)ThirdStageData @RT(0) @T @T @DERIVED 0 @T @T @DT @RT(15)KMEM_CreateData @RT(0) @T @T @UNKNOWN 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(26)after butterworth backward @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(6)tmpstr @RT(0) @T @F @DT @RT(11)STRING(255) @RT(0) @T @T @STRING 0 @F @RT(3)255 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(13)reallywritten @RT(0) @T @F @DT @RT(4)DINT @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(4)open @RT(0) @T @T @DERIVED 0 @T @T @DT @RT(15)KFILE_Open_Data @RT(0) @T @T @UNKNOWN 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(8)rMeanTmp @RT(0) @T @F @DT @RT(4)REAL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(11)rMeanTmpSet @RT(0) @T @F @DT @RT(4)REAL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(12)rMeanHigher1 @RT(0) @T @F @DT @RT(4)REAL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(29)mean value at 80% (left side) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(15)rMeanHigherSet1 @RT(0) @T @F @DT @RT(4)REAL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(29)mean value at 80% (left side) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(12)rMeanHigher2 @RT(0) @T @F @DT @RT(4)REAL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(30)mean value at 80% (right side) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(15)rMeanHigherSet2 @RT(0) @T @F @DT @RT(4)REAL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(30)mean value at 80% (right side) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(10)rMeanLower @RT(0) @T @F @DT @RT(4)REAL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(17)mean value at 40% @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(13)rMeanLowerSet @RT(0) @T @F @DT @RT(4)REAL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(17)mean value at 40% @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(25)rPT1LookalikeCutoffFactor @RT(0) @T @F @DT @RT(4)REAL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(3)0.5 @RT(100)factor from 0-1, which says where to cut off data collection, as plant does not act as a PT1 anymore @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(25)bPT1LookalikeCutoffEnable @RT(0) @T @F @DT @RT(4)BOOL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(4)TRUE @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(6)status @RT(0) @T @T @DERIVED 0 @T @T @DT @RT(12)KFILE_Status @RT(0) @T @T @UNKNOWN 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(6)bIsDir @RT(0) @T @F @DT @RT(4)BOOL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(5)sPath @RT(0) @T @F @DT @RT(11)STRING(255) @RT(0) @T @T @STRING 0 @F @RT(3)255 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(1)s @RT(0) @T @T @DERIVED 0 @T @T @DT @RT(11)KMEM_Status @RT(0) @T @T @UNKNOWN 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(14)rTmpThirdStage @RT(0) @T @F @DT @RT(4)REAL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(8)rTmpPres @RT(0) @T @F @DT @RT(4)REAL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(10)rTmpOutput @RT(0) @T @F @DT @RT(4)REAL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@END_Dcl 
+
+@END_Export 
+
+@BEG_Export 
+
+@BEG_Algo 
+@PROCESS_ALGORITHM @RT(12)paCalculate2 @STRUCTURED_TEXT 
+@RT(0) @RT(0) @RT(8)TaskSlow @F @F 
+@END_Algo 
+
+@BEG_Dcl 
+@RT(16)DclTreeContainer 
+3 
+@Var @RT(21)fbCalibInjectionInner @RT(0) @T @T @DERIVED 0 @T @T @DT @RT(26)FBAutoCalibInjectionInner2 @RT(0) @T @T @UNKNOWN 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(11)debugprefix @RT(0) @T @F @DT @RT(11)STRING(255) @RT(0) @T @T @STRING 0 @F @RT(3)255 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(5)sPath @RT(0) @T @F @DT @RT(11)STRING(255) @RT(0) @T @T @STRING 0 @F @RT(3)255 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@END_Dcl 
+
+@END_Export 
+
+@BEG_Export 
+
+@BEG_Algo 
+@POSTUPDATE_ALGORITHM @RT(13)pStartTestRun @STRUCTURED_TEXT 
+@RT(0) @RT(18)sv_bStartBackPTest @RT(8)TaskSlow @F @F 
+@END_Algo 
+
+@BEG_Dcl 
+@RT(16)DclTreeContainer 
+0 
+@END_Dcl 
+
+@END_Export 
+
+@BEG_Export 
+
+@BEG_Algo 
+@PROCESS_ALGORITHM @RT(9)paTestRun @STRUCTURED_TEXT 
+@RT(0) @RT(0) @RT(8)TaskSlow @F @F 
+@END_Algo 
+
+@BEG_Dcl 
+@RT(16)DclTreeContainer 
+17 
+@Var @RT(4)file @RT(0) @T @T @DERIVED 0 @T @T @DT @RT(15)KFILE_Open_Data @RT(0) @T @T @UNKNOWN 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(7)filestr @RT(0) @T @F @DT @RT(11)STRING(255) @RT(0) @T @T @STRING 0 @F @RT(3)255 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(3)out @RT(0) @T @F @DT @RT(11)STRING(255) @RT(0) @T @T @STRING 0 @F @RT(3)255 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(2)in @RT(0) @T @F @DT @RT(11)STRING(255) @RT(0) @T @T @STRING 0 @F @RT(3)255 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(6)tabpos @RT(0) @T @F @DT @RT(3)INT @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(8)printtmp @RT(0) @T @F @DT @RT(4)DINT @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(8)iCounter @RT(0) @T @F @DT @RT(4)DINT @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(5)comma @RT(0) @T @F @DT @RT(4)DINT @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(6)status @RT(0) @T @T @DERIVED 0 @T @T @DT @RT(12)KFILE_Status @RT(0) @T @T @UNKNOWN 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(22)rTmpScresSimulationPos @RT(0) @T @F @DT @RT(4)REAL @RT(0) @T @T @BASIC 0 @F 
+@F @T 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(8)mFoundRE @RT(0) @T @F @DT @RT(4)BOOL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(7)mDivide @RT(0) @T @F @DT @RT(4)BOOL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(4)rOut @RT(0) @T @F @DT @RT(4)REAL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(3)rIn @RT(0) @T @F @DT @RT(4)REAL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(9)mFindDone @RT(0) @T @F @DT @RT(4)BOOL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(1)s @RT(0) @T @T @DERIVED 0 @T @T @DT @RT(11)KMEM_Status @RT(0) @T @T @UNKNOWN 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(4)rTmp @RT(0) @T @F @DT @RT(4)REAL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@END_Dcl 
+
+@END_Export 
+
+@BEG_Export 
+
+@BEG_Algo 
+@POSTUPDATE_ALGORITHM @RT(14)pMaxPreChanged @STRUCTURED_TEXT 
+@RT(0) @RT(11)mprMaxPres^ @RT(9)PU_Task_7 @F @F 
+@END_Algo 
+
+@BEG_Dcl 
+@RT(16)DclTreeContainer 
+0 
+@END_Dcl 
+
+@END_Export 
+
+@BEG_Body 
+@TL(35)
+(**************************************** WARNING ********************************************
+ *** The KEBA Kemro K2 System including software is not intended for safety control tasks! ***
+ ***                       For further information see Comment tab!                        ***
+ *********************************************************************************************)
+
+mprMaxPres := prMaxPressure;
+
+mpConstant := pConst;
+mpConstant^.Pressure.Output.rOutputValue := rHighOutputFactor * mprMaxPres^;
+mpConstant^.Pressure.Output.rRamp := 800.0;
+mpConstant^.Velocity.Output.rOutputValue := 100.0;// in %
+mpConstant^.Velocity.Output.rRamp := 800.0;
+
+abConstMovement.aInit(pConst := pConst,
+                      MoveId := MoveId);
+mpbDebugCalibration := pbDebugCalibration;
+
+msFuName := GET_MY_FU_NAME();
+variableName := CONCAT(msFuName,'.HoldCalib.rActPressure bar');
+swoState := KSWO_AddVariable( Task := MeasureTask,
+                              Name := variableName,
+                              Variable := mrActPressure);
+variableName := CONCAT(msFuName,'.HoldCalib.rSetPressure bar');
+swoState := KSWO_AddVariable( Task := MeasureTask,
+                              Name := variableName,
+                              Variable := mrSetPressure);
+variableName := CONCAT(msFuName,'.HoldCalib.bStarted');
+swoState := KSWO_AddVariable( Task := MeasureTask,
+                              Name := variableName,
+                              Variable := bStarted);
+
+//get workpath
+msWorkPath := FGetCatConfigValueString('System.workPath', '/harddisk0/');
+
+
+@END_Body 
+
+@@@BEG_Comment@@@ 
+@TL(0)
+
+@@@END_Comment@@@ 
+
+@BEG_Body 
+@TL(118)
+(**************************************** WARNING ********************************************
+ *** The KEBA Kemro K2 System including software is not intended for safety control tasks! ***
+ ***                       For further information see Comment tab!                        ***
+ *********************************************************************************************)
+ 
+fbREdge_Start(CLK := bStart);
+IF fbREdge_Start.Q THEN
+    //tCalibMode := tnCalibMode_Both;// calculate raising and falling edge
+   
+    //get handles to dynamic arrays
+    MeasuredPresData := KMEM_GetHandle(cCalibMeasuredPres);
+    MeasuredOutputData := KMEM_GetHandle(cCalibMeasuredOutput);
+    IF (MeasuredOutputData.Status <> KMEM_Status_OK) OR (MeasuredPresData.Status <> KMEM_Status_OK) THEN
+       bError := TRUE;
+       iErrorInfo := cCalibInvalidHandle;
+       RETURN;
+    END_IF;
+   
+    bRampDown := FALSE;
+    iStage := 0;
+    bStarted := TRUE;
+    iMeasurePos := 1;
+    abConstMovement.aRun(bStart := FALSE);
+    sv_TmpInjectionData.bValid := FALSE;
+    sv_TmpInjectionData.bInvalid := FALSE;
+    CycleTime := GET_TASK_INTERVAL();
+    fbDelayTimer(IN := FALSE, PT:= dWantedSectionTime);
+END_IF;
+
+IF bStop THEN
+    bStarted := FALSE;
+END_IF;
+
+IF bStarted THEN
+   fbDelayTimer(IN := TRUE);
+   IF fbDelayTimer.Q THEN
+      iStage := iStage + 1;
+      fbDelayTimer(IN := FALSE);
+      
+      IF iStage = 1 THEN // falling edge
+         iTimeReachedPos1 := iMeasurePos;
+      ELSIF iStage = 2 THEN
+         iTimeReachedPos2 := iMeasurePos;   
+      ELSIF iStage = 3 THEN // done measuring
+         bRampDown := TRUE;
+         iTimeReachedEnd := iMeasurePos;
+         fbLog('Hold PID calib ');
+         START_PROCESS_ALGORITHM(paCalculate1);
+      END_IF;
+   END_IF;
+END_IF;
+
+
+IF bStarted THEN
+   //call const movement block
+   abConstMovement.aRun(bStart := bStart,
+                     bStop := bStop OR bRampDown,
+                     bUsePosDetect := FALSE,
+                     rStartOutputPre := 0.0,
+                     rStartOutputVel := 0.0,
+                     dDelayTimeOn := dDelayTimeOn,
+                     dDelayTimeOff := dDelayTimeOff);
+
+
+   (* to do a jump without a ramp we directly output the low value *)
+   IF iStage = 1 THEN    
+      rOutputPre := rLowOutputFactor * mprMaxPres^;    
+   ELSE
+      rOutputPre := abConstMovement.aRun.rOutputPre;
+   END_IF;
+   rOutputVel := abConstMovement.aRun.rOutputVel;
+   bPreOutputReached := abConstMovement.aRun.bPreOutputReached;
+   bActive := abConstMovement.aRun.bActive;
+   bError := abConstMovement.aRun.bError;
+ELSE
+   // not started
+   rOutputVel := 0.0;
+   bPreOutputReached := TRUE;
+   bActive := FALSE;
+   bError := FALSE;
+END_IF;
+   
+//finished ramping down -> switch off
+IF bStarted AND bRampDown AND NOT abConstMovement.aRun.bActive THEN
+   bStarted := FALSE;
+END_IF;
+
+
+IF bStarted AND NOT bRampDown THEN
+    IF iMeasurePos > cMaxRecordedData THEN
+        bError := TRUE;
+        iErrorInfo :=  123;//FIXME: use proper error
+        bActive := FALSE;
+        bStarted := FALSE;
+        RETURN;    
+    END_IF;
+    (* record values *)
+    rTmp := rOutputPre;
+    s := KMEM_ArraySet(MeasuredOutputData.Handle, rTmp, DINT_TO_UDINT(iMeasurePos));
+    rTmp := rPressure;
+    s := KMEM_ArraySet(MeasuredPresData.Handle, rTmp, DINT_TO_UDINT(iMeasurePos));
+    iMeasurePos := iMeasurePos + 1;
+    
+END_IF;
+
+IF abConstMovement.aRun.bError THEN
+    IF abConstMovement.aRun.iErrorInfo.Pressure <> cApplPlasticsNoError THEN
+        iErrorInfo := abConstMovement.aRun.iErrorInfo.Pressure;
+    ELSE
+        iErrorInfo := abConstMovement.aRun.iErrorInfo.Velocity;
+    END_IF;
+ELSIF NOT bError THEN
+    iErrorInfo := cApplPlasticsNoError;
+END_IF;
+
+mrSetPressure := rOutputPre;
+mrActPressure := rPressure;
+
+@END_Body 
+
+@@@BEG_Comment@@@ 
+@TL(2)
+Output profile for back pressure calibration
+and measure the pressure input
+@@@END_Comment@@@ 
+
+@BEG_Body 
+@TL(204)
+(**************************************** WARNING ********************************************
+ *** The KEBA Kemro K2 System including software is not intended for safety control tasks! ***
+ ***                       For further information see Comment tab!                        ***
+ *********************************************************************************************)
+
+(* this algo needs package version 4.88 so the filter can work*)
+
+fbLog('Hold PID calib calculation stage1 started');
+
+ThirdStageData := KMEM_GetHandle(cCalibThirdStage);
+
+mCalculationFinished := FALSE;
+
+iCycleTimeInMs := LINT_TO_DINT(TIME_TO_LINT(CycleTime)/1000);
+
+(* FIXME: check if enough samples *)
+IF(iTimeReachedEnd < 500 OR iTimeReachedPos1 < 50) THEN
+   mError := TRUE;
+   SET_ALARM(Name := erCalibrationNotEnoughValues);//maybe add how much we need?
+   sv_TmpInjectionData.bInvalid := TRUE;
+   STOP_PROCESS_ALGORITHM();
+   RETURN;
+END_IF;
+
+//copy
+FOR i := iTimeReachedEnd TO 1 BY -1 DO
+   s := KMEM_ArrayGet(MeasuredPresData.Handle, rTmpPres, DINT_TO_UDINT(i));
+   s := KMEM_ArraySet(ThirdStageData.Handle, rTmpPres, DINT_TO_UDINT(i));
+END_FOR;
+
+
+(* mean value of 300 ms before Pos1 (80% left)*)
+// By calculating the mean value of the set pressure
+// it is possible to check the difference between 
+// the set and the actual pressure.
+// Perhaps we should make a security test  
+rMeanTmp := 0.0;
+rMeanTmpSet := 0.0;
+j:= 0;
+FOR i:= MAX(50,iTimeReachedPos1 - (iMeanLength /iCycleTimeInMs)) TO iTimeReachedPos1-1 DO//drop the first 50 values
+   j := j+1;
+   s := KMEM_ArrayGet(ThirdStageData.Handle, rTmpThirdStage, DINT_TO_UDINT(i));
+   rMeanTmp := rMeanTmp + rTmpThirdStage;
+   s := KMEM_ArrayGet(MeasuredOutputData.Handle, rTmpPres, DINT_TO_UDINT(i));
+   rMeanTmpSet := rMeanTmpSet + rTmpPres;
+END_FOR;
+IF j = 0 THEN
+   mError := TRUE;
+   SET_ALARM(Name := erCalibrationNotEnoughValues);//maybe add how much we need?
+   sv_TmpInjectionData.bInvalid := TRUE;
+   STOP_PROCESS_ALGORITHM();
+   RETURN;
+END_IF;
+rMeanHigher1 := rMeanTmp / DINT_TO_REAL(j);
+rMeanHigherSet1 := rMeanTmpSet / DINT_TO_REAL(j); 
+
+(* mean value of 300 ms before Pos2 (40 %)*)
+rMeanTmp := 0.0;
+rMeanTmpSet := 0.0;
+j:= 0;
+FOR i:= iTimeReachedPos2 - (iMeanLength /iCycleTimeInMs) TO iTimeReachedPos2-1 DO
+   j := j+1;
+   s := KMEM_ArrayGet(ThirdStageData.Handle, rTmpThirdStage, DINT_TO_UDINT(i));
+   rMeanTmp := rMeanTmp + rTmpThirdStage;
+   s := KMEM_ArrayGet(MeasuredOutputData.Handle, rTmpPres, DINT_TO_UDINT(i));
+   rMeanTmpSet := rMeanTmpSet + rTmpPres;
+END_FOR;
+IF j = 0 THEN
+   mError := TRUE;
+   SET_ALARM(Name := erCalibrationNotEnoughValues);//maybe add how much we need?
+   sv_TmpInjectionData.bInvalid := TRUE;
+   STOP_PROCESS_ALGORITHM();
+   RETURN;
+END_IF;
+rMeanLower := rMeanTmp / DINT_TO_REAL(j);
+rMeanLowerSet := rMeanTmpSet / DINT_TO_REAL(j);
+
+(* mean value of 300 ms before end pos(-20) 80% right)*)
+// This is not needed, but perhaps in future
+rMeanTmp := 0.0;
+j:= 0;
+rMeanTmpSet := 0.0;
+FOR i:= MAX((iTimeReachedEnd - 20) - (iMeanLength /iCycleTimeInMs), iTimeReachedPos2) TO iTimeReachedEnd - 20(*MIN(iTimeReachedEnd - 20,maxHalfSize)*) DO
+   j := j+1;
+   s := KMEM_ArrayGet(ThirdStageData.Handle, rTmpThirdStage, DINT_TO_UDINT(i));
+   rMeanTmp := rMeanTmp + rTmpThirdStage;
+   s := KMEM_ArrayGet(MeasuredOutputData.Handle, rTmpPres, DINT_TO_UDINT(i));
+   rMeanTmpSet := rMeanTmpSet + rTmpPres;
+END_FOR;
+
+IF j = 0 THEN
+   mError := TRUE;
+   SET_ALARM(Name := erCalibrationNotEnoughValues);//maybe add how much we need?
+   sv_TmpInjectionData.bInvalid := TRUE;
+   STOP_PROCESS_ALGORITHM();
+   RETURN;
+END_IF;
+
+rMeanHigher2:= rMeanTmp / DINT_TO_REAL(j);
+rMeanHigherSet2:= rMeanTmpSet / DINT_TO_REAL(j);
+
+IF rMeanHigher1 = rMeanLower OR rMeanHigher2 = rMeanLower 
+   OR rMeanHigherSet1 = rMeanLowerSet OR rMeanHigherSet2 = rMeanLowerSet THEN
+   SET_ALARM(Name := erCalibrationDataFailure); 
+   sv_TmpInjectionData.bInvalid := TRUE;
+   fbLog('lower mean value equals higher mean value -> impossible');
+   STOP_PROCESS_ALGORITHM();
+   RETURN;
+END_IF;
+
+IF (ABS(rMeanHigher1 - rMeanHigherSet1)/rMeanHigherSet1 > rSecurityFactor) OR
+   (ABS(rMeanHigher2 - rMeanHigherSet2)/rMeanHigherSet2 > rSecurityFactor) OR
+   (ABS(rMeanLower - rMeanLowerSet)/rMeanLowerSet > rSecurityFactor)THEN
+   // High difference between set and actual pressure
+   // Perhaps wrong calibration or no calibration done
+   sv_TmpInjectionData.bInvalid := TRUE;
+   SET_ALARM(Name := erCalibrationDataFailure); 
+   fbLog('Please check calibration of pump pressure, perhaps it has not done.');
+   STOP_PROCESS_ALGORITHM();
+   RETURN;
+END_IF;
+     
+(* calc normalized  array *)
+(* skip at least the first 80 points as they are problematic *)
+(* begin iTimeAddDataPoints (41) points before reaching position 1 *)
+(* This shows good results on Haitian HTF120W and Haitian HTF58X1*)
+(* Be careful by increasing maximal deadTime over 30 Steps*) 
+
+j:= 1;
+FOR i:= MAX(80, iTimeReachedPos1 - iTimeAddDataPos) TO iTimeReachedPos2 - (iMeanLength / iCycleTimeInMs) DO
+   s := KMEM_ArrayGet(ThirdStageData.Handle, rTmpThirdStage, DINT_TO_UDINT(i));
+   RaisingOutArray[j] := (rTmpThirdStage - rMeanLower) * (rHighOutputFactor - rLowOutputFactor) / (rMeanHigher1 - rMeanLower) + rLowOutputFactor;
+   s := KMEM_ArrayGet(MeasuredOutputData.Handle, rTmpOutput, DINT_TO_UDINT(i));
+   RaisingInArray[j] := (rTmpOutput - rMeanLowerSet) * (rHighOutputFactor - rLowOutputFactor) / (rMeanHigherSet1 - rMeanLowerSet) + rLowOutputFactor;
+   // end array after 50% of jump, as it does not look like a PR1 anymore after that
+   // but take more than iTimeAddDataPos points after the falling edge, because otherwise 
+   // there are only a few or no points for the determination of the deadTime , take not more points as 
+   // possible 
+   IF bPT1LookalikeCutoffEnable AND 
+       RaisingOutArray[j] <= ((rHighOutputFactor + rLowOutputFactor)* rPT1LookalikeCutoffFactor) 
+       // perhaps it is necessary to have mor points, than use:
+       AND j >= MIN (2*iTimeAddDataPos+1,iTimeReachedPos2-iTimeReachedPos1-1) THEN
+       EXIT; //FOR-Loop
+   END_IF;
+   j := j + 1;
+END_FOR;
+RaisingArrayCount := j - 1;
+rPlantAmp1 := 1.0; //(rHighOutputFactor - rLowOutputFactor) / (rMeanHigher1 - rMeanLower);
+
+(* calc normalized  array *)
+(* skip the last 20 points as the are prolematic *)
+// This is not used at the moment
+j:= 1;
+FOR i:= iTimeReachedPos2 TO iTimeReachedEnd - 20 DO
+   s := KMEM_ArrayGet(ThirdStageData.Handle, rTmpThirdStage, DINT_TO_UDINT(i));
+   FallingOutArray[j] := (rTmpThirdStage - rMeanLower) * (rHighOutputFactor - rLowOutputFactor) / (rMeanHigher2 - rMeanLower) + rLowOutputFactor;
+   s := KMEM_ArrayGet(MeasuredOutputData.Handle, rTmpOutput, DINT_TO_UDINT(i));
+   FallingInArray[j] := (rTmpOutput - rMeanLowerSet) * (rHighOutputFactor - rLowOutputFactor) / (rMeanHigherSet2 - rMeanLowerSet) + rLowOutputFactor;
+   //end array after 50% of jump
+   IF bPT1LookalikeCutoffEnable AND FallingOutArray[j] >= ((rHighOutputFactor + rLowOutputFactor)* rPT1LookalikeCutoffFactor) THEN
+      EXIT;
+   END_IF;
+
+   j := j + 1;
+END_FOR;
+FallingArrayCount := j - 1;
+rPlantAmp2 := 1.0; //(rHighOutputFactor - rLowOutputFactor) / (rMeanHigher2 - rMeanLower);
+(* from here on we only have values normalize to 0.0 - 1.0 *)
+(* but the values may be outside of this limit when overshooting*)
+
+
+(* output whole injection array to file *)
+IF(mpbDebugCalibration^) THEN
+   sPath := CONCAT(msWorkPath, CALIB_FILE_PATH, msFuName, '/');
+   status := KFILE_IsDir (Name := sPath, IsDirectory := bIsDir);
+   IF status = KFILE_Status_NOTOK THEN
+      status := KFILE_MakeDir (Path := sPath);
+   END_IF;
+   
+   open := KFILE_Open(Name:= CONCAT(sPath, 'hold',DINT_TO_STRING(iInjectCounter), '_full.txt'), Mode := KFILE_Mode_ReadWriteDelete);
+   
+   tmpstr := 'count;measuredpres;outpres$N';
+   reallywritten := KFILE_WriteString(Token := open.Token, Length := 0, Buffer := tmpstr);
+       
+   (* FOR i:=1 TO RaisingArrayCount DO
+       tmpstr := CONCAT(DINT_TO_STRING(i), ';', REAL_TO_STRING(RaisingInArray[i]), ';',REAL_TO_STRING(RaisingOutArray[i]), ';', '$N');
+       reallywritten := KFILE_WriteString(Token := open.Token, Length := 0, Buffer := tmpstr);
+   END_FOR;
+   *)
+   FOR i:=1 TO iTimeReachedEnd DO
+      s := KMEM_ArrayGet(MeasuredPresData.Handle, rTmpPres, DINT_TO_UDINT(i));
+      s := KMEM_ArrayGet(MeasuredOutputData.Handle, rTmpOutput, DINT_TO_UDINT(i));
+      tmpstr := CONCAT(DINT_TO_STRING(i), ';', REAL_TO_STRING(rTmpPres), ';', REAL_TO_STRING(rTmpOutput), ';', '$N');
+      reallywritten := KFILE_WriteString(Token := open.Token, Length := 0, Buffer := tmpstr);
+   END_FOR;
+   status := KFILE_Close(Token := open.Token);   
+END_IF;
+
+(* start identifying normalized data *)
+START_PROCESS_ALGORITHM(paCalculate2);
+STOP_PROCESS_ALGORITHM();
+
+
+
+@END_Body 
+
+@@@BEG_Comment@@@ 
+@TL(3)
+preprocess data for hold pressure calibration
+normalize and split into raising and falling edge
+writes a log file to /workspace/data when mpbDebugCalibration is enabled
+@@@END_Comment@@@ 
+
+@BEG_Body 
+@TL(38)
+(**************************************** WARNING ********************************************
+ *** The KEBA Kemro K2 System including software is not intended for safety control tasks! ***
+ ***                       For further information see Comment tab!                        ***
+ *********************************************************************************************)
+
+sPath := CONCAT(msWorkPath, CALIB_FILE_PATH, msFuName, '/');
+
+fbLog('Hold PID calib calculation stage2 started');
+(* calculate first edge: sv_TmpInjectionData.CalibMode = tnCalibMode_Raising*)
+debugprefix := CONCAT(sPath, 'hold', DINT_TO_STRING(iInjectCounter),'_r_');
+fbCalibInjectionInner(InArray:= RaisingInArray, OutArray:=RaisingOutArray,
+                     CycleTime := CycleTime, iPointCount:=RaisingArrayCount,
+                     rPlantAmp := rPlantAmp1,
+                     DebugPrefix := debugprefix,
+                     rHighOutputFactor := rHighOutputFactor,
+                     iTimeStartPos := iTimeAddDataPos+1,
+                     bDebugCalibration := mpbDebugCalibration^,
+                     rPhasemargin:=sv_TmpInjectionData.rPhasemargin,
+                     rPhasemarginMin3dB:=sv_TmpInjectionData.rPhasemarginMin3dB); // mormalized to mean(p_act)
+
+sv_TmpInjectionData.Raising := fbCalibInjectionInner.CalculatedParams;
+iInjectCounter := iInjectCounter + 1;
+mCalculationFinished := TRUE;
+sv_TmpInjectionData.bValid := fbCalibInjectionInner.bValid;
+sv_TmpInjectionData.bInvalid := NOT fbCalibInjectionInner.bValid;
+
+IF sv_TmpInjectionData.bValid AND fbCalibInjectionInner.iErrorInfo = 0 THEN
+   fbLog('Hold PID calib Done -> Data valid');
+ELSIF sv_TmpInjectionData.bValid AND fbCalibInjectionInner.iErrorInfo <> 0 THEN
+   fbLog('Hold PID calib Done -> Data valid, but result might be problematic');
+   SET_ALARM(Name := erCalibrationWarning); 
+ELSE    
+   fbLog('Hold PID calib Done -> Data invalid');
+   SET_ALARM(Name := erPIDCalcPressureNotStable);
+END_IF;
+
+STOP_PROCESS_ALGORITHM();
+
+@END_Body 
+
+@@@BEG_Comment@@@ 
+@TL(0)
+
+@@@END_Comment@@@ 
+
+@BEG_Body 
+@TL(7)
+(* algo for debugging. Reads data from '/Messwerte.txt' *)
+(* then caclulates the controller like the standard version *)
+
+CycleTime := t#2ms;//GET_TASK_INTERVAL();
+(* Start Process algo, as this needs longer and we are in a POSTUPDATE *)
+START_PROCESS_ALGORITHM(paTestRun);
+
+@END_Body 
+
+@@@BEG_Comment@@@ 
+@TL(0)
+
+@@@END_Comment@@@ 
+
+@BEG_Body 
+@TL(101)
+(* algo for debugging. Reads data from 'workspace/data/messwerte.txt' *)
+(* then caclulates the controller like the standard version *)
+
+iInjectCounter := 1;
+//tsCalibMode := sv_tCalibMode;
+mFoundRE := FALSE;
+mDivide := FALSE;
+mFindDone := FALSE;
+
+fbLog('Backpressure calib calculation simulation started'); 
+
+file := KFILE_Open(Name := '/workspace/data/messwerte.txt', Mode :=KFILE_Mode_ReadOnly);
+IF(file.Status <> KFILE_Status_OK) THEN
+   printtmp := Print('could not open file: /workspace/data/messwerte.txt');
+   RETURN;
+END_IF;
+
+iCounter := 1;
+(* loop throught every line of the file and read in/out data *)
+(* convert to real and store in arrays *)
+WHILE iCounter <= cMaxRecordedData DO
+
+   filestr := FReadLineFromFile(File := file);//FIXME: returns an empty string every second time?
+         
+   IF( filestr = 'EOF_REACHED') THEN
+      EXIT;
+   END_IF;
+   (* values seperated by tab *)
+   tabpos := FIND(filestr, '$T');
+   IF tabpos = 0 THEN
+      tabpos := FIND(filestr, ';');
+   END_IF;
+   
+   IF(tabpos > 1) THEN// tab at beginning of line is not allowed!
+      out := LEFT(filestr, tabpos - 1);                 //measured output <tab> measured input
+      in := MID(filestr, 999999, tabpos+1);
+      
+      (* replace ',' with '.' so REAL_TO_STRING can read it *)
+      comma := FIND(in, ',');
+      IF(comma <> 0) THEN
+         in := REPLACE(in, '.', 1, comma);
+      END_IF;
+       
+      (* replace ',' with '.' so REAL_TO_STRING can read it *)
+      comma := FIND(out, ',');
+      IF(comma <> 0) THEN
+         out := REPLACE(out, '.', 1, comma);
+      END_IF;
+      rIn := STRING_TO_REAL(in);
+      rOut := STRING_TO_REAL(out);
+       
+      IF NOT mFoundRE AND (rOut = 0.4 OR rOut = 40.0) THEN    //RE is actually a falling edge
+         iTimeReachedPos1 := iCounter;
+         mFoundRE := TRUE;
+      END_IF;
+      IF mFoundRE AND NOT mFindDone AND (rOut = 0.8 OR rOut = 80.0) THEN
+         iTimeReachedPos2 := iCounter;
+         mFindDone := TRUE;
+      END_IF;
+
+      IF(rOut = 40.0 OR rOut = 80.0) THEN
+         mDivide := TRUE;    
+      END_IF; 
+       
+      s := KMEM_ArraySet(MeasuredOutputData.Handle, rOut, DINT_TO_UDINT(iCounter));
+      IF mDivide THEN
+         s := KMEM_ArrayGet(MeasuredOutputData.Handle, rTmp, DINT_TO_UDINT(iCounter));
+         rTmp := rTmp / 100.0;
+         s := KMEM_ArraySet(MeasuredOutputData.Handle, rTmp, DINT_TO_UDINT(iCounter));
+      END_IF;
+      s := KMEM_ArraySet(MeasuredPresData.Handle, rIn, DINT_TO_UDINT(iCounter));
+      iCounter := iCounter +1;
+   END_IF;
+END_WHILE;
+
+iTimeReachedEnd := iCounter;
+status := KFILE_Close(file.Token);
+
+    
+(* create jump for testing *)
+(* in and out are the same *)
+//rTmpScresSimulationPos := 1000.0;
+//FOR iCounter := 1 TO 1000 DO
+//   IF(iCounter >= 300 AND iCounter <600)THEN
+//      MeasuredOutput[iCounter] := 0.9;
+//      rTmpScresSimulationPos := rTmpScresSimulationPos - 0.9;
+//      MeasuredScrewPos[iCounter] := rTmpScresSimulationPos;
+//   ELSE
+//      MeasuredOutput[iCounter] := 0.1;
+//      rTmpScresSimulationPos := rTmpScresSimulationPos - 0.1;
+//      MeasuredScrewPos[iCounter] := rTmpScresSimulationPos;
+//   END_IF;  
+//END_FOR;
+//iMeasurePos := 1000;
+//iTimeReachedPos1 :=300;
+//iTimeReachedPos2 :=600;
+
+START_PROCESS_ALGORITHM(paCalculate1);
+STOP_PROCESS_ALGORITHM();
+
+
+@END_Body 
+
+@@@BEG_Comment@@@ 
+@TL(0)
+
+@@@END_Comment@@@ 
+
+@BEG_Body 
+@TL(10)
+(**************************************** WARNING ********************************************
+ *** The KEBA Kemro K2 System including software is not intended for safety control tasks! ***
+ ***                       For further information see Comment tab!                        ***
+ *********************************************************************************************)
+
+// update maximum pressure
+mpConstant^.Pressure.Output.rOutputValue := rHighOutputFactor * mprMaxPres^;
+
+
+
+@END_Body 
+
+@@@BEG_Comment@@@ 
+@TL(0)
+
+@@@END_Comment@@@ 
+@END_Body 
+
+@END_Contents 

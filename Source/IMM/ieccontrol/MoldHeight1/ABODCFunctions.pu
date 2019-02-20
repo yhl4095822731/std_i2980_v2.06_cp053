@@ -1,0 +1,202 @@
+IMPORT_OVER_LISTFILE
+ tsMoveData
+
+END_IMPORT
+
+ALGORITHM_BLOCK ABODCFunctions #DUMMY_EDIT_BLOCK
+
+SYSTEM_VAR
+ sv_bProgramSwitchChanged : BOOL;
+ sv_bMoldHeightAdjustByOneGear : BOOL;
+ sv_bAdjustInProduction : BOOL;
+ sv_MoveClosedLoop : tsMoveData;
+END_VAR
+
+SYSTEM_OBJECT
+ PU_Task_7 : TASK;
+END_OBJECT
+
+POSTUPDATE_ALGORITHM pMoldHeightProdMode ON PU_Task_7 WITH sv_bAdjustInProduction
+
+#BEGIN_EDIT_BLOCK
+(**************************************** WARNING ********************************************
+ *** The KEBA Kemro K2 System including software is not intended for safety control tasks! ***
+ ***                       For further information see Comment tab!                        ***
+ *********************************************************************************************)
+
+//new sequence must be created
+sv_bProgramSwitchChanged := TRUE;
+
+
+;#END_EDIT_BLOCK END_ALGORITHM
+
+POSTUPDATE_ALGORITHM pClosedLoopProgrammed ON PU_Task_7 WITH sv_MoveClosedLoop.bProgrammedInSequence
+
+#BEGIN_EDIT_BLOCK
+(**************************************** WARNING ********************************************
+ *** The KEBA Kemro K2 System including software is not intended for safety control tasks! ***
+ ***                       For further information see Comment tab!                        ***
+ *********************************************************************************************)
+
+//only one gear adjustment possible when adjust in production is activated  
+IF NOT sv_MoveClosedLoop.bProgrammedInSequence THEN
+    sv_bMoldHeightAdjustByOneGear := FALSE;            
+ELSE 
+    sv_bMoldHeightAdjustByOneGear := TRUE;           
+END_IF;
+
+
+
+;#END_EDIT_BLOCK END_ALGORITHM
+
+
+
+END_ALGORITHM_BLOCK
+
+
+
+#END_OF_IEC_PART
+
+@Puma @IecEditor 6 131 @Pou 25 
+@@@BEG_Comment@@@
+
+@@@END_Comment@@@
+
+@BEG_Contents 
+
+@BEG_Func 
+@RT(17)FuncTreeContainer 
+0 
+@END_Func 
+
+@BEG_Const 
+@RT(18)ConstTreeContainer 
+0 
+@END_Const 
+
+@BEG_Export 
+
+@BEG_Kind 
+@ALGORITHM_BLOCK @RT(14)ABODCFunctions @STRUCTURED_TEXT 
+@RT(0) @RT(0) @RT(0) 
+@END_Kind 
+
+@BEG_Dcl 
+@RT(16)DclTreeContainer 
+5 
+@Var @RT(9)PU_Task_7 @RT(0) @T @F @DT @RT(4)TASK @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 7 @F @F @F @F 
+
+@Var @RT(24)sv_bProgramSwitchChanged @RT(0) @T @T @RENAMED 0 @T @T @DT @RT(4)BOOL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 8 @F @F @F @F 
+
+@Var @RT(29)sv_bMoldHeightAdjustByOneGear @RT(0) @T @F @DT @RT(4)BOOL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 8 @F @F @F @F 
+
+@Var @RT(22)sv_bAdjustInProduction @RT(0) @T @T @RENAMED 0 @T @T @DT @RT(4)BOOL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 8 @F @F @F @F 
+
+@Var @RT(17)sv_MoveClosedLoop @RT(0) @T @T @DERIVED 0 @F @RT(10)tsMoveData @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 8 @F @F @F @F 
+
+@END_Dcl 
+
+@END_Export 
+
+@BEG_Body 
+
+2 
+
+@BEG_Export 
+
+@BEG_Algo 
+@POSTUPDATE_ALGORITHM @RT(19)pMoldHeightProdMode @STRUCTURED_TEXT 
+@RT(0) @RT(22)sv_bAdjustInProduction @RT(9)PU_Task_7 @F @F 
+@END_Algo 
+
+@BEG_Dcl 
+@RT(16)DclTreeContainer 
+0 
+@END_Dcl 
+
+@END_Export 
+
+@BEG_Export 
+
+@BEG_Algo 
+@POSTUPDATE_ALGORITHM @RT(21)pClosedLoopProgrammed @STRUCTURED_TEXT 
+@RT(0) @RT(39)sv_MoveClosedLoop.bProgrammedInSequence @RT(9)PU_Task_7 @F @F 
+@END_Algo 
+
+@BEG_Dcl 
+@RT(16)DclTreeContainer 
+0 
+@END_Dcl 
+
+@END_Export 
+
+@BEG_Body 
+@TL(8)
+(**************************************** WARNING ********************************************
+ *** The KEBA Kemro K2 System including software is not intended for safety control tasks! ***
+ ***                       For further information see Comment tab!                        ***
+ *********************************************************************************************)
+
+//new sequence must be created
+sv_bProgramSwitchChanged := TRUE;
+
+@END_Body 
+
+@@@BEG_Comment@@@ 
+@TL(0)
+
+@@@END_Comment@@@ 
+
+@BEG_Body 
+@TL(13)
+(**************************************** WARNING ********************************************
+ *** The KEBA Kemro K2 System including software is not intended for safety control tasks! ***
+ ***                       For further information see Comment tab!                        ***
+ *********************************************************************************************)
+
+//only one gear adjustment possible when adjust in production is activated  
+IF NOT sv_MoveClosedLoop.bProgrammedInSequence THEN
+    sv_bMoldHeightAdjustByOneGear := FALSE;            
+ELSE 
+    sv_bMoldHeightAdjustByOneGear := TRUE;           
+END_IF;
+
+
+@END_Body 
+
+@@@BEG_Comment@@@ 
+@TL(0)
+
+@@@END_Comment@@@ 
+@END_Body 
+
+@END_Contents 

@@ -1,0 +1,774 @@
+(*
+@h    ! WARNING !
+@h    The Kemro K2 system (including software) only meets category B according to EN 954-1,
+@h    thus it is not intended for usage in safety-relevant control applications in the field 
+@h    of personal safety (e.g. emergency stop).
+@h    To implement potentially necessary safety-relevant control tasks, always use additional 
+@h    external safety devices that are intended for the particular purpose, and meet the necessary 
+@h    functional safety.
+@h    For further information see EN 954-1 (EN ISO 13849-1) and/or the K2-x00 user manual, chapter 
+@h    "CE conformity, directives and standards".
+
+Following functions are implemented in this AB
+- registration of dummy movements for begin/end closing/opening sequence
+- trigger new creation of sequence if selector "mold open during plast" changes
+- trigger update of odc editor if a calculated movement time changes
+
+
+@FunctionID: S_FU_05
+*)
+
+IMPORT_OVER_LISTFILE
+ nAfterInject
+, cCompShutOffNozzle
+, tsMoveData
+, tsSetTimes
+, tnICMActivateMode
+, tnICMMode
+, tyNumberOfDevices
+, ABMovementRegister
+, KSYS_Status
+, FBUpdateEditorProperties
+
+END_IMPORT
+
+ALGORITHM_BLOCK ABODCFunctions #DUMMY_EDIT_BLOCK
+
+SYSTEM_VAR
+ sv_bInitStart : BOOL;
+ sv_MoveBeginClosingSequence : tsMoveData;
+ sv_MoveEndClosingSequence : tsMoveData;
+ sv_MoveBeginOpeningSequence : tsMoveData;
+ sv_MoveEndOpeningSequence : tsMoveData;
+ sv_bProgramSwitchChanged : BOOL;
+ sv_dCalculatedDurationOpen : TIME (* Calculated duration for mold open *);
+ sv_dCalculatedDurationClose : TIME (* Calculated duration for mold close *);
+ sv_MoldCloseTimesSet : tsSetTimes;
+ sv_MoldOpenTimesSet : tsSetTimes;
+ sv_CoiningActivateMode : tnICMActivateMode;
+ sv_VentingActivateMode : tnICMActivateMode;
+ sv_iODCSelector : INT (* selector variable (for sequence generation) *);
+ sv_ICMMode : tnICMMode;
+ sv_bInitDone : BOOL;
+ sv_NumberOfDevices : tyNumberOfDevices;
+END_VAR
+
+SYSTEM_OBJECT
+ PU_Task_7 : TASK;
+ PU_Task_13 : TASK;
+ PU_Task_3 : TASK;
+END_OBJECT
+
+VAR
+ mpbOpenDuringPlast : REFTO BOOL;
+END_VAR
+
+ALGORITHM aSetICMODCSelector
+
+#BEGIN_EDIT_BLOCK
+//No ICM 
+IF (sv_CoiningActivateMode = nDeactivate) 
+    AND (sv_VentingActivateMode = nDeactivate) THEN
+    sv_iODCSelector := 0;
+END_IF;
+
+//venting and coining parallel to inject
+IF (sv_ICMMode = nParallelICM) AND (sv_VentingActivateMode <> nDeactivate) 
+    AND (sv_CoiningActivateMode <> nDeactivate) THEN
+    
+    sv_iODCSelector := 1;
+END_IF;    
+
+//coining parallel to inject
+IF (sv_ICMMode = nParallelICM) AND (sv_VentingActivateMode = nDeactivate) 
+    AND (sv_CoiningActivateMode > nDeactivate) THEN
+    sv_iODCSelector := 2;
+END_IF;    
+
+//squential: inject -> venting -> coining//inject 
+IF (sv_ICMMode = nSequentialICM) AND 
+   (sv_CoiningActivateMode > nDeactivate) THEN
+    sv_iODCSelector := 3;
+END_IF;    
+
+//venting parallel to inject without coining
+IF (sv_ICMMode = nParallelICM) AND (sv_VentingActivateMode > nDeactivate) 
+    AND (sv_CoiningActivateMode = nDeactivate) THEN
+    sv_iODCSelector := 5;
+END_IF;    
+
+//sequential without coining: inject -> venting -> inject
+IF (sv_ICMMode = nSequentialICM) AND (sv_VentingActivateMode > nDeactivate) 
+    AND (sv_CoiningActivateMode = nDeactivate) THEN
+    sv_iODCSelector := 6;
+END_IF;    
+
+
+
+;#END_EDIT_BLOCK END_ALGORITHM
+
+(*
+registers the following dummy - movements:
+- begin of closing sequence
+- end of closing sequence
+- begin of opening sequence
+- end of opening sequence
+*)
+
+POSTUPDATE_ALGORITHM pInitStart ON PU_Task_7 WITH sv_bInitStart
+
+
+VAR
+ abBeginClosingSequenceRegister : ABMovementRegister;
+ abEndClosingSequenceRegister : ABMovementRegister;
+ abMoveBeginSequenceRegister : ABMovementRegister;
+ abMoveEndSequenceRegister : ABMovementRegister;
+ state : KSYS_Status;
+END_VAR
+#BEGIN_EDIT_BLOCK
+(**************************************** WARNING ********************************************
+ *** The KEBA Kemro K2 System including software is not intended for safety control tasks! ***
+ ***                       For further information see Comment tab!                        ***
+ *********************************************************************************************)
+
+IF sv_bInitStart THEN
+   //register begin of closing sequence    
+   abBeginClosingSequenceRegister.aRegister(@sv_MoveBeginClosingSequence);
+        
+   //register end of closing sequence
+   abEndClosingSequenceRegister.aRegister(@sv_MoveEndClosingSequence);
+   
+   //register begin of opening sequence    
+   abMoveBeginSequenceRegister.aRegister(@sv_MoveBeginOpeningSequence);
+        
+   //register end of opening sequence
+   abMoveEndSequenceRegister.aRegister(@sv_MoveEndOpeningSequence);
+END_IF;
+ 
+mpbOpenDuringPlast := GET_SYNC_REFTO('CentralCoordination1.sv_bClampOpenDuringPlast', T#0s, state);
+
+
+;#END_EDIT_BLOCK END_ALGORITHM
+
+POSTUPDATE_ALGORITHM pOpenDuringPlast ON PU_Task_7 WITH mpbOpenDuringPlast^
+
+#BEGIN_EDIT_BLOCK
+(**************************************** WARNING ********************************************
+ *** The KEBA Kemro K2 System including software is not intended for safety control tasks! ***
+ ***                       For further information see Comment tab!                        ***
+ *********************************************************************************************)
+
+IF mpbOpenDuringPlast^ AND (sv_NumberOfDevices[cCompShutOffNozzle] = 0) THEN
+   //no shut off nozzle available -> reset variable and do not trigger the creation of a new sequence
+   //basically this situation should be avoided by HMI but it can also happen by loading mold data
+   mpbOpenDuringPlast^ := FALSE;
+   RETURN;
+END_IF;
+
+sv_bProgramSwitchChanged := TRUE;
+
+
+;#END_EDIT_BLOCK END_ALGORITHM
+
+POSTUPDATE_ALGORITHM pDurationChanged ON PU_Task_13 WITH sv_dCalculatedDurationClose, sv_dCalculatedDurationOpen, sv_MoldCloseTimesSet.dSetDelayTime, sv_MoldOpenTimesSet.dSetDelayTime
+
+
+VAR
+ fbUpdateProperties : FBUpdateEditorProperties;
+END_VAR
+#BEGIN_EDIT_BLOCK
+(**************************************** WARNING ********************************************
+ *** The KEBA Kemro K2 System including software is not intended for safety control tasks! ***
+ ***                       For further information see Comment tab!                        ***
+ *********************************************************************************************)
+
+fbUpdateProperties();
+
+
+;#END_EDIT_BLOCK END_ALGORITHM
+
+POSTUPDATE_ALGORITHM pICMMode ON PU_Task_7 WITH sv_CoiningActivateMode,sv_VentingActivateMode,sv_ICMMode
+
+#BEGIN_EDIT_BLOCK
+(**************************************** WARNING ********************************************
+ *** The KEBA Kemro K2 System including software is not intended for safety control tasks! ***
+ ***                       For further information see Comment tab!                        ***
+ *********************************************************************************************)
+
+aSetICMODCSelector();
+
+
+;#END_EDIT_BLOCK END_ALGORITHM
+
+POSTUPDATE_ALGORITHM pICMODCSelector ON PU_Task_7 WITH sv_iODCSelector
+
+#BEGIN_EDIT_BLOCK
+sv_bProgramSwitchChanged := TRUE;
+
+
+;#END_EDIT_BLOCK END_ALGORITHM
+
+POSTUPDATE_ALGORITHM pInitDone ON PU_Task_3(1) WITH sv_bInitDone
+
+#BEGIN_EDIT_BLOCK
+(**************************************** WARNING ********************************************
+ *** The KEBA Kemro K2 System including software is not intended for safety control tasks! ***
+ ***                       For further information see Comment tab!                        ***
+ *********************************************************************************************)
+
+//set selector variable before sequence creation starts
+IF IS_LINKED(sv_ICMMode) THEN
+    aSetICMODCSelector();
+END_IF;    
+
+
+;#END_EDIT_BLOCK END_ALGORITHM
+
+
+
+END_ALGORITHM_BLOCK
+
+
+
+#END_OF_IEC_PART
+
+@Puma @IecEditor 6 86 @Pou 25 
+@@@BEG_Comment@@@
+@h    ! WARNING !
+@h    The Kemro K2 system (including software) only meets category B according to EN 954-1,
+@h    thus it is not intended for usage in safety-relevant control applications in the field 
+@h    of personal safety (e.g. emergency stop).
+@h    To implement potentially necessary safety-relevant control tasks, always use additional 
+@h    external safety devices that are intended for the particular purpose, and meet the necessary 
+@h    functional safety.
+@h    For further information see EN 954-1 (EN ISO 13849-1) and/or the K2-x00 user manual, chapter 
+@h    "CE conformity, directives and standards".
+
+Following functions are implemented in this AB
+- registration of dummy movements for begin/end closing/opening sequence
+- trigger new creation of sequence if selector "mold open during plast" changes
+- trigger update of odc editor if a calculated movement time changes
+
+
+@FunctionID: S_FU_05
+@@@END_Comment@@@
+
+@BEG_Contents 
+
+@BEG_Func 
+@RT(17)FuncTreeContainer 
+0 
+@END_Func 
+
+@BEG_Const 
+@RT(18)ConstTreeContainer 
+2 
+@Var @RT(12)nAfterInject @RT(0) @T @T @DERIVED 0 @F @RT(17)tnICMActivateMode @F 
+@T 
+@BEG_Attrib 
+0 @RT(1)1 @RT(39)start ICM movement after inject is done 
+@END_Attrib 
+1 1 @F @F @F @F 
+
+@Constant @RT(18)cCompShutOffNozzle @RT(0) @T @T @DERIVED 0 @T @T @DT @RT(0) @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+0 @RT(0) @RT(0) 
+@END_Attrib 
+
+
+@END_Const 
+
+@BEG_Export 
+
+@BEG_Kind 
+@ALGORITHM_BLOCK @RT(14)ABODCFunctions @STRUCTURED_TEXT 
+@RT(0) @RT(0) @RT(0) 
+@END_Kind 
+
+@BEG_Dcl 
+@RT(16)DclTreeContainer 
+20 
+@Var @RT(9)PU_Task_7 @RT(0) @T @F @DT @RT(4)TASK @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 7 @F @F @F @F 
+
+@Var @RT(10)PU_Task_13 @RT(0) @T @F @DT @RT(4)TASK @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 7 @F @F @F @F 
+
+@Var @RT(9)PU_Task_3 @RT(0) @T @F @DT @RT(4)TASK @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 7 @F @F @F @F 
+
+@Var @RT(13)sv_bInitStart @RT(0) @T @F @DT @RT(4)BOOL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 8 @F @F @F @F 
+
+@Var @RT(27)sv_MoveBeginClosingSequence @RT(0) @T @T @DERIVED 0 @T @T @DT @RT(10)tsMoveData @RT(0) @T @T @UNKNOWN 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 8 @F @F @F @F 
+
+@Var @RT(25)sv_MoveEndClosingSequence @RT(0) @T @T @DERIVED 0 @T @T @DT @RT(10)tsMoveData @RT(0) @T @T @UNKNOWN 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 8 @F @F @F @F 
+
+@Var @RT(27)sv_MoveBeginOpeningSequence @RT(0) @T @T @DERIVED 0 @T @T @DT @RT(10)tsMoveData @RT(0) @T @T @UNKNOWN 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 8 @F @F @F @F 
+
+@Var @RT(25)sv_MoveEndOpeningSequence @RT(0) @T @T @DERIVED 0 @T @T @DT @RT(10)tsMoveData @RT(0) @T @T @UNKNOWN 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 8 @F @F @F @F 
+
+@Var @RT(18)mpbOpenDuringPlast @RT(0) @T @T @REFTO 0 @T @DT @RT(4)BOOL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(24)sv_bProgramSwitchChanged @RT(0) @T @F @DT @RT(4)BOOL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 8 @F @F @F @F 
+
+@Var @RT(26)sv_dCalculatedDurationOpen @RT(0) @T @F @DT @RT(4)TIME @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(33)Calculated duration for mold open @RT(0) 
+@END_Attrib 
+1 8 @F @F @F @F 
+
+@Var @RT(27)sv_dCalculatedDurationClose @RT(0) @T @F @DT @RT(4)TIME @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(34)Calculated duration for mold close @RT(0) 
+@END_Attrib 
+1 8 @F @F @F @F 
+
+@Var @RT(20)sv_MoldCloseTimesSet @RT(0) @T @T @DERIVED 0 @T @T @DT @RT(10)tsSetTimes @RT(0) @T @T @UNKNOWN 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 8 @F @F @F @F 
+
+@Var @RT(19)sv_MoldOpenTimesSet @RT(0) @T @T @DERIVED 0 @T @T @DT @RT(10)tsSetTimes @RT(0) @T @T @UNKNOWN 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 8 @F @F @F @F 
+
+@Var @RT(22)sv_CoiningActivateMode @RT(0) @T @T @DERIVED 0 @T @T @DT @RT(17)tnICMActivateMode @RT(0) @T @T @UNKNOWN 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 8 @F @F @F @F 
+
+@Var @RT(22)sv_VentingActivateMode @RT(0) @T @T @DERIVED 0 @T @T @DT @RT(17)tnICMActivateMode @RT(0) @T @T @UNKNOWN 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 8 @F @F @F @F 
+
+@Var @RT(15)sv_iODCSelector @RT(0) @T @F @DT @RT(3)INT @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(43)selector variable (for sequence generation) @RT(0) 
+@END_Attrib 
+1 8 @F @F @F @F 
+
+@Var @RT(10)sv_ICMMode @RT(0) @T @T @DERIVED 0 @T @T @DT @RT(9)tnICMMode @RT(0) @T @T @UNKNOWN 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 8 @F @F @F @F 
+
+@Var @RT(12)sv_bInitDone @RT(0) @T @F @DT @RT(4)BOOL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 8 @F @F @F @F 
+
+@Var @RT(18)sv_NumberOfDevices @RT(0) @T @T @DERIVED 0 @T @T @DT @RT(17)tyNumberOfDevices @RT(0) @T @T @UNKNOWN 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 8 @F @F @F @F 
+
+@END_Dcl 
+
+@END_Export 
+
+@BEG_Body 
+
+7 
+
+@BEG_Export 
+
+@BEG_Algo 
+@ALGORITHM @RT(18)aSetICMODCSelector @STRUCTURED_TEXT 
+@RT(0) @RT(0) @RT(0) @F @F 
+@END_Algo 
+
+@BEG_Dcl 
+@RT(16)DclTreeContainer 
+0 
+@END_Dcl 
+
+@END_Export 
+
+@BEG_Export 
+
+@BEG_Algo 
+@POSTUPDATE_ALGORITHM @RT(10)pInitStart @STRUCTURED_TEXT 
+@RT(0) @RT(13)sv_bInitStart @RT(9)PU_Task_7 @F @F 
+@END_Algo 
+
+@BEG_Dcl 
+@RT(16)DclTreeContainer 
+5 
+@Var @RT(30)abBeginClosingSequenceRegister @RT(0) @T @T @DERIVED 0 @T @T @DT @RT(18)ABMovementRegister @RT(0) @T @T @UNKNOWN 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(28)abEndClosingSequenceRegister @RT(0) @T @T @DERIVED 0 @T @T @DT @RT(18)ABMovementRegister @RT(0) @T @T @UNKNOWN 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(27)abMoveBeginSequenceRegister @RT(0) @T @T @DERIVED 0 @T @T @DT @RT(18)ABMovementRegister @RT(0) @T @T @UNKNOWN 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(25)abMoveEndSequenceRegister @RT(0) @T @T @DERIVED 0 @T @T @DT @RT(18)ABMovementRegister @RT(0) @T @T @UNKNOWN 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(5)state @RT(0) @T @T @DERIVED 0 @T @T @DT @RT(11)KSYS_Status @RT(0) @T @T @UNKNOWN 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@END_Dcl 
+
+@END_Export 
+
+@BEG_Export 
+
+@BEG_Algo 
+@POSTUPDATE_ALGORITHM @RT(16)pOpenDuringPlast @STRUCTURED_TEXT 
+@RT(0) @RT(19)mpbOpenDuringPlast^ @RT(9)PU_Task_7 @F @F 
+@END_Algo 
+
+@BEG_Dcl 
+@RT(16)DclTreeContainer 
+0 
+@END_Dcl 
+
+@END_Export 
+
+@BEG_Export 
+
+@BEG_Algo 
+@POSTUPDATE_ALGORITHM @RT(16)pDurationChanged @STRUCTURED_TEXT 
+@RT(0) @RT(126)sv_dCalculatedDurationClose, sv_dCalculatedDurationOpen, sv_MoldCloseTimesSet.dSetDelayTime, sv_MoldOpenTimesSet.dSetDelayTime @RT(10)PU_Task_13 @F @F 
+@END_Algo 
+
+@BEG_Dcl 
+@RT(16)DclTreeContainer 
+1 
+@Var @RT(18)fbUpdateProperties @RT(0) @T @T @DERIVED 0 @T @T @DT @RT(24)FBUpdateEditorProperties @RT(0) @T @T @UNKNOWN 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@END_Dcl 
+
+@END_Export 
+
+@BEG_Export 
+
+@BEG_Algo 
+@POSTUPDATE_ALGORITHM @RT(8)pICMMode @STRUCTURED_TEXT 
+@RT(0) @RT(56)sv_CoiningActivateMode,sv_VentingActivateMode,sv_ICMMode @RT(9)PU_Task_7 @F @F 
+@END_Algo 
+
+@BEG_Dcl 
+@RT(16)DclTreeContainer 
+0 
+@END_Dcl 
+
+@END_Export 
+
+@BEG_Export 
+
+@BEG_Algo 
+@POSTUPDATE_ALGORITHM @RT(15)pICMODCSelector @STRUCTURED_TEXT 
+@RT(0) @RT(15)sv_iODCSelector @RT(9)PU_Task_7 @F @F 
+@END_Algo 
+
+@BEG_Dcl 
+@RT(16)DclTreeContainer 
+0 
+@END_Dcl 
+
+@END_Export 
+
+@BEG_Export 
+
+@BEG_Algo 
+@POSTUPDATE_ALGORITHM @RT(9)pInitDone @STRUCTURED_TEXT 
+@RT(0) @RT(12)sv_bInitDone @RT(12)PU_Task_3(1) @F @F 
+@END_Algo 
+
+@BEG_Dcl 
+@RT(16)DclTreeContainer 
+0 
+@END_Dcl 
+
+@END_Export 
+
+@BEG_Body 
+@TL(38)
+//No ICM 
+IF (sv_CoiningActivateMode = nDeactivate) 
+    AND (sv_VentingActivateMode = nDeactivate) THEN
+    sv_iODCSelector := 0;
+END_IF;
+
+//venting and coining parallel to inject
+IF (sv_ICMMode = nParallelICM) AND (sv_VentingActivateMode <> nDeactivate) 
+    AND (sv_CoiningActivateMode <> nDeactivate) THEN
+    
+    sv_iODCSelector := 1;
+END_IF;    
+
+//coining parallel to inject
+IF (sv_ICMMode = nParallelICM) AND (sv_VentingActivateMode = nDeactivate) 
+    AND (sv_CoiningActivateMode > nDeactivate) THEN
+    sv_iODCSelector := 2;
+END_IF;    
+
+//squential: inject -> venting -> coining//inject 
+IF (sv_ICMMode = nSequentialICM) AND 
+   (sv_CoiningActivateMode > nDeactivate) THEN
+    sv_iODCSelector := 3;
+END_IF;    
+
+//venting parallel to inject without coining
+IF (sv_ICMMode = nParallelICM) AND (sv_VentingActivateMode > nDeactivate) 
+    AND (sv_CoiningActivateMode = nDeactivate) THEN
+    sv_iODCSelector := 5;
+END_IF;    
+
+//sequential without coining: inject -> venting -> inject
+IF (sv_ICMMode = nSequentialICM) AND (sv_VentingActivateMode > nDeactivate) 
+    AND (sv_CoiningActivateMode = nDeactivate) THEN
+    sv_iODCSelector := 6;
+END_IF;    
+
+
+@END_Body 
+
+@@@BEG_Comment@@@ 
+@TL(0)
+
+@@@END_Comment@@@ 
+
+@BEG_Body 
+@TL(21)
+(**************************************** WARNING ********************************************
+ *** The KEBA Kemro K2 System including software is not intended for safety control tasks! ***
+ ***                       For further information see Comment tab!                        ***
+ *********************************************************************************************)
+
+IF sv_bInitStart THEN
+   //register begin of closing sequence    
+   abBeginClosingSequenceRegister.aRegister(@sv_MoveBeginClosingSequence);
+        
+   //register end of closing sequence
+   abEndClosingSequenceRegister.aRegister(@sv_MoveEndClosingSequence);
+   
+   //register begin of opening sequence    
+   abMoveBeginSequenceRegister.aRegister(@sv_MoveBeginOpeningSequence);
+        
+   //register end of opening sequence
+   abMoveEndSequenceRegister.aRegister(@sv_MoveEndOpeningSequence);
+END_IF;
+ 
+mpbOpenDuringPlast := GET_SYNC_REFTO('CentralCoordination1.sv_bClampOpenDuringPlast', T#0s, state);
+
+@END_Body 
+
+@@@BEG_Comment@@@ 
+@TL(5)
+registers the following dummy - movements:
+- begin of closing sequence
+- end of closing sequence
+- begin of opening sequence
+- end of opening sequence
+@@@END_Comment@@@ 
+
+@BEG_Body 
+@TL(14)
+(**************************************** WARNING ********************************************
+ *** The KEBA Kemro K2 System including software is not intended for safety control tasks! ***
+ ***                       For further information see Comment tab!                        ***
+ *********************************************************************************************)
+
+IF mpbOpenDuringPlast^ AND (sv_NumberOfDevices[cCompShutOffNozzle] = 0) THEN
+   //no shut off nozzle available -> reset variable and do not trigger the creation of a new sequence
+   //basically this situation should be avoided by HMI but it can also happen by loading mold data
+   mpbOpenDuringPlast^ := FALSE;
+   RETURN;
+END_IF;
+
+sv_bProgramSwitchChanged := TRUE;
+
+@END_Body 
+
+@@@BEG_Comment@@@ 
+@TL(0)
+
+@@@END_Comment@@@ 
+
+@BEG_Body 
+@TL(7)
+(**************************************** WARNING ********************************************
+ *** The KEBA Kemro K2 System including software is not intended for safety control tasks! ***
+ ***                       For further information see Comment tab!                        ***
+ *********************************************************************************************)
+
+fbUpdateProperties();
+
+@END_Body 
+
+@@@BEG_Comment@@@ 
+@TL(0)
+
+@@@END_Comment@@@ 
+
+@BEG_Body 
+@TL(7)
+(**************************************** WARNING ********************************************
+ *** The KEBA Kemro K2 System including software is not intended for safety control tasks! ***
+ ***                       For further information see Comment tab!                        ***
+ *********************************************************************************************)
+
+aSetICMODCSelector();
+
+@END_Body 
+
+@@@BEG_Comment@@@ 
+@TL(0)
+
+@@@END_Comment@@@ 
+
+@BEG_Body 
+@TL(2)
+sv_bProgramSwitchChanged := TRUE;
+
+@END_Body 
+
+@@@BEG_Comment@@@ 
+@TL(0)
+
+@@@END_Comment@@@ 
+
+@BEG_Body 
+@TL(10)
+(**************************************** WARNING ********************************************
+ *** The KEBA Kemro K2 System including software is not intended for safety control tasks! ***
+ ***                       For further information see Comment tab!                        ***
+ *********************************************************************************************)
+
+//set selector variable before sequence creation starts
+IF IS_LINKED(sv_ICMMode) THEN
+    aSetICMODCSelector();
+END_IF;    
+
+@END_Body 
+
+@@@BEG_Comment@@@ 
+@TL(0)
+
+@@@END_Comment@@@ 
+@END_Body 
+
+@END_Contents 

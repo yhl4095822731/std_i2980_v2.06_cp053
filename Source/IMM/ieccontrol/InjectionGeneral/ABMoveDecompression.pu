@@ -1,0 +1,3701 @@
+(*
+@h    ! WARNING !
+@h    The Kemro K2 system (including software) only meets category B according to EN 954-1,
+@h    thus it is not intended for usage in safety-relevant control applications in the field 
+@h    of personal safety (e.g. emergency stop).
+@h    To implement potentially necessary safety-relevant control tasks, always use additional 
+@h    external safety devices that are intended for the particular purpose, and meet the necessary 
+@h    functional safety.
+@h    For further information see EN 954-1 (EN ISO 13849-1) and/or the K2-x00 user manual, chapter 
+@h    "CE conformity, directives and standards".
+
+
+In this AB the decompression movements are realized.
+This means decompression before plast, decompression after plast,
+calibration for screw transducer (backward) and
+also the decompression movement for auto purging.
+
+@FunctionID: S_KPIEC_PRINJ_05
+@FunctionID: S_KPIEC_PRINJ_06
+@FunctionID: S_KPIEC_CALTRANS_04
+
+*)
+
+IMPORT_OVER_LISTFILE
+ GET_MY_FU_NAME
+, FCalcScrewSize
+, WRITE_SVREAL_DIRECT
+, WRITE_SV_DIRECT
+, cLockGroupHeatingNozzle
+, cLockGroupMotor
+, nActive
+, nDeviceState
+, nTimeDependent
+, nInactive
+, cMoveDecompPurge
+, nSetup
+, cMoveDecompBefPlast
+, cMoveDecompAftPlast
+, cMoveDecompInterPos
+, tnCalibState_Error
+, nKAPPL_IMM_ServoValve
+, nHalfAutomatic
+, nNotUsed
+, nPosDependent
+, nDecompTimeDependent
+, nDecompPosDependent
+, tnOperationMode
+, tsSetTimes
+, tsActTimes
+, tsDecompParam
+, tsVelPre
+, tsMoveData
+, tsDeviceId
+, KCTRL_Lintab_Point
+, tsMinOutput
+, tsPurgeSettings
+, KAPPL_LintabData
+, KAPPL_VisProfilePlast
+, KAPPL_IMM_Type
+, tsCalibMovement
+, tyInstanceListArrayDecomp
+, tyInterCondTimeArray
+, tevStart
+, tsMoveCtrl
+, ABConstMovement
+, ABConstCalib
+, ABLintabApply
+, ABStepOutput
+, ABMovementRegister
+, FBSetMovementState
+, FBDebugTrace2
+, tevStartData
+
+END_IMPORT
+
+ALGORITHM_BLOCK ABMoveDecompression #DUMMY_EDIT_BLOCK
+
+SYSTEM_VAR
+ sv_rPressure : REAL;
+ sv_rVelocity : REAL;
+ sv_OperationMode : tnOperationMode;
+ sv_DecompTimesSet : tsSetTimes;
+ sv_DecompTimesAct : tsActTimes;
+ sv_DecompBefPlastSettings : tsDecompParam;
+ sv_DecompAftPlastSettings : tsDecompParam;
+ sv_ConstDecompSetup : tsVelPre;
+ sv_ConstDecompSetupServo : tsVelPre;
+ sv_MoveDecompBefPlast : tsMoveData;
+ sv_MoveDecompAftPlast : tsMoveData;
+ sv_DeviceId : tsDeviceId;
+ sv_rHoldPosition : REAL (* position at the end of hold phase *);
+ sv_rScrewStroke : REAL;
+ ai_Position : REAL;
+ sv_dStandStillDetectTime : TIME (* time for standstill detection *);
+ sv_rMaxVoltageDiff : REAL (* max. voltage difference to detect stand still *);
+ sv_bDoTransducerCalib : BOOL;
+ sv_TmpLintabPoint : KCTRL_Lintab_Point;
+ sv_bOutputActive : BOOL (* Output is active *);
+ sv_bPreOutputReady : BOOL (* PreOutput is ready *);
+ sv_bTransducerError : BOOL;
+ sv_MinOutputDecomp : tsMinOutput;
+ sv_MoveDecompPurge : tsMoveData;
+ sv_PurgeSettings : tsPurgeSettings;
+ sv_bInitStart : BOOL;
+ sv_LintabOutBwdP : KAPPL_LintabData;
+ sv_LintabOutBwdV : KAPPL_LintabData;
+ sv_rScrewVolume : REAL;
+ sv_bInitDone : BOOL;
+ sv_rMaxSpeedBwd : REAL;
+ sv_PlastProfVis : KAPPL_VisProfilePlast;
+ sv_dActDecompBeforeTime : TIME;
+ sv_dActDecompAfterTime : TIME;
+ sv_rServoOutput : REAL;
+ sv_IMM_Type : KAPPL_IMM_Type;
+ sv_bActivatedDecompBeforePlast : BOOL (* indicates if movement decompress should be activated if start event is sent *);
+ sv_bActivatedDecompAfterPlast : BOOL (* indicates if movement decompress should be activated if start event is sent *);
+ sv_CalibState : tsCalibMovement;
+ sv_dCalculatedDurationDecompAft : TIME (* Calculated duration for inject + hold *);
+ sv_dCalculatedDurationDecompBef : TIME (* Calculated duration for inject + hold *);
+ sv_rDecompAftCalcDurStartPos : REAL (* Start position for calculation of inject duration *);
+ sv_rDecompAftCalcDurEndPos : REAL (* Start position for calculation of inject duration *);
+ sv_rDecompBefCalcDurStartPos : REAL (* Start position for calculation of decomp before plast duration *);
+ sv_rDecompBefCalcDurEndPos : REAL (* End position for calculation of decomp before plast duration *);
+ sv_rScrewDiameter : REAL;
+ sv_rTargetValueDecBefPlast : REAL (* target value of decomp before plast *);
+ sv_rTargetValueDecAftPlast : REAL (* target value of decomp after plast *);
+ sv_MoveDecompInterPos : tsMoveData (* instanceable decompression movement *);
+ sv_DecompInterPosSettings : tsDecompParam;
+ sv_InstanceDataDecompInterPos : tyInstanceListArrayDecomp (* array with target positions of decomp interpos movements *);
+ sv_bDecompActive : BOOL (* any decompression movement active *);
+ sv_rScrewPositionAbs : REAL;
+ sv_bMoveIdent : BOOL;
+ sv_rIdentPosition : REAL;
+ sv_rIdentStopRamp : REAL;
+ sv_dSetDelayTimeOffBwd : TIME;
+ sv_bMoveToServoCalibStartPos : BOOL;
+ sv_rScrewSetPosition : REAL;
+ sv_rVelocityAbs : REAL;
+ sv_ActiveTimesDecompInterPos : tyInterCondTimeArray;
+ sv_DecompAfterTimesSet : tsSetTimes;
+ sv_DecompAfterTimesAct : tsActTimes;
+ sv_bDoPumpVelocityCalib : BOOL;
+ sv_bDoInjectionCalib : BOOL;
+END_VAR
+
+SYSTEM_OBJECT
+ PU_Task_7 : TASK;
+ TaskMid : TASK;
+ evStart : tevStart;
+ EV_Task_3 : TASK;
+END_OBJECT
+
+VAR_EXTERNAL
+ g_MoveCtrl : tsMoveCtrl;
+END_VAR
+
+VAR
+ abDecompSetup : ABConstMovement;
+ abDecompSetupServo : ABConstMovement;
+ abDecompAftPlast : ABConstMovement;
+ abDecompBefPlast : ABConstMovement;
+ abDecompPurge : ABConstMovement;
+ abDecompInterPos : ABConstMovement;
+ abScrewBwdCalib : ABConstCalib;
+ abLintabApplyVel : ABLintabApply;
+ abLintabApplyPres : ABLintabApply;
+ mrDecAftPlastEnd : REAL (* target of decomp after plast *);
+ mrDecBefPlastEnd : REAL (* target of decomp before plast *);
+ miDecompInstance : DINT;
+ abDecompStep : ABStepOutput;
+END_VAR
+
+(*
+This algorithm is necessary for registering the available movements
+and the according parameters (Lockgroups, icon path,....)
+*)
+
+ALGORITHM aRegister
+
+
+VAR
+ abDecompBefPlastRegister : ABMovementRegister;
+ abDecompAftPlastRegister : ABMovementRegister;
+ abDecompPurgeRegister : ABMovementRegister;
+ abDecompInterPosRegister : ABMovementRegister;
+END_VAR
+#BEGIN_EDIT_BLOCK
+(**************************************** WARNING ********************************************
+ *** The KEBA Kemro K2 System including software is not intended for safety control tasks! ***
+ ***                       For further information see Comment tab!                        ***
+ *********************************************************************************************)
+
+//register decompression before plast
+sv_MoveDecompBefPlast.sIconPath := CONCAT(GET_MY_FU_NAME(),"\hmi\images\movScrewBwd.gif");
+sv_MoveDecompBefPlast.EditorData.sODCIcon := "\hmi\images\editDecomp.gif";
+sv_MoveDecompBefPlast.pdStartDelaySet := @sv_DecompTimesSet.dSetDelayTime;
+sv_MoveDecompBefPlast.pdStartDelayAct := @sv_DecompTimesAct.dActDelayTime; 
+sv_MoveDecompBefPlast.LockGroups[1] := cLockGroupHeatingNozzle;
+sv_MoveDecompBefPlast.LockGroups[2] := cLockGroupMotor;
+sv_MoveDecompBefPlast.pdActiveTimeAct := @sv_dActDecompBeforeTime;
+sv_MoveDecompBefPlast.pbActivated := @sv_bActivatedDecompBeforePlast;
+abDecompBefPlastRegister.aRegister(@sv_MoveDecompBefPlast);  
+  
+//register decompression after plast
+sv_MoveDecompAftPlast.pdStartDelaySet := @sv_DecompAfterTimesSet.dSetDelayTime;
+sv_MoveDecompAftPlast.pdStartDelayAct := @sv_DecompAfterTimesAct.dActDelayTime;
+sv_MoveDecompAftPlast.sIconPath := CONCAT(GET_MY_FU_NAME(),"\hmi\images\movScrewBwd.gif");
+sv_MoveDecompAftPlast.EditorData.sODCIcon := "\hmi\images\editDecomp.gif";
+sv_MoveDecompAftPlast.LockGroups[1] := cLockGroupHeatingNozzle;
+sv_MoveDecompAftPlast.LockGroups[2] := cLockGroupMotor;
+sv_MoveDecompAftPlast.pdActiveTimeAct := @sv_dActDecompAfterTime;
+sv_MoveDecompAftPlast.pbActivated := @sv_bActivatedDecompAfterPlast;
+abDecompAftPlastRegister.aRegister(@sv_MoveDecompAftPlast);
+  
+//register decomp part of purge movement
+sv_MoveDecompPurge.sIconPath := CONCAT(GET_MY_FU_NAME(),"\hmi\images\movScrewBwd.gif");
+sv_MoveDecompPurge.LockGroups[1] := cLockGroupHeatingNozzle;
+sv_MoveDecompPurge.LockGroups[2] := cLockGroupMotor;
+abDecompPurgeRegister.aRegister(@sv_MoveDecompPurge);
+
+//register instanceable decompression movement
+sv_MoveDecompInterPos.sIconPath := CONCAT(GET_MY_FU_NAME(),"\hmi\images\movScrewInterposBwd.gif");
+sv_MoveDecompInterPos.EditorData.sODCIcon := "\hmi\images\editDecomp.gif";
+sv_MoveDecompInterPos.LockGroups[1] := cLockGroupHeatingNozzle;
+sv_MoveDecompInterPos.LockGroups[2] := cLockGroupMotor;
+abDecompInterPosRegister.aRegister(@sv_MoveDecompInterPos); 
+
+
+;#END_EDIT_BLOCK END_ALGORITHM
+
+(*
+convert cm³ to mm
+*)
+
+ALGORITHM aVolumeToDistance
+
+
+VAR_INPUT
+ rVolume : REAL (* volume in cm³ *);
+END_VAR
+
+VAR_OUTPUT
+ rDistance : REAL (* distance in mm *);
+END_VAR
+#BEGIN_EDIT_BLOCK
+(**************************************** WARNING ********************************************
+ *** The KEBA Kemro K2 System including software is not intended for safety control tasks! ***
+ ***                       For further information see Comment tab!                        ***
+ *********************************************************************************************)
+
+IF sv_rScrewDiameter > 0.0 THEN
+   rDistance := rVolume * 1000.0 / (FCalcScrewSize(sv_rScrewDiameter));
+ELSE
+   rDistance := 0.0;
+END_IF;
+
+
+
+
+
+;#END_EDIT_BLOCK END_ALGORITHM
+
+(*
+This algorithm is responsible for executing the movement.
+Depending on MoveId, OperationMode and activated transducer calibration the according
+movement is executed.
+The different actions contain the movement blocks and the according parameters.
+*)
+
+ALGORITHM aRun
+
+
+VAR_INPUT
+ bStop : BOOL (* flag if the movement should be stopped *);
+END_VAR
+
+VAR_OUTPUT
+ bReady : BOOL (* information if movement is ready *);
+END_VAR
+
+VAR_TEMP
+ b : BOOL;
+END_VAR
+
+VAR
+ fbSetMovementState : FBSetMovementState;
+ bError : BOOL;
+ iErrorInfo : DINT;
+ dummy : DINT;
+ rTargetPosition : REAL (* target position in [mm] *);
+ fbDebugTrace2 : FBDebugTrace2;
+ bUsePosDetect : BOOL;
+ rPressureAbs : REAL;
+ rVelocityAbs : REAL;
+ dMaxMoveTime : TIME;
+END_VAR
+
+(* IecGraph-Code *)
+
+(* init step *)
+INITIAL_STEP S_Start:
+AStart (P);
+END_STEP
+
+ACTION AStart: #BEGIN_EDIT_BLOCK
+bReady := FALSE;
+fbSetMovementState(MoveId   := g_MoveCtrl.pData^.MoveId,
+                   MoveDir  := g_MoveCtrl.pData^.MoveDir,
+                   State    := nActive);
+sv_bDecompActive := TRUE;
+fbDebugTrace2(nDeviceState, 'Decompression started');
+
+;#END_EDIT_BLOCK END_ACTION (*AStart*)
+
+(* steps *)
+STEP S_Purge:
+AresetDecompPurge (P);
+ADecompPurge (N);
+AResetDecompPurgeServo (P);
+ADecompSetupServo (N);
+ASetPosPurge (P0);
+END_STEP
+
+ACTION ASetPosPurge: #BEGIN_EDIT_BLOCK
+b := WRITE_SVREAL_DIRECT(sv_rScrewSetPosition, sv_rScrewPositionAbs);
+
+;#END_EDIT_BLOCK END_ACTION (*ASetPosPurge*)
+STEP S_CheckOperationMode:
+END_STEP
+
+STEP S_CheckIfCalib:
+END_STEP
+
+STEP S_Calib:
+AResetCalibBlock (P);
+ATransducerCalib (N);
+ACheckCalibError (N);
+ADecompSetupServo (N);
+END_STEP
+
+STEP S_MoveIdent:
+AResetIdentBlock (P);
+AStepOutput (N);
+ADecompSetupServoIdent (N);
+AStopServo (P0);
+END_STEP
+
+ACTION AStopServo: #BEGIN_EDIT_BLOCK
+sv_rServoOutput := 0.0;
+
+;#END_EDIT_BLOCK END_ACTION (*AStopServo*)
+STEP S_Setup:
+AResetConstBlock (P);
+ADecompSetup (N);
+ADecompSetupServo (N);
+END_STEP
+
+STEP S_CheckMode:
+END_STEP
+
+STEP S_DecomBeforePlast:
+AInitDecompBef (P);
+ADecompBefPlast (N);
+ADecompSetupServo (N);
+ASetPosBefore (P0);
+END_STEP
+
+ACTION ASetPosBefore: #BEGIN_EDIT_BLOCK
+IF sv_DecompBefPlastSettings.Mode = nTimeDependent THEN
+   b := WRITE_SVREAL_DIRECT(sv_rScrewSetPosition, sv_rScrewPositionAbs);
+ELSE
+   IF bStop OR abDecompBefPlast.aRun.dActTime = T#0s THEN
+      b := WRITE_SVREAL_DIRECT(sv_rScrewSetPosition, sv_rScrewPositionAbs);
+   ELSE    
+      b := WRITE_SVREAL_DIRECT(sv_rScrewSetPosition, rTargetPosition); 
+   END_IF;    
+END_IF;
+
+;#END_EDIT_BLOCK END_ACTION (*ASetPosBefore*)
+STEP S_CorrectDuration1:
+ACorrectDurationDecompBef (P);
+END_STEP
+
+STEP S_DecompAfterPlast:
+AInitDecompAft (P);
+ADecompAftPlast (N);
+ADecompSetupServo (N);
+ASetPosAfter (P0);
+END_STEP
+
+ACTION ASetPosAfter: #BEGIN_EDIT_BLOCK
+IF sv_DecompAftPlastSettings.Mode = nTimeDependent THEN
+   b := WRITE_SVREAL_DIRECT(sv_rScrewSetPosition, sv_rScrewPositionAbs);
+ELSE
+   IF bStop OR abDecompAftPlast.aRun.dActTime = T#0s THEN
+      b := WRITE_SVREAL_DIRECT(sv_rScrewSetPosition, sv_rScrewPositionAbs);
+   ELSE    
+      b := WRITE_SVREAL_DIRECT(sv_rScrewSetPosition, rTargetPosition); 
+   END_IF; 
+END_IF;
+
+;#END_EDIT_BLOCK END_ACTION (*ASetPosAfter*)
+STEP S_CorrectDuration2:
+ACorrectDurationDecompAft (P);
+END_STEP
+
+STEP S_DecompInterPos:
+AInitDecompInterPos (P);
+ADecompInterPos (N);
+ADecompSetupServo (N);
+ASetPosInter (P0);
+END_STEP
+
+ACTION ASetPosInter: #BEGIN_EDIT_BLOCK
+IF sv_DecompAftPlastSettings.Mode = nTimeDependent THEN
+   b := WRITE_SVREAL_DIRECT(sv_rScrewSetPosition, sv_rScrewPositionAbs);
+ELSE
+   IF bStop OR abDecompInterPos.aRun.dActTime = T#0s THEN
+      b := WRITE_SVREAL_DIRECT(sv_rScrewSetPosition, sv_rScrewPositionAbs);
+   ELSE    
+      b := WRITE_SVREAL_DIRECT(sv_rScrewSetPosition, rTargetPosition);
+   END_IF; 
+END_IF;
+
+;#END_EDIT_BLOCK END_ACTION (*ASetPosInter*)
+STEP S_Ready:
+AReady (P);
+END_STEP
+
+ACTION AReady: #BEGIN_EDIT_BLOCK
+bReady := TRUE;
+fbSetMovementState(MoveId   := g_MoveCtrl.pData^.MoveId,
+                   MoveDir  := g_MoveCtrl.pData^.MoveDir,
+                   State    := nInactive);
+sv_bDecompActive := FALSE;
+fbDebugTrace2(nDeviceState, 'Decompression ready');
+
+;#END_EDIT_BLOCK END_ACTION (*AReady*)
+
+(* transitions *)
+GO_ON_TRANSITION TNotPurge (* TNotPurge *) FROM S_Start TO S_CheckOperationMode :=  #BEGIN_EDIT_BLOCK
+g_MoveCtrl.pData^.MoveId <>  cMoveDecompPurge
+;#END_EDIT_BLOCK
+END_TRANSITION
+
+GO_ON_TRANSITION TPurge (* TPurge *) FROM S_Start TO S_Purge :=  #BEGIN_EDIT_BLOCK
+g_MoveCtrl.pData^.MoveId = cMoveDecompPurge
+;#END_EDIT_BLOCK
+END_TRANSITION
+
+TRANSITION TPurgeReady (* TPurgeReady *) FROM S_Purge TO S_Ready :=  #BEGIN_EDIT_BLOCK
+NOT abDecompPurge.aRun.bActive
+;#END_EDIT_BLOCK
+END_TRANSITION
+
+GO_ON_TRANSITION TNotSetup (* TNotSetup *) FROM S_CheckOperationMode TO S_CheckMode :=  #BEGIN_EDIT_BLOCK
+sv_OperationMode <> nSetup
+;#END_EDIT_BLOCK
+END_TRANSITION
+
+GO_ON_TRANSITION TSetupMode (* TSetupMode *) FROM S_CheckOperationMode TO S_CheckIfCalib :=  #BEGIN_EDIT_BLOCK
+sv_OperationMode = nSetup
+;#END_EDIT_BLOCK
+END_TRANSITION
+
+GO_ON_TRANSITION TNotCalib (* TNotCalib *) FROM S_CheckIfCalib TO S_Setup :=  #BEGIN_EDIT_BLOCK
+NOT sv_bDoTransducerCalib 
+AND NOT sv_bMoveIdent
+;#END_EDIT_BLOCK
+END_TRANSITION
+
+GO_ON_TRANSITION TCalibActivated (* TCalibActivated *) FROM S_CheckIfCalib TO S_Calib :=  #BEGIN_EDIT_BLOCK
+sv_bDoTransducerCalib
+;#END_EDIT_BLOCK
+END_TRANSITION
+
+TRANSITION TCalibReady (* TCalibReady *) FROM S_Calib TO S_Ready :=  #BEGIN_EDIT_BLOCK
+NOT abScrewBwdCalib.aRun.bActive OR bError 
+;#END_EDIT_BLOCK
+END_TRANSITION
+
+GO_ON_TRANSITION TMoveIdentActivated (* TMoveIdentActivated *) FROM S_CheckIfCalib TO S_MoveIdent :=  #BEGIN_EDIT_BLOCK
+sv_bMoveIdent
+;#END_EDIT_BLOCK
+END_TRANSITION
+
+TRANSITION TMoveIdentReady (* TMoveIdentReady *) FROM S_MoveIdent TO S_Ready :=  #BEGIN_EDIT_BLOCK
+NOT abDecompStep.aRun.bActive
+;#END_EDIT_BLOCK
+END_TRANSITION
+
+TRANSITION TSetupReady (* TSetupReady *) FROM S_Setup TO S_Ready :=  #BEGIN_EDIT_BLOCK
+NOT abDecompSetup.aRun.bActive
+;#END_EDIT_BLOCK
+END_TRANSITION
+
+GO_ON_TRANSITION TDecompBefPlast (* TDecompBefPlast *) FROM S_CheckMode TO S_DecomBeforePlast :=  #BEGIN_EDIT_BLOCK
+g_MoveCtrl.pData^.MoveId = cMoveDecompBefPlast
+;#END_EDIT_BLOCK
+END_TRANSITION
+
+GO_ON_TRANSITION TBefPlastReady (* TBefPlastReady *) FROM S_DecomBeforePlast TO S_CorrectDuration1 :=  #BEGIN_EDIT_BLOCK
+NOT abDecompBefPlast.aRun.bActive
+;#END_EDIT_BLOCK
+END_TRANSITION
+
+GO_ON_TRANSITION Trans21 (* Trans21 *) FROM S_CorrectDuration1 TO S_Ready :=  #BEGIN_EDIT_BLOCK
+TRUE
+;#END_EDIT_BLOCK
+END_TRANSITION
+
+GO_ON_TRANSITION TDecompAftPlast (* TDecompAftPlast *) FROM S_CheckMode TO S_DecompAfterPlast :=  #BEGIN_EDIT_BLOCK
+g_MoveCtrl.pData^.MoveId = cMoveDecompAftPlast
+;#END_EDIT_BLOCK
+END_TRANSITION
+
+GO_ON_TRANSITION TAftPlastReady (* TAftPlastReady *) FROM S_DecompAfterPlast TO S_CorrectDuration2 :=  #BEGIN_EDIT_BLOCK
+NOT abDecompAftPlast.aRun.bActive
+;#END_EDIT_BLOCK
+END_TRANSITION
+
+GO_ON_TRANSITION Trans22 (* Trans22 *) FROM S_CorrectDuration2 TO S_Ready :=  #BEGIN_EDIT_BLOCK
+TRUE
+;#END_EDIT_BLOCK
+END_TRANSITION
+
+GO_ON_TRANSITION TDecompInterPos (* TDecompInterPos *) FROM S_CheckMode TO S_DecompInterPos :=  #BEGIN_EDIT_BLOCK
+g_MoveCtrl.pData^.MoveId = cMoveDecompInterPos
+;#END_EDIT_BLOCK
+END_TRANSITION
+
+GO_ON_TRANSITION TDecInterPosReady (* TDecInterPosReady *) FROM S_DecompInterPos TO S_Ready :=  #BEGIN_EDIT_BLOCK
+NOT abDecompInterPos.aRun.bActive
+;#END_EDIT_BLOCK
+END_TRANSITION
+
+TRANSITION TReady (* TReady *) FROM S_Ready TO S_Start :=  #BEGIN_EDIT_BLOCK
+TRUE
+;#END_EDIT_BLOCK
+END_TRANSITION
+
+(* end IecGraph-Code *)
+(* sfc-code *)
+
+(* stand alone actions *)
+ACTION AResetCalibBlock: #BEGIN_EDIT_BLOCK
+(**************************************** WARNING ********************************************
+ *** The KEBA Kemro K2 System including software is not intended for safety control tasks! ***
+ ***                       For further information see Comment tab!                        ***
+ *********************************************************************************************)
+bError := FALSE;
+
+abScrewBwdCalib.aRun(bStart := FALSE,
+                     LintabPoint := sv_TmpLintabPoint);
+abDecompSetupServo.aRun(bStart := FALSE);
+IF  abScrewBwdCalib.aRun.bError OR abDecompSetupServo.aRun.bError THEN
+   sv_CalibState.Status := tnCalibState_Error;
+   bError := TRUE; 
+   dummy := Print("Calib Error: Reset calib block failed"); 
+END_IF;
+
+bUsePosDetect := FALSE;
+
+;#END_EDIT_BLOCK END_ACTION (*AResetCalibBlock*)
+ACTION AResetConstBlock: #BEGIN_EDIT_BLOCK
+(**************************************** WARNING ********************************************
+ *** The KEBA Kemro K2 System including software is not intended for safety control tasks! ***
+ ***                       For further information see Comment tab!                        ***
+ *********************************************************************************************)
+
+abDecompSetup.aRun(bStart := FALSE);
+abDecompSetupServo.aRun(bStart := FALSE);
+
+bUsePosDetect := sv_bDoPumpVelocityCalib OR sv_bDoInjectionCalib OR sv_bMoveToServoCalibStartPos;
+IF bUsePosDetect THEN
+   //use timeout detection
+   dMaxMoveTime := sv_DecompTimesSet.dMaxMoveTime;
+ELSE
+   //no timeout detection
+   dMaxMoveTime := t#0s;
+END_IF;
+
+IF sv_bDoPumpVelocityCalib OR sv_bDoInjectionCalib THEN
+   rTargetPosition := 0.9 * sv_rScrewStroke;
+ELSIF sv_bMoveToServoCalibStartPos THEN
+   rTargetPosition := 0.99 * sv_rScrewStroke;
+END_IF;
+
+
+;#END_EDIT_BLOCK END_ACTION (*AResetConstBlock*)
+ACTION AresetDecompPurge: #BEGIN_EDIT_BLOCK
+(**************************************** WARNING ********************************************
+ *** The KEBA Kemro K2 System including software is not intended for safety control tasks! ***
+ ***                       For further information see Comment tab!                        ***
+ *********************************************************************************************)
+
+abDecompPurge.aRun(bStart := FALSE);
+
+aVolumeToDistance(rVolume := sv_PurgeSettings.DecompParams.rEndPos,
+                  rDistance => rTargetPosition);
+
+bUsePosDetect := TRUE;
+
+;#END_EDIT_BLOCK END_ACTION (*AresetDecompPurge*)
+ACTION ADecompSetupServo: #BEGIN_EDIT_BLOCK
+IF sv_IMM_Type = nKAPPL_IMM_ServoValve THEN
+   abDecompSetupServo.aRun(bStart := TRUE,
+                           bStop := bStop,
+                           bDirection := TRUE,
+                           rActPos := sv_rScrewPositionAbs,
+                           rTargetPos := rTargetPosition, 
+                           bUsePosDetect := bUsePosDetect,
+                           rStartOutputPre := 0.0,
+                           rStartOutputVel := 0.0,
+                           dDelayTimeOn := T#0s,
+                           dDelayTimeOff := T#0s);    
+   
+   b := WRITE_SVREAL_DIRECT(sv_rServoOutput, abDecompSetupServo.aRun.rOutputVel);
+END_IF;
+
+;#END_EDIT_BLOCK END_ACTION (*ADecompSetupServo*)
+ACTION ACheckCalibError: #BEGIN_EDIT_BLOCK
+IF bError THEN
+   sv_CalibState.Status := tnCalibState_Error;
+   dummy := Print("Calib Error: %i", iErrorInfo);
+END_IF;
+
+;#END_EDIT_BLOCK END_ACTION (*ACheckCalibError*)
+ACTION ACorrectDurationDecompBef: #BEGIN_EDIT_BLOCK
+(**************************************** WARNING ********************************************
+ *** The KEBA Kemro K2 System including software is not intended for safety control tasks! ***
+ ***                       For further information see Comment tab!                        ***
+ *********************************************************************************************)
+
+IF sv_OperationMode >= nHalfAutomatic THEN
+   //duration update only in HA and FA
+   sv_dCalculatedDurationDecompBef := sv_dActDecompBeforeTime;
+END_IF;
+
+
+
+;#END_EDIT_BLOCK END_ACTION (*ACorrectDurationDecompBef*)
+ACTION ACorrectDurationDecompAft: #BEGIN_EDIT_BLOCK
+(**************************************** WARNING ********************************************
+ *** The KEBA Kemro K2 System including software is not intended for safety control tasks! ***
+ ***                       For further information see Comment tab!                        ***
+ *********************************************************************************************)
+
+IF sv_OperationMode >= nHalfAutomatic THEN
+   //duration update only in HA and FA
+   sv_dCalculatedDurationDecompAft := sv_dActDecompAfterTime;
+END_IF;
+
+;#END_EDIT_BLOCK END_ACTION (*ACorrectDurationDecompAft*)
+ACTION AResetDecompPurgeServo: #BEGIN_EDIT_BLOCK
+IF sv_IMM_Type = nKAPPL_IMM_ServoValve THEN
+   abDecompSetupServo.aRun(bStart := FALSE, bStop := TRUE);    
+END_IF;
+
+;#END_EDIT_BLOCK END_ACTION (*AResetDecompPurgeServo*)
+ACTION AInitDecompBef: #BEGIN_EDIT_BLOCK
+(**************************************** WARNING ********************************************
+ *** The KEBA Kemro K2 System including software is not intended for safety control tasks! ***
+ ***                       For further information see Comment tab!                        ***
+ *********************************************************************************************)
+ 
+abDecompBefPlast.aRun(bStart := FALSE);
+abDecompSetupServo.aRun(bStart := FALSE);
+
+IF sv_DecompBefPlastSettings.Mode = nTimeDependent THEN
+   //set target position to maximum value 
+   //-> screw ramps down to maximum position no matter if the
+   //move time is set to a high value
+   rTargetPosition := sv_rScrewStroke;
+   
+   //set movement time
+   abDecompBefPlast.aSetMoveTime(dSetMoveTime := sv_DecompBefPlastSettings.dDecompTime); 
+ELSE
+   //mode position dependent -> set according target value
+   aVolumeToDistance(rVolume := mrDecBefPlastEnd,
+                     rDistance => rTargetPosition);
+END_IF;
+
+bUsePosDetect := TRUE;
+
+;#END_EDIT_BLOCK END_ACTION (*AInitDecompBef*)
+ACTION AInitDecompAft: #BEGIN_EDIT_BLOCK
+(**************************************** WARNING ********************************************
+ *** The KEBA Kemro K2 System including software is not intended for safety control tasks! ***
+ ***                       For further information see Comment tab!                        ***
+ *********************************************************************************************)
+ 
+abDecompAftPlast.aRun(bStart := FALSE);
+abDecompSetupServo.aRun(bStart := FALSE);
+
+IF sv_DecompAftPlastSettings.Mode = nTimeDependent THEN
+   //set target position to maximum value 
+   //-> screw ramps down to maximum position no matter if the
+   //move time is set to a high value
+   rTargetPosition := sv_rScrewStroke;
+   
+   //set movement time
+   abDecompAftPlast.aSetMoveTime(dSetMoveTime := sv_DecompAftPlastSettings.dDecompTime);
+ELSE
+   //mode position dependent -> set according target value
+   aVolumeToDistance(rVolume := mrDecAftPlastEnd,
+                     rDistance => rTargetPosition);
+END_IF;
+
+bUsePosDetect := TRUE;
+
+
+;#END_EDIT_BLOCK END_ACTION (*AInitDecompAft*)
+ACTION AInitDecompInterPos: #BEGIN_EDIT_BLOCK
+(**************************************** WARNING ********************************************
+ *** The KEBA Kemro K2 System including software is not intended for safety control tasks! ***
+ ***                       For further information see Comment tab!                        ***
+ *********************************************************************************************)
+ 
+abDecompInterPos.aRun(bStart := FALSE);
+abDecompSetupServo.aRun(bStart := FALSE);
+
+IF sv_DecompInterPosSettings.Mode = nTimeDependent THEN
+   //set target position to maximum value 
+   //-> screw ramps down to maximum position no matter if the
+   //move time is set to a high value
+   rTargetPosition := sv_rScrewStroke;
+   
+   //set movement time
+   abDecompInterPos.aSetMoveTime(dSetMoveTime := sv_DecompInterPosSettings.dDecompTime);
+ELSE
+   //mode position dependent -> set according target value
+   aVolumeToDistance(rVolume := sv_DecompInterPosSettings.rDecompPos,
+                     rDistance => rTargetPosition);
+END_IF;
+
+bUsePosDetect := TRUE;
+
+;#END_EDIT_BLOCK END_ACTION (*AInitDecompInterPos*)
+ACTION AResetIdentBlock: #BEGIN_EDIT_BLOCK
+abDecompStep.aRun(bStart := FALSE);
+
+rTargetPosition := sv_rIdentPosition;
+bUsePosDetect := (sv_rIdentPosition <> 0.0);
+
+abDecompSetupServo.aRun(bStart := FALSE);
+IF  abDecompStep.aRun.bError OR abDecompSetupServo.aRun.bError THEN
+   sv_CalibState.Status := tnCalibState_Error;
+   bError := TRUE; 
+   dummy := Print("Ident Error: Reset calib block failed"); 
+END_IF;
+
+;#END_EDIT_BLOCK END_ACTION (*AResetIdentBlock*)
+ACTION ADecompSetupServoIdent: #BEGIN_EDIT_BLOCK
+IF sv_IMM_Type = nKAPPL_IMM_ServoValve THEN
+   abDecompSetupServo.aRun(bStart := TRUE,
+                           bStop := bStop,
+                           bDirection := TRUE,
+                           rActPos := sv_rScrewPositionAbs,
+                           rTargetPos := rTargetPosition, 
+                           bUsePosDetect := bUsePosDetect,
+                           rStartOutputPre := 0.0,
+                           rStartOutputVel := 0.0,
+                           dDelayTimeOn := T#0s,
+                           dDelayTimeOff := T#0s);    
+   sv_rServoOutput := abDecompSetupServo.aRun.rOutputVel;
+END_IF;
+
+;#END_EDIT_BLOCK END_ACTION (*ADecompSetupServoIdent*)
+ACTION ATransducerCalib: #BEGIN_EDIT_BLOCK
+(**************************************** WARNING ********************************************
+ *** The KEBA Kemro K2 System including software is not intended for safety control tasks! ***
+ ***                       For further information see Comment tab!                        ***
+ *********************************************************************************************)
+
+// Calibration works with stroke not volume
+abScrewBwdCalib.aRun(bStop := bStop OR sv_bTransducerError,
+                     bStart := TRUE,
+                     rActVoltage := ai_Position,
+                     rMaxVoltageDiff := sv_rMaxVoltageDiff,
+                     dStandStillDetectTime := sv_dStandStillDetectTime,
+                     LintabPoint := sv_TmpLintabPoint,
+                     rSetValue := sv_rScrewStroke,
+                     dDelayTimeOn := sv_DecompTimesSet.dSetDelayTimePump,
+                     dDelayTimeOff := sv_DecompTimesSet.dSetDelayTimeValve,
+                     bActive => sv_bOutputActive,
+                     rOutputPre => rPressureAbs,
+                     rOutputVel => rVelocityAbs,
+                     bPreOutputReached => sv_bPreOutputReady,
+                     iErrorInfo => iErrorInfo);
+
+sv_bDoTransducerCalib := NOT (abScrewBwdCalib.aRun.bPointDetected);
+bError := abScrewBwdCalib.aRun.bError OR bError;
+
+abLintabApplyPres.aCalc(rX := rPressureAbs,
+                        rY => sv_rPressure);
+
+abLintabApplyVel.aCalc(rX := rVelocityAbs,
+                       rY => sv_rVelocity);
+
+;#END_EDIT_BLOCK END_ACTION (*ATransducerCalib*)
+ACTION AStepOutput: #BEGIN_EDIT_BLOCK
+(**************************************** WARNING ********************************************
+ *** The KEBA Kemro K2 System including software is not intended for safety control tasks! ***
+ ***                       For further information see Comment tab!                        ***
+ *********************************************************************************************)
+
+abDecompStep.aRun(bUsePosDetect := (sv_rIdentPosition <> 0.0),
+                  rPositionDown := (sv_rScrewPositionAbs + sv_rIdentPosition) * 0.5,
+                  rLowOutput := sv_rMaxSpeedBwd * 0.1,
+                  bStart := TRUE,
+                  bStop := bStop,
+                  bDirection := TRUE,
+                  rActPos := sv_rScrewPositionAbs,
+                  rTargetPos := sv_rIdentPosition,
+                  dDelayTimeOn := sv_DecompTimesSet.dSetDelayTimePump,
+                  dDelayTimeOff := sv_dSetDelayTimeOffBwd,
+                  rPositionUp := sv_rScrewPositionAbs,
+                  rHighOutput := sv_ConstDecompSetup.Velocity.Output.rOutputValue,
+                  dMaxMoveTime := sv_DecompTimesSet.dMaxMoveTime,
+                  rStopRamp := sv_rIdentStopRamp,
+                  bActive => sv_bOutputActive,
+                  rOutputPre => rPressureAbs,
+                  rOutputVel => rVelocityAbs,
+                  bPreOutputReached => sv_bPreOutputReady);
+
+sv_rVelocityAbs := rVelocityAbs;
+
+abLintabApplyPres.aCalc(rX := rPressureAbs,
+                        rY => sv_rPressure);
+
+abLintabApplyVel.aCalc(rX := rVelocityAbs,
+                       rY => sv_rVelocity);
+
+;#END_EDIT_BLOCK END_ACTION (*AStepOutput*)
+ACTION ADecompSetup: #BEGIN_EDIT_BLOCK
+(**************************************** WARNING ********************************************
+ *** The KEBA Kemro K2 System including software is not intended for safety control tasks! ***
+ ***                       For further information see Comment tab!                        ***
+ *********************************************************************************************)
+
+abDecompSetup.aRun(bStart := TRUE,
+                   bStop := bStop,
+                   bDirection := TRUE,
+                   rActPos := sv_rScrewPositionAbs,
+                   rTargetPos := rTargetPosition,
+                   bUsePosDetect := bUsePosDetect,
+                   dMaxTime := dMaxMoveTime,
+                   dDelayTimeOn := sv_DecompTimesSet.dSetDelayTimePump,
+                   dDelayTimeOff := sv_DecompTimesSet.dSetDelayTimeValve,
+                   rOutputPre => rPressureAbs,
+                   rOutputVel => rVelocityAbs,
+                   bActive => sv_bOutputActive,
+                   bPreOutputReached => sv_bPreOutputReady);
+
+abLintabApplyPres.aCalc(rX := rPressureAbs);
+b := WRITE_SVREAL_DIRECT(sv_rPressure, abLintabApplyPres.aCalc.rY);    
+
+abLintabApplyVel.aCalc(rX := rVelocityAbs);
+b := WRITE_SVREAL_DIRECT(sv_rVelocity, abLintabApplyVel.aCalc.rY);    
+
+
+;#END_EDIT_BLOCK END_ACTION (*ADecompSetup*)
+ACTION ADecompPurge: #BEGIN_EDIT_BLOCK
+(**************************************** WARNING ********************************************
+ *** The KEBA Kemro K2 System including software is not intended for safety control tasks! ***
+ ***                       For further information see Comment tab!                        ***
+ *********************************************************************************************)
+
+abDecompPurge.aRun(bStart := TRUE,
+                   bStop := bStop,
+                   bDirection := TRUE,
+                   rActPos := sv_rScrewPositionAbs,
+                   rTargetPos := rTargetPosition,
+                   bUsePosDetect := TRUE,
+                   dDelayTimeOn := sv_DecompTimesSet.dSetDelayTimePump,
+                   dDelayTimeOff := sv_DecompTimesSet.dSetDelayTimeValve,
+                   rOutputPre => rPressureAbs,
+                   rOutputVel => rVelocityAbs,
+                   bActive => sv_bOutputActive,
+                   bPreOutputReached => sv_bPreOutputReady); 
+
+
+abLintabApplyPres.aCalc(rX := rPressureAbs);
+b := WRITE_SVREAL_DIRECT(sv_rPressure, abLintabApplyPres.aCalc.rY);
+
+abLintabApplyVel.aCalc(rX := rVelocityAbs);
+b := WRITE_SVREAL_DIRECT(sv_rVelocity, abLintabApplyVel.aCalc.rY);
+
+;#END_EDIT_BLOCK END_ACTION (*ADecompPurge*)
+ACTION ADecompInterPos: #BEGIN_EDIT_BLOCK
+(**************************************** WARNING ********************************************
+ *** The KEBA Kemro K2 System including software is not intended for safety control tasks! ***
+ ***                       For further information see Comment tab!                        ***
+ *********************************************************************************************)
+
+abDecompInterPos.aRun(bStop := bStop OR sv_bTransducerError OR (sv_DecompInterPosSettings.Mode = nNotUsed),
+                      bStart := TRUE,
+                      bDirection := TRUE,
+                      rActPos := sv_rScrewPositionAbs,
+                      rTargetPos := rTargetPosition,
+                      bUsePosDetect := TRUE,
+                      dMaxTime := sv_DecompTimesSet.dMaxMoveTime,
+                      dDelayTimeOn := sv_DecompTimesSet.dSetDelayTimePump,
+                      dDelayTimeOff := sv_DecompTimesSet.dSetDelayTimeValve,
+                      rOutputPre => rPressureAbs,
+                      rOutputVel => rVelocityAbs,
+                      bActive => sv_bOutputActive,
+                      bPreOutputReached => sv_bPreOutputReady);
+
+b := WRITE_SV_DIRECT(sv_DecompTimesAct.dActMoveTime, abDecompInterPos.aRun.dActTime);
+b := WRITE_SV_DIRECT(sv_ActiveTimesDecompInterPos[g_MoveCtrl.iCount], sv_DecompTimesAct.dActMoveTime);
+
+
+abLintabApplyPres.aCalc(rX := rPressureAbs);
+b := WRITE_SVREAL_DIRECT(sv_rPressure, abLintabApplyPres.aCalc.rY);    
+
+abLintabApplyVel.aCalc(rX := rVelocityAbs);
+b := WRITE_SVREAL_DIRECT(sv_rVelocity, abLintabApplyVel.aCalc.rY);    
+
+;#END_EDIT_BLOCK END_ACTION (*ADecompInterPos*)
+ACTION ADecompBefPlast: #BEGIN_EDIT_BLOCK
+(**************************************** WARNING ********************************************
+ *** The KEBA Kemro K2 System including software is not intended for safety control tasks! ***
+ ***                       For further information see Comment tab!                        ***
+ *********************************************************************************************)
+
+abDecompBefPlast.aRun(bStop := bStop OR sv_bTransducerError OR (sv_DecompBefPlastSettings.Mode = nNotUsed),
+                      bStart := TRUE,
+                      bDirection := TRUE,
+                      rActPos := sv_rScrewPositionAbs,
+                      rTargetPos := rTargetPosition,
+                      bUsePosDetect := TRUE,
+                      dMaxTime := sv_DecompTimesSet.dMaxMoveTime,
+                      dDelayTimeOn := sv_DecompTimesSet.dSetDelayTimePump,
+                      dDelayTimeOff := sv_DecompTimesSet.dSetDelayTimeValve,
+                      rOutputPre => rPressureAbs,
+                      rOutputVel => rVelocityAbs,
+                      bActive => sv_bOutputActive,
+                      bPreOutputReached => sv_bPreOutputReady);
+
+b := WRITE_SV_DIRECT(sv_dActDecompBeforeTime, abDecompBefPlast.aRun.dActTime);
+b := WRITE_SV_DIRECT(sv_DecompTimesAct.dActMoveTime, sv_dActDecompBeforeTime);
+
+abLintabApplyPres.aCalc(rX := rPressureAbs);
+b := WRITE_SVREAL_DIRECT(sv_rPressure, abLintabApplyPres.aCalc.rY);
+
+abLintabApplyVel.aCalc(rX := rVelocityAbs);                                              
+b := WRITE_SVREAL_DIRECT(sv_rVelocity, abLintabApplyVel.aCalc.rY);
+
+;#END_EDIT_BLOCK END_ACTION (*ADecompBefPlast*)
+ACTION ADecompAftPlast: #BEGIN_EDIT_BLOCK
+(**************************************** WARNING ********************************************
+ *** The KEBA Kemro K2 System including software is not intended for safety control tasks! ***
+ ***                       For further information see Comment tab!                        ***
+ *********************************************************************************************)
+
+abDecompAftPlast.aRun(bStop := bStop OR sv_bTransducerError OR (sv_DecompAftPlastSettings.Mode = nNotUsed),
+                      bStart := TRUE,
+                      bDirection := TRUE,
+                      rActPos := sv_rScrewPositionAbs,
+                      rTargetPos := rTargetPosition,
+                      bUsePosDetect := TRUE,
+                      dMaxTime := sv_DecompTimesSet.dMaxMoveTime,
+                      dDelayTimeOn := sv_DecompTimesSet.dSetDelayTimePump,
+                      dDelayTimeOff := sv_DecompTimesSet.dSetDelayTimeValve,
+                      rOutputPre => rPressureAbs,
+                      rOutputVel => rVelocityAbs,
+                      bActive => sv_bOutputActive,
+                      bPreOutputReached => sv_bPreOutputReady);
+
+b := WRITE_SV_DIRECT(sv_dActDecompAfterTime, abDecompAftPlast.aRun.dActTime);
+b := WRITE_SV_DIRECT(sv_DecompTimesAct.dActMoveTime, sv_dActDecompAfterTime);
+
+
+abLintabApplyPres.aCalc(rX := rPressureAbs);
+b := WRITE_SVREAL_DIRECT(sv_rPressure, abLintabApplyPres.aCalc.rY);    
+
+abLintabApplyVel.aCalc(rX := rVelocityAbs);
+b := WRITE_SVREAL_DIRECT(sv_rVelocity, abLintabApplyVel.aCalc.rY);    
+
+;#END_EDIT_BLOCK END_ACTION (*ADecompAftPlast*)
+(* end sfc-code *)
+
+
+END_ALGORITHM
+
+ALGORITHM aInit
+
+#BEGIN_EDIT_BLOCK
+(**************************************** WARNING ********************************************
+ *** The KEBA Kemro K2 System including software is not intended for safety control tasks! ***
+ ***                       For further information see Comment tab!                        ***
+ *********************************************************************************************)
+
+// Decomp. after plast:
+abDecompAftPlast.aInit(pConst := @sv_DecompAftPlastSettings.ConstOutput,
+                       MoveId := cMoveDecompAftPlast,
+                       pdCalcedDuration := @sv_dCalculatedDurationDecompAft,
+                       prCalcDurationStartPosition := @sv_rDecompAftCalcDurStartPos,
+                       prCalcDurationEndPosition := @sv_rDecompAftCalcDurEndPos);
+
+// Decomp before plast:
+abDecompBefPlast.aInit(pConst := @sv_DecompBefPlastSettings.ConstOutput,
+                       MoveId := cMoveDecompBefPlast,
+                       pdCalcedDuration := @sv_dCalculatedDurationDecompBef,
+                       prCalcDurationStartPosition := @sv_rDecompBefCalcDurStartPos,
+                       prCalcDurationEndPosition := @sv_rDecompBefCalcDurEndPos);
+
+// Decomp setup:
+abDecompSetup.aInit(pConst := @sv_ConstDecompSetup,
+                    MoveId := cMoveDecompAftPlast);
+
+// Decomp setup servo:
+abDecompSetupServo.aInit(pConst := @sv_ConstDecompSetupServo,
+                         MoveId := cMoveDecompAftPlast);
+
+// Decomp interpos:
+abDecompInterPos.aInit(pConst := @sv_DecompInterPosSettings.ConstOutput,
+                       MoveId := cMoveDecompInterPos);
+
+// Init bwd calib:
+abScrewBwdCalib.aInit(pConst := @sv_ConstDecompSetup,
+                      MoveId := cMoveDecompAftPlast);
+
+// Init decomp for purge:
+abDecompPurge.aInit(pConst := @sv_PurgeSettings.DecompParams.ConstOutput,
+                    MoveId := cMoveDecompPurge);
+
+// Init lintab apply press:
+abLintabApplyPres.aInit(pLintab := @sv_LintabOutBwdP);
+
+// Init lintab apply vel
+abLintabApplyVel.aInit(pLintab := @sv_LintabOutBwdV);
+
+// Init ident. movement:
+abDecompStep.aInit(pConst := @sv_ConstDecompSetup,
+                   MoveId := cMoveDecompAftPlast,
+                   prMaxSpeed := @sv_rMaxSpeedBwd);
+
+
+;#END_EDIT_BLOCK END_ALGORITHM
+
+(*
+calculate an estimated volume considering constant velocity over a defined time
+ramps are not considered in this calculation
+*)
+
+ALGORITHM aCalcEstimatedVolume
+
+
+VAR_INPUT
+ rVelocity : REAL (* velocity in mm/s *);
+ dTime : TIME (* time in seconds *);
+END_VAR
+
+VAR_OUTPUT
+ rVolume : REAL (* distance in cm³ *);
+END_VAR
+
+VAR
+ rSize : REAL (* screw size in mm² *);
+ rTime : REAL;
+END_VAR
+#BEGIN_EDIT_BLOCK
+(**************************************** WARNING ********************************************
+ *** The KEBA Kemro K2 System including software is not intended for safety control tasks! ***
+ ***                       For further information see Comment tab!                        ***
+ *********************************************************************************************)
+
+rSize := FCalcScrewSize(sv_rScrewDiameter);
+rTime := LINT_TO_REAL(TIME_TO_LINT(dTime)) / 1000000.0;
+
+rVolume := (rVelocity * rTime * rSize) / 1000.0;
+
+
+;#END_EDIT_BLOCK END_ALGORITHM
+
+POSTUPDATE_ALGORITHM pMinOutputChanged ON PU_Task_7 WITH sv_MinOutputDecomp,sv_bInitStart
+
+#BEGIN_EDIT_BLOCK
+(**************************************** WARNING ********************************************
+ *** The KEBA Kemro K2 System including software is not intended for safety control tasks! ***
+ ***                       For further information see Comment tab!                        ***
+ *********************************************************************************************)
+
+//copy minoutput to decomp before plast settings
+sv_DecompBefPlastSettings.ConstOutput.Velocity.rMinOutput := sv_MinOutputDecomp.rVelocity;
+sv_DecompBefPlastSettings.ConstOutput.Pressure.rMinOutput := sv_MinOutputDecomp.rPressure;
+
+//copy minoutput to decomp after plast settings
+sv_DecompAftPlastSettings.ConstOutput.Velocity.rMinOutput := sv_MinOutputDecomp.rVelocity;
+sv_DecompAftPlastSettings.ConstOutput.Pressure.rMinOutput := sv_MinOutputDecomp.rPressure;
+
+//copy minoutput to decomp movement in setup mode
+sv_ConstDecompSetup.Velocity.rMinOutput := sv_MinOutputDecomp.rVelocity;
+sv_ConstDecompSetup.Pressure.rMinOutput := sv_MinOutputDecomp.rPressure;
+
+
+;#END_EDIT_BLOCK END_ALGORITHM
+
+POSTUPDATE_ALGORITHM pDecAftPlastEnd ON PU_Task_7 WITH sv_DecompAftPlastSettings,sv_PlastProfVis,sv_bInitDone
+
+#BEGIN_EDIT_BLOCK
+(**************************************** WARNING ********************************************
+ *** The KEBA Kemro K2 System including software is not intended for safety control tasks! ***
+ ***                       For further information see Comment tab!                        ***
+ *********************************************************************************************)
+
+mrDecAftPlastEnd := sv_PlastProfVis.Profile.Points[(sv_PlastProfVis.Profile.iNoOfPoints+1)].rStartPos +
+                    sv_DecompAftPlastSettings.rDecompPos;
+
+
+;#END_EDIT_BLOCK END_ALGORITHM
+
+POSTUPDATE_ALGORITHM pMovementActiveFlags ON TaskMid(1) WITH sv_bInitStart,sv_DecompBefPlastSettings.Mode,sv_DecompAftPlastSettings.Mode,sv_OperationMode
+
+#BEGIN_EDIT_BLOCK
+(**************************************** WARNING ********************************************
+ *** The KEBA Kemro K2 System including software is not intended for safety control tasks! ***
+ ***                       For further information see Comment tab!                        ***
+ *********************************************************************************************)
+
+// set flags that indicate if movement should be activated
+// if false a start movement event is ignored by ABControl
+
+sv_bActivatedDecompBeforePlast := sv_DecompBefPlastSettings.Mode <> nNotUsed;
+// Decompression should be possible in SetupMode
+sv_bActivatedDecompAfterPlast := (sv_DecompAftPlastSettings.Mode <> nNotUsed) OR 
+                                 (sv_OperationMode = nSetup);
+
+
+;#END_EDIT_BLOCK END_ALGORITHM
+
+POSTUPDATE_ALGORITHM pDecompAftModeChanged ON PU_Task_7 WITH sv_PlastProfVis.Profile,sv_DecompAftPlastSettings,sv_rScrewDiameter,sv_bInitDone,sv_rTargetValueDecBefPlast
+
+
+VAR_TEMP
+ b : BOOL;
+END_VAR
+
+VAR
+ rPlastEnd : REAL;
+ dNull : TIME := t#0s;
+END_VAR
+#BEGIN_EDIT_BLOCK
+(**************************************** WARNING ********************************************
+ *** The KEBA Kemro K2 System including software is not intended for safety control tasks! ***
+ ***                       For further information see Comment tab!                        ***
+ *********************************************************************************************)
+
+//plast endposition is maximum value of decomp before and plast profile
+rPlastEnd := MAX((sv_PlastProfVis.Profile.Points[sv_PlastProfVis.Profile.iNoOfPoints + 1].rStartPos),
+                 sv_rTargetValueDecBefPlast);
+
+IF (sv_DecompAftPlastSettings.Mode = nTimeDependent) THEN
+   //calculate estimated target position
+   aCalcEstimatedVolume(rVelocity := sv_DecompAftPlastSettings.ConstOutput.Velocity.Output.rOutputValue,
+                        dTime := sv_DecompAftPlastSettings.dDecompTime);
+   sv_rTargetValueDecAftPlast := MIN((aCalcEstimatedVolume.rVolume + rPlastEnd),sv_rScrewVolume);
+  
+ELSIF (sv_DecompAftPlastSettings.Mode = nPosDependent) THEN     
+    
+   sv_rTargetValueDecAftPlast := sv_DecompAftPlastSettings.rDecompPos + rPlastEnd;
+   
+ELSIF sv_DecompAftPlastSettings.Mode = nNotUsed THEN    
+    
+   sv_rTargetValueDecAftPlast := MAX(rPlastEnd, sv_rTargetValueDecBefPlast);
+   b := WRITE_SV_DIRECT(sv_dActDecompAfterTime, dNull);
+END_IF;
+
+//convert start position and endposition to mm (startposition = plast endposition)
+aVolumeToDistance(rVolume := rPlastEnd);
+sv_rDecompAftCalcDurStartPos := aVolumeToDistance.rDistance;
+
+aVolumeToDistance(rVolume := sv_rTargetValueDecAftPlast);
+sv_rDecompAftCalcDurEndPos := aVolumeToDistance.rDistance;
+
+
+;#END_EDIT_BLOCK END_ALGORITHM
+
+POSTUPDATE_ALGORITHM pDecompBefModeChanged ON PU_Task_7 WITH sv_DecompBefPlastSettings,sv_rScrewDiameter,sv_bInitDone
+
+
+VAR_TEMP
+ b : BOOL;
+END_VAR
+
+VAR
+ dNull : TIME := t#0s;
+END_VAR
+#BEGIN_EDIT_BLOCK
+(**************************************** WARNING ********************************************
+ *** The KEBA Kemro K2 System including software is not intended for safety control tasks! ***
+ ***                       For further information see Comment tab!                        ***
+ *********************************************************************************************)
+
+IF (sv_DecompBefPlastSettings.Mode = nTimeDependent) THEN
+    
+   //calculate estimated target position
+   aCalcEstimatedVolume(rVelocity := sv_DecompBefPlastSettings.ConstOutput.Velocity.Output.rOutputValue,
+                        dTime := sv_DecompBefPlastSettings.dDecompTime);
+   sv_rTargetValueDecBefPlast := MIN(aCalcEstimatedVolume.rVolume,sv_rScrewVolume);
+ 
+ELSIF (sv_DecompBefPlastSettings.Mode = nPosDependent) THEN 
+        
+   sv_rTargetValueDecBefPlast := sv_DecompBefPlastSettings.rDecompPos;
+        
+ELSIF sv_DecompBefPlastSettings.Mode = nNotUsed THEN
+    
+   //decomp not used
+   sv_rTargetValueDecBefPlast := 0.0;
+   b := WRITE_SV_DIRECT(sv_dActDecompBeforeTime, dNull);
+END_IF;
+
+sv_rDecompBefCalcDurStartPos := 0.0;
+
+//convert endposition to mm
+aVolumeToDistance(rVolume := sv_rTargetValueDecBefPlast);                      
+sv_rDecompBefCalcDurEndPos := aVolumeToDistance.rDistance;
+
+
+;#END_EDIT_BLOCK END_ALGORITHM
+
+(*
+copy settings of instance to the systemvariable that is used for the movement
+*)
+
+ALGORITHM aGetInstanceData
+
+
+VAR_INPUT
+ iInstance : DINT;
+END_VAR
+
+VAR
+ i : DINT;
+END_VAR
+#BEGIN_EDIT_BLOCK
+(**************************************** WARNING ********************************************
+ *** The KEBA Kemro K2 System including software is not intended for safety control tasks! ***
+ ***                       For further information see Comment tab!                        ***
+ *********************************************************************************************)
+
+//avoid out of range errors
+i := MAX(1,iInstance);
+
+//copy data of according instance to sv_DecompInterPosSettings
+IF sv_InstanceDataDecompInterPos[i].Mode = nDecompTimeDependent THEN
+   sv_DecompInterPosSettings.Mode := nTimeDependent; 
+ELSIF sv_InstanceDataDecompInterPos[i].Mode = nDecompPosDependent THEN
+   sv_DecompInterPosSettings.Mode := nPosDependent;
+END_IF;
+
+sv_DecompInterPosSettings.dDecompTime := sv_InstanceDataDecompInterPos[i].dTime;
+sv_DecompInterPosSettings.rDecompPos := sv_InstanceDataDecompInterPos[i].rTargetValue;
+sv_DecompInterPosSettings.ConstOutput.Pressure.Output.rOutputValue := sv_InstanceDataDecompInterPos[i].rPressure;
+sv_DecompInterPosSettings.ConstOutput.Velocity.Output.rOutputValue := sv_InstanceDataDecompInterPos[i].rVelocity;
+
+sv_MoveDecompInterPos.pdCalculatedDuration := @sv_InstanceDataDecompInterPos[i].dCalculatedDuration;
+sv_MoveDecompInterPos.pdStartDelaySet := @sv_InstanceDataDecompInterPos[i].dDelay;
+
+
+;#END_EDIT_BLOCK END_ALGORITHM
+
+(*
+get instance data if start event is received
+
+attention:
+taskslot is asigned to make sure that execution is done before evaStart in ABControl.pu
+*)
+
+EVENT_ALGORITHM evaStart ON EV_Task_3(50) WITH evStart
+
+
+VAR_INPUT
+ evStartData : tevStartData;
+END_VAR
+#BEGIN_EDIT_BLOCK
+(**************************************** WARNING ********************************************
+ *** The KEBA Kemro K2 System including software is not intended for safety control tasks! ***
+ ***                       For further information see Comment tab!                        ***
+ *********************************************************************************************)
+
+IF evStartData.DeviceId = sv_DeviceId AND evStartData.MoveId = cMoveDecompInterPos THEN
+   aGetInstanceData(iInstance := evStartData.IntermediateCond);
+   miDecompInstance := MAX(1,evStartData.IntermediateCond);
+END_IF;
+
+
+;#END_EDIT_BLOCK END_ALGORITHM
+
+POSTUPDATE_ALGORITHM pDecBefPlastEnd ON PU_Task_7 WITH sv_rHoldPosition,sv_DecompBefPlastSettings.rDecompPos,sv_PlastProfVis,sv_bInitDone
+
+#BEGIN_EDIT_BLOCK
+(**************************************** WARNING ********************************************
+ *** The KEBA Kemro K2 System including software is not intended for safety control tasks! ***
+ ***                       For further information see Comment tab!                        ***
+ *********************************************************************************************)
+
+mrDecBefPlastEnd := MIN(sv_rHoldPosition + sv_DecompBefPlastSettings.rDecompPos,
+                        sv_PlastProfVis.Profile.Points[(sv_PlastProfVis.Profile.iNoOfPoints+1)].rStartPos); 
+
+
+;#END_EDIT_BLOCK END_ALGORITHM
+
+
+
+END_ALGORITHM_BLOCK
+
+
+
+#END_OF_IEC_PART
+
+@Puma @IecEditor 6 152 @Pou 25 
+@@@BEG_Comment@@@
+@h    ! WARNING !
+@h    The Kemro K2 system (including software) only meets category B according to EN 954-1,
+@h    thus it is not intended for usage in safety-relevant control applications in the field 
+@h    of personal safety (e.g. emergency stop).
+@h    To implement potentially necessary safety-relevant control tasks, always use additional 
+@h    external safety devices that are intended for the particular purpose, and meet the necessary 
+@h    functional safety.
+@h    For further information see EN 954-1 (EN ISO 13849-1) and/or the K2-x00 user manual, chapter 
+@h    "CE conformity, directives and standards".
+
+
+In this AB the decompression movements are realized.
+This means decompression before plast, decompression after plast,
+calibration for screw transducer (backward) and
+also the decompression movement for auto purging.
+
+@FunctionID: S_KPIEC_PRINJ_05
+@FunctionID: S_KPIEC_PRINJ_06
+@FunctionID: S_KPIEC_CALTRANS_04
+
+@@@END_Comment@@@
+
+@BEG_Contents 
+
+@BEG_Func 
+@RT(17)FuncTreeContainer 
+4 
+@Var @RT(14)GET_MY_FU_NAME @RT(0) @T @T @DERIVED 0 @F @RT(22)KEBA_STANDARD_FUNCTION @F 
+@T 
+@BEG_Attrib 
+0 @RT(0) @RT(0) 
+@END_Attrib 
+1 1 @F @F @F @F 
+
+@Var @RT(14)FCalcScrewSize @RT(0) @T @T @DERIVED 0 @F @RT(8)FUNCTION @F 
+@T 
+@BEG_Attrib 
+0 @RT(0) @RT(0) 
+@END_Attrib 
+1 1 @F @F @F @F 
+
+@Var @RT(19)WRITE_SVREAL_DIRECT @RT(0) @T @T @DERIVED 0 @F @RT(22)KEBA_STANDARD_FUNCTION @F 
+@T 
+@BEG_Attrib 
+0 @RT(0) @RT(0) 
+@END_Attrib 
+1 1 @F @F @F @F 
+
+@Var @RT(15)WRITE_SV_DIRECT @RT(0) @T @T @DERIVED 0 @F @RT(22)KEBA_STANDARD_FUNCTION @F 
+@T 
+@BEG_Attrib 
+0 @RT(0) @RT(0) 
+@END_Attrib 
+1 1 @F @F @F @F 
+
+@END_Func 
+
+@BEG_Const 
+@RT(18)ConstTreeContainer 
+18 
+@Var @RT(23)cLockGroupHeatingNozzle @RT(0) @T @F @DT @RT(4)DINT @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+0 @RT(2)63 @RT(35)Members: Injection, Plast, Suckback 
+@END_Attrib 
+1 1 @F @F @F @F 
+
+@Var @RT(15)cLockGroupMotor @RT(0) @T @F @DT @RT(4)DINT @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+0 @RT(2)69 @RT(56)Members: Mold, Ejector, Cores, Injection, Plast, Purge,  
+@END_Attrib 
+1 1 @F @F @F @F 
+
+@Var @RT(7)nActive @RT(0) @T @T @DERIVED 0 @F @RT(16)tnActiveInactive @F 
+@T 
+@BEG_Attrib 
+0 @RT(1)1 @RT(0) 
+@END_Attrib 
+1 1 @F @F @F @F 
+
+@Var @RT(12)nDeviceState @RT(0) @T @T @DERIVED 0 @F @RT(12)tnTraceLevel @F 
+@T 
+@BEG_Attrib 
+0 @RT(1)3 @RT(0) 
+@END_Attrib 
+1 1 @F @F @F @F 
+
+@Var @RT(14)nTimeDependent @RT(0) @T @T @DERIVED 0 @F @RT(12)tnDecompMode @F 
+@T 
+@BEG_Attrib 
+0 @RT(1)1 @RT(0) 
+@END_Attrib 
+1 1 @F @F @F @F 
+
+@Var @RT(9)nInactive @RT(0) @T @T @DERIVED 0 @F @RT(16)tnActiveInactive @F 
+@T 
+@BEG_Attrib 
+0 @RT(1)0 @RT(0) 
+@END_Attrib 
+1 1 @F @F @F @F 
+
+@Var @RT(16)cMoveDecompPurge @RT(0) @T @F @DT @RT(4)DINT @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+0 @RT(2)36 @RT(27)decomp movement for purging 
+@END_Attrib 
+1 1 @F @F @F @F 
+
+@Var @RT(6)nSetup @RT(0) @T @T @DERIVED 0 @F @RT(15)tnOperationMode @F 
+@T 
+@BEG_Attrib 
+0 @RT(1)0 @RT(36)Setup mode only for service engineer 
+@END_Attrib 
+1 1 @F @F @F @F 
+
+@Var @RT(19)cMoveDecompBefPlast @RT(0) @T @F @DT @RT(4)DINT @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+0 @RT(2)26 @RT(26)decompression before plast 
+@END_Attrib 
+1 1 @F @F @F @F 
+
+@Var @RT(19)cMoveDecompAftPlast @RT(0) @T @F @DT @RT(4)DINT @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+0 @RT(2)27 @RT(25)decompression after plast 
+@END_Attrib 
+1 1 @F @F @F @F 
+
+@Var @RT(19)cMoveDecompInterPos @RT(0) @T @F @DT @RT(4)DINT @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+0 @RT(2)54 @RT(35)instanceable decompression movement 
+@END_Attrib 
+1 1 @F @F @F @F 
+
+@Var @RT(18)tnCalibState_Error @RT(0) @T @T @DERIVED 0 @F @RT(12)tnCalibState @F 
+@T 
+@BEG_Attrib 
+0 @RT(1)3 @RT(32)error occured during calibration 
+@END_Attrib 
+1 1 @F @F @F @F 
+
+@Var @RT(21)nKAPPL_IMM_ServoValve @RT(0) @T @T @DERIVED 0 @F @RT(14)KAPPL_IMM_Type @F 
+@T 
+@BEG_Attrib 
+0 @RT(1)2 @RT(0) 
+@END_Attrib 
+1 1 @F @F @F @F 
+
+@Var @RT(14)nHalfAutomatic @RT(0) @T @T @DERIVED 0 @F @RT(15)tnOperationMode @F 
+@T 
+@BEG_Attrib 
+0 @RT(1)2 @RT(34)confirmation every cycle necessary 
+@END_Attrib 
+1 1 @F @F @F @F 
+
+@Var @RT(8)nNotUsed @RT(0) @T @T @DERIVED 0 @F @RT(12)tnDecompMode @F 
+@T 
+@BEG_Attrib 
+0 @RT(1)0 @RT(0) 
+@END_Attrib 
+1 1 @F @F @F @F 
+
+@Var @RT(13)nPosDependent @RT(0) @T @T @DERIVED 0 @F @RT(12)tnDecompMode @F 
+@T 
+@BEG_Attrib 
+0 @RT(1)2 @RT(0) 
+@END_Attrib 
+1 1 @F @F @F @F 
+
+@Var @RT(20)nDecompTimeDependent @RT(0) @T @T @DERIVED 0 @F @RT(20)tnDecompInterPosMode @F 
+@T 
+@BEG_Attrib 
+0 @RT(1)0 @RT(0) 
+@END_Attrib 
+1 1 @F @F @F @F 
+
+@Var @RT(19)nDecompPosDependent @RT(0) @T @T @DERIVED 0 @F @RT(20)tnDecompInterPosMode @F 
+@T 
+@BEG_Attrib 
+0 @RT(1)1 @RT(0) 
+@END_Attrib 
+1 1 @F @F @F @F 
+
+@END_Const 
+
+@BEG_Export 
+
+@BEG_Kind 
+@ALGORITHM_BLOCK @RT(19)ABMoveDecompression @STRUCTURED_TEXT 
+@RT(0) @RT(0) @RT(0) 
+@END_Kind 
+
+@BEG_Dcl 
+@RT(16)DclTreeContainer 
+83 
+@Var @RT(12)sv_rPressure @RT(0) @T @F @DT @RT(4)REAL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 8 @F @F @F @F 
+
+@Var @RT(12)sv_rVelocity @RT(0) @T @F @DT @RT(4)REAL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 8 @F @F @F @F 
+
+@Var @RT(16)sv_OperationMode @RT(0) @T @T @DERIVED 0 @T @T @DT @RT(15)tnOperationMode @RT(0) @T @T @UNKNOWN 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 8 @F @F @F @F 
+
+@Var @RT(17)sv_DecompTimesSet @RT(0) @T @T @DERIVED 0 @T @T @DT @RT(10)tsSetTimes @RT(0) @T @T @UNKNOWN 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 8 @F @F @F @F 
+
+@Var @RT(17)sv_DecompTimesAct @RT(0) @T @T @DERIVED 0 @T @T @DT @RT(10)tsActTimes @RT(0) @T @T @UNKNOWN 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 8 @F @F @F @F 
+
+@Var @RT(25)sv_DecompBefPlastSettings @RT(0) @T @T @DERIVED 0 @T @T @DT @RT(13)tsDecompParam @RT(0) @T @T @UNKNOWN 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 8 @F @F @F @F 
+
+@Var @RT(25)sv_DecompAftPlastSettings @RT(0) @T @T @DERIVED 0 @T @T @DT @RT(13)tsDecompParam @RT(0) @T @T @UNKNOWN 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 8 @F @F @F @F 
+
+@Var @RT(19)sv_ConstDecompSetup @RT(0) @T @T @DERIVED 0 @T @T @DT @RT(8)tsVelPre @RT(0) @T @T @UNKNOWN 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 8 @F @F @F @F 
+
+@Var @RT(24)sv_ConstDecompSetupServo @RT(0) @T @T @DERIVED 0 @T @T @DT @RT(8)tsVelPre @RT(0) @T @T @UNKNOWN 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 8 @F @F @F @F 
+
+@Var @RT(21)sv_MoveDecompBefPlast @RT(0) @T @T @DERIVED 0 @T @T @DT @RT(10)tsMoveData @RT(0) @T @T @UNKNOWN 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 8 @F @F @F @F 
+
+@Var @RT(21)sv_MoveDecompAftPlast @RT(0) @T @T @DERIVED 0 @T @T @DT @RT(10)tsMoveData @RT(0) @T @T @UNKNOWN 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 8 @F @F @F @F 
+
+@Var @RT(11)sv_DeviceId @RT(0) @T @T @DERIVED 0 @T @T @DT @RT(10)tsDeviceId @RT(0) @T @T @UNKNOWN 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 8 @F @F @F @F 
+
+@Var @RT(16)sv_rHoldPosition @RT(0) @T @F @DT @RT(4)REAL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(33)position at the end of hold phase @RT(0) 
+@END_Attrib 
+1 8 @F @F @F @F 
+
+@Var @RT(15)sv_rScrewStroke @RT(0) @T @F @DT @RT(4)REAL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 8 @F @F @F @F 
+
+@Var @RT(11)ai_Position @RT(0) @T @F @DT @RT(4)REAL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 8 @F @F @F @F 
+
+@Var @RT(24)sv_dStandStillDetectTime @RT(0) @T @F @DT @RT(4)TIME @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(29)time for standstill detection @RT(0) 
+@END_Attrib 
+1 8 @F @F @F @F 
+
+@Var @RT(18)sv_rMaxVoltageDiff @RT(0) @T @F @DT @RT(4)REAL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(45)max. voltage difference to detect stand still @RT(0) 
+@END_Attrib 
+1 8 @F @F @F @F 
+
+@Var @RT(21)sv_bDoTransducerCalib @RT(0) @T @F @DT @RT(4)BOOL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 8 @F @F @F @F 
+
+@Var @RT(17)sv_TmpLintabPoint @RT(0) @T @T @DERIVED 0 @T @T @DT @RT(18)KCTRL_Lintab_Point @RT(0) @T @T @UNKNOWN 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 8 @F @F @F @F 
+
+@Var @RT(16)sv_bOutputActive @RT(0) @T @F @DT @RT(4)BOOL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(16)Output is active @RT(0) 
+@END_Attrib 
+1 8 @F @F @F @F 
+
+@Var @RT(18)sv_bPreOutputReady @RT(0) @T @F @DT @RT(4)BOOL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(18)PreOutput is ready @RT(0) 
+@END_Attrib 
+1 8 @F @F @F @F 
+
+@Var @RT(19)sv_bTransducerError @RT(0) @T @F @DT @RT(4)BOOL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 8 @F @F @F @F 
+
+@Var @RT(18)sv_MinOutputDecomp @RT(0) @T @T @DERIVED 0 @T @T @DT @RT(11)tsMinOutput @RT(0) @T @T @UNKNOWN 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 8 @F @F @F @F 
+
+@Var @RT(18)sv_MoveDecompPurge @RT(0) @T @T @DERIVED 0 @T @T @DT @RT(10)tsMoveData @RT(0) @T @T @UNKNOWN 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 8 @F @F @F @F 
+
+@Var @RT(16)sv_PurgeSettings @RT(0) @T @T @DERIVED 0 @T @T @DT @RT(15)tsPurgeSettings @RT(0) @T @T @UNKNOWN 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 8 @F @F @F @F 
+
+@Var @RT(13)sv_bInitStart @RT(0) @T @F @DT @RT(4)BOOL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 8 @F @F @F @F 
+
+@Var @RT(16)sv_LintabOutBwdP @RT(0) @T @T @DERIVED 0 @T @T @DT @RT(16)KAPPL_LintabData @RT(0) @T @T @UNKNOWN 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 8 @F @F @F @F 
+
+@Var @RT(16)sv_LintabOutBwdV @RT(0) @T @T @DERIVED 0 @T @T @DT @RT(16)KAPPL_LintabData @RT(0) @T @T @UNKNOWN 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 8 @F @F @F @F 
+
+@Var @RT(15)sv_rScrewVolume @RT(0) @T @F @DT @RT(4)REAL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 8 @F @F @F @F 
+
+@Var @RT(12)sv_bInitDone @RT(0) @T @F @DT @RT(4)BOOL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 8 @F @F @F @F 
+
+@Var @RT(15)sv_rMaxSpeedBwd @RT(0) @T @F @DT @RT(4)REAL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 8 @F @F @F @F 
+
+@Var @RT(15)sv_PlastProfVis @RT(0) @T @T @DERIVED 0 @T @T @DT @RT(21)KAPPL_VisProfilePlast @RT(0) @T @T @UNKNOWN 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 8 @F @F @F @F 
+
+@Var @RT(23)sv_dActDecompBeforeTime @RT(0) @T @F @DT @RT(4)TIME @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 8 @F @F @F @F 
+
+@Var @RT(22)sv_dActDecompAfterTime @RT(0) @T @F @DT @RT(4)TIME @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 8 @F @F @F @F 
+
+@Var @RT(15)sv_rServoOutput @RT(0) @T @F @DT @RT(4)REAL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 8 @F @F @F @F 
+
+@Var @RT(11)sv_IMM_Type @RT(0) @T @T @DERIVED 0 @T @T @DT @RT(14)KAPPL_IMM_Type @RT(0) @T @T @UNKNOWN 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 8 @F @F @F @F 
+
+@Var @RT(30)sv_bActivatedDecompBeforePlast @RT(0) @T @F @DT @RT(4)BOOL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(75)indicates if movement decompress should be activated if start event is sent @RT(0) 
+@END_Attrib 
+1 8 @F @F @F @F 
+
+@Var @RT(29)sv_bActivatedDecompAfterPlast @RT(0) @T @F @DT @RT(4)BOOL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(75)indicates if movement decompress should be activated if start event is sent @RT(0) 
+@END_Attrib 
+1 8 @F @F @F @F 
+
+@Var @RT(13)sv_CalibState @RT(0) @T @T @DERIVED 0 @T @T @DT @RT(15)tsCalibMovement @RT(0) @T @T @UNKNOWN 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 8 @F @F @F @F 
+
+@Var @RT(31)sv_dCalculatedDurationDecompAft @RT(0) @T @F @DT @RT(4)TIME @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(37)Calculated duration for inject + hold @RT(0) 
+@END_Attrib 
+1 8 @F @F @F @F 
+
+@Var @RT(31)sv_dCalculatedDurationDecompBef @RT(0) @T @F @DT @RT(4)TIME @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(37)Calculated duration for inject + hold @RT(0) 
+@END_Attrib 
+1 8 @F @F @F @F 
+
+@Var @RT(28)sv_rDecompAftCalcDurStartPos @RT(0) @T @F @DT @RT(4)REAL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(49)Start position for calculation of inject duration @RT(0) 
+@END_Attrib 
+1 8 @F @F @F @F 
+
+@Var @RT(26)sv_rDecompAftCalcDurEndPos @RT(0) @T @F @DT @RT(4)REAL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(49)Start position for calculation of inject duration @RT(0) 
+@END_Attrib 
+1 8 @F @F @F @F 
+
+@Var @RT(28)sv_rDecompBefCalcDurStartPos @RT(0) @T @F @DT @RT(4)REAL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(62)Start position for calculation of decomp before plast duration @RT(0) 
+@END_Attrib 
+1 8 @F @F @F @F 
+
+@Var @RT(26)sv_rDecompBefCalcDurEndPos @RT(0) @T @F @DT @RT(4)REAL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(60)End position for calculation of decomp before plast duration @RT(0) 
+@END_Attrib 
+1 8 @F @F @F @F 
+
+@Var @RT(17)sv_rScrewDiameter @RT(0) @T @F @DT @RT(4)REAL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 8 @F @F @F @F 
+
+@Var @RT(26)sv_rTargetValueDecBefPlast @RT(0) @T @F @DT @RT(4)REAL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(35)target value of decomp before plast @RT(0) 
+@END_Attrib 
+1 8 @F @F @F @F 
+
+@Var @RT(26)sv_rTargetValueDecAftPlast @RT(0) @T @F @DT @RT(4)REAL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(34)target value of decomp after plast @RT(0) 
+@END_Attrib 
+1 8 @F @F @F @F 
+
+@Var @RT(21)sv_MoveDecompInterPos @RT(0) @T @T @DERIVED 0 @T @T @DT @RT(10)tsMoveData @RT(0) @T @T @UNKNOWN 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(35)instanceable decompression movement @RT(0) 
+@END_Attrib 
+1 8 @F @F @F @F 
+
+@Var @RT(25)sv_DecompInterPosSettings @RT(0) @T @T @DERIVED 0 @T @T @DT @RT(13)tsDecompParam @RT(0) @T @T @UNKNOWN 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 8 @F @F @F @F 
+
+@Var @RT(29)sv_InstanceDataDecompInterPos @RT(0) @T @T @DERIVED 0 @T @T @DT @RT(25)tyInstanceListArrayDecomp @RT(0) @T @T @UNKNOWN 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(56)array with target positions of decomp interpos movements @RT(0) 
+@END_Attrib 
+1 8 @F @F @F @F 
+
+@Var @RT(16)sv_bDecompActive @RT(0) @T @F @DT @RT(4)BOOL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(33)any decompression movement active @RT(0) 
+@END_Attrib 
+1 8 @F @F @F @F 
+
+@Var @RT(20)sv_rScrewPositionAbs @RT(0) @T @F @DT @RT(4)REAL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 8 @F @F @F @F 
+
+@Var @RT(13)sv_bMoveIdent @RT(0) @T @F @DT @RT(4)BOOL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 8 @F @F @F @F 
+
+@Var @RT(17)sv_rIdentPosition @RT(0) @T @F @DT @RT(4)REAL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 8 @F @F @F @F 
+
+@Var @RT(17)sv_rIdentStopRamp @RT(0) @T @F @DT @RT(4)REAL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 8 @F @F @F @F 
+
+@Var @RT(22)sv_dSetDelayTimeOffBwd @RT(0) @T @F @DT @RT(4)TIME @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 8 @F @F @F @F 
+
+@Var @RT(28)sv_bMoveToServoCalibStartPos @RT(0) @T @F @DT @RT(4)BOOL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 8 @F @F @F @F 
+
+@Var @RT(20)sv_rScrewSetPosition @RT(0) @T @F @DT @RT(4)REAL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 8 @F @F @F @F 
+
+@Var @RT(15)sv_rVelocityAbs @RT(0) @T @F @DT @RT(4)REAL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 8 @F @F @F @F 
+
+@Var @RT(28)sv_ActiveTimesDecompInterPos @RT(0) @T @T @DERIVED 0 @T @T @DT @RT(20)tyInterCondTimeArray @RT(0) @T @T @UNKNOWN 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 8 @F @F @F @F 
+
+@Var @RT(22)sv_DecompAfterTimesSet @RT(0) @T @T @DERIVED 0 @T @T @DT @RT(10)tsSetTimes @RT(0) @T @T @UNKNOWN 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 8 @F @F @F @F 
+
+@Var @RT(22)sv_DecompAfterTimesAct @RT(0) @T @T @DERIVED 0 @T @T @DT @RT(10)tsActTimes @RT(0) @T @T @UNKNOWN 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 8 @F @F @F @F 
+
+@Var @RT(23)sv_bDoPumpVelocityCalib @RT(0) @T @F @DT @RT(4)BOOL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 8 @F @F @F @F 
+
+@Var @RT(20)sv_bDoInjectionCalib @RT(0) @T @F @DT @RT(4)BOOL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 8 @F @F @F @F 
+
+@Var @RT(9)PU_Task_7 @RT(0) @T @F @DT @RT(4)TASK @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 7 @F @F @F @F 
+
+@Var @RT(7)TaskMid @RT(0) @T @F @DT @RT(4)TASK @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 7 @F @F @F @F 
+
+@Var @RT(7)evStart @RT(0) @T @T @DERIVED 0 @T @T @DT @RT(8)tevStart @RT(0) @T @T @UNKNOWN 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 7 @F @F @F @F 
+
+@Var @RT(9)EV_Task_3 @RT(0) @T @F @DT @RT(4)TASK @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 7 @F @F @F @F 
+
+@Var @RT(10)g_MoveCtrl @RT(0) @T @T @DERIVED 0 @T @T @DT @RT(10)tsMoveCtrl @RT(0) @T @T @UNKNOWN 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 6 @F @F @F @F 
+
+@Var @RT(13)abDecompSetup @RT(0) @T @T @DERIVED 0 @T @T @DT @RT(15)ABConstMovement @RT(0) @T @T @UNKNOWN 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(18)abDecompSetupServo @RT(0) @T @T @DERIVED 0 @T @T @DT @RT(15)ABConstMovement @RT(0) @T @T @UNKNOWN 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(16)abDecompAftPlast @RT(0) @T @T @DERIVED 0 @T @T @DT @RT(15)ABConstMovement @RT(0) @T @T @UNKNOWN 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(16)abDecompBefPlast @RT(0) @T @T @DERIVED 0 @T @T @DT @RT(15)ABConstMovement @RT(0) @T @T @UNKNOWN 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(13)abDecompPurge @RT(0) @T @T @DERIVED 0 @T @T @DT @RT(15)ABConstMovement @RT(0) @T @T @UNKNOWN 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(16)abDecompInterPos @RT(0) @T @T @DERIVED 0 @T @T @DT @RT(15)ABConstMovement @RT(0) @T @T @UNKNOWN 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(15)abScrewBwdCalib @RT(0) @T @T @DERIVED 0 @T @T @DT @RT(12)ABConstCalib @RT(0) @T @T @UNKNOWN 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(16)abLintabApplyVel @RT(0) @T @T @DERIVED 0 @T @T @DT @RT(13)ABLintabApply @RT(0) @T @T @UNKNOWN 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(17)abLintabApplyPres @RT(0) @T @T @DERIVED 0 @T @T @DT @RT(13)ABLintabApply @RT(0) @T @T @UNKNOWN 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(16)mrDecAftPlastEnd @RT(0) @T @F @DT @RT(4)REAL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(28)target of decomp after plast @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(16)mrDecBefPlastEnd @RT(0) @T @F @DT @RT(4)REAL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(29)target of decomp before plast @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(16)miDecompInstance @RT(0) @T @F @DT @RT(4)DINT @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(12)abDecompStep @RT(0) @T @T @DERIVED 0 @T @T @DT @RT(12)ABStepOutput @RT(0) @T @T @UNKNOWN 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@END_Dcl 
+
+@END_Export 
+
+@BEG_Body 
+
+13 
+
+@BEG_Export 
+
+@BEG_Algo 
+@ALGORITHM @RT(9)aRegister @STRUCTURED_TEXT 
+@RT(0) @RT(0) @RT(0) @F @F 
+@END_Algo 
+
+@BEG_Dcl 
+@RT(16)DclTreeContainer 
+4 
+@Var @RT(24)abDecompBefPlastRegister @RT(0) @T @T @DERIVED 0 @T @T @DT @RT(18)ABMovementRegister @RT(0) @T @T @UNKNOWN 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(24)abDecompAftPlastRegister @RT(0) @T @T @DERIVED 0 @T @T @DT @RT(18)ABMovementRegister @RT(0) @T @T @UNKNOWN 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(21)abDecompPurgeRegister @RT(0) @T @T @DERIVED 0 @T @T @DT @RT(18)ABMovementRegister @RT(0) @T @T @UNKNOWN 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(24)abDecompInterPosRegister @RT(0) @T @T @DERIVED 0 @T @T @DT @RT(18)ABMovementRegister @RT(0) @T @T @UNKNOWN 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@END_Dcl 
+
+@END_Export 
+
+@BEG_Export 
+
+@BEG_Algo 
+@ALGORITHM @RT(17)aVolumeToDistance @STRUCTURED_TEXT 
+@RT(0) @RT(0) @RT(0) @F @F 
+@END_Algo 
+
+@BEG_Dcl 
+@RT(16)DclTreeContainer 
+2 
+@Var @RT(7)rVolume @RT(0) @T @F @DT @RT(4)REAL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(13)volume in cm³ @RT(0) 
+@END_Attrib 
+1 1 @F @F @F @F 
+
+@Var @RT(9)rDistance @RT(0) @T @F @DT @RT(4)REAL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(14)distance in mm @RT(0) 
+@END_Attrib 
+1 3 @F @F @F @F 
+
+@END_Dcl 
+
+@END_Export 
+
+@BEG_Export 
+
+@BEG_Algo 
+@ALGORITHM @RT(4)aRun @SEQUENTIAL_FLOW_CHART 
+@RT(0) @RT(0) @RT(0) @F @F 
+@END_Algo 
+
+@BEG_Dcl 
+@RT(16)DclTreeContainer 
+13 
+@Var @RT(5)bStop @RT(0) @T @F @DT @RT(4)BOOL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(38)flag if the movement should be stopped @RT(0) 
+@END_Attrib 
+1 1 @F @F @F @F 
+
+@Var @RT(6)bReady @RT(0) @T @F @DT @RT(4)BOOL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(32)information if movement is ready @RT(0) 
+@END_Attrib 
+1 3 @F @F @F @F 
+
+@Var @RT(1)b @RT(0) @T @F @DT @RT(4)BOOL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 4 @F @F @F @F 
+
+@Var @RT(18)fbSetMovementState @RT(0) @T @T @DERIVED 0 @T @T @DT @RT(18)FBSetMovementState @RT(0) @T @T @UNKNOWN 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(6)bError @RT(0) @T @F @DT @RT(4)BOOL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(10)iErrorInfo @RT(0) @T @F @DT @RT(4)DINT @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(5)dummy @RT(0) @T @F @DT @RT(4)DINT @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(15)rTargetPosition @RT(0) @T @F @DT @RT(4)REAL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(23)target position in [mm] @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(13)fbDebugTrace2 @RT(0) @T @T @DERIVED 0 @T @T @DT @RT(13)FBDebugTrace2 @RT(0) @T @T @UNKNOWN 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(13)bUsePosDetect @RT(0) @T @F @DT @RT(4)BOOL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(12)rPressureAbs @RT(0) @T @F @DT @RT(4)REAL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(12)rVelocityAbs @RT(0) @T @F @DT @RT(4)REAL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(12)dMaxMoveTime @RT(0) @T @F @DT @RT(4)TIME @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@END_Dcl 
+
+@END_Export 
+
+@BEG_Export 
+
+@BEG_Algo 
+@ALGORITHM @RT(5)aInit @STRUCTURED_TEXT 
+@RT(0) @RT(0) @RT(0) @F @F 
+@END_Algo 
+
+@BEG_Dcl 
+@RT(16)DclTreeContainer 
+0 
+@END_Dcl 
+
+@END_Export 
+
+@BEG_Export 
+
+@BEG_Algo 
+@ALGORITHM @RT(20)aCalcEstimatedVolume @STRUCTURED_TEXT 
+@RT(0) @RT(0) @RT(0) @F @F 
+@END_Algo 
+
+@BEG_Dcl 
+@RT(16)DclTreeContainer 
+5 
+@Var @RT(9)rVelocity @RT(0) @T @F @DT @RT(4)REAL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(16)velocity in mm/s @RT(0) 
+@END_Attrib 
+1 1 @F @F @F @F 
+
+@Var @RT(5)dTime @RT(0) @T @F @DT @RT(4)TIME @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(15)time in seconds @RT(0) 
+@END_Attrib 
+1 1 @F @F @F @F 
+
+@Var @RT(7)rVolume @RT(0) @T @F @DT @RT(4)REAL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(15)distance in cm³ @RT(0) 
+@END_Attrib 
+1 3 @F @F @F @F 
+
+@Var @RT(5)rSize @RT(0) @T @F @DT @RT(4)REAL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(17)screw size in mm² @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(5)rTime @RT(0) @T @F @DT @RT(4)REAL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@END_Dcl 
+
+@END_Export 
+
+@BEG_Export 
+
+@BEG_Algo 
+@POSTUPDATE_ALGORITHM @RT(17)pMinOutputChanged @STRUCTURED_TEXT 
+@RT(0) @RT(32)sv_MinOutputDecomp,sv_bInitStart @RT(9)PU_Task_7 @F @F 
+@END_Algo 
+
+@BEG_Dcl 
+@RT(16)DclTreeContainer 
+0 
+@END_Dcl 
+
+@END_Export 
+
+@BEG_Export 
+
+@BEG_Algo 
+@POSTUPDATE_ALGORITHM @RT(15)pDecAftPlastEnd @STRUCTURED_TEXT 
+@RT(0) @RT(54)sv_DecompAftPlastSettings,sv_PlastProfVis,sv_bInitDone @RT(9)PU_Task_7 @F @F 
+@END_Algo 
+
+@BEG_Dcl 
+@RT(16)DclTreeContainer 
+0 
+@END_Dcl 
+
+@END_Export 
+
+@BEG_Export 
+
+@BEG_Algo 
+@POSTUPDATE_ALGORITHM @RT(20)pMovementActiveFlags @STRUCTURED_TEXT 
+@RT(0) @RT(92)sv_bInitStart,sv_DecompBefPlastSettings.Mode,sv_DecompAftPlastSettings.Mode,sv_OperationMode @RT(10)TaskMid(1) @F @F 
+@END_Algo 
+
+@BEG_Dcl 
+@RT(16)DclTreeContainer 
+0 
+@END_Dcl 
+
+@END_Export 
+
+@BEG_Export 
+
+@BEG_Algo 
+@POSTUPDATE_ALGORITHM @RT(21)pDecompAftModeChanged @STRUCTURED_TEXT 
+@RT(0) @RT(107)sv_PlastProfVis.Profile,sv_DecompAftPlastSettings,sv_rScrewDiameter,sv_bInitDone,sv_rTargetValueDecBefPlast @RT(9)PU_Task_7 @F @F 
+@END_Algo 
+
+@BEG_Dcl 
+@RT(16)DclTreeContainer 
+3 
+@Var @RT(9)rPlastEnd @RT(0) @T @F @DT @RT(4)REAL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(5)dNull @RT(0) @T @F @DT @RT(4)TIME @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(4)t#0s @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(1)b @RT(0) @T @F @DT @RT(4)BOOL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 4 @F @F @F @F 
+
+@END_Dcl 
+
+@END_Export 
+
+@BEG_Export 
+
+@BEG_Algo 
+@POSTUPDATE_ALGORITHM @RT(21)pDecompBefModeChanged @STRUCTURED_TEXT 
+@RT(0) @RT(56)sv_DecompBefPlastSettings,sv_rScrewDiameter,sv_bInitDone @RT(9)PU_Task_7 @F @F 
+@END_Algo 
+
+@BEG_Dcl 
+@RT(16)DclTreeContainer 
+2 
+@Var @RT(5)dNull @RT(0) @T @F @DT @RT(4)TIME @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(4)t#0s @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(1)b @RT(0) @T @F @DT @RT(4)BOOL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 4 @F @F @F @F 
+
+@END_Dcl 
+
+@END_Export 
+
+@BEG_Export 
+
+@BEG_Algo 
+@ALGORITHM @RT(16)aGetInstanceData @STRUCTURED_TEXT 
+@RT(0) @RT(0) @RT(0) @F @F 
+@END_Algo 
+
+@BEG_Dcl 
+@RT(16)DclTreeContainer 
+2 
+@Var @RT(9)iInstance @RT(0) @T @F @DT @RT(4)DINT @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 1 @F @F @F @F 
+
+@Var @RT(1)i @RT(0) @T @F @DT @RT(4)DINT @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@END_Dcl 
+
+@END_Export 
+
+@BEG_Export 
+
+@BEG_Algo 
+@EVENT_ALGORITHM @RT(8)evaStart @STRUCTURED_TEXT 
+@RT(0) @RT(7)evStart @RT(13)EV_Task_3(50) @F @F 
+@END_Algo 
+
+@BEG_Dcl 
+@RT(16)DclTreeContainer 
+1 
+@Var @RT(11)evStartData @RT(0) @T @T @DERIVED 0 @T @T @DT @RT(12)tevStartData @RT(0) @T @T @UNKNOWN 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 1 @F @F @F @F 
+
+@END_Dcl 
+
+@END_Export 
+
+@BEG_Export 
+
+@BEG_Algo 
+@POSTUPDATE_ALGORITHM @RT(15)pDecBefPlastEnd @STRUCTURED_TEXT 
+@RT(0) @RT(82)sv_rHoldPosition,sv_DecompBefPlastSettings.rDecompPos,sv_PlastProfVis,sv_bInitDone @RT(9)PU_Task_7 @F @F 
+@END_Algo 
+
+@BEG_Dcl 
+@RT(16)DclTreeContainer 
+0 
+@END_Dcl 
+
+@END_Export 
+
+@BEG_Body 
+@TL(40)
+(**************************************** WARNING ********************************************
+ *** The KEBA Kemro K2 System including software is not intended for safety control tasks! ***
+ ***                       For further information see Comment tab!                        ***
+ *********************************************************************************************)
+
+//register decompression before plast
+sv_MoveDecompBefPlast.sIconPath := CONCAT(GET_MY_FU_NAME(),"\hmi\images\movScrewBwd.gif");
+sv_MoveDecompBefPlast.EditorData.sODCIcon := "\hmi\images\editDecomp.gif";
+sv_MoveDecompBefPlast.pdStartDelaySet := @sv_DecompTimesSet.dSetDelayTime;
+sv_MoveDecompBefPlast.pdStartDelayAct := @sv_DecompTimesAct.dActDelayTime; 
+sv_MoveDecompBefPlast.LockGroups[1] := cLockGroupHeatingNozzle;
+sv_MoveDecompBefPlast.LockGroups[2] := cLockGroupMotor;
+sv_MoveDecompBefPlast.pdActiveTimeAct := @sv_dActDecompBeforeTime;
+sv_MoveDecompBefPlast.pbActivated := @sv_bActivatedDecompBeforePlast;
+abDecompBefPlastRegister.aRegister(@sv_MoveDecompBefPlast);  
+  
+//register decompression after plast
+sv_MoveDecompAftPlast.pdStartDelaySet := @sv_DecompAfterTimesSet.dSetDelayTime;
+sv_MoveDecompAftPlast.pdStartDelayAct := @sv_DecompAfterTimesAct.dActDelayTime;
+sv_MoveDecompAftPlast.sIconPath := CONCAT(GET_MY_FU_NAME(),"\hmi\images\movScrewBwd.gif");
+sv_MoveDecompAftPlast.EditorData.sODCIcon := "\hmi\images\editDecomp.gif";
+sv_MoveDecompAftPlast.LockGroups[1] := cLockGroupHeatingNozzle;
+sv_MoveDecompAftPlast.LockGroups[2] := cLockGroupMotor;
+sv_MoveDecompAftPlast.pdActiveTimeAct := @sv_dActDecompAfterTime;
+sv_MoveDecompAftPlast.pbActivated := @sv_bActivatedDecompAfterPlast;
+abDecompAftPlastRegister.aRegister(@sv_MoveDecompAftPlast);
+  
+//register decomp part of purge movement
+sv_MoveDecompPurge.sIconPath := CONCAT(GET_MY_FU_NAME(),"\hmi\images\movScrewBwd.gif");
+sv_MoveDecompPurge.LockGroups[1] := cLockGroupHeatingNozzle;
+sv_MoveDecompPurge.LockGroups[2] := cLockGroupMotor;
+abDecompPurgeRegister.aRegister(@sv_MoveDecompPurge);
+
+//register instanceable decompression movement
+sv_MoveDecompInterPos.sIconPath := CONCAT(GET_MY_FU_NAME(),"\hmi\images\movScrewInterposBwd.gif");
+sv_MoveDecompInterPos.EditorData.sODCIcon := "\hmi\images\editDecomp.gif";
+sv_MoveDecompInterPos.LockGroups[1] := cLockGroupHeatingNozzle;
+sv_MoveDecompInterPos.LockGroups[2] := cLockGroupMotor;
+abDecompInterPosRegister.aRegister(@sv_MoveDecompInterPos); 
+
+@END_Body 
+
+@@@BEG_Comment@@@ 
+@TL(2)
+This algorithm is necessary for registering the available movements
+and the according parameters (Lockgroups, icon path,....)
+@@@END_Comment@@@ 
+
+@BEG_Body 
+@TL(14)
+(**************************************** WARNING ********************************************
+ *** The KEBA Kemro K2 System including software is not intended for safety control tasks! ***
+ ***                       For further information see Comment tab!                        ***
+ *********************************************************************************************)
+
+IF sv_rScrewDiameter > 0.0 THEN
+   rDistance := rVolume * 1000.0 / (FCalcScrewSize(sv_rScrewDiameter));
+ELSE
+   rDistance := 0.0;
+END_IF;
+
+
+
+
+@END_Body 
+
+@@@BEG_Comment@@@ 
+@TL(1)
+convert cm³ to mm
+@@@END_Comment@@@ 
+
+@BEG_SfcBody 
+33 19 21 
+
+@BEG_SfcData 2 
+@StepSeq @RT(4)sseq @F 1 
+@Loop @RT(4)loop @F 2 
+@StepSeq @RT(4)sseq @F 7 
+@Step @RT(7)S_Start @F @T @F @F @RT(0) @F 
+@AcbCont @RT(7)unnamed @F 1 
+@Acb @RT(6)AStart @F @T @RT(1)P @RT(0) @F @F @T @TL(7)
+bReady := FALSE;
+fbSetMovementState(MoveId   := g_MoveCtrl.pData^.MoveId,
+                   MoveDir  := g_MoveCtrl.pData^.MoveDir,
+                   State    := nActive);
+sv_bDecompActive := TRUE;
+fbDebugTrace2(nDeviceState, 'Decompression started');
+
+@F 
+
+@AltBranch @RT(3)alt @F 2 
+@TransSeq @RT(4)tseq @F 1 
+@Trans @RT(9)TNotPurge @F @T @F @F @T @F @TL(2)
+g_MoveCtrl.pData^.MoveId <>  cMoveDecompPurge
+
+@RT(9)TNotPurge @F 
+
+@TransSeq @RT(4)tseq @F 4 
+@Trans @RT(6)TPurge @F @T @F @F @T @F @TL(2)
+g_MoveCtrl.pData^.MoveId = cMoveDecompPurge
+
+@RT(6)TPurge @F 
+@Step @RT(7)S_Purge @F @F @F @F @RT(0) @F 
+@AcbCont @RT(7)unnamed @F 5 
+@Acb @RT(17)AresetDecompPurge @F @F @RT(1)P @RT(0) @F @F @F @F 
+@Acb @RT(12)ADecompPurge @F @F @RT(1)N @RT(0) @F @F @F @F 
+@Acb @RT(22)AResetDecompPurgeServo @F @F @RT(1)P @RT(0) @F @F @F @F 
+@Acb @RT(17)ADecompSetupServo @F @F @RT(1)N @RT(0) @F @F @F @F 
+@Acb @RT(12)ASetPosPurge @F @T @RT(2)P0 @RT(0) @F @F @T @TL(2)
+b := WRITE_SVREAL_DIRECT(sv_rScrewSetPosition, sv_rScrewPositionAbs);
+
+@F 
+
+@Trans @RT(11)TPurgeReady @F @T @F @F @T @T @TL(2)
+NOT abDecompPurge.aRun.bActive
+
+@RT(11)TPurgeReady @F 
+@Goto @RT(7)S_Ready @F @F 
+
+
+@Step @RT(20)S_CheckOperationMode @F @F @F @F @RT(0) @F 
+@AcbCont @RT(7)unnamed @F 0 
+
+@AltBranch @RT(3)alt @F 2 
+@TransSeq @RT(4)tseq @F 1 
+@Trans @RT(9)TNotSetup @F @T @F @F @T @F @TL(2)
+sv_OperationMode <> nSetup
+
+@RT(9)TNotSetup @F 
+
+@TransSeq @RT(4)tseq @F 6 
+@Trans @RT(10)TSetupMode @F @T @F @F @T @F @TL(2)
+sv_OperationMode = nSetup
+
+@RT(10)TSetupMode @F 
+@Step @RT(14)S_CheckIfCalib @F @F @F @F @RT(0) @F 
+@AcbCont @RT(7)unnamed @F 0 
+
+@AltBranch @RT(3)alt @F 3 
+@TransSeq @RT(4)tseq @F 1 
+@Trans @RT(9)TNotCalib @F @T @F @F @T @F @TL(3)
+NOT sv_bDoTransducerCalib 
+AND NOT sv_bMoveIdent
+
+@RT(9)TNotCalib @F 
+
+@TransSeq @RT(4)tseq @F 4 
+@Trans @RT(15)TCalibActivated @F @T @F @F @T @F @TL(2)
+sv_bDoTransducerCalib
+
+@RT(15)TCalibActivated @F 
+@Step @RT(7)S_Calib @F @F @F @F @RT(0) @F 
+@AcbCont @RT(7)unnamed @F 4 
+@Acb @RT(16)AResetCalibBlock @F @F @RT(1)P @RT(0) @F @F @F @F 
+@Acb @RT(16)ATransducerCalib @F @F @RT(1)N @RT(0) @F @F @F @F 
+@Acb @RT(16)ACheckCalibError @F @F @RT(1)N @RT(0) @F @F @F @F 
+@Acb @RT(17)ADecompSetupServo @F @F @RT(1)N @RT(0) @F @F @F @F 
+
+@Trans @RT(11)TCalibReady @F @T @F @F @T @T @TL(2)
+NOT abScrewBwdCalib.aRun.bActive OR bError 
+
+@RT(11)TCalibReady @F 
+@Goto @RT(7)S_Ready @F @F 
+
+@TransSeq @RT(4)tseq @F 4 
+@Trans @RT(19)TMoveIdentActivated @F @T @F @F @T @F @TL(2)
+sv_bMoveIdent
+
+@RT(19)TMoveIdentActivated @F 
+@Step @RT(11)S_MoveIdent @F @F @F @F @RT(0) @F 
+@AcbCont @RT(7)unnamed @F 4 
+@Acb @RT(16)AResetIdentBlock @F @F @RT(1)P @RT(0) @F @F @F @F 
+@Acb @RT(11)AStepOutput @F @F @RT(1)N @RT(0) @F @F @F @F 
+@Acb @RT(22)ADecompSetupServoIdent @F @F @RT(1)N @RT(0) @F @F @F @F 
+@Acb @RT(10)AStopServo @F @T @RT(2)P0 @RT(0) @F @F @T @TL(2)
+sv_rServoOutput := 0.0;
+
+@F 
+
+@Trans @RT(15)TMoveIdentReady @F @T @F @F @T @T @TL(2)
+NOT abDecompStep.aRun.bActive
+
+@RT(15)TMoveIdentReady @F 
+@Goto @RT(7)S_Ready @F @F 
+
+
+@Step @RT(7)S_Setup @F @F @F @F @RT(0) @F 
+@AcbCont @RT(7)unnamed @F 3 
+@Acb @RT(16)AResetConstBlock @F @F @RT(1)P @RT(0) @F @F @F @F 
+@Acb @RT(12)ADecompSetup @F @F @RT(1)N @RT(0) @F @F @F @F 
+@Acb @RT(17)ADecompSetupServo @F @F @RT(1)N @RT(0) @F @F @F @F 
+
+@Trans @RT(11)TSetupReady @F @T @F @F @T @T @TL(2)
+NOT abDecompSetup.aRun.bActive
+
+@RT(11)TSetupReady @F 
+@Goto @RT(7)S_Ready @F @F 
+
+
+@Step @RT(11)S_CheckMode @F @F @F @F @RT(0) @F 
+@AcbCont @RT(7)unnamed @F 0 
+
+@AltBranch @RT(3)alt @F 3 
+@TransSeq @RT(4)tseq @F 5 
+@Trans @RT(15)TDecompBefPlast @F @T @F @F @T @F @TL(2)
+g_MoveCtrl.pData^.MoveId = cMoveDecompBefPlast
+
+@RT(15)TDecompBefPlast @F 
+@Step @RT(18)S_DecomBeforePlast @F @F @F @F @RT(0) @F 
+@AcbCont @RT(7)unnamed @F 4 
+@Acb @RT(14)AInitDecompBef @F @F @RT(1)P @RT(0) @F @F @F @F 
+@Acb @RT(15)ADecompBefPlast @F @F @RT(1)N @RT(0) @F @F @F @F 
+@Acb @RT(17)ADecompSetupServo @F @F @RT(1)N @RT(0) @F @F @F @F 
+@Acb @RT(13)ASetPosBefore @F @T @RT(2)P0 @RT(0) @F @F @T @TL(10)
+IF sv_DecompBefPlastSettings.Mode = nTimeDependent THEN
+   b := WRITE_SVREAL_DIRECT(sv_rScrewSetPosition, sv_rScrewPositionAbs);
+ELSE
+   IF bStop OR abDecompBefPlast.aRun.dActTime = T#0s THEN
+      b := WRITE_SVREAL_DIRECT(sv_rScrewSetPosition, sv_rScrewPositionAbs);
+   ELSE    
+      b := WRITE_SVREAL_DIRECT(sv_rScrewSetPosition, rTargetPosition); 
+   END_IF;    
+END_IF;
+
+@F 
+
+@Trans @RT(14)TBefPlastReady @F @T @F @F @T @F @TL(2)
+NOT abDecompBefPlast.aRun.bActive
+
+@RT(14)TBefPlastReady @F 
+@Step @RT(18)S_CorrectDuration1 @F @F @F @F @RT(0) @F 
+@AcbCont @RT(7)unnamed @F 1 
+@Acb @RT(25)ACorrectDurationDecompBef @F @F @RT(1)P @RT(0) @F @F @F @F 
+
+@Trans @RT(7)Trans21 @F @T @F @F @T @F @TL(2)
+TRUE
+
+@RT(7)Trans21 @F 
+
+@TransSeq @RT(4)tseq @F 5 
+@Trans @RT(15)TDecompAftPlast @F @T @F @F @T @F @TL(2)
+g_MoveCtrl.pData^.MoveId = cMoveDecompAftPlast
+
+@RT(15)TDecompAftPlast @F 
+@Step @RT(18)S_DecompAfterPlast @F @F @F @F @RT(0) @F 
+@AcbCont @RT(7)unnamed @F 4 
+@Acb @RT(14)AInitDecompAft @F @F @RT(1)P @RT(0) @F @F @F @F 
+@Acb @RT(15)ADecompAftPlast @F @F @RT(1)N @RT(0) @F @F @F @F 
+@Acb @RT(17)ADecompSetupServo @F @F @RT(1)N @RT(0) @F @F @F @F 
+@Acb @RT(12)ASetPosAfter @F @T @RT(2)P0 @RT(0) @F @F @T @TL(10)
+IF sv_DecompAftPlastSettings.Mode = nTimeDependent THEN
+   b := WRITE_SVREAL_DIRECT(sv_rScrewSetPosition, sv_rScrewPositionAbs);
+ELSE
+   IF bStop OR abDecompAftPlast.aRun.dActTime = T#0s THEN
+      b := WRITE_SVREAL_DIRECT(sv_rScrewSetPosition, sv_rScrewPositionAbs);
+   ELSE    
+      b := WRITE_SVREAL_DIRECT(sv_rScrewSetPosition, rTargetPosition); 
+   END_IF; 
+END_IF;
+
+@F 
+
+@Trans @RT(14)TAftPlastReady @F @T @F @F @T @F @TL(2)
+NOT abDecompAftPlast.aRun.bActive
+
+@RT(14)TAftPlastReady @F 
+@Step @RT(18)S_CorrectDuration2 @F @F @F @F @RT(0) @F 
+@AcbCont @RT(7)unnamed @F 1 
+@Acb @RT(25)ACorrectDurationDecompAft @F @F @RT(1)P @RT(0) @F @F @F @F 
+
+@Trans @RT(7)Trans22 @F @T @F @F @T @F @TL(2)
+TRUE
+
+@RT(7)Trans22 @F 
+
+@TransSeq @RT(4)tseq @F 3 
+@Trans @RT(15)TDecompInterPos @F @T @F @F @T @F @TL(2)
+g_MoveCtrl.pData^.MoveId = cMoveDecompInterPos
+
+@RT(15)TDecompInterPos @F 
+@Step @RT(16)S_DecompInterPos @F @F @F @F @RT(0) @F 
+@AcbCont @RT(7)unnamed @F 4 
+@Acb @RT(19)AInitDecompInterPos @F @F @RT(1)P @RT(0) @F @F @F @F 
+@Acb @RT(15)ADecompInterPos @F @F @RT(1)N @RT(0) @F @F @F @F 
+@Acb @RT(17)ADecompSetupServo @F @F @RT(1)N @RT(0) @F @F @F @F 
+@Acb @RT(12)ASetPosInter @F @T @RT(2)P0 @RT(0) @F @F @T @TL(10)
+IF sv_DecompAftPlastSettings.Mode = nTimeDependent THEN
+   b := WRITE_SVREAL_DIRECT(sv_rScrewSetPosition, sv_rScrewPositionAbs);
+ELSE
+   IF bStop OR abDecompInterPos.aRun.dActTime = T#0s THEN
+      b := WRITE_SVREAL_DIRECT(sv_rScrewSetPosition, sv_rScrewPositionAbs);
+   ELSE    
+      b := WRITE_SVREAL_DIRECT(sv_rScrewSetPosition, rTargetPosition);
+   END_IF; 
+END_IF;
+
+@F 
+
+@Trans @RT(17)TDecInterPosReady @F @T @F @F @T @F @TL(2)
+NOT abDecompInterPos.aRun.bActive
+
+@RT(17)TDecInterPosReady @F 
+
+
+@Step @RT(7)S_Ready @F @F @T @F @RT(0) @F 
+@AcbCont @RT(7)unnamed @F 1 
+@Acb @RT(6)AReady @F @T @RT(1)P @RT(0) @F @F @T @TL(7)
+bReady := TRUE;
+fbSetMovementState(MoveId   := g_MoveCtrl.pData^.MoveId,
+                   MoveDir  := g_MoveCtrl.pData^.MoveDir,
+                   State    := nInactive);
+sv_bDecompActive := FALSE;
+fbDebugTrace2(nDeviceState, 'Decompression ready');
+
+@F 
+
+
+@Trans @RT(6)TReady @F @T @T @T @T @T @TL(2)
+TRUE
+
+@RT(6)TReady @F 
+
+@END_SfcData 
+@SaActions 20 
+@SaText @RT(16)AResetCalibBlock 1 @TL(17)
+(**************************************** WARNING ********************************************
+ *** The KEBA Kemro K2 System including software is not intended for safety control tasks! ***
+ ***                       For further information see Comment tab!                        ***
+ *********************************************************************************************)
+bError := FALSE;
+
+abScrewBwdCalib.aRun(bStart := FALSE,
+                     LintabPoint := sv_TmpLintabPoint);
+abDecompSetupServo.aRun(bStart := FALSE);
+IF  abScrewBwdCalib.aRun.bError OR abDecompSetupServo.aRun.bError THEN
+   sv_CalibState.Status := tnCalibState_Error;
+   bError := TRUE; 
+   dummy := Print("Calib Error: Reset calib block failed"); 
+END_IF;
+
+bUsePosDetect := FALSE;
+
+
+@SaText @RT(16)AResetConstBlock 1 @TL(24)
+(**************************************** WARNING ********************************************
+ *** The KEBA Kemro K2 System including software is not intended for safety control tasks! ***
+ ***                       For further information see Comment tab!                        ***
+ *********************************************************************************************)
+
+abDecompSetup.aRun(bStart := FALSE);
+abDecompSetupServo.aRun(bStart := FALSE);
+
+bUsePosDetect := sv_bDoPumpVelocityCalib OR sv_bDoInjectionCalib OR sv_bMoveToServoCalibStartPos;
+IF bUsePosDetect THEN
+   //use timeout detection
+   dMaxMoveTime := sv_DecompTimesSet.dMaxMoveTime;
+ELSE
+   //no timeout detection
+   dMaxMoveTime := t#0s;
+END_IF;
+
+IF sv_bDoPumpVelocityCalib OR sv_bDoInjectionCalib THEN
+   rTargetPosition := 0.9 * sv_rScrewStroke;
+ELSIF sv_bMoveToServoCalibStartPos THEN
+   rTargetPosition := 0.99 * sv_rScrewStroke;
+END_IF;
+
+
+
+@SaText @RT(17)AresetDecompPurge 1 @TL(12)
+(**************************************** WARNING ********************************************
+ *** The KEBA Kemro K2 System including software is not intended for safety control tasks! ***
+ ***                       For further information see Comment tab!                        ***
+ *********************************************************************************************)
+
+abDecompPurge.aRun(bStart := FALSE);
+
+aVolumeToDistance(rVolume := sv_PurgeSettings.DecompParams.rEndPos,
+                  rDistance => rTargetPosition);
+
+bUsePosDetect := TRUE;
+
+
+@SaText @RT(17)ADecompSetupServo 1 @TL(15)
+IF sv_IMM_Type = nKAPPL_IMM_ServoValve THEN
+   abDecompSetupServo.aRun(bStart := TRUE,
+                           bStop := bStop,
+                           bDirection := TRUE,
+                           rActPos := sv_rScrewPositionAbs,
+                           rTargetPos := rTargetPosition, 
+                           bUsePosDetect := bUsePosDetect,
+                           rStartOutputPre := 0.0,
+                           rStartOutputVel := 0.0,
+                           dDelayTimeOn := T#0s,
+                           dDelayTimeOff := T#0s);    
+   
+   b := WRITE_SVREAL_DIRECT(sv_rServoOutput, abDecompSetupServo.aRun.rOutputVel);
+END_IF;
+
+
+@SaText @RT(16)ACheckCalibError 1 @TL(5)
+IF bError THEN
+   sv_CalibState.Status := tnCalibState_Error;
+   dummy := Print("Calib Error: %i", iErrorInfo);
+END_IF;
+
+
+@SaText @RT(25)ACorrectDurationDecompBef 1 @TL(12)
+(**************************************** WARNING ********************************************
+ *** The KEBA Kemro K2 System including software is not intended for safety control tasks! ***
+ ***                       For further information see Comment tab!                        ***
+ *********************************************************************************************)
+
+IF sv_OperationMode >= nHalfAutomatic THEN
+   //duration update only in HA and FA
+   sv_dCalculatedDurationDecompBef := sv_dActDecompBeforeTime;
+END_IF;
+
+
+
+
+@SaText @RT(25)ACorrectDurationDecompAft 1 @TL(10)
+(**************************************** WARNING ********************************************
+ *** The KEBA Kemro K2 System including software is not intended for safety control tasks! ***
+ ***                       For further information see Comment tab!                        ***
+ *********************************************************************************************)
+
+IF sv_OperationMode >= nHalfAutomatic THEN
+   //duration update only in HA and FA
+   sv_dCalculatedDurationDecompAft := sv_dActDecompAfterTime;
+END_IF;
+
+
+@SaText @RT(22)AResetDecompPurgeServo 1 @TL(4)
+IF sv_IMM_Type = nKAPPL_IMM_ServoValve THEN
+   abDecompSetupServo.aRun(bStart := FALSE, bStop := TRUE);    
+END_IF;
+
+
+@SaText @RT(14)AInitDecompBef 1 @TL(24)
+(**************************************** WARNING ********************************************
+ *** The KEBA Kemro K2 System including software is not intended for safety control tasks! ***
+ ***                       For further information see Comment tab!                        ***
+ *********************************************************************************************)
+ 
+abDecompBefPlast.aRun(bStart := FALSE);
+abDecompSetupServo.aRun(bStart := FALSE);
+
+IF sv_DecompBefPlastSettings.Mode = nTimeDependent THEN
+   //set target position to maximum value 
+   //-> screw ramps down to maximum position no matter if the
+   //move time is set to a high value
+   rTargetPosition := sv_rScrewStroke;
+   
+   //set movement time
+   abDecompBefPlast.aSetMoveTime(dSetMoveTime := sv_DecompBefPlastSettings.dDecompTime); 
+ELSE
+   //mode position dependent -> set according target value
+   aVolumeToDistance(rVolume := mrDecBefPlastEnd,
+                     rDistance => rTargetPosition);
+END_IF;
+
+bUsePosDetect := TRUE;
+
+
+@SaText @RT(14)AInitDecompAft 1 @TL(25)
+(**************************************** WARNING ********************************************
+ *** The KEBA Kemro K2 System including software is not intended for safety control tasks! ***
+ ***                       For further information see Comment tab!                        ***
+ *********************************************************************************************)
+ 
+abDecompAftPlast.aRun(bStart := FALSE);
+abDecompSetupServo.aRun(bStart := FALSE);
+
+IF sv_DecompAftPlastSettings.Mode = nTimeDependent THEN
+   //set target position to maximum value 
+   //-> screw ramps down to maximum position no matter if the
+   //move time is set to a high value
+   rTargetPosition := sv_rScrewStroke;
+   
+   //set movement time
+   abDecompAftPlast.aSetMoveTime(dSetMoveTime := sv_DecompAftPlastSettings.dDecompTime);
+ELSE
+   //mode position dependent -> set according target value
+   aVolumeToDistance(rVolume := mrDecAftPlastEnd,
+                     rDistance => rTargetPosition);
+END_IF;
+
+bUsePosDetect := TRUE;
+
+
+
+@SaText @RT(19)AInitDecompInterPos 1 @TL(24)
+(**************************************** WARNING ********************************************
+ *** The KEBA Kemro K2 System including software is not intended for safety control tasks! ***
+ ***                       For further information see Comment tab!                        ***
+ *********************************************************************************************)
+ 
+abDecompInterPos.aRun(bStart := FALSE);
+abDecompSetupServo.aRun(bStart := FALSE);
+
+IF sv_DecompInterPosSettings.Mode = nTimeDependent THEN
+   //set target position to maximum value 
+   //-> screw ramps down to maximum position no matter if the
+   //move time is set to a high value
+   rTargetPosition := sv_rScrewStroke;
+   
+   //set movement time
+   abDecompInterPos.aSetMoveTime(dSetMoveTime := sv_DecompInterPosSettings.dDecompTime);
+ELSE
+   //mode position dependent -> set according target value
+   aVolumeToDistance(rVolume := sv_DecompInterPosSettings.rDecompPos,
+                     rDistance => rTargetPosition);
+END_IF;
+
+bUsePosDetect := TRUE;
+
+
+@SaText @RT(16)AResetIdentBlock 1 @TL(12)
+abDecompStep.aRun(bStart := FALSE);
+
+rTargetPosition := sv_rIdentPosition;
+bUsePosDetect := (sv_rIdentPosition <> 0.0);
+
+abDecompSetupServo.aRun(bStart := FALSE);
+IF  abDecompStep.aRun.bError OR abDecompSetupServo.aRun.bError THEN
+   sv_CalibState.Status := tnCalibState_Error;
+   bError := TRUE; 
+   dummy := Print("Ident Error: Reset calib block failed"); 
+END_IF;
+
+
+@SaText @RT(22)ADecompSetupServoIdent 1 @TL(14)
+IF sv_IMM_Type = nKAPPL_IMM_ServoValve THEN
+   abDecompSetupServo.aRun(bStart := TRUE,
+                           bStop := bStop,
+                           bDirection := TRUE,
+                           rActPos := sv_rScrewPositionAbs,
+                           rTargetPos := rTargetPosition, 
+                           bUsePosDetect := bUsePosDetect,
+                           rStartOutputPre := 0.0,
+                           rStartOutputVel := 0.0,
+                           dDelayTimeOn := T#0s,
+                           dDelayTimeOff := T#0s);    
+   sv_rServoOutput := abDecompSetupServo.aRun.rOutputVel;
+END_IF;
+
+
+@SaText @RT(16)ATransducerCalib 1 @TL(30)
+(**************************************** WARNING ********************************************
+ *** The KEBA Kemro K2 System including software is not intended for safety control tasks! ***
+ ***                       For further information see Comment tab!                        ***
+ *********************************************************************************************)
+
+// Calibration works with stroke not volume
+abScrewBwdCalib.aRun(bStop := bStop OR sv_bTransducerError,
+                     bStart := TRUE,
+                     rActVoltage := ai_Position,
+                     rMaxVoltageDiff := sv_rMaxVoltageDiff,
+                     dStandStillDetectTime := sv_dStandStillDetectTime,
+                     LintabPoint := sv_TmpLintabPoint,
+                     rSetValue := sv_rScrewStroke,
+                     dDelayTimeOn := sv_DecompTimesSet.dSetDelayTimePump,
+                     dDelayTimeOff := sv_DecompTimesSet.dSetDelayTimeValve,
+                     bActive => sv_bOutputActive,
+                     rOutputPre => rPressureAbs,
+                     rOutputVel => rVelocityAbs,
+                     bPreOutputReached => sv_bPreOutputReady,
+                     iErrorInfo => iErrorInfo);
+
+sv_bDoTransducerCalib := NOT (abScrewBwdCalib.aRun.bPointDetected);
+bError := abScrewBwdCalib.aRun.bError OR bError;
+
+abLintabApplyPres.aCalc(rX := rPressureAbs,
+                        rY => sv_rPressure);
+
+abLintabApplyVel.aCalc(rX := rVelocityAbs,
+                       rY => sv_rVelocity);
+
+
+@SaText @RT(11)AStepOutput 1 @TL(32)
+(**************************************** WARNING ********************************************
+ *** The KEBA Kemro K2 System including software is not intended for safety control tasks! ***
+ ***                       For further information see Comment tab!                        ***
+ *********************************************************************************************)
+
+abDecompStep.aRun(bUsePosDetect := (sv_rIdentPosition <> 0.0),
+                  rPositionDown := (sv_rScrewPositionAbs + sv_rIdentPosition) * 0.5,
+                  rLowOutput := sv_rMaxSpeedBwd * 0.1,
+                  bStart := TRUE,
+                  bStop := bStop,
+                  bDirection := TRUE,
+                  rActPos := sv_rScrewPositionAbs,
+                  rTargetPos := sv_rIdentPosition,
+                  dDelayTimeOn := sv_DecompTimesSet.dSetDelayTimePump,
+                  dDelayTimeOff := sv_dSetDelayTimeOffBwd,
+                  rPositionUp := sv_rScrewPositionAbs,
+                  rHighOutput := sv_ConstDecompSetup.Velocity.Output.rOutputValue,
+                  dMaxMoveTime := sv_DecompTimesSet.dMaxMoveTime,
+                  rStopRamp := sv_rIdentStopRamp,
+                  bActive => sv_bOutputActive,
+                  rOutputPre => rPressureAbs,
+                  rOutputVel => rVelocityAbs,
+                  bPreOutputReached => sv_bPreOutputReady);
+
+sv_rVelocityAbs := rVelocityAbs;
+
+abLintabApplyPres.aCalc(rX := rPressureAbs,
+                        rY => sv_rPressure);
+
+abLintabApplyVel.aCalc(rX := rVelocityAbs,
+                       rY => sv_rVelocity);
+
+
+@SaText @RT(12)ADecompSetup 1 @TL(26)
+(**************************************** WARNING ********************************************
+ *** The KEBA Kemro K2 System including software is not intended for safety control tasks! ***
+ ***                       For further information see Comment tab!                        ***
+ *********************************************************************************************)
+
+abDecompSetup.aRun(bStart := TRUE,
+                   bStop := bStop,
+                   bDirection := TRUE,
+                   rActPos := sv_rScrewPositionAbs,
+                   rTargetPos := rTargetPosition,
+                   bUsePosDetect := bUsePosDetect,
+                   dMaxTime := dMaxMoveTime,
+                   dDelayTimeOn := sv_DecompTimesSet.dSetDelayTimePump,
+                   dDelayTimeOff := sv_DecompTimesSet.dSetDelayTimeValve,
+                   rOutputPre => rPressureAbs,
+                   rOutputVel => rVelocityAbs,
+                   bActive => sv_bOutputActive,
+                   bPreOutputReached => sv_bPreOutputReady);
+
+abLintabApplyPres.aCalc(rX := rPressureAbs);
+b := WRITE_SVREAL_DIRECT(sv_rPressure, abLintabApplyPres.aCalc.rY);    
+
+abLintabApplyVel.aCalc(rX := rVelocityAbs);
+b := WRITE_SVREAL_DIRECT(sv_rVelocity, abLintabApplyVel.aCalc.rY);    
+
+
+
+@SaText @RT(12)ADecompPurge 1 @TL(25)
+(**************************************** WARNING ********************************************
+ *** The KEBA Kemro K2 System including software is not intended for safety control tasks! ***
+ ***                       For further information see Comment tab!                        ***
+ *********************************************************************************************)
+
+abDecompPurge.aRun(bStart := TRUE,
+                   bStop := bStop,
+                   bDirection := TRUE,
+                   rActPos := sv_rScrewPositionAbs,
+                   rTargetPos := rTargetPosition,
+                   bUsePosDetect := TRUE,
+                   dDelayTimeOn := sv_DecompTimesSet.dSetDelayTimePump,
+                   dDelayTimeOff := sv_DecompTimesSet.dSetDelayTimeValve,
+                   rOutputPre => rPressureAbs,
+                   rOutputVel => rVelocityAbs,
+                   bActive => sv_bOutputActive,
+                   bPreOutputReached => sv_bPreOutputReady); 
+
+
+abLintabApplyPres.aCalc(rX := rPressureAbs);
+b := WRITE_SVREAL_DIRECT(sv_rPressure, abLintabApplyPres.aCalc.rY);
+
+abLintabApplyVel.aCalc(rX := rVelocityAbs);
+b := WRITE_SVREAL_DIRECT(sv_rVelocity, abLintabApplyVel.aCalc.rY);
+
+
+@SaText @RT(15)ADecompInterPos 1 @TL(29)
+(**************************************** WARNING ********************************************
+ *** The KEBA Kemro K2 System including software is not intended for safety control tasks! ***
+ ***                       For further information see Comment tab!                        ***
+ *********************************************************************************************)
+
+abDecompInterPos.aRun(bStop := bStop OR sv_bTransducerError OR (sv_DecompInterPosSettings.Mode = nNotUsed),
+                      bStart := TRUE,
+                      bDirection := TRUE,
+                      rActPos := sv_rScrewPositionAbs,
+                      rTargetPos := rTargetPosition,
+                      bUsePosDetect := TRUE,
+                      dMaxTime := sv_DecompTimesSet.dMaxMoveTime,
+                      dDelayTimeOn := sv_DecompTimesSet.dSetDelayTimePump,
+                      dDelayTimeOff := sv_DecompTimesSet.dSetDelayTimeValve,
+                      rOutputPre => rPressureAbs,
+                      rOutputVel => rVelocityAbs,
+                      bActive => sv_bOutputActive,
+                      bPreOutputReached => sv_bPreOutputReady);
+
+b := WRITE_SV_DIRECT(sv_DecompTimesAct.dActMoveTime, abDecompInterPos.aRun.dActTime);
+b := WRITE_SV_DIRECT(sv_ActiveTimesDecompInterPos[g_MoveCtrl.iCount], sv_DecompTimesAct.dActMoveTime);
+
+
+abLintabApplyPres.aCalc(rX := rPressureAbs);
+b := WRITE_SVREAL_DIRECT(sv_rPressure, abLintabApplyPres.aCalc.rY);    
+
+abLintabApplyVel.aCalc(rX := rVelocityAbs);
+b := WRITE_SVREAL_DIRECT(sv_rVelocity, abLintabApplyVel.aCalc.rY);    
+
+
+@SaText @RT(15)ADecompBefPlast 1 @TL(28)
+(**************************************** WARNING ********************************************
+ *** The KEBA Kemro K2 System including software is not intended for safety control tasks! ***
+ ***                       For further information see Comment tab!                        ***
+ *********************************************************************************************)
+
+abDecompBefPlast.aRun(bStop := bStop OR sv_bTransducerError OR (sv_DecompBefPlastSettings.Mode = nNotUsed),
+                      bStart := TRUE,
+                      bDirection := TRUE,
+                      rActPos := sv_rScrewPositionAbs,
+                      rTargetPos := rTargetPosition,
+                      bUsePosDetect := TRUE,
+                      dMaxTime := sv_DecompTimesSet.dMaxMoveTime,
+                      dDelayTimeOn := sv_DecompTimesSet.dSetDelayTimePump,
+                      dDelayTimeOff := sv_DecompTimesSet.dSetDelayTimeValve,
+                      rOutputPre => rPressureAbs,
+                      rOutputVel => rVelocityAbs,
+                      bActive => sv_bOutputActive,
+                      bPreOutputReached => sv_bPreOutputReady);
+
+b := WRITE_SV_DIRECT(sv_dActDecompBeforeTime, abDecompBefPlast.aRun.dActTime);
+b := WRITE_SV_DIRECT(sv_DecompTimesAct.dActMoveTime, sv_dActDecompBeforeTime);
+
+abLintabApplyPres.aCalc(rX := rPressureAbs);
+b := WRITE_SVREAL_DIRECT(sv_rPressure, abLintabApplyPres.aCalc.rY);
+
+abLintabApplyVel.aCalc(rX := rVelocityAbs);                                              
+b := WRITE_SVREAL_DIRECT(sv_rVelocity, abLintabApplyVel.aCalc.rY);
+
+
+@SaText @RT(15)ADecompAftPlast 1 @TL(29)
+(**************************************** WARNING ********************************************
+ *** The KEBA Kemro K2 System including software is not intended for safety control tasks! ***
+ ***                       For further information see Comment tab!                        ***
+ *********************************************************************************************)
+
+abDecompAftPlast.aRun(bStop := bStop OR sv_bTransducerError OR (sv_DecompAftPlastSettings.Mode = nNotUsed),
+                      bStart := TRUE,
+                      bDirection := TRUE,
+                      rActPos := sv_rScrewPositionAbs,
+                      rTargetPos := rTargetPosition,
+                      bUsePosDetect := TRUE,
+                      dMaxTime := sv_DecompTimesSet.dMaxMoveTime,
+                      dDelayTimeOn := sv_DecompTimesSet.dSetDelayTimePump,
+                      dDelayTimeOff := sv_DecompTimesSet.dSetDelayTimeValve,
+                      rOutputPre => rPressureAbs,
+                      rOutputVel => rVelocityAbs,
+                      bActive => sv_bOutputActive,
+                      bPreOutputReached => sv_bPreOutputReady);
+
+b := WRITE_SV_DIRECT(sv_dActDecompAfterTime, abDecompAftPlast.aRun.dActTime);
+b := WRITE_SV_DIRECT(sv_DecompTimesAct.dActMoveTime, sv_dActDecompAfterTime);
+
+
+abLintabApplyPres.aCalc(rX := rPressureAbs);
+b := WRITE_SVREAL_DIRECT(sv_rPressure, abLintabApplyPres.aCalc.rY);    
+
+abLintabApplyVel.aCalc(rX := rVelocityAbs);
+b := WRITE_SVREAL_DIRECT(sv_rVelocity, abLintabApplyVel.aCalc.rY);    
+
+
+@SaTrans 0 
+@SaExits 0 
+@END_SfcBody 
+
+@@@BEG_Comment@@@ 
+@TL(4)
+This algorithm is responsible for executing the movement.
+Depending on MoveId, OperationMode and activated transducer calibration the according
+movement is executed.
+The different actions contain the movement blocks and the according parameters.
+@@@END_Comment@@@ 
+
+@BEG_Body 
+@TL(50)
+(**************************************** WARNING ********************************************
+ *** The KEBA Kemro K2 System including software is not intended for safety control tasks! ***
+ ***                       For further information see Comment tab!                        ***
+ *********************************************************************************************)
+
+// Decomp. after plast:
+abDecompAftPlast.aInit(pConst := @sv_DecompAftPlastSettings.ConstOutput,
+                       MoveId := cMoveDecompAftPlast,
+                       pdCalcedDuration := @sv_dCalculatedDurationDecompAft,
+                       prCalcDurationStartPosition := @sv_rDecompAftCalcDurStartPos,
+                       prCalcDurationEndPosition := @sv_rDecompAftCalcDurEndPos);
+
+// Decomp before plast:
+abDecompBefPlast.aInit(pConst := @sv_DecompBefPlastSettings.ConstOutput,
+                       MoveId := cMoveDecompBefPlast,
+                       pdCalcedDuration := @sv_dCalculatedDurationDecompBef,
+                       prCalcDurationStartPosition := @sv_rDecompBefCalcDurStartPos,
+                       prCalcDurationEndPosition := @sv_rDecompBefCalcDurEndPos);
+
+// Decomp setup:
+abDecompSetup.aInit(pConst := @sv_ConstDecompSetup,
+                    MoveId := cMoveDecompAftPlast);
+
+// Decomp setup servo:
+abDecompSetupServo.aInit(pConst := @sv_ConstDecompSetupServo,
+                         MoveId := cMoveDecompAftPlast);
+
+// Decomp interpos:
+abDecompInterPos.aInit(pConst := @sv_DecompInterPosSettings.ConstOutput,
+                       MoveId := cMoveDecompInterPos);
+
+// Init bwd calib:
+abScrewBwdCalib.aInit(pConst := @sv_ConstDecompSetup,
+                      MoveId := cMoveDecompAftPlast);
+
+// Init decomp for purge:
+abDecompPurge.aInit(pConst := @sv_PurgeSettings.DecompParams.ConstOutput,
+                    MoveId := cMoveDecompPurge);
+
+// Init lintab apply press:
+abLintabApplyPres.aInit(pLintab := @sv_LintabOutBwdP);
+
+// Init lintab apply vel
+abLintabApplyVel.aInit(pLintab := @sv_LintabOutBwdV);
+
+// Init ident. movement:
+abDecompStep.aInit(pConst := @sv_ConstDecompSetup,
+                   MoveId := cMoveDecompAftPlast,
+                   prMaxSpeed := @sv_rMaxSpeedBwd);
+
+@END_Body 
+
+@@@BEG_Comment@@@ 
+@TL(0)
+
+@@@END_Comment@@@ 
+
+@BEG_Body 
+@TL(10)
+(**************************************** WARNING ********************************************
+ *** The KEBA Kemro K2 System including software is not intended for safety control tasks! ***
+ ***                       For further information see Comment tab!                        ***
+ *********************************************************************************************)
+
+rSize := FCalcScrewSize(sv_rScrewDiameter);
+rTime := LINT_TO_REAL(TIME_TO_LINT(dTime)) / 1000000.0;
+
+rVolume := (rVelocity * rTime * rSize) / 1000.0;
+
+@END_Body 
+
+@@@BEG_Comment@@@ 
+@TL(2)
+calculate an estimated volume considering constant velocity over a defined time
+ramps are not considered in this calculation
+@@@END_Comment@@@ 
+
+@BEG_Body 
+@TL(17)
+(**************************************** WARNING ********************************************
+ *** The KEBA Kemro K2 System including software is not intended for safety control tasks! ***
+ ***                       For further information see Comment tab!                        ***
+ *********************************************************************************************)
+
+//copy minoutput to decomp before plast settings
+sv_DecompBefPlastSettings.ConstOutput.Velocity.rMinOutput := sv_MinOutputDecomp.rVelocity;
+sv_DecompBefPlastSettings.ConstOutput.Pressure.rMinOutput := sv_MinOutputDecomp.rPressure;
+
+//copy minoutput to decomp after plast settings
+sv_DecompAftPlastSettings.ConstOutput.Velocity.rMinOutput := sv_MinOutputDecomp.rVelocity;
+sv_DecompAftPlastSettings.ConstOutput.Pressure.rMinOutput := sv_MinOutputDecomp.rPressure;
+
+//copy minoutput to decomp movement in setup mode
+sv_ConstDecompSetup.Velocity.rMinOutput := sv_MinOutputDecomp.rVelocity;
+sv_ConstDecompSetup.Pressure.rMinOutput := sv_MinOutputDecomp.rPressure;
+
+@END_Body 
+
+@@@BEG_Comment@@@ 
+@TL(0)
+
+@@@END_Comment@@@ 
+
+@BEG_Body 
+@TL(8)
+(**************************************** WARNING ********************************************
+ *** The KEBA Kemro K2 System including software is not intended for safety control tasks! ***
+ ***                       For further information see Comment tab!                        ***
+ *********************************************************************************************)
+
+mrDecAftPlastEnd := sv_PlastProfVis.Profile.Points[(sv_PlastProfVis.Profile.iNoOfPoints+1)].rStartPos +
+                    sv_DecompAftPlastSettings.rDecompPos;
+
+@END_Body 
+
+@@@BEG_Comment@@@ 
+@TL(0)
+
+@@@END_Comment@@@ 
+
+@BEG_Body 
+@TL(13)
+(**************************************** WARNING ********************************************
+ *** The KEBA Kemro K2 System including software is not intended for safety control tasks! ***
+ ***                       For further information see Comment tab!                        ***
+ *********************************************************************************************)
+
+// set flags that indicate if movement should be activated
+// if false a start movement event is ignored by ABControl
+
+sv_bActivatedDecompBeforePlast := sv_DecompBefPlastSettings.Mode <> nNotUsed;
+// Decompression should be possible in SetupMode
+sv_bActivatedDecompAfterPlast := (sv_DecompAftPlastSettings.Mode <> nNotUsed) OR 
+                                 (sv_OperationMode = nSetup);
+
+@END_Body 
+
+@@@BEG_Comment@@@ 
+@TL(0)
+
+@@@END_Comment@@@ 
+
+@BEG_Body 
+@TL(32)
+(**************************************** WARNING ********************************************
+ *** The KEBA Kemro K2 System including software is not intended for safety control tasks! ***
+ ***                       For further information see Comment tab!                        ***
+ *********************************************************************************************)
+
+//plast endposition is maximum value of decomp before and plast profile
+rPlastEnd := MAX((sv_PlastProfVis.Profile.Points[sv_PlastProfVis.Profile.iNoOfPoints + 1].rStartPos),
+                 sv_rTargetValueDecBefPlast);
+
+IF (sv_DecompAftPlastSettings.Mode = nTimeDependent) THEN
+   //calculate estimated target position
+   aCalcEstimatedVolume(rVelocity := sv_DecompAftPlastSettings.ConstOutput.Velocity.Output.rOutputValue,
+                        dTime := sv_DecompAftPlastSettings.dDecompTime);
+   sv_rTargetValueDecAftPlast := MIN((aCalcEstimatedVolume.rVolume + rPlastEnd),sv_rScrewVolume);
+  
+ELSIF (sv_DecompAftPlastSettings.Mode = nPosDependent) THEN     
+    
+   sv_rTargetValueDecAftPlast := sv_DecompAftPlastSettings.rDecompPos + rPlastEnd;
+   
+ELSIF sv_DecompAftPlastSettings.Mode = nNotUsed THEN    
+    
+   sv_rTargetValueDecAftPlast := MAX(rPlastEnd, sv_rTargetValueDecBefPlast);
+   b := WRITE_SV_DIRECT(sv_dActDecompAfterTime, dNull);
+END_IF;
+
+//convert start position and endposition to mm (startposition = plast endposition)
+aVolumeToDistance(rVolume := rPlastEnd);
+sv_rDecompAftCalcDurStartPos := aVolumeToDistance.rDistance;
+
+aVolumeToDistance(rVolume := sv_rTargetValueDecAftPlast);
+sv_rDecompAftCalcDurEndPos := aVolumeToDistance.rDistance;
+
+@END_Body 
+
+@@@BEG_Comment@@@ 
+@TL(0)
+
+@@@END_Comment@@@ 
+
+@BEG_Body 
+@TL(29)
+(**************************************** WARNING ********************************************
+ *** The KEBA Kemro K2 System including software is not intended for safety control tasks! ***
+ ***                       For further information see Comment tab!                        ***
+ *********************************************************************************************)
+
+IF (sv_DecompBefPlastSettings.Mode = nTimeDependent) THEN
+    
+   //calculate estimated target position
+   aCalcEstimatedVolume(rVelocity := sv_DecompBefPlastSettings.ConstOutput.Velocity.Output.rOutputValue,
+                        dTime := sv_DecompBefPlastSettings.dDecompTime);
+   sv_rTargetValueDecBefPlast := MIN(aCalcEstimatedVolume.rVolume,sv_rScrewVolume);
+ 
+ELSIF (sv_DecompBefPlastSettings.Mode = nPosDependent) THEN 
+        
+   sv_rTargetValueDecBefPlast := sv_DecompBefPlastSettings.rDecompPos;
+        
+ELSIF sv_DecompBefPlastSettings.Mode = nNotUsed THEN
+    
+   //decomp not used
+   sv_rTargetValueDecBefPlast := 0.0;
+   b := WRITE_SV_DIRECT(sv_dActDecompBeforeTime, dNull);
+END_IF;
+
+sv_rDecompBefCalcDurStartPos := 0.0;
+
+//convert endposition to mm
+aVolumeToDistance(rVolume := sv_rTargetValueDecBefPlast);                      
+sv_rDecompBefCalcDurEndPos := aVolumeToDistance.rDistance;
+
+@END_Body 
+
+@@@BEG_Comment@@@ 
+@TL(0)
+
+@@@END_Comment@@@ 
+
+@BEG_Body 
+@TL(23)
+(**************************************** WARNING ********************************************
+ *** The KEBA Kemro K2 System including software is not intended for safety control tasks! ***
+ ***                       For further information see Comment tab!                        ***
+ *********************************************************************************************)
+
+//avoid out of range errors
+i := MAX(1,iInstance);
+
+//copy data of according instance to sv_DecompInterPosSettings
+IF sv_InstanceDataDecompInterPos[i].Mode = nDecompTimeDependent THEN
+   sv_DecompInterPosSettings.Mode := nTimeDependent; 
+ELSIF sv_InstanceDataDecompInterPos[i].Mode = nDecompPosDependent THEN
+   sv_DecompInterPosSettings.Mode := nPosDependent;
+END_IF;
+
+sv_DecompInterPosSettings.dDecompTime := sv_InstanceDataDecompInterPos[i].dTime;
+sv_DecompInterPosSettings.rDecompPos := sv_InstanceDataDecompInterPos[i].rTargetValue;
+sv_DecompInterPosSettings.ConstOutput.Pressure.Output.rOutputValue := sv_InstanceDataDecompInterPos[i].rPressure;
+sv_DecompInterPosSettings.ConstOutput.Velocity.Output.rOutputValue := sv_InstanceDataDecompInterPos[i].rVelocity;
+
+sv_MoveDecompInterPos.pdCalculatedDuration := @sv_InstanceDataDecompInterPos[i].dCalculatedDuration;
+sv_MoveDecompInterPos.pdStartDelaySet := @sv_InstanceDataDecompInterPos[i].dDelay;
+
+@END_Body 
+
+@@@BEG_Comment@@@ 
+@TL(1)
+copy settings of instance to the systemvariable that is used for the movement
+@@@END_Comment@@@ 
+
+@BEG_Body 
+@TL(10)
+(**************************************** WARNING ********************************************
+ *** The KEBA Kemro K2 System including software is not intended for safety control tasks! ***
+ ***                       For further information see Comment tab!                        ***
+ *********************************************************************************************)
+
+IF evStartData.DeviceId = sv_DeviceId AND evStartData.MoveId = cMoveDecompInterPos THEN
+   aGetInstanceData(iInstance := evStartData.IntermediateCond);
+   miDecompInstance := MAX(1,evStartData.IntermediateCond);
+END_IF;
+
+@END_Body 
+
+@@@BEG_Comment@@@ 
+@TL(4)
+get instance data if start event is received
+
+attention:
+taskslot is asigned to make sure that execution is done before evaStart in ABControl.pu
+@@@END_Comment@@@ 
+
+@BEG_Body 
+@TL(8)
+(**************************************** WARNING ********************************************
+ *** The KEBA Kemro K2 System including software is not intended for safety control tasks! ***
+ ***                       For further information see Comment tab!                        ***
+ *********************************************************************************************)
+
+mrDecBefPlastEnd := MIN(sv_rHoldPosition + sv_DecompBefPlastSettings.rDecompPos,
+                        sv_PlastProfVis.Profile.Points[(sv_PlastProfVis.Profile.iNoOfPoints+1)].rStartPos); 
+
+@END_Body 
+
+@@@BEG_Comment@@@ 
+@TL(0)
+
+@@@END_Comment@@@ 
+@END_Body 
+
+@END_Contents 

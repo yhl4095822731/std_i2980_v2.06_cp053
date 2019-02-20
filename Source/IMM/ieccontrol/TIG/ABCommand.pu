@@ -1,0 +1,2545 @@
+(*
+@h    ! WARNING !
+@h    The Kemro K2 system (including software) only meets category B according to EN 954-1,
+@h    thus it is not intended for usage in safety-relevant control applications in the field 
+@h    of personal safety (e.g. emergency stop).
+@h    To implement potentially necessary safety-relevant control tasks, always use additional 
+@h    external safety devices that are intended for the particular purpose, and meet the necessary 
+@h    functional safety.
+@h    For further information see EN 954-1 (EN ISO 13849-1) and/or the K2-x00 user manual, chapter 
+@h    "CE conformity, directives and standards".
+
+handles dialogs with TIG PLS (job commands, dataset commands, ...)
+
+@FunctionID: A-VAR-16
+TIG 3.11
+*)
+
+IMPORT_OVER_LISTFILE
+ KPROT_UserInfoLog
+, FDeleteActDSFiles
+, KFILE_MakeDir
+, KCAT_GetHandle
+, KCAT_GetValue
+, KFILE_Open
+, KFILE_Read
+, KFILE_Write
+, KFILE_Close
+, CMD_RET_WORKING
+, CMD_ID_DATASET_SAVE
+, CMD_ID_DATASET_LOAD
+, CMD_RET_OTHERERROR
+, CMD_ID_NOCMD
+, CMD_RET_TIMEOUT
+, CMD_ID_JOB_START
+, CMD_ID_JOB_STARTNEXT
+, CMD_ID_JOB_STOP
+, CMD_ID_JOB_BREAK
+, CMD_RET_JOB_NOT_EXISTING
+, KCAT_Status_OK
+, KFILE_Mode_ReadWriteDelete
+, KFILE_Mode_ReadOnly
+, tsTIGHmi
+, tsTIG
+, tsTIGHmiCommand
+, TON
+, FBHmiDataSet
+, KPROT_Status
+, RTC
+, KFILE_Status
+, KFILE_Open_Data
+, KCAT_HandleData
+, KCAT_Status
+
+END_IMPORT
+
+ALGORITHM_BLOCK ABCommand #DUMMY_EDIT_BLOCK
+
+SYSTEM_VAR
+ sv_TIGHmi : tsTIGHmi;
+ sv_TIG : tsTIG;
+ sv_Test : BOOL;
+END_VAR
+
+SYSTEM_OBJECT
+ TaskVis : TASK;
+END_OBJECT
+
+VAR
+ mpCmd : REFTO tsTIGHmiCommand;
+ fbTimeOut : TON;
+ fbHmiDSCmd : FBHmiDataSet;
+ msILog : STRING(127);
+END_VAR
+
+(*
+@h    ! WARNING !
+@h    The Kemro K2 system (including software) only meets category B according to EN 954-1,
+@h    thus it is not intended for usage in safety-relevant control applications in the field 
+@h    of personal safety (e.g. emergency stop).
+@h    To implement potentially necessary safety-relevant control tasks, always use additional 
+@h    external safety devices that are intended for the particular purpose, and meet the necessary 
+@h    functional safety.
+@h    For further information see EN 954-1 (EN ISO 13849-1) and/or the K2-x00 user manual, chapter 
+@h    "CE conformity, directives and standards".
+
+command triggered by TIG 
+
+@FunctionID: A-VAR-16.3
+TIG 3.11.4
+*)
+
+POSTUPDATE_ALGORITHM pCmdHostStart ON TaskVis WITH sv_TIGHmi.dialog.iCmdHost.iStart
+
+
+VAR
+ iStart : DINT;
+END_VAR
+#BEGIN_EDIT_BLOCK
+(**************************************** WARNING ********************************************
+ *** The KEBA Kemro K2 System including software is not intended for safety control tasks! ***
+ ***                       For further information see Comment tab!                        ***
+ *********************************************************************************************)
+
+IF (sv_TIGHmi.dialog.iCmdHost.iStart MOD 2 = 1) THEN 
+   IF (NOT sv_TIGHmi.dialog.bCmdWorking) THEN
+      sv_TIGHmi.dialog.bCmdWorking := TRUE;  
+      sv_TIGHmi.dialog.iCmdHost.cmdID := sv_TIG.dialog.Host.command;
+      mpCmd := @sv_TIGHmi.dialog.iCmdHost;
+      mpCmd^.sText := "";
+      sv_TIG.dialog.Host.command := 0;  // sollte man den nicht erst löschen wenn durchgeführt? trigger für lr zum statusauslesn unklar?
+      START_PROCESS_ALGORITHM(paCmdRun);
+   ELSE
+      sv_TIGHmi.dialog.iCmdHost.Status := CMD_RET_WORKING;
+      sv_TIGHmi.dialog.iCmdHost.sText := "#busy#8481";      
+      iStart:= sv_TIGHmi.dialog.iCmdHost.iStart;
+      iStart := iStart + (2 - (iStart MOD 2));
+      sv_TIGHmi.dialog.iCmdHost.iStart := iStart; 
+   END_IF;
+END_IF;
+
+
+;#END_EDIT_BLOCK END_ALGORITHM
+
+(*
+@h    ! WARNING !
+@h    The Kemro K2 system (including software) only meets category B according to EN 954-1,
+@h    thus it is not intended for usage in safety-relevant control applications in the field 
+@h    of personal safety (e.g. emergency stop).
+@h    To implement potentially necessary safety-relevant control tasks, always use additional 
+@h    external safety devices that are intended for the particular purpose, and meet the necessary 
+@h    functional safety.
+@h    For further information see EN 954-1 (EN ISO 13849-1) and/or the K2-x00 user manual, chapter 
+@h    "CE conformity, directives and standards".
+
+command from HMI: start job
+
+@FunctionID: A-VAR-16.4
+TIG 3.11.5
+*)
+
+POSTUPDATE_ALGORITHM pCmdJobStart ON TaskVis WITH sv_TIGHmi.job.cmdStartJob.iStart
+
+
+VAR
+ iStart : DINT;
+END_VAR
+#BEGIN_EDIT_BLOCK
+(**************************************** WARNING ********************************************
+ *** The KEBA Kemro K2 System including software is not intended for safety control tasks! ***
+ ***                       For further information see Comment tab!                        ***
+ *********************************************************************************************)
+
+IF (sv_TIGHmi.job.cmdStartJob.iStart MOD 2 = 1) THEN 
+   IF (NOT sv_TIGHmi.dialog.bCmdWorking) THEN
+      sv_TIGHmi.dialog.bCmdWorking := TRUE;  
+//      sv_TIGHmi.job.cmdStartJob.cmdID := CMD_ID_JOB_START;
+      mpCmd := @sv_TIGHmi.job.cmdStartJob;
+      mpCmd^.sText := "#jobstart#8482";      
+      START_PROCESS_ALGORITHM(paCmdRun);
+   ELSE
+      sv_TIGHmi.job.cmdStartJob.Status := CMD_RET_WORKING;
+      sv_TIGHmi.job.cmdStartJob.sText := "#busy#8481";      
+      iStart:= sv_TIGHmi.job.cmdStartJob.iStart;
+      iStart := iStart + (2 - (iStart MOD 2));
+      sv_TIGHmi.job.cmdStartJob.iStart := iStart; 
+   END_IF;
+END_IF;
+
+
+;#END_EDIT_BLOCK END_ALGORITHM
+
+(*
+@h    ! WARNING !
+@h    The Kemro K2 system (including software) only meets category B according to EN 954-1,
+@h    thus it is not intended for usage in safety-relevant control applications in the field 
+@h    of personal safety (e.g. emergency stop).
+@h    To implement potentially necessary safety-relevant control tasks, always use additional 
+@h    external safety devices that are intended for the particular purpose, and meet the necessary 
+@h    functional safety.
+@h    For further information see EN 954-1 (EN ISO 13849-1) and/or the K2-x00 user manual, chapter 
+@h    "CE conformity, directives and standards".
+
+command from HMI: start next job
+
+@FunctionID: A-VAR-16.4
+TIG 3.11.5
+*)
+
+POSTUPDATE_ALGORITHM pCmdJobStartNext ON TaskVis WITH sv_TIGHmi.job.cmdStartNextJob.iStart
+
+
+VAR
+ iStart : DINT;
+END_VAR
+#BEGIN_EDIT_BLOCK
+(**************************************** WARNING ********************************************
+ *** The KEBA Kemro K2 System including software is not intended for safety control tasks! ***
+ ***                       For further information see Comment tab!                        ***
+ *********************************************************************************************)
+
+IF (sv_TIGHmi.job.cmdStartNextJob.iStart MOD 2 = 1) THEN
+   IF (NOT sv_TIGHmi.dialog.bCmdWorking) THEN
+      sv_TIGHmi.dialog.bCmdWorking := TRUE;  
+//      sv_TIGHmi.job.cmdStartNextJob.cmdID := CMD_ID_JOB_STARTNEXT;
+      mpCmd := @sv_TIGHmi.job.cmdStartNextJob;
+      mpCmd^.sText := "#jobnext#8483";      
+      START_PROCESS_ALGORITHM(paCmdRun);
+   ELSE
+      sv_TIGHmi.job.cmdStartNextJob.Status := CMD_RET_WORKING;
+      sv_TIGHmi.job.cmdStartNextJob.sText := "#busy#8481";      
+      iStart := sv_TIGHmi.job.cmdStartNextJob.iStart;
+      iStart := iStart + (2 - (iStart MOD 2));
+      sv_TIGHmi.job.cmdStartNextJob.iStart := iStart;
+   END_IF;
+END_IF;
+
+
+;#END_EDIT_BLOCK END_ALGORITHM
+
+(*
+@h    ! WARNING !
+@h    The Kemro K2 system (including software) only meets category B according to EN 954-1,
+@h    thus it is not intended for usage in safety-relevant control applications in the field 
+@h    of personal safety (e.g. emergency stop).
+@h    To implement potentially necessary safety-relevant control tasks, always use additional 
+@h    external safety devices that are intended for the particular purpose, and meet the necessary 
+@h    functional safety.
+@h    For further information see EN 954-1 (EN ISO 13849-1) and/or the K2-x00 user manual, chapter 
+@h    "CE conformity, directives and standards".
+
+command from HMI: stop job
+
+@FunctionID: A-VAR-16.4
+TIG 3.11.5
+*)
+
+POSTUPDATE_ALGORITHM pCmdJobStopJob ON TaskVis WITH sv_TIGHmi.job.cmdStopJob.iStart
+
+
+VAR
+ iStart : DINT;
+END_VAR
+#BEGIN_EDIT_BLOCK
+(**************************************** WARNING ********************************************
+ *** The KEBA Kemro K2 System including software is not intended for safety control tasks! ***
+ ***                       For further information see Comment tab!                        ***
+ *********************************************************************************************)
+
+IF (sv_TIGHmi.job.cmdStopJob.iStart MOD 2 = 1) THEN
+   IF (NOT sv_TIGHmi.dialog.bCmdWorking) THEN
+      sv_TIGHmi.dialog.bCmdWorking := TRUE;  
+ //     sv_TIGHmi.job.cmdStopJob.cmdID := CMD_ID_JOB_STOP;
+      mpCmd := @sv_TIGHmi.job.cmdStopJob;
+            mpCmd^.sText := "#jobstop#8484";
+      START_PROCESS_ALGORITHM(paCmdRun);
+   ELSE
+      sv_TIGHmi.job.cmdStopJob.Status := CMD_RET_WORKING;
+      sv_TIGHmi.job.cmdStopJob.sText := "#busy#8481";      
+      iStart := sv_TIGHmi.job.cmdStopJob.iStart;
+      iStart := iStart + (2 - (iStart MOD 2));
+      sv_TIGHmi.job.cmdStopJob.iStart := iStart;
+   END_IF;
+END_IF;
+
+
+;#END_EDIT_BLOCK END_ALGORITHM
+
+(*
+@h    ! WARNING !
+@h    The Kemro K2 system (including software) only meets category B according to EN 954-1,
+@h    thus it is not intended for usage in safety-relevant control applications in the field 
+@h    of personal safety (e.g. emergency stop).
+@h    To implement potentially necessary safety-relevant control tasks, always use additional 
+@h    external safety devices that are intended for the particular purpose, and meet the necessary 
+@h    functional safety.
+@h    For further information see EN 954-1 (EN ISO 13849-1) and/or the K2-x00 user manual, chapter 
+@h    "CE conformity, directives and standards".
+
+command from HMI: break job
+
+@FunctionID: A-VAR-16.4
+TIG 3.11.5
+*)
+
+POSTUPDATE_ALGORITHM pCmdJobBreakJob ON TaskVis WITH sv_TIGHmi.job.cmdBreakJob.iStart
+
+
+VAR
+ iStart : DINT;
+END_VAR
+#BEGIN_EDIT_BLOCK
+(**************************************** WARNING ********************************************
+ *** The KEBA Kemro K2 System including software is not intended for safety control tasks! ***
+ ***                       For further information see Comment tab!                        ***
+ *********************************************************************************************)
+
+IF (sv_TIGHmi.job.cmdBreakJob.iStart MOD 2 = 1) THEN
+   IF (NOT sv_TIGHmi.dialog.bCmdWorking) THEN
+      sv_TIGHmi.dialog.bCmdWorking := TRUE;  
+//      sv_TIGHmi.job.cmdBreakJob.cmdID := CMD_ID_JOB_BREAK;
+      mpCmd := @sv_TIGHmi.job.cmdBreakJob;
+            mpCmd^.sText := "#jobbreak#8485";
+      START_PROCESS_ALGORITHM(paCmdRun);
+   ELSE
+      sv_TIGHmi.job.cmdBreakJob.Status := CMD_RET_WORKING;
+      sv_TIGHmi.job.cmdBreakJob.sText := "#busy#8481";      
+      iStart := sv_TIGHmi.job.cmdBreakJob.iStart;
+      iStart := iStart + (2 - (iStart MOD 2));
+      sv_TIGHmi.job.cmdBreakJob.iStart := iStart;
+   END_IF;
+END_IF;
+
+
+;#END_EDIT_BLOCK END_ALGORITHM
+
+(*
+@h    ! WARNING !
+@h    The Kemro K2 system (including software) only meets category B according to EN 954-1,
+@h    thus it is not intended for usage in safety-relevant control applications in the field 
+@h    of personal safety (e.g. emergency stop).
+@h    To implement potentially necessary safety-relevant control tasks, always use additional 
+@h    external safety devices that are intended for the particular purpose, and meet the necessary 
+@h    functional safety.
+@h    For further information see EN 954-1 (EN ISO 13849-1) and/or the K2-x00 user manual, chapter 
+@h    "CE conformity, directives and standards".
+
+command from HMI: load dataset from TIG
+
+@FunctionID: A-VAR-16.5
+TIG 3.11.6
+*)
+
+POSTUPDATE_ALGORITHM pCmdDSDownload2Ctrl ON TaskVis WITH sv_TIGHmi.dataSet.cmdDataSetDownload2Ctrl.iStart
+
+
+VAR
+ iStart : DINT;
+END_VAR
+#BEGIN_EDIT_BLOCK
+(**************************************** WARNING ********************************************
+ *** The KEBA Kemro K2 System including software is not intended for safety control tasks! ***
+ ***                       For further information see Comment tab!                        ***
+ *********************************************************************************************)
+
+IF (sv_TIGHmi.dataSet.cmdDataSetDownload2Ctrl.iStart MOD 2 = 1) THEN
+   IF (NOT sv_TIGHmi.dialog.bCmdWorking) THEN
+      sv_TIGHmi.dialog.bCmdWorking := TRUE;  
+//      sv_TIGHmi.dataSet.cmdDataSetDownload2Ctrl.cmdID := CMD_ID_DATASET_LOAD;
+      mpCmd := @sv_TIGHmi.dataSet.cmdDataSetDownload2Ctrl;
+      mpCmd^.sText := "#dsload#8486";
+      START_PROCESS_ALGORITHM(paCmdRun);
+   ELSE
+      sv_TIGHmi.dataSet.cmdDataSetDownload2Ctrl.Status := CMD_RET_WORKING;
+      sv_TIGHmi.dataSet.cmdDataSetDownload2Ctrl.sText := "#busy#8481";      
+      iStart := sv_TIGHmi.dataSet.cmdDataSetDownload2Ctrl.iStart;
+      iStart := iStart + (2 - (iStart MOD 2));
+      sv_TIGHmi.dataSet.cmdDataSetDownload2Ctrl.iStart := iStart; 
+   END_IF;
+END_IF;
+
+
+;#END_EDIT_BLOCK END_ALGORITHM
+
+// POSTUPDATE_ALGORITHM pCmdDSDownloadAll2Ctrl ON TaskVis WITH sv_TIGHmi.dataSet.cmdDataSetDownloadAll2Ctrl.iStart
+
+
+// VAR
+ // iStart : DINT;
+// END_VAR
+// #BEGIN_EDIT_BLOCK
+// IF (sv_TIGHmi.dataSet.cmdDataSetDownloadAll2Ctrl.iStart MOD 2 = 1) THEN
+//    IF (NOT sv_TIGHmi.dialog.bCmdWorking) THEN
+//       sv_TIGHmi.dialog.bCmdWorking := TRUE;  
+//       sv_TIGHmi.dataSet.cmdDataSetDownloadAll2Ctrl.cmdID := CMD_ID_DATASET_LOADALL;
+//       mpCmd := @sv_TIGHmi.dataSet.cmdDataSetDownloadAll2Ctrl;
+//       START_PROCESS_ALGORITHM(paCmdRun);
+//    ELSE
+//       sv_TIGHmi.dataSet.cmdDataSetDownloadAll2Ctrl.Status := CMD_RET_WORKING;
+//       sv_TIGHmi.dataSet.cmdDataSetDownloadAll2Ctrl.sText := "";      
+//       iStart := sv_TIGHmi.dataSet.cmdDataSetDownloadAll2Ctrl.iStart;
+//       // next even number 
+//       iStart := iStart + (2 - (iStart MOD 2));
+//       sv_TIGHmi.dataSet.cmdDataSetDownloadAll2Ctrl.iStart := iStart;
+//    END_IF;
+// END_IF;
+
+
+// ;#END_EDIT_BLOCK END_ALGORITHM
+
+(*
+@h    ! WARNING !
+@h    The Kemro K2 system (including software) only meets category B according to EN 954-1,
+@h    thus it is not intended for usage in safety-relevant control applications in the field 
+@h    of personal safety (e.g. emergency stop).
+@h    To implement potentially necessary safety-relevant control tasks, always use additional 
+@h    external safety devices that are intended for the particular purpose, and meet the necessary 
+@h    functional safety.
+@h    For further information see EN 954-1 (EN ISO 13849-1) and/or the K2-x00 user manual, chapter 
+@h    "CE conformity, directives and standards".
+
+command from HMI: save dataset to TIG
+
+@FunctionID: A-VAR-16.5
+TIG 3.11.6
+*)
+
+POSTUPDATE_ALGORITHM pCmdDSUpload2TIG ON TaskVis WITH sv_TIGHmi.dataSet.cmdDataSetUpload2TIG.iStart
+
+
+VAR
+ iStart : DINT;
+END_VAR
+#BEGIN_EDIT_BLOCK
+(**************************************** WARNING ********************************************
+ *** The KEBA Kemro K2 System including software is not intended for safety control tasks! ***
+ ***                       For further information see Comment tab!                        ***
+ *********************************************************************************************)
+
+IF (sv_TIGHmi.dataSet.cmdDataSetUpload2TIG.iStart MOD 2 = 1) THEN
+   IF (NOT sv_TIGHmi.dialog.bCmdWorking) THEN
+      sv_TIGHmi.dialog.bCmdWorking := TRUE;  
+//      sv_TIGHmi.dataSet.cmdDataSetUpload2TIG.cmdID := CMD_ID_DATASET_SAVE;
+      mpCmd := @sv_TIGHmi.dataSet.cmdDataSetUpload2TIG;
+      mpCmd^.sText := "#dssave#8487";
+      START_PROCESS_ALGORITHM(paCmdRun);
+   ELSE
+      sv_TIGHmi.dataSet.cmdDataSetUpload2TIG.Status := CMD_RET_WORKING;
+      sv_TIGHmi.dataSet.cmdDataSetUpload2TIG.sText := "#busy#8481";      
+      iStart := sv_TIGHmi.dataSet.cmdDataSetUpload2TIG.iStart;
+      iStart := iStart + (2 - (iStart MOD 2));
+      sv_TIGHmi.dataSet.cmdDataSetUpload2TIG.iStart := iStart;
+   END_IF;
+END_IF;
+
+
+;#END_EDIT_BLOCK END_ALGORITHM
+
+(*
+@h    ! WARNING !
+@h    The Kemro K2 system (including software) only meets category B according to EN 954-1,
+@h    thus it is not intended for usage in safety-relevant control applications in the field 
+@h    of personal safety (e.g. emergency stop).
+@h    To implement potentially necessary safety-relevant control tasks, always use additional 
+@h    external safety devices that are intended for the particular purpose, and meet the necessary 
+@h    functional safety.
+@h    For further information see EN 954-1 (EN ISO 13849-1) and/or the K2-x00 user manual, chapter 
+@h    "CE conformity, directives and standards".
+
+run command: communication with TIG
+
+@FunctionID: A-VAR-16.1
+TIG 3.11.2
+*)
+
+PROCESS_ALGORITHM paCmdRun ON TaskVis
+
+
+VAR
+ iStep : DINT;
+ iStart : DINT;
+ ret : BOOL;
+ bTestTimeOut : BOOL;
+ sOldText : STRING(255);
+ s : KPROT_Status;
+END_VAR
+#BEGIN_EDIT_BLOCK
+(**************************************** WARNING ********************************************
+ *** The KEBA Kemro K2 System including software is not intended for safety control tasks! ***
+ ***                       For further information see Comment tab!                        ***
+ *********************************************************************************************)
+
+IF iStep = 0 THEN
+   s := KPROT_UserInfoLog("Ctrl station: cmd %1i param %5s", mpCmd^.cmdID, 0, 0, 0, mpCmd^.sName);
+   fbHmiDSCmd(Execute := FALSE); 
+   // before command 
+   CASE mpCmd^.cmdID OF
+      
+      CMD_ID_DATASET_SAVE: 
+            ret := FDeleteActDSFiles(sv_TIG.dataSet.sDataSetPath);
+            iStep:=5;
+      
+      CMD_ID_DATASET_LOAD: 
+            ret := FDeleteActDSFiles(sv_TIG.dataSet.sDataSetPath);
+            iStep:=10;
+
+      ELSE
+         iStep:=15; 
+         
+   END_CASE;                                      
+END_IF;
+
+IF iStep = 5 THEN 
+   // before save     set cmd for hmi: save dataset into temp folder 
+   mpCmd^.sText := "#saving#8491";
+   fbHmiDSCmd(Execute := TRUE, Save := TRUE, sParam := mpCmd^.sName); 
+   
+   IF fbHmiDSCmd.Error THEN 
+      mpCmd^.Status := CMD_RET_OTHERERROR; 
+      mpCmd^.sText := "#saveerror#8493";
+      iStep := 30; 
+   END_IF;
+   
+   IF fbHmiDSCmd.Done THEN 
+      mpCmd^.sText := "#savedone#8492";
+      iStep := 15; 
+   END_IF;
+END_IF; 
+
+IF iStep = 10 THEN 
+   // before load
+   iStep:=15; 
+END_IF;
+
+IF iStep = 15 THEN 
+   sv_TIG.dialog.Control.sName := mpCmd^.sName;
+   sOldText := sv_TIG.dialog.Control.sText;
+   sv_TIG.dialog.Control.command := mpCmd^.cmdID;   // command start
+   fbTimeOut(IN := FALSE);
+   iStep := 18; 
+END_IF;
+               
+IF iStep = 18 THEN
+   IF sv_TIG.dialog.Control.sText <> sOldText THEN 
+     mpCmd^.sText := sv_TIG.dialog.Control.sText;
+   END_IF; 
+   fbTimeOut(TRUE, T#1m);   
+   IF (sv_TIG.dialog.Control.command = CMD_ID_NOCMD) THEN 
+      mpCmd^.Status := sv_TIG.dialog.Control.State;
+//      mpCmd^.sText := sv_TIG.dialog.Control.sText;
+   END_IF;
+   IF fbTimeOut.Q OR bTestTimeOut THEN
+      sv_TIG.dialog.Control.command := CMD_ID_NOCMD;
+      mpCmd^.Status := CMD_RET_TIMEOUT;
+      mpCmd^.sText := "#timeout#8480";
+      iStep := 30; 
+      RETURN; 
+   END_IF;
+   IF (sv_TIG.dialog.Control.command = CMD_ID_NOCMD) THEN 
+      IF mpCmd^.Status = 0 THEN
+              iStep := 20; 
+      ELSE 
+              iStep := 30; // in case of an error 
+      END_IF;
+
+   END_IF;
+END_IF;
+
+IF iStep = 20 THEN
+    mpCmd^.sText := sv_TIG.dialog.Control.sText;
+   // after command
+   CASE mpCmd^.cmdID OF
+      CMD_ID_JOB_START:
+          sv_TIGHmi.job.jobData.iNewPartListDataCnt := sv_TIGHmi.job.jobData.iNewPartListDataCnt + 1;  // trigger new calculation of partlistlength
+          iStep := 30;      
+
+      CMD_ID_JOB_STARTNEXT:
+          sv_TIGHmi.job.jobData.iNewPartListDataCnt := sv_TIGHmi.job.jobData.iNewPartListDataCnt + 1;      
+          iStep := 30;   
+      
+      CMD_ID_JOB_STOP:
+          sv_TIGHmi.job.jobData.iNewPartListDataCnt := sv_TIGHmi.job.jobData.iNewPartListDataCnt + 1;      
+          iStep := 30;   
+
+      CMD_ID_JOB_BREAK:
+          sv_TIGHmi.job.jobData.iNewPartListDataCnt := sv_TIGHmi.job.jobData.iNewPartListDataCnt + 1;      
+          iStep := 30; 
+          
+      CMD_ID_DATASET_LOAD: 
+          iStep := 25;
+      
+      ELSE
+         iStep:=30; 
+   END_CASE;
+   
+
+END_IF;
+
+IF iStep = 25 THEN
+    // after load     set cmd for hmi: load dataset from temp folder 
+   fbHmiDSCmd(Execute := TRUE, Save := FALSE, sParam := mpCmd^.sName); 
+   mpCmd^.sText := "#loading#8488";   
+   IF fbHmiDSCmd.Error THEN 
+      mpCmd^.Status := CMD_RET_OTHERERROR; 
+      iStep := 30;
+      mpCmd^.sText := "#loaderror#8489";
+   END_IF;
+   
+   IF fbHmiDSCmd.Done THEN 
+      iStep := 30; 
+      mpCmd^.sText := "#loaddone#8490";      
+   END_IF;
+END_IF;
+
+IF iStep = 30 THEN
+      // command done
+    //iStart MOD 2 = 1 starts the command
+    // iStart MOD 2 = 0 stopped 
+    
+      msILog := CONCAT("Control station: command ", DINT_TO_STRING(mpCmd^.cmdID), " done, status=", DWORD_TO_STRING(mpCmd^.Status), " text=", "");
+      s := KPROT_UserInfoLog("%5s", 0, 0, 0, 0, msILog);
+    
+      sv_TIG.dialog.Control.command := CMD_ID_NOCMD; 
+   
+      iStart := mpCmd^.iStart;
+      iStart := iStart + (2 - (iStart MOD 2));
+      mpCmd^.iStart := iStart; 
+      sv_TIGHmi.dialog.bCmdWorking := FALSE;
+      iStep := 0; 
+      STOP_PROCESS_ALGORITHM();
+END_IF;
+
+
+;#END_EDIT_BLOCK END_ALGORITHM
+
+(*
+@h    ! WARNING !
+@h    The Kemro K2 system (including software) only meets category B according to EN 954-1,
+@h    thus it is not intended for usage in safety-relevant control applications in the field 
+@h    of personal safety (e.g. emergency stop).
+@h    To implement potentially necessary safety-relevant control tasks, always use additional 
+@h    external safety devices that are intended for the particular purpose, and meet the necessary 
+@h    functional safety.
+@h    For further information see EN 954-1 (EN ISO 13849-1) and/or the K2-x00 user manual, chapter 
+@h    "CE conformity, directives and standards".
+
+simulation routine
+
+
+
+*)
+
+PROCESS_ALGORITHM paTest ON TaskVis AUTOSTART
+
+
+VAR_TEMP
+ i : DINT;
+END_VAR
+
+VAR
+ fbRTC : RTC;
+ iStep : DINT;
+ testTimeOut : BOOL;
+ cntwait : DINT := 10;
+ jobName : STRING(20);
+ iFound : DINT;
+ s : KFILE_Status;
+ name : STRING(255);
+ opendata : KFILE_Open_Data;
+ fname : STRING(255);
+ opendata2 : KFILE_Open_Data;
+ nr : DINT;
+ rs : STRING(255);
+ filename : STRING(255);
+ orgfile : STRING(255);
+ u : DINT;
+ sRootPath : STRING(255);
+ StatusName_CAT : KCAT_HandleData;
+ Status_CAT : KCAT_Status;
+END_VAR
+#BEGIN_EDIT_BLOCK
+(**************************************** WARNING ********************************************
+ *** The KEBA Kemro K2 System including software is not intended for safety control tasks! ***
+ ***                       For further information see Comment tab!                        ***
+ *********************************************************************************************)
+
+IF NOT sv_Test THEN
+   iStep := 0; 
+   RETURN;
+END_IF;
+
+
+IF iStep = 0 THEN
+   IF testTimeOut THEN
+      RETURN;    
+   END_IF;
+   CASE sv_TIG.dialog.Control.command OF
+      CMD_ID_JOB_START: 
+         jobName := sv_TIG.dialog.Control.sName;
+         iStep := 10;       
+         cntwait := 50;
+      
+      CMD_ID_JOB_STARTNEXT:       
+         iStep := 25;       
+         cntwait := 10;
+      
+      CMD_ID_JOB_STOP:                 
+        iStep:=50; 
+         cntwait := 10;
+      
+      CMD_ID_JOB_BREAK:                 
+        iStep:=50; 
+         cntwait := 10;
+      
+      CMD_ID_DATASET_SAVE:
+           iStep:=100; 
+         cntwait:=10; 
+      
+      CMD_ID_DATASET_LOAD:
+           iStep:=150; 
+         cntwait:=10; 
+      
+    
+   END_CASE;
+END_IF;
+
+IF iStep = 10 THEN
+   sv_TIG.dialog.Control.sText := "search job ...";         
+   cntwait := cntwait - 1;
+   IF cntwait = 0 THEN
+      iStep := 20;   
+   END_IF;
+END_IF;
+
+    fbRTC();
+
+    sv_TIG.job.jobData.JobActEnd := DT_TO_STRING(fbRTC.CDT);
+    
+IF iStep = 20111 THEN
+   // start job 
+    sv_TIG.productionData.Act.bResetCounter := TRUE;
+    sv_TIG.job.jobData.iJobID := sv_TIG.job.yJobList[1].iJobID;
+
+    sv_TIG.job.jobData.JobActBegin := DT_TO_STRING(fbRTC.CDT);    
+    sv_TIG.job.jobData.JobSetBegin := DT_TO_STRING(fbRTC.CDT);
+    sv_TIG.job.jobData.JobSetEnd := DT_TO_STRING(fbRTC.CDT);
+    sv_TIG.job.jobData.JobDelivery := DT_TO_STRING(DT#2017-1-1-13:13:13.131)     ;
+    sv_TIG.job.jobData.sJobComment := "aklsdfkasjfl";
+    sv_TIG.job.jobData.sJobCustomer := "hsf_customer";
+    sv_TIG.job.jobData.sJobName := sv_TIG.job.yJobList[1].sJobName;
+    sv_TIG.job.jobData.sJobType := "type";
+   
+    FOR i:=1 TO 5 DO
+       sv_TIG.job.jobData.yJobArticle[i].sArticleName := CONCAT("article_", DINT_TO_STRING(i)); 
+       sv_TIG.job.jobData.yJobPartList[i].sType := CONCAT("stklisttyp_", DINT_TO_STRING(i)); 
+       sv_TIG.job.jobData.yJobPartList[i].sName := CONCAT("stklistbez_", DINT_TO_STRING(i));        
+    END_FOR;
+    sv_TIG.dialog.Control.command := 0; 
+    iStep := 0; 
+END_IF;
+
+IF iStep = 20 THEN
+   // start job 
+       sv_TIG.productionData.Act.bResetCounter := TRUE;
+   iFound := 0; 
+    FOR i:=1 TO sv_TIGHmi.job.iJobListTextsLength DO
+       IF jobName = DINT_TO_STRING(sv_TIG.job.yJobList[i].iJobID) THEN
+            iFound := i;        
+             EXIT; 
+       END_IF;    
+    END_FOR;
+    
+     IF iFound=0 THEN
+         sv_TIG.dialog.Control.State := CMD_RET_JOB_NOT_EXISTING; 
+         sv_TIG.dialog.Control.sText := "no job found!";         
+         sv_TIG.dialog.Control.command := 0; 
+         iStep := 0; 
+        RETURN; 
+    END_IF;   
+   
+   iStep:=30;
+END_IF;
+   
+IF iStep=25 THEN
+   // next job
+       sv_TIG.productionData.Act.bResetCounter := TRUE;
+   iFound:=iFound+1;
+   IF iFound > sv_TIGHmi.job.iJobListTextsLength THEN
+       sv_TIG.dialog.Control.State := CMD_RET_JOB_NOT_EXISTING; 
+         sv_TIG.dialog.Control.sText := "no job found!";         
+         sv_TIG.dialog.Control.command := 0; 
+         iStep := 0; 
+        RETURN; 
+   END_IF;
+  iStep:=30;
+END_IF;   
+   
+   // do job
+IF iStep=30 THEN
+
+
+    sv_TIG.job.jobData.iJobID := sv_TIG.job.yJobList[iFound].iJobID;
+
+    sv_TIG.job.jobData.JobActBegin := DT_TO_STRING(fbRTC.CDT);  
+   sv_TIG.job.jobData.JobSetBegin := DT_TO_STRING(fbRTC.CDT);
+    sv_TIG.job.jobData.JobSetEnd := DT_TO_STRING(fbRTC.CDT);
+    sv_TIG.job.jobData.JobDelivery := DT_TO_STRING(DT#2017-1-1-13:13:13.131);
+    sv_TIG.job.jobData.sJobComment := "aklsdfkasjfl";
+    sv_TIG.job.jobData.sJobCustomer := "hsf_customer";
+    sv_TIG.job.jobData.sJobName := sv_TIG.job.yJobList[iFound].sJobName;
+    sv_TIG.job.jobData.sJobType := "type";
+IF                              sv_TIG.job.jobData.iJobID MOD 2 = 0 THEN
+   u := 5;
+   ELSE 
+      u:=2;
+   END_IF;
+    FOR i:=1 TO u DO
+       sv_TIG.job.jobData.yJobArticle[i].sArticleName := CONCAT(jobName, "article_", DINT_TO_STRING(i)); 
+       sv_TIG.job.jobData.yJobPartList[i].sType := CONCAT(jobName, "stklisttyp_", DINT_TO_STRING(i)); 
+       sv_TIG.job.jobData.yJobPartList[i].sName := CONCAT(jobName, "stklistbez_", DINT_TO_STRING(i));        
+    END_FOR;
+   sv_TIG.job.jobData.yJobArticle[i+1].sArticleName := "";
+    sv_TIG.dialog.Control.command := 0; 
+            sv_TIG.dialog.Control.State := 0; 
+               sv_TIG.dialog.Control.sText := "job started"; 
+    iStep := 0; 
+   
+END_IF;
+
+   // stop/break job
+IF iStep=50 THEN
+
+
+    sv_TIG.job.jobData.iJobID := 0;
+
+    sv_TIG.job.jobData.JobActBegin := DT_TO_STRING(fbRTC.CDT);  
+    sv_TIG.job.jobData.JobSetBegin := DT_TO_STRING(fbRTC.CDT);
+    sv_TIG.job.jobData.JobSetEnd := DT_TO_STRING(fbRTC.CDT);
+    sv_TIG.job.jobData.JobDelivery := DT_TO_STRING(DT#2017-1-1-13:13:13.131);
+    sv_TIG.job.jobData.sJobComment := "";
+    sv_TIG.job.jobData.sJobCustomer := "";
+    sv_TIG.job.jobData.sJobName := "";
+    sv_TIG.job.jobData.sJobType := "";
+   
+    FOR i:=1 TO 5 DO
+       sv_TIG.job.jobData.yJobArticle[i].sArticleName := "";
+       sv_TIG.job.jobData.yJobPartList[i].sType := "";
+       sv_TIG.job.jobData.yJobPartList[i].sName := "";
+    END_FOR;
+    sv_TIG.dialog.Control.command := 0; 
+            sv_TIG.dialog.Control.State := 0; 
+               sv_TIG.dialog.Control.sText := ""; 
+    iStep := 0; 
+   
+END_IF;
+
+// save
+IF iStep=100 THEN 
+   cntwait := cntwait - 1;
+   IF cntwait > 0 THEN
+       RETURN;
+   END_IF;   
+
+   sv_TIG.dialog.Control.command := 0; 
+   sv_TIG.dialog.Control.State := 0; 
+   sv_TIG.dialog.Control.sText := ""; 
+
+   iStep := 0;
+END_IF;
+
+// load
+IF iStep=150 THEN 
+//   name := CONCAT(sv_TIG.dataSet.sDataSetPath, "/", sv_TIG.dialog.Control.sName);
+   name := sv_TIG.dataSet.sDataSetPath;
+   s := KFILE_MakeDir(name);
+   filename := '/mold.xml';
+
+
+   StatusName_CAT := KCAT_GetHandle('System.workPath');
+   IF StatusName_CAT.Status = KCAT_Status_OK THEN
+     Status_CAT := KCAT_GetValue(Handle := StatusName_CAT.Handle, Buffer := sRootPath);
+   END_IF;
+       
+   orgfile := CONCAT(sRootPath,'/workspace/data/molddata/mold.xml')  ;
+   iStep:=155;
+END_IF;
+
+IF iStep=155  THEN 
+   fname := CONCAT(name, filename);
+   opendata := KFILE_Open(fname, KFILE_Mode_ReadWriteDelete);
+
+
+   opendata2 := KFILE_Open(orgfile, KFILE_Mode_ReadOnly);
+   
+   REPEAT
+      nr := KFILE_Read(opendata2.Token, 255, rs);
+      i:=KFILE_Write(opendata.Token, nr, rs);
+   UNTIL (nr<255)
+   END_REPEAT;
+      
+   s := KFILE_Close(opendata.Token);
+         s := KFILE_Close(opendata2.Token);
+   
+
+
+
+   iStep := 160;
+END_IF;
+
+IF iStep=160 THEN 
+      sv_TIG.dialog.Control.command := 0; 
+            sv_TIG.dialog.Control.State := 0; 
+               sv_TIG.dialog.Control.sText := "tigjob done"; 
+   iStep:=0; 
+END_IF;
+
+
+;#END_EDIT_BLOCK END_ALGORITHM
+
+(*
+@h    ! WARNING !
+@h    The Kemro K2 system (including software) only meets category B according to EN 954-1,
+@h    thus it is not intended for usage in safety-relevant control applications in the field 
+@h    of personal safety (e.g. emergency stop).
+@h    To implement potentially necessary safety-relevant control tasks, always use additional 
+@h    external safety devices that are intended for the particular purpose, and meet the necessary 
+@h    functional safety.
+@h    For further information see EN 954-1 (EN ISO 13849-1) and/or the K2-x00 user manual, chapter 
+@h    "CE conformity, directives and standards".
+
+command triggered by TIG recieved
+
+@FunctionID: A-VAR-16.3
+TIG 3.11.4
+*)
+
+POSTUPDATE_ALGORITHM pCmdHost ON TaskVis WITH sv_TIG.dialog.Host.command
+
+
+VAR
+ iStart : DINT;
+END_VAR
+#BEGIN_EDIT_BLOCK
+(**************************************** WARNING ********************************************
+ *** The KEBA Kemro K2 System including software is not intended for safety control tasks! ***
+ ***                       For further information see Comment tab!                        ***
+ *********************************************************************************************)
+
+sv_TIGHmi.dialog.iCmdHost.sName := sv_TIG.dialog.Host.sName;
+//iStart MOD 2 = 1 starts the command      
+iStart := sv_TIGHmi.dialog.iCmdHost.iStart;
+iStart := iStart + ((iStart MOD 2) + 1);
+sv_TIGHmi.dialog.iCmdHost.iStart := iStart;
+
+
+;#END_EDIT_BLOCK END_ALGORITHM
+
+(*
+@h    ! WARNING !
+@h    The Kemro K2 system (including software) only meets category B according to EN 954-1,
+@h    thus it is not intended for usage in safety-relevant control applications in the field 
+@h    of personal safety (e.g. emergency stop).
+@h    To implement potentially necessary safety-relevant control tasks, always use additional 
+@h    external safety devices that are intended for the particular purpose, and meet the necessary 
+@h    functional safety.
+@h    For further information see EN 954-1 (EN ISO 13849-1) and/or the K2-x00 user manual, chapter 
+@h    "CE conformity, directives and standards".
+
+command triggered by TIG done
+
+@FunctionID: A-VAR-16.3
+TIG 3.11.4
+*)
+
+POSTUPDATE_ALGORITHM pCmdHostDone ON TaskVis WITH sv_TIGHmi.dialog.iCmdHost.iStart
+
+
+VAR
+ iStart : DINT;
+END_VAR
+#BEGIN_EDIT_BLOCK
+(**************************************** WARNING ********************************************
+ *** The KEBA Kemro K2 System including software is not intended for safety control tasks! ***
+ ***                       For further information see Comment tab!                        ***
+ *********************************************************************************************)
+
+iStart := sv_TIGHmi.dialog.iCmdHost.iStart;
+IF ((iStart MOD 2) = 0) THEN
+   // cmd done
+   sv_TIG.dialog.Host.sText := sv_TIG.dialog.Control.sText;
+   sv_TIG.dialog.Host.State := sv_TIG.dialog.Control.State;
+END_IF;
+
+
+
+;#END_EDIT_BLOCK END_ALGORITHM
+
+
+
+END_ALGORITHM_BLOCK
+
+
+
+#END_OF_IEC_PART
+
+@Puma @IecEditor 6 103 @Pou 25 
+@@@BEG_Comment@@@
+@h    ! WARNING !
+@h    The Kemro K2 system (including software) only meets category B according to EN 954-1,
+@h    thus it is not intended for usage in safety-relevant control applications in the field 
+@h    of personal safety (e.g. emergency stop).
+@h    To implement potentially necessary safety-relevant control tasks, always use additional 
+@h    external safety devices that are intended for the particular purpose, and meet the necessary 
+@h    functional safety.
+@h    For further information see EN 954-1 (EN ISO 13849-1) and/or the K2-x00 user manual, chapter 
+@h    "CE conformity, directives and standards".
+
+handles dialogs with TIG PLS (job commands, dataset commands, ...)
+
+@FunctionID: A-VAR-16
+TIG 3.11
+@@@END_Comment@@@
+
+@BEG_Contents 
+
+@BEG_Func 
+@RT(17)FuncTreeContainer 
+9 
+@Var @RT(17)KPROT_UserInfoLog @RT(0) @T @T @DERIVED 0 @F @RT(22)KEBA_STANDARD_FUNCTION @F 
+@T 
+@BEG_Attrib 
+0 @RT(0) @RT(0) 
+@END_Attrib 
+1 1 @F @F @F @F 
+
+@Var @RT(17)FDeleteActDSFiles @RT(0) @T @T @DERIVED 0 @F @RT(8)FUNCTION @F 
+@T 
+@BEG_Attrib 
+0 @RT(0) @RT(0) 
+@END_Attrib 
+1 1 @F @F @F @F 
+
+@Var @RT(13)KFILE_MakeDir @RT(0) @T @T @DERIVED 0 @F @RT(22)KEBA_STANDARD_FUNCTION @F 
+@T 
+@BEG_Attrib 
+0 @RT(0) @RT(0) 
+@END_Attrib 
+1 1 @F @F @F @F 
+
+@Var @RT(14)KCAT_GetHandle @RT(0) @T @T @DERIVED 0 @F @RT(22)KEBA_STANDARD_FUNCTION @F 
+@T 
+@BEG_Attrib 
+0 @RT(0) @RT(0) 
+@END_Attrib 
+1 1 @F @F @F @F 
+
+@Var @RT(13)KCAT_GetValue @RT(0) @T @T @DERIVED 0 @F @RT(22)KEBA_STANDARD_FUNCTION @F 
+@T 
+@BEG_Attrib 
+0 @RT(0) @RT(0) 
+@END_Attrib 
+1 1 @F @F @F @F 
+
+@Var @RT(10)KFILE_Open @RT(0) @T @T @DERIVED 0 @F @RT(22)KEBA_STANDARD_FUNCTION @F 
+@T 
+@BEG_Attrib 
+0 @RT(0) @RT(0) 
+@END_Attrib 
+1 1 @F @F @F @F 
+
+@Var @RT(10)KFILE_Read @RT(0) @T @T @DERIVED 0 @F @RT(22)KEBA_STANDARD_FUNCTION @F 
+@T 
+@BEG_Attrib 
+0 @RT(0) @RT(0) 
+@END_Attrib 
+1 1 @F @F @F @F 
+
+@Var @RT(11)KFILE_Write @RT(0) @T @T @DERIVED 0 @F @RT(22)KEBA_STANDARD_FUNCTION @F 
+@T 
+@BEG_Attrib 
+0 @RT(0) @RT(0) 
+@END_Attrib 
+1 1 @F @F @F @F 
+
+@Var @RT(11)KFILE_Close @RT(0) @T @T @DERIVED 0 @F @RT(22)KEBA_STANDARD_FUNCTION @F 
+@T 
+@BEG_Attrib 
+0 @RT(0) @RT(0) 
+@END_Attrib 
+1 1 @F @F @F @F 
+
+@END_Func 
+
+@BEG_Const 
+@RT(18)ConstTreeContainer 
+14 
+@Var @RT(15)CMD_RET_WORKING @RT(0) @T @F @DT @RT(5)DWORD @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+0 @RT(12)16#FFFF_FFFF @RT(0) 
+@END_Attrib 
+1 1 @F @F @F @F 
+
+@Var @RT(19)CMD_ID_DATASET_SAVE @RT(0) @T @F @DT @RT(4)DINT @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+0 @RT(1)5 @RT(0) 
+@END_Attrib 
+1 1 @F @F @F @F 
+
+@Var @RT(19)CMD_ID_DATASET_LOAD @RT(0) @T @F @DT @RT(4)DINT @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+0 @RT(1)6 @RT(0) 
+@END_Attrib 
+1 1 @F @F @F @F 
+
+@Var @RT(18)CMD_RET_OTHERERROR @RT(0) @T @F @DT @RT(5)DWORD @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+0 @RT(12)16#0000_FFFF @RT(0) 
+@END_Attrib 
+1 1 @F @F @F @F 
+
+@Var @RT(12)CMD_ID_NOCMD @RT(0) @T @F @DT @RT(4)DINT @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+0 @RT(1)0 @RT(0) 
+@END_Attrib 
+1 1 @F @F @F @F 
+
+@Var @RT(15)CMD_RET_TIMEOUT @RT(0) @T @F @DT @RT(5)DWORD @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+0 @RT(1)2 @RT(0) 
+@END_Attrib 
+1 1 @F @F @F @F 
+
+@Var @RT(16)CMD_ID_JOB_START @RT(0) @T @F @DT @RT(4)DINT @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+0 @RT(1)1 @RT(0) 
+@END_Attrib 
+1 1 @F @F @F @F 
+
+@Var @RT(20)CMD_ID_JOB_STARTNEXT @RT(0) @T @F @DT @RT(4)DINT @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+0 @RT(1)2 @RT(0) 
+@END_Attrib 
+1 1 @F @F @F @F 
+
+@Var @RT(15)CMD_ID_JOB_STOP @RT(0) @T @F @DT @RT(4)DINT @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+0 @RT(1)3 @RT(0) 
+@END_Attrib 
+1 1 @F @F @F @F 
+
+@Var @RT(16)CMD_ID_JOB_BREAK @RT(0) @T @F @DT @RT(4)DINT @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+0 @RT(1)4 @RT(0) 
+@END_Attrib 
+1 1 @F @F @F @F 
+
+@Var @RT(24)CMD_RET_JOB_NOT_EXISTING @RT(0) @T @F @DT @RT(5)DWORD @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+0 @RT(1)3 @RT(0) 
+@END_Attrib 
+1 1 @F @F @F @F 
+
+@Var @RT(14)KCAT_Status_OK @RT(0) @T @T @DERIVED 0 @F @RT(11)KCAT_Status @F 
+@T 
+@BEG_Attrib 
+0 @RT(1)0 @RT(0) 
+@END_Attrib 
+1 1 @F @F @F @F 
+
+@Var @RT(26)KFILE_Mode_ReadWriteDelete @RT(0) @T @T @DERIVED 0 @F @RT(10)KFILE_Mode @F 
+@T 
+@BEG_Attrib 
+0 @RT(1)3 @RT(102)opens for reading and writing, if file doesn't exist, it will be created, its contents will be deleted 
+@END_Attrib 
+1 1 @F @F @F @F 
+
+@Var @RT(19)KFILE_Mode_ReadOnly @RT(0) @T @T @DERIVED 0 @F @RT(10)KFILE_Mode @F 
+@T 
+@BEG_Attrib 
+0 @RT(1)0 @RT(22)opens for reading only 
+@END_Attrib 
+1 1 @F @F @F @F 
+
+@END_Const 
+
+@BEG_Export 
+
+@BEG_Kind 
+@ALGORITHM_BLOCK @RT(9)ABCommand @STRUCTURED_TEXT 
+@RT(0) @RT(0) @RT(0) 
+@END_Kind 
+
+@BEG_Dcl 
+@RT(16)DclTreeContainer 
+8 
+@Var @RT(9)sv_TIGHmi @RT(0) @T @T @DERIVED 0 @T @T @DT @RT(8)tsTIGHmi @RT(0) @T @T @UNKNOWN 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 8 @F @F @F @F 
+
+@Var @RT(6)sv_TIG @RT(0) @T @T @DERIVED 0 @T @T @DT @RT(5)tsTIG @RT(0) @T @T @UNKNOWN 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 8 @F @F @F @F 
+
+@Var @RT(7)sv_Test @RT(0) @T @F @DT @RT(4)BOOL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 8 @F @F @F @F 
+
+@Var @RT(7)TaskVis @RT(0) @T @F @DT @RT(4)TASK @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 7 @F @F @F @F 
+
+@Var @RT(5)mpCmd @RT(0) @T @T @REFTO 0 @F @DERIVED 0 @T @T @DT @RT(15)tsTIGHmiCommand @RT(0) @T @T @UNKNOWN 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(9)fbTimeOut @RT(0) @T @T @DERIVED 0 @T @T @DT @RT(3)TON @RT(0) @T @T @UNKNOWN 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(10)fbHmiDSCmd @RT(0) @T @T @DERIVED 0 @T @T @DT @RT(12)FBHmiDataSet @RT(0) @T @T @UNKNOWN 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(6)msILog @RT(0) @T @F @DT @RT(11)STRING(127) @RT(0) @T @T @STRING 0 @F @RT(3)127 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@END_Dcl 
+
+@END_Export 
+
+@BEG_Body 
+
+12 
+
+@BEG_Export 
+
+@BEG_Algo 
+@POSTUPDATE_ALGORITHM @RT(13)pCmdHostStart @STRUCTURED_TEXT 
+@RT(0) @RT(32)sv_TIGHmi.dialog.iCmdHost.iStart @RT(7)TaskVis @F @F 
+@END_Algo 
+
+@BEG_Dcl 
+@RT(16)DclTreeContainer 
+1 
+@Var @RT(6)iStart @RT(0) @T @F @DT @RT(4)DINT @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@END_Dcl 
+
+@END_Export 
+
+@BEG_Export 
+
+@BEG_Algo 
+@POSTUPDATE_ALGORITHM @RT(12)pCmdJobStart @STRUCTURED_TEXT 
+@RT(0) @RT(32)sv_TIGHmi.job.cmdStartJob.iStart @RT(7)TaskVis @F @F 
+@END_Algo 
+
+@BEG_Dcl 
+@RT(16)DclTreeContainer 
+1 
+@Var @RT(6)iStart @RT(0) @T @F @DT @RT(4)DINT @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@END_Dcl 
+
+@END_Export 
+
+@BEG_Export 
+
+@BEG_Algo 
+@POSTUPDATE_ALGORITHM @RT(16)pCmdJobStartNext @STRUCTURED_TEXT 
+@RT(0) @RT(36)sv_TIGHmi.job.cmdStartNextJob.iStart @RT(7)TaskVis @F @F 
+@END_Algo 
+
+@BEG_Dcl 
+@RT(16)DclTreeContainer 
+1 
+@Var @RT(6)iStart @RT(0) @T @F @DT @RT(4)DINT @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@END_Dcl 
+
+@END_Export 
+
+@BEG_Export 
+
+@BEG_Algo 
+@POSTUPDATE_ALGORITHM @RT(14)pCmdJobStopJob @STRUCTURED_TEXT 
+@RT(0) @RT(31)sv_TIGHmi.job.cmdStopJob.iStart @RT(7)TaskVis @F @F 
+@END_Algo 
+
+@BEG_Dcl 
+@RT(16)DclTreeContainer 
+1 
+@Var @RT(6)iStart @RT(0) @T @F @DT @RT(4)DINT @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@END_Dcl 
+
+@END_Export 
+
+@BEG_Export 
+
+@BEG_Algo 
+@POSTUPDATE_ALGORITHM @RT(15)pCmdJobBreakJob @STRUCTURED_TEXT 
+@RT(0) @RT(32)sv_TIGHmi.job.cmdBreakJob.iStart @RT(7)TaskVis @F @F 
+@END_Algo 
+
+@BEG_Dcl 
+@RT(16)DclTreeContainer 
+1 
+@Var @RT(6)iStart @RT(0) @T @F @DT @RT(4)DINT @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@END_Dcl 
+
+@END_Export 
+
+@BEG_Export 
+
+@BEG_Algo 
+@POSTUPDATE_ALGORITHM @RT(19)pCmdDSDownload2Ctrl @STRUCTURED_TEXT 
+@RT(0) @RT(48)sv_TIGHmi.dataSet.cmdDataSetDownload2Ctrl.iStart @RT(7)TaskVis @F @F 
+@END_Algo 
+
+@BEG_Dcl 
+@RT(16)DclTreeContainer 
+1 
+@Var @RT(6)iStart @RT(0) @T @F @DT @RT(4)DINT @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@END_Dcl 
+
+@END_Export 
+
+@BEG_Export 
+
+@BEG_Algo 
+@POSTUPDATE_ALGORITHM @RT(22)pCmdDSDownloadAll2Ctrl @STRUCTURED_TEXT 
+@RT(0) @RT(51)sv_TIGHmi.dataSet.cmdDataSetDownloadAll2Ctrl.iStart @RT(7)TaskVis @F @T 
+@END_Algo 
+
+@BEG_Dcl 
+@RT(16)DclTreeContainer 
+1 
+@Var @RT(6)iStart @RT(0) @T @F @DT @RT(4)DINT @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@END_Dcl 
+
+@END_Export 
+
+@BEG_Export 
+
+@BEG_Algo 
+@POSTUPDATE_ALGORITHM @RT(16)pCmdDSUpload2TIG @STRUCTURED_TEXT 
+@RT(0) @RT(45)sv_TIGHmi.dataSet.cmdDataSetUpload2TIG.iStart @RT(7)TaskVis @F @F 
+@END_Algo 
+
+@BEG_Dcl 
+@RT(16)DclTreeContainer 
+1 
+@Var @RT(6)iStart @RT(0) @T @F @DT @RT(4)DINT @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@END_Dcl 
+
+@END_Export 
+
+@BEG_Export 
+
+@BEG_Algo 
+@PROCESS_ALGORITHM @RT(8)paCmdRun @STRUCTURED_TEXT 
+@RT(0) @RT(0) @RT(7)TaskVis @F @F 
+@END_Algo 
+
+@BEG_Dcl 
+@RT(16)DclTreeContainer 
+6 
+@Var @RT(5)iStep @RT(0) @T @F @DT @RT(4)DINT @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(6)iStart @RT(0) @T @F @DT @RT(4)DINT @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(3)ret @RT(0) @T @F @DT @RT(4)BOOL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(12)bTestTimeOut @RT(0) @T @F @DT @RT(4)BOOL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(8)sOldText @RT(0) @T @F @DT @RT(11)STRING(255) @RT(0) @T @T @STRING 0 @F @RT(3)255 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(1)s @RT(0) @T @T @DERIVED 0 @T @T @DT @RT(12)KPROT_Status @RT(0) @T @T @UNKNOWN 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@END_Dcl 
+
+@END_Export 
+
+@BEG_Export 
+
+@BEG_Algo 
+@PROCESS_ALGORITHM @RT(6)paTest @STRUCTURED_TEXT 
+@RT(0) @RT(0) @RT(7)TaskVis @T @F 
+@END_Algo 
+
+@BEG_Dcl 
+@RT(16)DclTreeContainer 
+20 
+@Var @RT(1)i @RT(0) @T @F @DT @RT(4)DINT @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 4 @F @F @F @F 
+
+@Var @RT(5)fbRTC @RT(0) @T @T @DERIVED 0 @T @T @DT @RT(3)RTC @RT(0) @T @T @UNKNOWN 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(5)iStep @RT(0) @T @F @DT @RT(4)DINT @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(11)testTimeOut @RT(0) @T @F @DT @RT(4)BOOL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(7)cntwait @RT(0) @T @F @DT @RT(4)DINT @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(2)10 @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(7)jobName @RT(0) @T @F @DT @RT(10)STRING(20) @RT(0) @T @T @STRING 0 @F @RT(2)20 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(6)iFound @RT(0) @T @F @DT @RT(4)DINT @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(1)s @RT(0) @T @T @DERIVED 0 @T @T @DT @RT(12)KFILE_Status @RT(0) @T @T @UNKNOWN 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(4)name @RT(0) @T @F @DT @RT(11)STRING(255) @RT(0) @T @T @STRING 0 @F @RT(3)255 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(8)opendata @RT(0) @T @T @DERIVED 0 @T @T @DT @RT(15)KFILE_Open_Data @RT(0) @T @T @UNKNOWN 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(5)fname @RT(0) @T @F @DT @RT(11)STRING(255) @RT(0) @T @T @STRING 0 @F @RT(3)255 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(9)opendata2 @RT(0) @T @T @DERIVED 0 @T @T @DT @RT(15)KFILE_Open_Data @RT(0) @T @T @UNKNOWN 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(2)nr @RT(0) @T @F @DT @RT(4)DINT @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(2)rs @RT(0) @T @F @DT @RT(11)STRING(255) @RT(0) @T @T @STRING 0 @F @RT(3)255 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(8)filename @RT(0) @T @F @DT @RT(11)STRING(255) @RT(0) @T @T @STRING 0 @F @RT(3)255 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(7)orgfile @RT(0) @T @F @DT @RT(11)STRING(255) @RT(0) @T @T @STRING 0 @F @RT(3)255 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(1)u @RT(0) @T @F @DT @RT(4)DINT @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(9)sRootPath @RT(0) @T @F @DT @RT(11)STRING(255) @RT(0) @T @T @STRING 0 @F @RT(3)255 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(14)StatusName_CAT @RT(0) @T @T @DERIVED 0 @T @T @DT @RT(15)KCAT_HandleData @RT(0) @T @T @UNKNOWN 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(10)Status_CAT @RT(0) @T @T @DERIVED 0 @T @T @DT @RT(11)KCAT_Status @RT(0) @T @T @UNKNOWN 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@END_Dcl 
+
+@END_Export 
+
+@BEG_Export 
+
+@BEG_Algo 
+@POSTUPDATE_ALGORITHM @RT(8)pCmdHost @STRUCTURED_TEXT 
+@RT(0) @RT(26)sv_TIG.dialog.Host.command @RT(7)TaskVis @F @F 
+@END_Algo 
+
+@BEG_Dcl 
+@RT(16)DclTreeContainer 
+1 
+@Var @RT(6)iStart @RT(0) @T @F @DT @RT(4)DINT @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@END_Dcl 
+
+@END_Export 
+
+@BEG_Export 
+
+@BEG_Algo 
+@POSTUPDATE_ALGORITHM @RT(12)pCmdHostDone @STRUCTURED_TEXT 
+@RT(0) @RT(32)sv_TIGHmi.dialog.iCmdHost.iStart @RT(7)TaskVis @F @F 
+@END_Algo 
+
+@BEG_Dcl 
+@RT(16)DclTreeContainer 
+1 
+@Var @RT(6)iStart @RT(0) @T @F @DT @RT(4)DINT @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@END_Dcl 
+
+@END_Export 
+
+@BEG_Body 
+@TL(22)
+(**************************************** WARNING ********************************************
+ *** The KEBA Kemro K2 System including software is not intended for safety control tasks! ***
+ ***                       For further information see Comment tab!                        ***
+ *********************************************************************************************)
+
+IF (sv_TIGHmi.dialog.iCmdHost.iStart MOD 2 = 1) THEN 
+   IF (NOT sv_TIGHmi.dialog.bCmdWorking) THEN
+      sv_TIGHmi.dialog.bCmdWorking := TRUE;  
+      sv_TIGHmi.dialog.iCmdHost.cmdID := sv_TIG.dialog.Host.command;
+      mpCmd := @sv_TIGHmi.dialog.iCmdHost;
+      mpCmd^.sText := "";
+      sv_TIG.dialog.Host.command := 0;  // sollte man den nicht erst löschen wenn durchgeführt? trigger für lr zum statusauslesn unklar?
+      START_PROCESS_ALGORITHM(paCmdRun);
+   ELSE
+      sv_TIGHmi.dialog.iCmdHost.Status := CMD_RET_WORKING;
+      sv_TIGHmi.dialog.iCmdHost.sText := "#busy#8481";      
+      iStart:= sv_TIGHmi.dialog.iCmdHost.iStart;
+      iStart := iStart + (2 - (iStart MOD 2));
+      sv_TIGHmi.dialog.iCmdHost.iStart := iStart; 
+   END_IF;
+END_IF;
+
+@END_Body 
+
+@@@BEG_Comment@@@ 
+@TL(14)
+@h    ! WARNING !
+@h    The Kemro K2 system (including software) only meets category B according to EN 954-1,
+@h    thus it is not intended for usage in safety-relevant control applications in the field 
+@h    of personal safety (e.g. emergency stop).
+@h    To implement potentially necessary safety-relevant control tasks, always use additional 
+@h    external safety devices that are intended for the particular purpose, and meet the necessary 
+@h    functional safety.
+@h    For further information see EN 954-1 (EN ISO 13849-1) and/or the K2-x00 user manual, chapter 
+@h    "CE conformity, directives and standards".
+
+command triggered by TIG 
+
+@FunctionID: A-VAR-16.3
+TIG 3.11.4
+@@@END_Comment@@@ 
+
+@BEG_Body 
+@TL(21)
+(**************************************** WARNING ********************************************
+ *** The KEBA Kemro K2 System including software is not intended for safety control tasks! ***
+ ***                       For further information see Comment tab!                        ***
+ *********************************************************************************************)
+
+IF (sv_TIGHmi.job.cmdStartJob.iStart MOD 2 = 1) THEN 
+   IF (NOT sv_TIGHmi.dialog.bCmdWorking) THEN
+      sv_TIGHmi.dialog.bCmdWorking := TRUE;  
+//      sv_TIGHmi.job.cmdStartJob.cmdID := CMD_ID_JOB_START;
+      mpCmd := @sv_TIGHmi.job.cmdStartJob;
+      mpCmd^.sText := "#jobstart#8482";      
+      START_PROCESS_ALGORITHM(paCmdRun);
+   ELSE
+      sv_TIGHmi.job.cmdStartJob.Status := CMD_RET_WORKING;
+      sv_TIGHmi.job.cmdStartJob.sText := "#busy#8481";      
+      iStart:= sv_TIGHmi.job.cmdStartJob.iStart;
+      iStart := iStart + (2 - (iStart MOD 2));
+      sv_TIGHmi.job.cmdStartJob.iStart := iStart; 
+   END_IF;
+END_IF;
+
+@END_Body 
+
+@@@BEG_Comment@@@ 
+@TL(14)
+@h    ! WARNING !
+@h    The Kemro K2 system (including software) only meets category B according to EN 954-1,
+@h    thus it is not intended for usage in safety-relevant control applications in the field 
+@h    of personal safety (e.g. emergency stop).
+@h    To implement potentially necessary safety-relevant control tasks, always use additional 
+@h    external safety devices that are intended for the particular purpose, and meet the necessary 
+@h    functional safety.
+@h    For further information see EN 954-1 (EN ISO 13849-1) and/or the K2-x00 user manual, chapter 
+@h    "CE conformity, directives and standards".
+
+command from HMI: start job
+
+@FunctionID: A-VAR-16.4
+TIG 3.11.5
+@@@END_Comment@@@ 
+
+@BEG_Body 
+@TL(21)
+(**************************************** WARNING ********************************************
+ *** The KEBA Kemro K2 System including software is not intended for safety control tasks! ***
+ ***                       For further information see Comment tab!                        ***
+ *********************************************************************************************)
+
+IF (sv_TIGHmi.job.cmdStartNextJob.iStart MOD 2 = 1) THEN
+   IF (NOT sv_TIGHmi.dialog.bCmdWorking) THEN
+      sv_TIGHmi.dialog.bCmdWorking := TRUE;  
+//      sv_TIGHmi.job.cmdStartNextJob.cmdID := CMD_ID_JOB_STARTNEXT;
+      mpCmd := @sv_TIGHmi.job.cmdStartNextJob;
+      mpCmd^.sText := "#jobnext#8483";      
+      START_PROCESS_ALGORITHM(paCmdRun);
+   ELSE
+      sv_TIGHmi.job.cmdStartNextJob.Status := CMD_RET_WORKING;
+      sv_TIGHmi.job.cmdStartNextJob.sText := "#busy#8481";      
+      iStart := sv_TIGHmi.job.cmdStartNextJob.iStart;
+      iStart := iStart + (2 - (iStart MOD 2));
+      sv_TIGHmi.job.cmdStartNextJob.iStart := iStart;
+   END_IF;
+END_IF;
+
+@END_Body 
+
+@@@BEG_Comment@@@ 
+@TL(14)
+@h    ! WARNING !
+@h    The Kemro K2 system (including software) only meets category B according to EN 954-1,
+@h    thus it is not intended for usage in safety-relevant control applications in the field 
+@h    of personal safety (e.g. emergency stop).
+@h    To implement potentially necessary safety-relevant control tasks, always use additional 
+@h    external safety devices that are intended for the particular purpose, and meet the necessary 
+@h    functional safety.
+@h    For further information see EN 954-1 (EN ISO 13849-1) and/or the K2-x00 user manual, chapter 
+@h    "CE conformity, directives and standards".
+
+command from HMI: start next job
+
+@FunctionID: A-VAR-16.4
+TIG 3.11.5
+@@@END_Comment@@@ 
+
+@BEG_Body 
+@TL(21)
+(**************************************** WARNING ********************************************
+ *** The KEBA Kemro K2 System including software is not intended for safety control tasks! ***
+ ***                       For further information see Comment tab!                        ***
+ *********************************************************************************************)
+
+IF (sv_TIGHmi.job.cmdStopJob.iStart MOD 2 = 1) THEN
+   IF (NOT sv_TIGHmi.dialog.bCmdWorking) THEN
+      sv_TIGHmi.dialog.bCmdWorking := TRUE;  
+ //     sv_TIGHmi.job.cmdStopJob.cmdID := CMD_ID_JOB_STOP;
+      mpCmd := @sv_TIGHmi.job.cmdStopJob;
+            mpCmd^.sText := "#jobstop#8484";
+      START_PROCESS_ALGORITHM(paCmdRun);
+   ELSE
+      sv_TIGHmi.job.cmdStopJob.Status := CMD_RET_WORKING;
+      sv_TIGHmi.job.cmdStopJob.sText := "#busy#8481";      
+      iStart := sv_TIGHmi.job.cmdStopJob.iStart;
+      iStart := iStart + (2 - (iStart MOD 2));
+      sv_TIGHmi.job.cmdStopJob.iStart := iStart;
+   END_IF;
+END_IF;
+
+@END_Body 
+
+@@@BEG_Comment@@@ 
+@TL(14)
+@h    ! WARNING !
+@h    The Kemro K2 system (including software) only meets category B according to EN 954-1,
+@h    thus it is not intended for usage in safety-relevant control applications in the field 
+@h    of personal safety (e.g. emergency stop).
+@h    To implement potentially necessary safety-relevant control tasks, always use additional 
+@h    external safety devices that are intended for the particular purpose, and meet the necessary 
+@h    functional safety.
+@h    For further information see EN 954-1 (EN ISO 13849-1) and/or the K2-x00 user manual, chapter 
+@h    "CE conformity, directives and standards".
+
+command from HMI: stop job
+
+@FunctionID: A-VAR-16.4
+TIG 3.11.5
+@@@END_Comment@@@ 
+
+@BEG_Body 
+@TL(21)
+(**************************************** WARNING ********************************************
+ *** The KEBA Kemro K2 System including software is not intended for safety control tasks! ***
+ ***                       For further information see Comment tab!                        ***
+ *********************************************************************************************)
+
+IF (sv_TIGHmi.job.cmdBreakJob.iStart MOD 2 = 1) THEN
+   IF (NOT sv_TIGHmi.dialog.bCmdWorking) THEN
+      sv_TIGHmi.dialog.bCmdWorking := TRUE;  
+//      sv_TIGHmi.job.cmdBreakJob.cmdID := CMD_ID_JOB_BREAK;
+      mpCmd := @sv_TIGHmi.job.cmdBreakJob;
+            mpCmd^.sText := "#jobbreak#8485";
+      START_PROCESS_ALGORITHM(paCmdRun);
+   ELSE
+      sv_TIGHmi.job.cmdBreakJob.Status := CMD_RET_WORKING;
+      sv_TIGHmi.job.cmdBreakJob.sText := "#busy#8481";      
+      iStart := sv_TIGHmi.job.cmdBreakJob.iStart;
+      iStart := iStart + (2 - (iStart MOD 2));
+      sv_TIGHmi.job.cmdBreakJob.iStart := iStart;
+   END_IF;
+END_IF;
+
+@END_Body 
+
+@@@BEG_Comment@@@ 
+@TL(14)
+@h    ! WARNING !
+@h    The Kemro K2 system (including software) only meets category B according to EN 954-1,
+@h    thus it is not intended for usage in safety-relevant control applications in the field 
+@h    of personal safety (e.g. emergency stop).
+@h    To implement potentially necessary safety-relevant control tasks, always use additional 
+@h    external safety devices that are intended for the particular purpose, and meet the necessary 
+@h    functional safety.
+@h    For further information see EN 954-1 (EN ISO 13849-1) and/or the K2-x00 user manual, chapter 
+@h    "CE conformity, directives and standards".
+
+command from HMI: break job
+
+@FunctionID: A-VAR-16.4
+TIG 3.11.5
+@@@END_Comment@@@ 
+
+@BEG_Body 
+@TL(21)
+(**************************************** WARNING ********************************************
+ *** The KEBA Kemro K2 System including software is not intended for safety control tasks! ***
+ ***                       For further information see Comment tab!                        ***
+ *********************************************************************************************)
+
+IF (sv_TIGHmi.dataSet.cmdDataSetDownload2Ctrl.iStart MOD 2 = 1) THEN
+   IF (NOT sv_TIGHmi.dialog.bCmdWorking) THEN
+      sv_TIGHmi.dialog.bCmdWorking := TRUE;  
+//      sv_TIGHmi.dataSet.cmdDataSetDownload2Ctrl.cmdID := CMD_ID_DATASET_LOAD;
+      mpCmd := @sv_TIGHmi.dataSet.cmdDataSetDownload2Ctrl;
+      mpCmd^.sText := "#dsload#8486";
+      START_PROCESS_ALGORITHM(paCmdRun);
+   ELSE
+      sv_TIGHmi.dataSet.cmdDataSetDownload2Ctrl.Status := CMD_RET_WORKING;
+      sv_TIGHmi.dataSet.cmdDataSetDownload2Ctrl.sText := "#busy#8481";      
+      iStart := sv_TIGHmi.dataSet.cmdDataSetDownload2Ctrl.iStart;
+      iStart := iStart + (2 - (iStart MOD 2));
+      sv_TIGHmi.dataSet.cmdDataSetDownload2Ctrl.iStart := iStart; 
+   END_IF;
+END_IF;
+
+@END_Body 
+
+@@@BEG_Comment@@@ 
+@TL(14)
+@h    ! WARNING !
+@h    The Kemro K2 system (including software) only meets category B according to EN 954-1,
+@h    thus it is not intended for usage in safety-relevant control applications in the field 
+@h    of personal safety (e.g. emergency stop).
+@h    To implement potentially necessary safety-relevant control tasks, always use additional 
+@h    external safety devices that are intended for the particular purpose, and meet the necessary 
+@h    functional safety.
+@h    For further information see EN 954-1 (EN ISO 13849-1) and/or the K2-x00 user manual, chapter 
+@h    "CE conformity, directives and standards".
+
+command from HMI: load dataset from TIG
+
+@FunctionID: A-VAR-16.5
+TIG 3.11.6
+@@@END_Comment@@@ 
+
+@BEG_Body 
+@TL(16)
+IF (sv_TIGHmi.dataSet.cmdDataSetDownloadAll2Ctrl.iStart MOD 2 = 1) THEN
+   IF (NOT sv_TIGHmi.dialog.bCmdWorking) THEN
+      sv_TIGHmi.dialog.bCmdWorking := TRUE;  
+      sv_TIGHmi.dataSet.cmdDataSetDownloadAll2Ctrl.cmdID := CMD_ID_DATASET_LOADALL;
+      mpCmd := @sv_TIGHmi.dataSet.cmdDataSetDownloadAll2Ctrl;
+      START_PROCESS_ALGORITHM(paCmdRun);
+   ELSE
+      sv_TIGHmi.dataSet.cmdDataSetDownloadAll2Ctrl.Status := CMD_RET_WORKING;
+      sv_TIGHmi.dataSet.cmdDataSetDownloadAll2Ctrl.sText := "";      
+      iStart := sv_TIGHmi.dataSet.cmdDataSetDownloadAll2Ctrl.iStart;
+      // next even number 
+      iStart := iStart + (2 - (iStart MOD 2));
+      sv_TIGHmi.dataSet.cmdDataSetDownloadAll2Ctrl.iStart := iStart;
+   END_IF;
+END_IF;
+
+@END_Body 
+
+@@@BEG_Comment@@@ 
+@TL(0)
+
+@@@END_Comment@@@ 
+
+@BEG_Body 
+@TL(21)
+(**************************************** WARNING ********************************************
+ *** The KEBA Kemro K2 System including software is not intended for safety control tasks! ***
+ ***                       For further information see Comment tab!                        ***
+ *********************************************************************************************)
+
+IF (sv_TIGHmi.dataSet.cmdDataSetUpload2TIG.iStart MOD 2 = 1) THEN
+   IF (NOT sv_TIGHmi.dialog.bCmdWorking) THEN
+      sv_TIGHmi.dialog.bCmdWorking := TRUE;  
+//      sv_TIGHmi.dataSet.cmdDataSetUpload2TIG.cmdID := CMD_ID_DATASET_SAVE;
+      mpCmd := @sv_TIGHmi.dataSet.cmdDataSetUpload2TIG;
+      mpCmd^.sText := "#dssave#8487";
+      START_PROCESS_ALGORITHM(paCmdRun);
+   ELSE
+      sv_TIGHmi.dataSet.cmdDataSetUpload2TIG.Status := CMD_RET_WORKING;
+      sv_TIGHmi.dataSet.cmdDataSetUpload2TIG.sText := "#busy#8481";      
+      iStart := sv_TIGHmi.dataSet.cmdDataSetUpload2TIG.iStart;
+      iStart := iStart + (2 - (iStart MOD 2));
+      sv_TIGHmi.dataSet.cmdDataSetUpload2TIG.iStart := iStart;
+   END_IF;
+END_IF;
+
+@END_Body 
+
+@@@BEG_Comment@@@ 
+@TL(14)
+@h    ! WARNING !
+@h    The Kemro K2 system (including software) only meets category B according to EN 954-1,
+@h    thus it is not intended for usage in safety-relevant control applications in the field 
+@h    of personal safety (e.g. emergency stop).
+@h    To implement potentially necessary safety-relevant control tasks, always use additional 
+@h    external safety devices that are intended for the particular purpose, and meet the necessary 
+@h    functional safety.
+@h    For further information see EN 954-1 (EN ISO 13849-1) and/or the K2-x00 user manual, chapter 
+@h    "CE conformity, directives and standards".
+
+command from HMI: save dataset to TIG
+
+@FunctionID: A-VAR-16.5
+TIG 3.11.6
+@@@END_Comment@@@ 
+
+@BEG_Body 
+@TL(145)
+(**************************************** WARNING ********************************************
+ *** The KEBA Kemro K2 System including software is not intended for safety control tasks! ***
+ ***                       For further information see Comment tab!                        ***
+ *********************************************************************************************)
+
+IF iStep = 0 THEN
+   s := KPROT_UserInfoLog("Ctrl station: cmd %1i param %5s", mpCmd^.cmdID, 0, 0, 0, mpCmd^.sName);
+   fbHmiDSCmd(Execute := FALSE); 
+   // before command 
+   CASE mpCmd^.cmdID OF
+      
+      CMD_ID_DATASET_SAVE: 
+            ret := FDeleteActDSFiles(sv_TIG.dataSet.sDataSetPath);
+            iStep:=5;
+      
+      CMD_ID_DATASET_LOAD: 
+            ret := FDeleteActDSFiles(sv_TIG.dataSet.sDataSetPath);
+            iStep:=10;
+
+      ELSE
+         iStep:=15; 
+         
+   END_CASE;                                      
+END_IF;
+
+IF iStep = 5 THEN 
+   // before save     set cmd for hmi: save dataset into temp folder 
+   mpCmd^.sText := "#saving#8491";
+   fbHmiDSCmd(Execute := TRUE, Save := TRUE, sParam := mpCmd^.sName); 
+   
+   IF fbHmiDSCmd.Error THEN 
+      mpCmd^.Status := CMD_RET_OTHERERROR; 
+      mpCmd^.sText := "#saveerror#8493";
+      iStep := 30; 
+   END_IF;
+   
+   IF fbHmiDSCmd.Done THEN 
+      mpCmd^.sText := "#savedone#8492";
+      iStep := 15; 
+   END_IF;
+END_IF; 
+
+IF iStep = 10 THEN 
+   // before load
+   iStep:=15; 
+END_IF;
+
+IF iStep = 15 THEN 
+   sv_TIG.dialog.Control.sName := mpCmd^.sName;
+   sOldText := sv_TIG.dialog.Control.sText;
+   sv_TIG.dialog.Control.command := mpCmd^.cmdID;   // command start
+   fbTimeOut(IN := FALSE);
+   iStep := 18; 
+END_IF;
+               
+IF iStep = 18 THEN
+   IF sv_TIG.dialog.Control.sText <> sOldText THEN 
+     mpCmd^.sText := sv_TIG.dialog.Control.sText;
+   END_IF; 
+   fbTimeOut(TRUE, T#1m);   
+   IF (sv_TIG.dialog.Control.command = CMD_ID_NOCMD) THEN 
+      mpCmd^.Status := sv_TIG.dialog.Control.State;
+//      mpCmd^.sText := sv_TIG.dialog.Control.sText;
+   END_IF;
+   IF fbTimeOut.Q OR bTestTimeOut THEN
+      sv_TIG.dialog.Control.command := CMD_ID_NOCMD;
+      mpCmd^.Status := CMD_RET_TIMEOUT;
+      mpCmd^.sText := "#timeout#8480";
+      iStep := 30; 
+      RETURN; 
+   END_IF;
+   IF (sv_TIG.dialog.Control.command = CMD_ID_NOCMD) THEN 
+      IF mpCmd^.Status = 0 THEN
+              iStep := 20; 
+      ELSE 
+              iStep := 30; // in case of an error 
+      END_IF;
+
+   END_IF;
+END_IF;
+
+IF iStep = 20 THEN
+    mpCmd^.sText := sv_TIG.dialog.Control.sText;
+   // after command
+   CASE mpCmd^.cmdID OF
+      CMD_ID_JOB_START:
+          sv_TIGHmi.job.jobData.iNewPartListDataCnt := sv_TIGHmi.job.jobData.iNewPartListDataCnt + 1;  // trigger new calculation of partlistlength
+          iStep := 30;      
+
+      CMD_ID_JOB_STARTNEXT:
+          sv_TIGHmi.job.jobData.iNewPartListDataCnt := sv_TIGHmi.job.jobData.iNewPartListDataCnt + 1;      
+          iStep := 30;   
+      
+      CMD_ID_JOB_STOP:
+          sv_TIGHmi.job.jobData.iNewPartListDataCnt := sv_TIGHmi.job.jobData.iNewPartListDataCnt + 1;      
+          iStep := 30;   
+
+      CMD_ID_JOB_BREAK:
+          sv_TIGHmi.job.jobData.iNewPartListDataCnt := sv_TIGHmi.job.jobData.iNewPartListDataCnt + 1;      
+          iStep := 30; 
+          
+      CMD_ID_DATASET_LOAD: 
+          iStep := 25;
+      
+      ELSE
+         iStep:=30; 
+   END_CASE;
+   
+
+END_IF;
+
+IF iStep = 25 THEN
+    // after load     set cmd for hmi: load dataset from temp folder 
+   fbHmiDSCmd(Execute := TRUE, Save := FALSE, sParam := mpCmd^.sName); 
+   mpCmd^.sText := "#loading#8488";   
+   IF fbHmiDSCmd.Error THEN 
+      mpCmd^.Status := CMD_RET_OTHERERROR; 
+      iStep := 30;
+      mpCmd^.sText := "#loaderror#8489";
+   END_IF;
+   
+   IF fbHmiDSCmd.Done THEN 
+      iStep := 30; 
+      mpCmd^.sText := "#loaddone#8490";      
+   END_IF;
+END_IF;
+
+IF iStep = 30 THEN
+      // command done
+    //iStart MOD 2 = 1 starts the command
+    // iStart MOD 2 = 0 stopped 
+    
+      msILog := CONCAT("Control station: command ", DINT_TO_STRING(mpCmd^.cmdID), " done, status=", DWORD_TO_STRING(mpCmd^.Status), " text=", "");
+      s := KPROT_UserInfoLog("%5s", 0, 0, 0, 0, msILog);
+    
+      sv_TIG.dialog.Control.command := CMD_ID_NOCMD; 
+   
+      iStart := mpCmd^.iStart;
+      iStart := iStart + (2 - (iStart MOD 2));
+      mpCmd^.iStart := iStart; 
+      sv_TIGHmi.dialog.bCmdWorking := FALSE;
+      iStep := 0; 
+      STOP_PROCESS_ALGORITHM();
+END_IF;
+
+@END_Body 
+
+@@@BEG_Comment@@@ 
+@TL(14)
+@h    ! WARNING !
+@h    The Kemro K2 system (including software) only meets category B according to EN 954-1,
+@h    thus it is not intended for usage in safety-relevant control applications in the field 
+@h    of personal safety (e.g. emergency stop).
+@h    To implement potentially necessary safety-relevant control tasks, always use additional 
+@h    external safety devices that are intended for the particular purpose, and meet the necessary 
+@h    functional safety.
+@h    For further information see EN 954-1 (EN ISO 13849-1) and/or the K2-x00 user manual, chapter 
+@h    "CE conformity, directives and standards".
+
+run command: communication with TIG
+
+@FunctionID: A-VAR-16.1
+TIG 3.11.2
+@@@END_Comment@@@ 
+
+@BEG_Body 
+@TL(235)
+(**************************************** WARNING ********************************************
+ *** The KEBA Kemro K2 System including software is not intended for safety control tasks! ***
+ ***                       For further information see Comment tab!                        ***
+ *********************************************************************************************)
+
+IF NOT sv_Test THEN
+   iStep := 0; 
+   RETURN;
+END_IF;
+
+
+IF iStep = 0 THEN
+   IF testTimeOut THEN
+      RETURN;    
+   END_IF;
+   CASE sv_TIG.dialog.Control.command OF
+      CMD_ID_JOB_START: 
+         jobName := sv_TIG.dialog.Control.sName;
+         iStep := 10;       
+         cntwait := 50;
+      
+      CMD_ID_JOB_STARTNEXT:       
+         iStep := 25;       
+         cntwait := 10;
+      
+      CMD_ID_JOB_STOP:                 
+        iStep:=50; 
+         cntwait := 10;
+      
+      CMD_ID_JOB_BREAK:                 
+        iStep:=50; 
+         cntwait := 10;
+      
+      CMD_ID_DATASET_SAVE:
+           iStep:=100; 
+         cntwait:=10; 
+      
+      CMD_ID_DATASET_LOAD:
+           iStep:=150; 
+         cntwait:=10; 
+      
+    
+   END_CASE;
+END_IF;
+
+IF iStep = 10 THEN
+   sv_TIG.dialog.Control.sText := "search job ...";         
+   cntwait := cntwait - 1;
+   IF cntwait = 0 THEN
+      iStep := 20;   
+   END_IF;
+END_IF;
+
+    fbRTC();
+
+    sv_TIG.job.jobData.JobActEnd := DT_TO_STRING(fbRTC.CDT);
+    
+IF iStep = 20111 THEN
+   // start job 
+    sv_TIG.productionData.Act.bResetCounter := TRUE;
+    sv_TIG.job.jobData.iJobID := sv_TIG.job.yJobList[1].iJobID;
+
+    sv_TIG.job.jobData.JobActBegin := DT_TO_STRING(fbRTC.CDT);    
+    sv_TIG.job.jobData.JobSetBegin := DT_TO_STRING(fbRTC.CDT);
+    sv_TIG.job.jobData.JobSetEnd := DT_TO_STRING(fbRTC.CDT);
+    sv_TIG.job.jobData.JobDelivery := DT_TO_STRING(DT#2017-1-1-13:13:13.131)     ;
+    sv_TIG.job.jobData.sJobComment := "aklsdfkasjfl";
+    sv_TIG.job.jobData.sJobCustomer := "hsf_customer";
+    sv_TIG.job.jobData.sJobName := sv_TIG.job.yJobList[1].sJobName;
+    sv_TIG.job.jobData.sJobType := "type";
+   
+    FOR i:=1 TO 5 DO
+       sv_TIG.job.jobData.yJobArticle[i].sArticleName := CONCAT("article_", DINT_TO_STRING(i)); 
+       sv_TIG.job.jobData.yJobPartList[i].sType := CONCAT("stklisttyp_", DINT_TO_STRING(i)); 
+       sv_TIG.job.jobData.yJobPartList[i].sName := CONCAT("stklistbez_", DINT_TO_STRING(i));        
+    END_FOR;
+    sv_TIG.dialog.Control.command := 0; 
+    iStep := 0; 
+END_IF;
+
+IF iStep = 20 THEN
+   // start job 
+       sv_TIG.productionData.Act.bResetCounter := TRUE;
+   iFound := 0; 
+    FOR i:=1 TO sv_TIGHmi.job.iJobListTextsLength DO
+       IF jobName = DINT_TO_STRING(sv_TIG.job.yJobList[i].iJobID) THEN
+            iFound := i;        
+             EXIT; 
+       END_IF;    
+    END_FOR;
+    
+     IF iFound=0 THEN
+         sv_TIG.dialog.Control.State := CMD_RET_JOB_NOT_EXISTING; 
+         sv_TIG.dialog.Control.sText := "no job found!";         
+         sv_TIG.dialog.Control.command := 0; 
+         iStep := 0; 
+        RETURN; 
+    END_IF;   
+   
+   iStep:=30;
+END_IF;
+   
+IF iStep=25 THEN
+   // next job
+       sv_TIG.productionData.Act.bResetCounter := TRUE;
+   iFound:=iFound+1;
+   IF iFound > sv_TIGHmi.job.iJobListTextsLength THEN
+       sv_TIG.dialog.Control.State := CMD_RET_JOB_NOT_EXISTING; 
+         sv_TIG.dialog.Control.sText := "no job found!";         
+         sv_TIG.dialog.Control.command := 0; 
+         iStep := 0; 
+        RETURN; 
+   END_IF;
+  iStep:=30;
+END_IF;   
+   
+   // do job
+IF iStep=30 THEN
+
+
+    sv_TIG.job.jobData.iJobID := sv_TIG.job.yJobList[iFound].iJobID;
+
+    sv_TIG.job.jobData.JobActBegin := DT_TO_STRING(fbRTC.CDT);  
+   sv_TIG.job.jobData.JobSetBegin := DT_TO_STRING(fbRTC.CDT);
+    sv_TIG.job.jobData.JobSetEnd := DT_TO_STRING(fbRTC.CDT);
+    sv_TIG.job.jobData.JobDelivery := DT_TO_STRING(DT#2017-1-1-13:13:13.131);
+    sv_TIG.job.jobData.sJobComment := "aklsdfkasjfl";
+    sv_TIG.job.jobData.sJobCustomer := "hsf_customer";
+    sv_TIG.job.jobData.sJobName := sv_TIG.job.yJobList[iFound].sJobName;
+    sv_TIG.job.jobData.sJobType := "type";
+IF                              sv_TIG.job.jobData.iJobID MOD 2 = 0 THEN
+   u := 5;
+   ELSE 
+      u:=2;
+   END_IF;
+    FOR i:=1 TO u DO
+       sv_TIG.job.jobData.yJobArticle[i].sArticleName := CONCAT(jobName, "article_", DINT_TO_STRING(i)); 
+       sv_TIG.job.jobData.yJobPartList[i].sType := CONCAT(jobName, "stklisttyp_", DINT_TO_STRING(i)); 
+       sv_TIG.job.jobData.yJobPartList[i].sName := CONCAT(jobName, "stklistbez_", DINT_TO_STRING(i));        
+    END_FOR;
+   sv_TIG.job.jobData.yJobArticle[i+1].sArticleName := "";
+    sv_TIG.dialog.Control.command := 0; 
+            sv_TIG.dialog.Control.State := 0; 
+               sv_TIG.dialog.Control.sText := "job started"; 
+    iStep := 0; 
+   
+END_IF;
+
+   // stop/break job
+IF iStep=50 THEN
+
+
+    sv_TIG.job.jobData.iJobID := 0;
+
+    sv_TIG.job.jobData.JobActBegin := DT_TO_STRING(fbRTC.CDT);  
+    sv_TIG.job.jobData.JobSetBegin := DT_TO_STRING(fbRTC.CDT);
+    sv_TIG.job.jobData.JobSetEnd := DT_TO_STRING(fbRTC.CDT);
+    sv_TIG.job.jobData.JobDelivery := DT_TO_STRING(DT#2017-1-1-13:13:13.131);
+    sv_TIG.job.jobData.sJobComment := "";
+    sv_TIG.job.jobData.sJobCustomer := "";
+    sv_TIG.job.jobData.sJobName := "";
+    sv_TIG.job.jobData.sJobType := "";
+   
+    FOR i:=1 TO 5 DO
+       sv_TIG.job.jobData.yJobArticle[i].sArticleName := "";
+       sv_TIG.job.jobData.yJobPartList[i].sType := "";
+       sv_TIG.job.jobData.yJobPartList[i].sName := "";
+    END_FOR;
+    sv_TIG.dialog.Control.command := 0; 
+            sv_TIG.dialog.Control.State := 0; 
+               sv_TIG.dialog.Control.sText := ""; 
+    iStep := 0; 
+   
+END_IF;
+
+// save
+IF iStep=100 THEN 
+   cntwait := cntwait - 1;
+   IF cntwait > 0 THEN
+       RETURN;
+   END_IF;   
+
+   sv_TIG.dialog.Control.command := 0; 
+   sv_TIG.dialog.Control.State := 0; 
+   sv_TIG.dialog.Control.sText := ""; 
+
+   iStep := 0;
+END_IF;
+
+// load
+IF iStep=150 THEN 
+//   name := CONCAT(sv_TIG.dataSet.sDataSetPath, "/", sv_TIG.dialog.Control.sName);
+   name := sv_TIG.dataSet.sDataSetPath;
+   s := KFILE_MakeDir(name);
+   filename := '/mold.xml';
+
+
+   StatusName_CAT := KCAT_GetHandle('System.workPath');
+   IF StatusName_CAT.Status = KCAT_Status_OK THEN
+     Status_CAT := KCAT_GetValue(Handle := StatusName_CAT.Handle, Buffer := sRootPath);
+   END_IF;
+       
+   orgfile := CONCAT(sRootPath,'/workspace/data/molddata/mold.xml')  ;
+   iStep:=155;
+END_IF;
+
+IF iStep=155  THEN 
+   fname := CONCAT(name, filename);
+   opendata := KFILE_Open(fname, KFILE_Mode_ReadWriteDelete);
+
+
+   opendata2 := KFILE_Open(orgfile, KFILE_Mode_ReadOnly);
+   
+   REPEAT
+      nr := KFILE_Read(opendata2.Token, 255, rs);
+      i:=KFILE_Write(opendata.Token, nr, rs);
+   UNTIL (nr<255)
+   END_REPEAT;
+      
+   s := KFILE_Close(opendata.Token);
+         s := KFILE_Close(opendata2.Token);
+   
+
+
+
+   iStep := 160;
+END_IF;
+
+IF iStep=160 THEN 
+      sv_TIG.dialog.Control.command := 0; 
+            sv_TIG.dialog.Control.State := 0; 
+               sv_TIG.dialog.Control.sText := "tigjob done"; 
+   iStep:=0; 
+END_IF;
+
+@END_Body 
+
+@@@BEG_Comment@@@ 
+@TL(14)
+@h    ! WARNING !
+@h    The Kemro K2 system (including software) only meets category B according to EN 954-1,
+@h    thus it is not intended for usage in safety-relevant control applications in the field 
+@h    of personal safety (e.g. emergency stop).
+@h    To implement potentially necessary safety-relevant control tasks, always use additional 
+@h    external safety devices that are intended for the particular purpose, and meet the necessary 
+@h    functional safety.
+@h    For further information see EN 954-1 (EN ISO 13849-1) and/or the K2-x00 user manual, chapter 
+@h    "CE conformity, directives and standards".
+
+simulation routine
+
+
+
+@@@END_Comment@@@ 
+
+@BEG_Body 
+@TL(11)
+(**************************************** WARNING ********************************************
+ *** The KEBA Kemro K2 System including software is not intended for safety control tasks! ***
+ ***                       For further information see Comment tab!                        ***
+ *********************************************************************************************)
+
+sv_TIGHmi.dialog.iCmdHost.sName := sv_TIG.dialog.Host.sName;
+//iStart MOD 2 = 1 starts the command      
+iStart := sv_TIGHmi.dialog.iCmdHost.iStart;
+iStart := iStart + ((iStart MOD 2) + 1);
+sv_TIGHmi.dialog.iCmdHost.iStart := iStart;
+
+@END_Body 
+
+@@@BEG_Comment@@@ 
+@TL(14)
+@h    ! WARNING !
+@h    The Kemro K2 system (including software) only meets category B according to EN 954-1,
+@h    thus it is not intended for usage in safety-relevant control applications in the field 
+@h    of personal safety (e.g. emergency stop).
+@h    To implement potentially necessary safety-relevant control tasks, always use additional 
+@h    external safety devices that are intended for the particular purpose, and meet the necessary 
+@h    functional safety.
+@h    For further information see EN 954-1 (EN ISO 13849-1) and/or the K2-x00 user manual, chapter 
+@h    "CE conformity, directives and standards".
+
+command triggered by TIG recieved
+
+@FunctionID: A-VAR-16.3
+TIG 3.11.4
+@@@END_Comment@@@ 
+
+@BEG_Body 
+@TL(13)
+(**************************************** WARNING ********************************************
+ *** The KEBA Kemro K2 System including software is not intended for safety control tasks! ***
+ ***                       For further information see Comment tab!                        ***
+ *********************************************************************************************)
+
+iStart := sv_TIGHmi.dialog.iCmdHost.iStart;
+IF ((iStart MOD 2) = 0) THEN
+   // cmd done
+   sv_TIG.dialog.Host.sText := sv_TIG.dialog.Control.sText;
+   sv_TIG.dialog.Host.State := sv_TIG.dialog.Control.State;
+END_IF;
+
+
+@END_Body 
+
+@@@BEG_Comment@@@ 
+@TL(14)
+@h    ! WARNING !
+@h    The Kemro K2 system (including software) only meets category B according to EN 954-1,
+@h    thus it is not intended for usage in safety-relevant control applications in the field 
+@h    of personal safety (e.g. emergency stop).
+@h    To implement potentially necessary safety-relevant control tasks, always use additional 
+@h    external safety devices that are intended for the particular purpose, and meet the necessary 
+@h    functional safety.
+@h    For further information see EN 954-1 (EN ISO 13849-1) and/or the K2-x00 user manual, chapter 
+@h    "CE conformity, directives and standards".
+
+command triggered by TIG done
+
+@FunctionID: A-VAR-16.3
+TIG 3.11.4
+@@@END_Comment@@@ 
+@END_Body 
+
+@END_Contents 

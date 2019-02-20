@@ -1,0 +1,150 @@
+(*
+Sending the device registration event to the system fu
+*)
+
+IMPORT_OVER_LISTFILE
+ SET_ALARM
+, tevDeviceRegister
+, tevDeviceRegisterData
+, tsDeviceId
+
+END_IMPORT
+
+FUNCTION_BLOCK FBDeviceRegister #DUMMY_EDIT_BLOCK
+
+SYSTEM_VAR
+ sv_DeviceId : tsDeviceId;
+END_VAR
+
+SYSTEM_OBJECT
+ evDeviceRegister : tevDeviceRegister;
+ erNoSvDeviceId : ALARM;
+END_OBJECT
+
+VAR
+ evDeviceRegisterData : tevDeviceRegisterData;
+ fuName : STRING(255) (* In which FU the sv_DeviceId is missing *);
+END_VAR
+#BEGIN_EDIT_BLOCK
+(**************************************** WARNING ********************************************
+ *** The KEBA Kemro K2 System including software is not intended for safety control tasks! ***
+ ***                       For further information see Comment tab!                        ***
+ *********************************************************************************************)
+
+
+// sending device registrationevent to system FU
+IF IS_LINKED(sv_DeviceId) THEN
+   evDeviceRegisterData.DeviceId := sv_DeviceId;
+   SET_EVENT(evDeviceRegister, evDeviceRegisterData);
+ELSE 
+   fuName:= GET_MY_FU_NAME();
+   SET_ALARM(Name := erNoSvDeviceId, Param1 := fuName);
+END_IF;
+
+
+
+;#END_EDIT_BLOCK END_FUNCTION_BLOCK
+
+
+
+#END_OF_IEC_PART
+
+@Puma @IecEditor 6 10 @Pou 25 
+@@@BEG_Comment@@@
+Sending the device registration event to the system fu
+@@@END_Comment@@@
+
+@BEG_Contents 
+
+@BEG_Func 
+@RT(17)FuncTreeContainer 
+1 
+@Var @RT(9)SET_ALARM @RT(0) @T @T @DERIVED 0 @F @RT(23)KEBA_STANDARD_PROCEDURE @F 
+@T 
+@BEG_Attrib 
+0 @RT(0) @RT(0) 
+@END_Attrib 
+1 1 @F @F @F @F 
+
+@END_Func 
+
+@BEG_Const 
+@RT(18)ConstTreeContainer 
+0 
+@END_Const 
+
+@BEG_Export 
+
+@BEG_Kind 
+@FUNCTION_BLOCK @RT(16)FBDeviceRegister @STRUCTURED_TEXT 
+@RT(0) @RT(0) @RT(0) 
+@END_Kind 
+
+@BEG_Dcl 
+@RT(16)DclTreeContainer 
+5 
+@Var @RT(16)evDeviceRegister @RT(0) @T @T @DERIVED 0 @T @T @DT @RT(17)tevDeviceRegister @RT(0) @T @T @UNKNOWN 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 7 @F @F @F @F 
+
+@Var @RT(20)evDeviceRegisterData @RT(0) @T @T @DERIVED 0 @T @T @DT @RT(21)tevDeviceRegisterData @RT(0) @T @T @UNKNOWN 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(14)erNoSvDeviceId @RT(0) @T @F @DT @RT(5)ALARM @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 7 @F @F @F @F 
+
+@Var @RT(11)sv_DeviceId @RT(0) @T @T @DERIVED 0 @T @T @DT @RT(10)tsDeviceId @RT(0) @T @T @UNKNOWN 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 8 @F @F @F @F 
+
+@Var @RT(6)fuName @RT(0) @T @F @DT @RT(11)STRING(255) @RT(0) @T @T @STRING 0 @F @RT(3)255 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(38)In which FU the sv_DeviceId is missing @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@END_Dcl 
+
+@END_Export 
+
+@BEG_Body 
+@TL(16)
+(**************************************** WARNING ********************************************
+ *** The KEBA Kemro K2 System including software is not intended for safety control tasks! ***
+ ***                       For further information see Comment tab!                        ***
+ *********************************************************************************************)
+
+
+// sending device registrationevent to system FU
+IF IS_LINKED(sv_DeviceId) THEN
+   evDeviceRegisterData.DeviceId := sv_DeviceId;
+   SET_EVENT(evDeviceRegister, evDeviceRegisterData);
+ELSE 
+   fuName:= GET_MY_FU_NAME();
+   SET_ALARM(Name := erNoSvDeviceId, Param1 := fuName);
+END_IF;
+
+
+@END_Body 
+
+@END_Contents 

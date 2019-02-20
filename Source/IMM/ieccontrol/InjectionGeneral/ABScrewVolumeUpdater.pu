@@ -1,0 +1,229 @@
+IMPORT_OVER_LISTFILE
+ FCalcScrewSize
+
+END_IMPORT
+
+ALGORITHM_BLOCK ABScrewVolumeUpdater #DUMMY_EDIT_BLOCK
+
+SYSTEM_VAR
+ sv_rScrewStroke : REAL;
+ sv_rScrewVolume : REAL;
+ sv_rScrewDiameter : REAL;
+END_VAR
+
+SYSTEM_OBJECT
+ PU_Task_7 : TASK;
+END_OBJECT
+
+(*
+update sv_rScrewVolume when sv_rScrewStroke changes
+*)
+
+POSTUPDATE_ALGORITHM pUpdate ON PU_Task_7 WITH sv_rScrewStroke,sv_rScrewDiameter
+
+#BEGIN_EDIT_BLOCK
+(**************************************** WARNING ********************************************
+ *** The KEBA Kemro K2 System including software is not intended for safety control tasks! ***
+ ***                       For further information see Comment tab!                        ***
+ *********************************************************************************************)
+
+
+// sanity check
+IF sv_rScrewDiameter <= 0.0 THEN
+   sv_rScrewDiameter := 34.0;
+END_IF;
+
+//multiply sizes in mm^2 /mm then convert to cm^3
+sv_rScrewVolume := sv_rScrewStroke * FCalcScrewSize(sv_rScrewDiameter) / 1000.0;
+
+
+
+;#END_EDIT_BLOCK END_ALGORITHM
+
+(*
+initialize block
+update sv_rScrewVolume
+sv_rScrewVolume is in cm^3
+*)
+
+ALGORITHM aInit
+
+#BEGIN_EDIT_BLOCK
+(**************************************** WARNING ********************************************
+ *** The KEBA Kemro K2 System including software is not intended for safety control tasks! ***
+ ***                       For further information see Comment tab!                        ***
+ *********************************************************************************************)
+
+// sanity check
+IF sv_rScrewDiameter <= 0.0 THEN
+   sv_rScrewDiameter := 34.0;
+END_IF;
+
+//multiply sizes in mm^2 /mm then convert to cm^3
+sv_rScrewVolume := sv_rScrewStroke * FCalcScrewSize(sv_rScrewDiameter) / 1000.0;
+
+
+
+;#END_EDIT_BLOCK END_ALGORITHM
+
+
+
+END_ALGORITHM_BLOCK
+
+
+
+#END_OF_IEC_PART
+
+@Puma @IecEditor 6 60 @Pou 25 
+@@@BEG_Comment@@@
+
+@@@END_Comment@@@
+
+@BEG_Contents 
+
+@BEG_Func 
+@RT(17)FuncTreeContainer 
+1 
+@Var @RT(14)FCalcScrewSize @RT(0) @T @T @DERIVED 0 @F @RT(8)FUNCTION @F 
+@T 
+@BEG_Attrib 
+0 @RT(0) @RT(0) 
+@END_Attrib 
+1 1 @F @F @F @F 
+
+@END_Func 
+
+@BEG_Const 
+@RT(18)ConstTreeContainer 
+0 
+@END_Const 
+
+@BEG_Export 
+
+@BEG_Kind 
+@ALGORITHM_BLOCK @RT(20)ABScrewVolumeUpdater @STRUCTURED_TEXT 
+@RT(0) @RT(0) @RT(0) 
+@END_Kind 
+
+@BEG_Dcl 
+@RT(16)DclTreeContainer 
+4 
+@Var @RT(15)sv_rScrewStroke @RT(0) @T @F @DT @RT(4)REAL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 8 @F @F @F @F 
+
+@Var @RT(15)sv_rScrewVolume @RT(0) @T @F @DT @RT(4)REAL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 8 @F @F @F @F 
+
+@Var @RT(17)sv_rScrewDiameter @RT(0) @T @F @DT @RT(4)REAL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 8 @F @F @F @F 
+
+@Var @RT(9)PU_Task_7 @RT(0) @T @F @DT @RT(4)TASK @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 7 @F @F @F @F 
+
+@END_Dcl 
+
+@END_Export 
+
+@BEG_Body 
+
+2 
+
+@BEG_Export 
+
+@BEG_Algo 
+@POSTUPDATE_ALGORITHM @RT(7)pUpdate @STRUCTURED_TEXT 
+@RT(0) @RT(33)sv_rScrewStroke,sv_rScrewDiameter @RT(9)PU_Task_7 @F @F 
+@END_Algo 
+
+@BEG_Dcl 
+@RT(16)DclTreeContainer 
+0 
+@END_Dcl 
+
+@END_Export 
+
+@BEG_Export 
+
+@BEG_Algo 
+@ALGORITHM @RT(5)aInit @STRUCTURED_TEXT 
+@RT(0) @RT(0) @RT(0) @F @F 
+@END_Algo 
+
+@BEG_Dcl 
+@RT(16)DclTreeContainer 
+0 
+@END_Dcl 
+
+@END_Export 
+
+@BEG_Body 
+@TL(15)
+(**************************************** WARNING ********************************************
+ *** The KEBA Kemro K2 System including software is not intended for safety control tasks! ***
+ ***                       For further information see Comment tab!                        ***
+ *********************************************************************************************)
+
+
+// sanity check
+IF sv_rScrewDiameter <= 0.0 THEN
+   sv_rScrewDiameter := 34.0;
+END_IF;
+
+//multiply sizes in mm^2 /mm then convert to cm^3
+sv_rScrewVolume := sv_rScrewStroke * FCalcScrewSize(sv_rScrewDiameter) / 1000.0;
+
+
+@END_Body 
+
+@@@BEG_Comment@@@ 
+@TL(1)
+update sv_rScrewVolume when sv_rScrewStroke changes
+@@@END_Comment@@@ 
+
+@BEG_Body 
+@TL(14)
+(**************************************** WARNING ********************************************
+ *** The KEBA Kemro K2 System including software is not intended for safety control tasks! ***
+ ***                       For further information see Comment tab!                        ***
+ *********************************************************************************************)
+
+// sanity check
+IF sv_rScrewDiameter <= 0.0 THEN
+   sv_rScrewDiameter := 34.0;
+END_IF;
+
+//multiply sizes in mm^2 /mm then convert to cm^3
+sv_rScrewVolume := sv_rScrewStroke * FCalcScrewSize(sv_rScrewDiameter) / 1000.0;
+
+
+@END_Body 
+
+@@@BEG_Comment@@@ 
+@TL(3)
+initialize block
+update sv_rScrewVolume
+sv_rScrewVolume is in cm^3
+@@@END_Comment@@@ 
+@END_Body 
+
+@END_Contents 

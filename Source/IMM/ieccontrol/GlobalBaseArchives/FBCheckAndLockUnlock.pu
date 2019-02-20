@@ -1,0 +1,338 @@
+(*
+@h    ! WARNING !
+@h    The Kemro K2 system (including software) only meets category B according to EN 954-1,
+@h    thus it is not intended for usage in safety-relevant control applications in the field 
+@h    of personal safety (e.g. emergency stop).
+@h    To implement potentially necessary safety-relevant control tasks, always use additional 
+@h    external safety devices that are intended for the particular purpose, and meet the necessary 
+@h    functional safety.
+@h    For further information see EN 954-1 (EN ISO 13849-1) and/or the K2-x00 user manual, chapter 
+@h    "CE conformity, directives and standards".
+*)
+
+IMPORT_OVER_LISTFILE
+ tCompId
+, tIndexId
+, tMoveIdent
+, FBCheckPosReached
+, FBLockUnlock
+, tsDeviceId
+, R_TRIG
+, F_TRIG
+
+END_IMPORT
+
+FUNCTION_BLOCK FBCheckAndLockUnlock #DUMMY_EDIT_BLOCK
+
+VAR_INPUT
+ CompIdToCheck : tCompId (* component id of movement that must be in endposition *);
+ IndexIdToCheck : tIndexId (* index id of movement that must be in endposition *);
+ MoveDirToCheck : tMoveIdent;
+ MoveIdToCheck : tMoveIdent;
+ CompIdToLock : tCompId (* component id of movement that should be locked/unlocked *);
+ IndexIdToLock : tIndexId (* index id of movement that should be locked/unlocked *);
+ MoveDirToLock : tMoveIdent;
+ MoveIdToLock : tMoveIdent;
+END_VAR
+
+VAR
+ fbCheckPosReached : FBCheckPosReached;
+ fbLockUnlock : FBLockUnlock;
+ DeviceIdToCheck : tsDeviceId;
+ DeviceIdToLock : tsDeviceId;
+ fbRTrig : R_TRIG;
+ fbFTrig : F_TRIG;
+ bNewParameters : BOOL;
+ OldCompIdToCheck : tCompId;
+ OldIndexIdToCheck : tIndexId;
+ OldCompIdToLock : tCompId;
+ OldIndexIdToLock : tIndexId;
+END_VAR
+#BEGIN_EDIT_BLOCK
+(**************************************** WARNING ********************************************
+ *** The KEBA Kemro K2 System including software is not intended for safety control tasks! ***
+ ***                       For further information see Comment tab!                        ***
+ *********************************************************************************************)
+
+DeviceIdToCheck.CompId := CompIdToCheck;
+DeviceIdToCheck.IndexId := IndexIdToCheck;
+DeviceIdToLock.CompId := CompIdToLock;
+DeviceIdToLock.IndexId := IndexIdToLock;
+
+bNewParameters := (IndexIdToLock <> OldIndexIdToLock) OR (CompIdToLock <> OldCompIdToLock) OR
+                  (IndexIdToCheck <> OldIndexIdToCheck) OR (CompIdToCheck <> OldCompIdToCheck);
+            
+
+//check posReached - Flag
+fbCheckPosReached(DeviceId := DeviceIdToCheck,
+                MoveDir := MoveDirToCheck,
+                MoveId := MoveIdToCheck);
+
+fbRTrig(CLK := fbCheckPosReached.bPosReached);
+fbFTrig(CLK := fbCheckPosReached.bPosReached);
+                
+
+IF fbRTrig.Q OR fbFTrig.Q OR bNewParameters THEN
+    //only send events if posReached has changed or block is called with new parameters
+    IF fbCheckPosReached.bPosReached THEN
+        fbLockUnlock.Mode := nUnlock; //allow movement
+    ELSE
+        fbLockUnlock.Mode := nLockAbort; //don´t allow movement
+    END_IF;
+    
+    fbLockUnlock(DeviceId := DeviceIdToLock,
+                MoveDir := MoveDirToLock,
+                MoveId := MoveIdToLock,
+                Alarm := fbCheckPosReached.Alarm);
+END_IF;
+
+OldIndexIdToLock := IndexIdToLock;
+OldCompIdToLock := CompIdToLock;
+OldIndexIdToCheck := IndexIdToCheck;
+OldCompIdToCheck := CompIdToCheck;
+
+
+;#END_EDIT_BLOCK END_FUNCTION_BLOCK
+
+
+
+#END_OF_IEC_PART
+
+@Puma @IecEditor 6 22 @Pou 25 
+@@@BEG_Comment@@@
+@h    ! WARNING !
+@h    The Kemro K2 system (including software) only meets category B according to EN 954-1,
+@h    thus it is not intended for usage in safety-relevant control applications in the field 
+@h    of personal safety (e.g. emergency stop).
+@h    To implement potentially necessary safety-relevant control tasks, always use additional 
+@h    external safety devices that are intended for the particular purpose, and meet the necessary 
+@h    functional safety.
+@h    For further information see EN 954-1 (EN ISO 13849-1) and/or the K2-x00 user manual, chapter 
+@h    "CE conformity, directives and standards".
+@@@END_Comment@@@
+
+@BEG_Contents 
+
+@BEG_Func 
+@RT(17)FuncTreeContainer 
+0 
+@END_Func 
+
+@BEG_Const 
+@RT(18)ConstTreeContainer 
+0 
+@END_Const 
+
+@BEG_Export 
+
+@BEG_Kind 
+@FUNCTION_BLOCK @RT(20)FBCheckAndLockUnlock @STRUCTURED_TEXT 
+@RT(0) @RT(0) @RT(0) 
+@END_Kind 
+
+@BEG_Dcl 
+@RT(16)DclTreeContainer 
+19 
+@Var @RT(13)CompIdToCheck @RT(0) @T @T @DERIVED 0 @T @T @DT @RT(7)tCompId @RT(0) @T @T @UNKNOWN 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(52)component id of movement that must be in endposition @RT(0) 
+@END_Attrib 
+1 1 @F @F @F @F 
+
+@Var @RT(14)IndexIdToCheck @RT(0) @T @T @DERIVED 0 @T @T @DT @RT(8)tIndexId @RT(0) @T @T @UNKNOWN 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(48)index id of movement that must be in endposition @RT(0) 
+@END_Attrib 
+1 1 @F @F @F @F 
+
+@Var @RT(14)MoveDirToCheck @RT(0) @T @T @DERIVED 0 @T @T @DT @RT(10)tMoveIdent @RT(0) @T @T @UNKNOWN 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 1 @F @F @F @F 
+
+@Var @RT(13)MoveIdToCheck @RT(0) @T @T @DERIVED 0 @T @T @DT @RT(10)tMoveIdent @RT(0) @T @T @UNKNOWN 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 1 @F @F @F @F 
+
+@Var @RT(12)CompIdToLock @RT(0) @T @T @DERIVED 0 @T @T @DT @RT(7)tCompId @RT(0) @T @T @UNKNOWN 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(55)component id of movement that should be locked/unlocked @RT(0) 
+@END_Attrib 
+1 1 @F @F @F @F 
+
+@Var @RT(13)IndexIdToLock @RT(0) @T @T @DERIVED 0 @T @T @DT @RT(8)tIndexId @RT(0) @T @T @UNKNOWN 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(51)index id of movement that should be locked/unlocked @RT(0) 
+@END_Attrib 
+1 1 @F @F @F @F 
+
+@Var @RT(13)MoveDirToLock @RT(0) @T @T @DERIVED 0 @T @T @DT @RT(10)tMoveIdent @RT(0) @T @T @UNKNOWN 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 1 @F @F @F @F 
+
+@Var @RT(12)MoveIdToLock @RT(0) @T @T @DERIVED 0 @T @T @DT @RT(10)tMoveIdent @RT(0) @T @T @UNKNOWN 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 1 @F @F @F @F 
+
+@Var @RT(17)fbCheckPosReached @RT(0) @T @T @DERIVED 0 @T @T @DT @RT(17)FBCheckPosReached @RT(0) @T @T @UNKNOWN 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(12)fbLockUnlock @RT(0) @T @T @DERIVED 0 @T @T @DT @RT(12)FBLockUnlock @RT(0) @T @T @UNKNOWN 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(15)DeviceIdToCheck @RT(0) @T @T @DERIVED 0 @T @T @DT @RT(10)tsDeviceId @RT(0) @T @T @UNKNOWN 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(14)DeviceIdToLock @RT(0) @T @T @DERIVED 0 @T @T @DT @RT(10)tsDeviceId @RT(0) @T @T @UNKNOWN 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(7)fbRTrig @RT(0) @T @T @DERIVED 0 @T @T @DT @RT(6)R_TRIG @RT(0) @T @T @UNKNOWN 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(7)fbFTrig @RT(0) @T @T @DERIVED 0 @T @T @DT @RT(6)F_TRIG @RT(0) @T @T @UNKNOWN 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(14)bNewParameters @RT(0) @T @F @DT @RT(4)BOOL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(16)OldCompIdToCheck @RT(0) @T @T @DERIVED 0 @T @T @DT @RT(7)tCompId @RT(0) @T @T @UNKNOWN 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(17)OldIndexIdToCheck @RT(0) @T @T @DERIVED 0 @T @T @DT @RT(8)tIndexId @RT(0) @T @T @UNKNOWN 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(15)OldCompIdToLock @RT(0) @T @T @DERIVED 0 @T @T @DT @RT(7)tCompId @RT(0) @T @T @UNKNOWN 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(16)OldIndexIdToLock @RT(0) @T @T @DERIVED 0 @T @T @DT @RT(8)tIndexId @RT(0) @T @T @UNKNOWN 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@END_Dcl 
+
+@END_Export 
+
+@BEG_Body 
+@TL(42)
+(**************************************** WARNING ********************************************
+ *** The KEBA Kemro K2 System including software is not intended for safety control tasks! ***
+ ***                       For further information see Comment tab!                        ***
+ *********************************************************************************************)
+
+DeviceIdToCheck.CompId := CompIdToCheck;
+DeviceIdToCheck.IndexId := IndexIdToCheck;
+DeviceIdToLock.CompId := CompIdToLock;
+DeviceIdToLock.IndexId := IndexIdToLock;
+
+bNewParameters := (IndexIdToLock <> OldIndexIdToLock) OR (CompIdToLock <> OldCompIdToLock) OR
+                  (IndexIdToCheck <> OldIndexIdToCheck) OR (CompIdToCheck <> OldCompIdToCheck);
+            
+
+//check posReached - Flag
+fbCheckPosReached(DeviceId := DeviceIdToCheck,
+                MoveDir := MoveDirToCheck,
+                MoveId := MoveIdToCheck);
+
+fbRTrig(CLK := fbCheckPosReached.bPosReached);
+fbFTrig(CLK := fbCheckPosReached.bPosReached);
+                
+
+IF fbRTrig.Q OR fbFTrig.Q OR bNewParameters THEN
+    //only send events if posReached has changed or block is called with new parameters
+    IF fbCheckPosReached.bPosReached THEN
+        fbLockUnlock.Mode := nUnlock; //allow movement
+    ELSE
+        fbLockUnlock.Mode := nLockAbort; //don´t allow movement
+    END_IF;
+    
+    fbLockUnlock(DeviceId := DeviceIdToLock,
+                MoveDir := MoveDirToLock,
+                MoveId := MoveIdToLock,
+                Alarm := fbCheckPosReached.Alarm);
+END_IF;
+
+OldIndexIdToLock := IndexIdToLock;
+OldCompIdToLock := CompIdToLock;
+OldIndexIdToCheck := IndexIdToCheck;
+OldCompIdToCheck := CompIdToCheck;
+
+@END_Body 
+
+@END_Contents 

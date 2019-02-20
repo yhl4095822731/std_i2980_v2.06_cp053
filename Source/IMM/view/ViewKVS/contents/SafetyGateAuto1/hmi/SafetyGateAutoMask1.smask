@@ -1,0 +1,236 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<base:Mask xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xmlns:base="http://www.keba.at/viewedit.model.base" widgetId="kvs.mask" name="SafetyGateAutoMask1">
+  <resolution width="684" height="476"/>
+  <position x="1" y="1"/>
+  <attributeValues key="Icon" value="SafetyGateAuto1/hmi/images/iconSafetyGateAuto.gif"/>
+  <attributeValues key="Background" value="BG_Desktop:30,30,30"/>
+  <attributeValues key="Title" value="Auto safetygate"/>
+  <widgetInstances xsi:type="base:ContainerWidgetInstance" widgetId="keplast.kvs.borderpanelsmall" name="panelMain" layoutConstraint="NORTH">
+    <resolution width="684" height="330"/>
+    <position/>
+    <attributeValues key="Background" value="BG_Panel:220,220,220"/>
+    <attributeValues key="PreferredSize" value="714, 330"/>
+    <attributeValues key="Title" value="Auto safetygate"/>
+    <widgetInstances widgetId="keplast.kvs.separator" name="separator1" layoutConstraint="SEPARATOR">
+      <resolution width="2" height="293"/>
+      <position x="341" y="33"/>
+    </widgetInstances>
+    <widgetInstances xsi:type="base:ContainerWidgetInstance" widgetId="kvs.panel" name="panelRight" layoutConstraint="RIGHT">
+      <resolution width="332" height="268"/>
+      <position x="346" y="33"/>
+      <attributeValues key="PreferredSize" value="347, 268"/>
+      <dynamicAttributes key="Create">
+        <value function="isDeviceHydraulic : UserFunctions" equal="true" unequal="false">
+          <parameter key="1" value="devicename; PlastFunctionUtils.createDeviceName(&quot;SafetyGateAuto1&quot;)"/>
+        </value>
+      </dynamicAttributes>
+      <widgetInstances xsi:type="base:ContainerWidgetInstance" widgetId="kvs.panel" name="headerAutoSG" layoutConstraint="null">
+        <resolution width="332" height="29"/>
+        <position/>
+        <widgetInstances xsi:type="base:ContainerWidgetInstance" widgetId="kvs.panel" name="panelMoldAdjustHeader" layoutConstraint="EAST">
+          <resolution width="164" height="29"/>
+          <position x="168"/>
+          <widgetInstances widgetId="keplast.kvs.klabeltip" name="labelPressure" layoutConstraint="null">
+            <resolution width="60" height="29"/>
+            <position x="2"/>
+            <attributeValues key="Text" value="Press"/>
+            <attributeValues key="PreferredSize" value="60, 29"/>
+          </widgetInstances>
+          <widgetInstances widgetId="keplast.kvs.klabeltip" name="labelVelocity" layoutConstraint="null">
+            <resolution width="60" height="29"/>
+            <position x="64"/>
+            <attributeValues key="Text" value="Velocity"/>
+            <attributeValues key="PreferredSize" value="60, 29"/>
+          </widgetInstances>
+          <widgetInstances widgetId="kvs.label" name="labelHeaderDummy" layoutConstraint="null">
+            <resolution width="36" height="29"/>
+            <position x="126"/>
+            <attributeValues key="PreferredSize" value="36, 29"/>
+          </widgetInstances>
+          <layout layoutID="kvs.layout.FlowLayout" name="FlowLayout">
+            <attributeValues key="Hgap" value="2"/>
+            <attributeValues key="Vgap" value="0"/>
+          </layout>
+        </widgetInstances>
+        <layout layoutID="kvs.layout.BorderLayout" name="BorderLayout"/>
+      </widgetInstances>
+      <widgetInstances xsi:type="base:ContainerWidgetInstance" widgetId="kvs.panel" name="headerAutoSGUnits" layoutConstraint="null">
+        <resolution width="332" height="29"/>
+        <position y="29"/>
+        <widgetInstances xsi:type="base:ContainerWidgetInstance" widgetId="kvs.panel" name="pUnits" layoutConstraint="EAST">
+          <resolution width="164" height="29"/>
+          <position x="168"/>
+          <widgetInstances widgetId="keplast.kvs.varlabeltip" name="lblPressure" layoutConstraint="null">
+            <resolution width="60" height="29"/>
+            <position x="2"/>
+            <attributeValues key="TextLabelType" value="Unit Variable Label"/>
+            <attributeValues key="PreferredSize" value="60, 29"/>
+            <attributeValues key="Variable" value="SafetyGateAuto1.sv_ConstCloseFast.Pressure.Output.rOutputValue"/>
+          </widgetInstances>
+          <widgetInstances widgetId="keplast.kvs.varlabeltip" name="lblVelocity" layoutConstraint="null">
+            <resolution width="60" height="29"/>
+            <position x="64"/>
+            <attributeValues key="TextLabelType" value="Unit Variable Label"/>
+            <attributeValues key="PreferredSize" value="60, 29"/>
+            <attributeValues key="Variable" value="SafetyGateAuto1.sv_ConstCloseFast.Velocity.Output.rOutputValue"/>
+          </widgetInstances>
+          <widgetInstances widgetId="kvs.label" name="lblDummy" layoutConstraint="null">
+            <resolution width="36" height="29"/>
+            <position x="126"/>
+            <attributeValues key="PreferredSize" value="36, 29"/>
+          </widgetInstances>
+          <layout layoutID="kvs.layout.FlowLayout" name="FlowLayout">
+            <attributeValues key="Hgap" value="2"/>
+            <attributeValues key="Vgap" value="0"/>
+          </layout>
+        </widgetInstances>
+        <layout layoutID="kvs.layout.BorderLayout" name="BorderLayout"/>
+      </widgetInstances>
+      <widgetInstances widgetId="keplast.kvs.twonumfieldtext" name="fCloseFast" layoutConstraint="null">
+        <resolution width="332" height="29"/>
+        <position y="58"/>
+        <attributeValues key="VariableRight" value="SafetyGateAuto1.sv_ConstCloseFast.Velocity.Output.rOutputValue"/>
+        <attributeValues key="VariableLeft" value="SafetyGateAuto1.sv_ConstCloseFast.Pressure.Output.rOutputValue"/>
+        <attributeValues key="RemoveUnitLeft" value="true"/>
+        <attributeValues key="UnitVisibleRight" value="false"/>
+      </widgetInstances>
+      <widgetInstances widgetId="keplast.kvs.twonumfieldtext" name="fCloseSlow" layoutConstraint="null">
+        <resolution width="332" height="29"/>
+        <position y="87"/>
+        <attributeValues key="VariableRight" value="SafetyGateAuto1.sv_ConstCloseSlow.Velocity.Output.rOutputValue"/>
+        <attributeValues key="VariableLeft" value="SafetyGateAuto1.sv_ConstCloseSlow.Pressure.Output.rOutputValue"/>
+        <attributeValues key="RemoveUnitLeft" value="true"/>
+        <attributeValues key="UnitVisibleRight" value="false"/>
+        <dynamicAttributes key="Create">
+          <value function="doesVariableExist : UserFunctions" equal="true" unequal="false">
+            <parameter key="1" value="variableasstring; PlastFunctionUtils.createVariableString(&quot;SafetyGateAuto1.di_CloseSlow&quot;)"/>
+          </value>
+        </dynamicAttributes>
+      </widgetInstances>
+      <widgetInstances widgetId="keplast.kvs.twonumfieldtext" name="fOpenFast" layoutConstraint="null">
+        <resolution width="332" height="29"/>
+        <position y="116"/>
+        <attributeValues key="VariableRight" value="SafetyGateAuto1.sv_ConstOpenFast.Velocity.Output.rOutputValue"/>
+        <attributeValues key="VariableLeft" value="SafetyGateAuto1.sv_ConstOpenFast.Pressure.Output.rOutputValue"/>
+        <attributeValues key="RemoveUnitLeft" value="true"/>
+        <attributeValues key="UnitVisibleRight" value="false"/>
+      </widgetInstances>
+      <widgetInstances widgetId="keplast.kvs.twonumfieldtext" name="fOpenSlow" layoutConstraint="null">
+        <resolution width="332" height="29"/>
+        <position y="145"/>
+        <attributeValues key="VariableRight" value="SafetyGateAuto1.sv_ConstOpenSlow.Velocity.Output.rOutputValue"/>
+        <attributeValues key="VariableLeft" value="SafetyGateAuto1.sv_ConstOpenSlow.Pressure.Output.rOutputValue"/>
+        <attributeValues key="RemoveUnitLeft" value="true"/>
+        <attributeValues key="UnitVisibleRight" value="false"/>
+        <dynamicAttributes key="Create">
+          <value function="doesVariableExist : UserFunctions" equal="true" unequal="false">
+            <parameter key="1" value="variableasstring; PlastFunctionUtils.createVariableString(&quot;SafetyGateAuto1.di_OpenSlow&quot;)"/>
+          </value>
+        </dynamicAttributes>
+      </widgetInstances>
+      <widgetInstances widgetId="kvs.label" name="labelDummyRight" layoutConstraint="null">
+        <resolution width="332" height="29"/>
+        <position y="174"/>
+        <attributeValues key="PreferredSize" value="332, 29"/>
+      </widgetInstances>
+      <widgetInstances widgetId="keplast.kvs.numfieldtext" name="fMaxPressure" layoutConstraint="null">
+        <resolution width="332" height="29"/>
+        <position y="203"/>
+        <attributeValues key="Variable" value="SafetyGateAuto1.sv_rMaxPressureSetLimit"/>
+      </widgetInstances>
+      <widgetInstances widgetId="keplast.kvs.numfieldtext" name="fMaxVelocity" layoutConstraint="null">
+        <resolution width="332" height="29"/>
+        <position y="232"/>
+        <attributeValues key="Variable" value="SafetyGateAuto1.sv_rMaxVelocitySetLimit"/>
+      </widgetInstances>
+      <layout layoutID="kvs.layout.VerticalFlowLayout" name="VerticalFlowLayout">
+        <attributeValues key="OuterGaps" value="false"/>
+        <attributeValues key="Vgap" value="0"/>
+        <attributeValues key="Hgap" value="0"/>
+      </layout>
+    </widgetInstances>
+    <widgetInstances xsi:type="base:ContainerWidgetInstance" widgetId="kvs.panel" name="panelLeft" layoutConstraint="LEFT">
+      <resolution width="332" height="268"/>
+      <position x="6" y="33"/>
+      <attributeValues key="PreferredSize" value="347, 268"/>
+      <widgetInstances xsi:type="base:ContainerWidgetInstance" widgetId="kvs.panel" name="container1" layoutConstraint="null">
+        <resolution width="332" height="28"/>
+        <position/>
+        <widgetInstances widgetId="keplast.kvs.varlabeltip" name="lblAutoSGMode" layoutConstraint="null">
+          <resolution width="139" height="21"/>
+          <position x="3" y="3"/>
+          <attributeValues key="TextLabelType" value="Short Variable Label"/>
+          <attributeValues key="Variable" value="SafetyGateAuto1.sv_SGOpenMode"/>
+          <attributeValues key="Alignment" value="MIDDLE/LEFT"/>
+        </widgetInstances>
+        <widgetInstances widgetId="keplast.kvs.sequencercontrolledselectlist" name="selectListAutoSGMode" layoutConstraint="null">
+          <resolution width="152" height="28"/>
+          <position x="142"/>
+          <attributeValues key="Variable" value="SafetyGateAuto1.sv_SGOpenMode"/>
+          <attributeValues key="PreferredSize" value="152, 28"/>
+        </widgetInstances>
+        <layout layoutID="keplast.kvs.layout.beanlayout" name="BeanLayout">
+          <attributeValues key="UseUnitFieldGap" value="true"/>
+        </layout>
+      </widgetInstances>
+      <widgetInstances widgetId="keplast.kvs.numfieldtext" name="fStartPosition" layoutConstraint="null">
+        <resolution width="332" height="29"/>
+        <position y="28"/>
+        <attributeValues key="Variable" value="SafetyGateAuto1.sv_rStartPosition"/>
+        <dynamicAttributes key="Create">
+          <value function="b1_EQ_true : ViewEditFunctions" equal="true" unequal="false">
+            <parameter key="1" value="kvariable; system.sv_bFALSE"/>
+          </value>
+        </dynamicAttributes>
+      </widgetInstances>
+      <widgetInstances widgetId="keplast.kvs.numfieldtext" name="fOpenTime" layoutConstraint="null">
+        <resolution width="332" height="29"/>
+        <position y="57"/>
+        <attributeValues key="Variable" value="SafetyGateAuto1.sv_dSGAutoOpenTimeSet"/>
+      </widgetInstances>
+      <widgetInstances widgetId="kvs.label" name="lblDummyLeft" layoutConstraint="null">
+        <resolution width="332" height="29"/>
+        <position y="86"/>
+        <attributeValues key="PreferredSize" value="332, 29"/>
+      </widgetInstances>
+      <widgetInstances widgetId="keplast.kvs.actsetnumfieldtext" name="fMaxCloseTime" layoutConstraint="null">
+        <resolution width="332" height="29"/>
+        <position y="115"/>
+        <attributeValues key="Variable" value="SafetyGateAuto1.sv_AutoGateFwdTimesSet.dMaxMoveTime"/>
+        <attributeValues key="VariableActual" value="SafetyGateAuto1.sv_AutoGateFwdTimesAct.dActMoveTime"/>
+      </widgetInstances>
+      <widgetInstances widgetId="keplast.kvs.actsetnumfieldtext" name="fMaxOpenTime" layoutConstraint="null">
+        <resolution width="332" height="29"/>
+        <position y="144"/>
+        <attributeValues key="Variable" value="SafetyGateAuto1.sv_AutoGateBwdTimesSet.dMaxMoveTime"/>
+        <attributeValues key="VariableActual" value="SafetyGateAuto1.sv_AutoGateBwdTimesAct.dActMoveTime"/>
+      </widgetInstances>
+      <widgetInstances widgetId="kvs.label" name="lblDummyRight" layoutConstraint="null">
+        <resolution width="332" height="29"/>
+        <position y="173"/>
+        <attributeValues key="PreferredSize" value="332, 29"/>
+      </widgetInstances>
+      <widgetInstances widgetId="keplast.kvs.actsetnumfieldtext" name="fCloseDelay" layoutConstraint="null">
+        <resolution width="332" height="29"/>
+        <position y="202"/>
+        <attributeValues key="VariableActual" value="SafetyGateAuto1.sv_AutoGateFwdTimesAct.dActDelayTime"/>
+        <attributeValues key="Variable" value="SafetyGateAuto1.sv_AutoGateFwdTimesSet.dSetDelayTime"/>
+      </widgetInstances>
+      <widgetInstances widgetId="keplast.kvs.actsetnumfieldtext" name="fOpenDelay" layoutConstraint="null">
+        <resolution width="332" height="29"/>
+        <position y="231"/>
+        <attributeValues key="VariableActual" value="SafetyGateAuto1.sv_AutoGateBwdTimesAct.dActDelayTime"/>
+        <attributeValues key="Variable" value="SafetyGateAuto1.sv_AutoGateBwdTimesSet.dSetDelayTime"/>
+      </widgetInstances>
+      <layout layoutID="kvs.layout.VerticalFlowLayout" name="VerticalFlowLayout">
+        <attributeValues key="OuterGaps" value="false"/>
+        <attributeValues key="Hgap" value="0"/>
+        <attributeValues key="Vgap" value="0"/>
+      </layout>
+    </widgetInstances>
+    <layout layoutID="keplast.kvs.layout.horizontalsplitlayout" name="HorizontalSplitLayout"/>
+  </widgetInstances>
+  <layout layoutID="kvs.layout.BorderLayout" name="BorderLayout">
+    <attributeValues key="Vgap" value="8"/>
+  </layout>
+</base:Mask>

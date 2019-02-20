@@ -1,0 +1,180 @@
+FUNCTION FScaleAndFloor : REAL #DUMMY_EDIT_BLOCK
+
+VAR_INPUT
+ rInput : REAL (* value to correct *);
+ rScale : REAL (* percent to scale rInput with this value *);
+ iDigitsToFloor : SINT (* number of significant digits to floor *);
+END_VAR
+
+VAR
+ rExp : LREAL;
+ rExpRound : LREAL;
+ rFactor : LREAL;
+ rValue : REAL;
+END_VAR
+#BEGIN_EDIT_BLOCK
+(**************************************** WARNING ********************************************
+ *** The KEBA Kemro K2 System including software is not intended for safety control tasks! ***
+ ***                       For further information see Comment tab!                        ***
+ *********************************************************************************************)
+
+
+rValue := rInput * rScale/100.0;
+
+IF (ABS(rValue) < 1.0e-6 OR iDigitsToFloor <= 0) THEN
+   // prevent log(0) - only scale and return
+   FScaleAndFloor := rValue;
+   RETURN;
+END_IF;
+
+// scale and floor to the n-th significant digit
+// rFactor = 10.0 ^(iDigitsToFloor - ceil(log10(fabs(rInput))));
+// corrected = round(rInput * rFactor) / rFactor; 
+
+rExp := LOG(ABS(REAL_TO_LREAL(rValue)));
+rExpRound := LINT_TO_LREAL(TRUNC_TO_LINT(rExp));
+
+// simple ceil algorithm
+IF (rExp - rExpRound) > 0.0 THEN
+   rExp := rExpRound + 1.0;
+ELSE
+   rExp := rExpRound;   
+END_IF;
+
+rFactor := 10.00**(SINT_TO_LREAL(iDigitsToFloor) - rExp);
+rValue := LINT_TO_REAL(TRUNC_TO_LINT((rValue * LREAL_TO_REAL(rFactor))))/LREAL_TO_REAL(rFactor);
+
+FScaleAndFloor := rValue;
+
+
+;#END_EDIT_BLOCK END_FUNCTION
+
+
+
+#END_OF_IEC_PART
+
+@Puma @IecEditor 6 150 @Pou 25 
+@@@BEG_Comment@@@
+
+@@@END_Comment@@@
+
+@BEG_Contents 
+
+@BEG_Func 
+@RT(17)FuncTreeContainer 
+0 
+@END_Func 
+
+@BEG_Const 
+@RT(18)ConstTreeContainer 
+0 
+@END_Const 
+
+@BEG_Export 
+
+@BEG_Kind 
+@FUNCTION @RT(14)FScaleAndFloor @STRUCTURED_TEXT 
+@RT(4)REAL @RT(0) @RT(0) 
+@END_Kind 
+
+@BEG_Dcl 
+@RT(16)DclTreeContainer 
+7 
+@Var @RT(6)rInput @RT(0) @T @F @DT @RT(4)REAL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(16)value to correct @RT(0) 
+@END_Attrib 
+1 1 @F @F @F @F 
+
+@Var @RT(6)rScale @RT(0) @T @F @DT @RT(4)REAL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(39)percent to scale rInput with this value @RT(0) 
+@END_Attrib 
+1 1 @F @F @F @F 
+
+@Var @RT(14)iDigitsToFloor @RT(0) @T @F @DT @RT(4)SINT @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(37)number of significant digits to floor @RT(0) 
+@END_Attrib 
+1 1 @F @F @F @F 
+
+@Var @RT(4)rExp @RT(0) @T @F @DT @RT(5)LREAL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(9)rExpRound @RT(0) @T @F @DT @RT(5)LREAL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(7)rFactor @RT(0) @T @F @DT @RT(5)LREAL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(6)rValue @RT(0) @T @F @DT @RT(4)REAL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@END_Dcl 
+
+@END_Export 
+
+@BEG_Body 
+@TL(33)
+(**************************************** WARNING ********************************************
+ *** The KEBA Kemro K2 System including software is not intended for safety control tasks! ***
+ ***                       For further information see Comment tab!                        ***
+ *********************************************************************************************)
+
+
+rValue := rInput * rScale/100.0;
+
+IF (ABS(rValue) < 1.0e-6 OR iDigitsToFloor <= 0) THEN
+   // prevent log(0) - only scale and return
+   FScaleAndFloor := rValue;
+   RETURN;
+END_IF;
+
+// scale and floor to the n-th significant digit
+// rFactor = 10.0 ^(iDigitsToFloor - ceil(log10(fabs(rInput))));
+// corrected = round(rInput * rFactor) / rFactor; 
+
+rExp := LOG(ABS(REAL_TO_LREAL(rValue)));
+rExpRound := LINT_TO_LREAL(TRUNC_TO_LINT(rExp));
+
+// simple ceil algorithm
+IF (rExp - rExpRound) > 0.0 THEN
+   rExp := rExpRound + 1.0;
+ELSE
+   rExp := rExpRound;   
+END_IF;
+
+rFactor := 10.00**(SINT_TO_LREAL(iDigitsToFloor) - rExp);
+rValue := LINT_TO_REAL(TRUNC_TO_LINT((rValue * LREAL_TO_REAL(rFactor))))/LREAL_TO_REAL(rFactor);
+
+FScaleAndFloor := rValue;
+
+@END_Body 
+
+@END_Contents 

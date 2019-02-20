@@ -1,0 +1,913 @@
+(*
+@h    ! WARNING !
+@h    The Kemro K2 system (including software) only meets category B according to EN 954-1,
+@h    thus it is not intended for usage in safety-relevant control applications in the field 
+@h    of personal safety (e.g. emergency stop).
+@h    To implement potentially necessary safety-relevant control tasks, always use additional 
+@h    external safety devices that are intended for the particular purpose, and meet the necessary 
+@h    functional safety.
+@h    For further information see EN 954-1 (EN ISO 13849-1) and/or the K2-x00 user manual, chapter 
+@h    "CE conformity, directives and standards".
+
+Following functions are implemented in this AB
+- registration of dummy movments for begin/end inject/plast sequence
+- trigger new creation of machine sequence
+- set/reset activated flags for intrusion and cold drop
+
+@FunctionID: S_FU_05
+@FunctionID: S_FU_04
+@FunctionID: S_ALLG_09
+*)
+
+IMPORT_OVER_LISTFILE
+ cMaxIntermediateConditions
+, tsMoveData
+, tsIntrusionParam
+, tsColdDropParams
+, tyInstanceListArrayDecomp
+, ABMovementRegister
+, FBUpdateEditorProperties
+
+END_IMPORT
+
+ALGORITHM_BLOCK ABODCFunctions #DUMMY_EDIT_BLOCK
+
+SYSTEM_VAR
+ sv_bInitStart : BOOL;
+ sv_MoveBeginInjectSequence : tsMoveData;
+ sv_MoveEndInjectSequence : tsMoveData;
+ sv_MoveBeginPlastSequence : tsMoveData;
+ sv_MoveEndPlastSequence : tsMoveData;
+ sv_IntrusionSettings : tsIntrusionParam;
+ sv_bProgramSwitchChanged : BOOL (* TRUE if ODC sequence should be reinitialized because a program switch changed *);
+ sv_ColdDropSettings : tsColdDropParams;
+ sv_dDurationInjectAndHold : TIME (* Duration of inject + hold *);
+ sv_bHoldActive : BOOL (* TRUE: holding is active; attention: SV is resetted after end of inject movement *);
+ sv_bInjectActive : BOOL (* Injection is active *);
+ sv_InstanceDataDecompInterPos : tyInstanceListArrayDecomp;
+ sv_bInitDone : BOOL;
+ sv_MoveIntrusion : tsMoveData;
+ sv_bUseProgramSwitches : BOOL (* TRUE: create sequence by using program switches; FALSE: use sequence from ODC editor *);
+ sv_MoveColdDrop : tsMoveData;
+END_VAR
+
+SYSTEM_OBJECT
+ PU_Task_7 : TASK;
+ PU_Task_13 : TASK;
+ TaskSlow : TASK;
+END_OBJECT
+
+(*
+registers the following dummy - movements:
+- begin of inject sequence
+- end of inject sequence
+- begin of plast sequence
+- end of plast sequence
+*)
+
+POSTUPDATE_ALGORITHM pInitStart ON PU_Task_7 WITH sv_bInitStart
+
+
+VAR
+ abBeginInjSequenceRegister : ABMovementRegister;
+ abEndInjSequenceRegister : ABMovementRegister;
+ abBeginPlastSequenceRegister : ABMovementRegister;
+ abEndPlastSequenceRegister : ABMovementRegister;
+END_VAR
+#BEGIN_EDIT_BLOCK
+(**************************************** WARNING ********************************************
+ *** The KEBA Kemro K2 System including software is not intended for safety control tasks! ***
+ ***                       For further information see Comment tab!                        ***
+ *********************************************************************************************)
+
+IF sv_bInitStart THEN
+   //register begin of inject sequence    
+   abBeginInjSequenceRegister.aRegister(@sv_MoveBeginInjectSequence);
+        
+   //register end of inject sequence
+   abEndInjSequenceRegister.aRegister(@sv_MoveEndInjectSequence);
+   
+   //register begin of plast sequence    
+   abBeginPlastSequenceRegister.aRegister(@sv_MoveBeginPlastSequence);
+        
+   //register end of plast sequence
+   abEndPlastSequenceRegister.aRegister(@sv_MoveEndPlastSequence);
+END_IF;
+
+
+;#END_EDIT_BLOCK END_ALGORITHM
+
+POSTUPDATE_ALGORITHM pIntrusionMode ON PU_Task_7 WITH sv_IntrusionSettings.Mode
+
+#BEGIN_EDIT_BLOCK
+(**************************************** WARNING ********************************************
+ *** The KEBA Kemro K2 System including software is not intended for safety control tasks! ***
+ ***                       For further information see Comment tab!                        ***
+ *********************************************************************************************)
+
+//new sequence must be created
+sv_bProgramSwitchChanged := TRUE;
+
+
+;#END_EDIT_BLOCK END_ALGORITHM
+
+POSTUPDATE_ALGORITHM pColdDrop ON PU_Task_7 WITH sv_ColdDropSettings.bUse
+
+#BEGIN_EDIT_BLOCK
+(**************************************** WARNING ********************************************
+ *** The KEBA Kemro K2 System including software is not intended for safety control tasks! ***
+ ***                       For further information see Comment tab!                        ***
+ *********************************************************************************************)
+  
+//new sequence must be created 
+sv_bProgramSwitchChanged := TRUE;
+
+
+;#END_EDIT_BLOCK END_ALGORITHM
+
+POSTUPDATE_ALGORITHM pDurationChanged ON PU_Task_13 WITH sv_ColdDropSettings.dColdDropTime,sv_dDurationInjectAndHold
+
+
+VAR
+ fbUpdateProperties : FBUpdateEditorProperties;
+END_VAR
+#BEGIN_EDIT_BLOCK
+(**************************************** WARNING ********************************************
+ *** The KEBA Kemro K2 System including software is not intended for safety control tasks! ***
+ ***                       For further information see Comment tab!                        ***
+ *********************************************************************************************)
+
+fbUpdateProperties();
+
+
+;#END_EDIT_BLOCK END_ALGORITHM
+
+POSTUPDATE_ALGORITHM pInjectActive ON PU_Task_13 WITH sv_bInjectActive
+
+#BEGIN_EDIT_BLOCK
+(**************************************** WARNING ********************************************
+ *** The KEBA Kemro K2 System including software is not intended for safety control tasks! ***
+ ***                       For further information see Comment tab!                        ***
+ *********************************************************************************************)
+
+IF NOT sv_bInjectActive THEN
+   START_PROCESS_ALGORITHM(paResetHoldActive);
+END_IF;
+
+
+
+
+;#END_EDIT_BLOCK END_ALGORITHM
+
+PROCESS_ALGORITHM paResetHoldActive ON TaskSlow
+
+#BEGIN_EDIT_BLOCK
+(**************************************** WARNING ********************************************
+ *** The KEBA Kemro K2 System including software is not intended for safety control tasks! ***
+ ***                       For further information see Comment tab!                        ***
+ *********************************************************************************************)
+
+//reset sv_bHoldActive after end of inject movement
+//sv_bHoldActive is used as start condition reached flag if a parallel programmed
+//movement refers to a detected CutOff instead of a position
+//the slow task for resetting sv_bHoldActive is choosen to guarantee that also in 
+//the case of holding time is 0.0s a start condition reached information can be detected
+//by the interpreter
+
+sv_bHoldActive := FALSE;
+STOP_PROCESS_ALGORITHM();
+
+
+;#END_EDIT_BLOCK END_ALGORITHM
+
+POSTUPDATE_ALGORITHM pDecompInstanceData ON PU_Task_7 WITH sv_InstanceDataDecompInterPos,sv_bInitDone
+
+
+VAR_TEMP
+ i : DINT;
+END_VAR
+
+VAR
+ bInitDone : BOOL;
+ PrevInstanceData : tyInstanceListArrayDecomp;
+ bUpdate : BOOL;
+ fbUpdateProperties : FBUpdateEditorProperties;
+END_VAR
+#BEGIN_EDIT_BLOCK
+(**************************************** WARNING ********************************************
+ *** The KEBA Kemro K2 System including software is not intended for safety control tasks! ***
+ ***                       For further information see Comment tab!                        ***
+ *********************************************************************************************)
+
+IF NOT bInitDone THEN
+   //save instance data after startup
+   PrevInstanceData := sv_InstanceDataDecompInterPos;
+   bInitDone := TRUE;
+   RETURN;
+END_IF;
+
+FOR i := 1 TO cMaxIntermediateConditions DO
+   
+   bUpdate := FALSE;
+   
+   //copy set time to calculated duration
+   //for representation in machine sequencer
+   IF (sv_InstanceDataDecompInterPos[i].Mode = nDecompTimeDependent) AND
+     (sv_InstanceDataDecompInterPos[i].dTime <> PrevInstanceData[i].dTime) THEN
+      
+      sv_InstanceDataDecompInterPos[i].dCalculatedDuration := sv_InstanceDataDecompInterPos[i].dTime;
+      bUpdate := TRUE;
+   END_IF;
+END_FOR;
+
+IF bUpdate THEN
+   //trigger update of machine sequencer
+   fbUpdateProperties();
+END_IF;
+
+
+
+;#END_EDIT_BLOCK END_ALGORITHM
+
+POSTUPDATE_ALGORITHM pIntrusionProgrammed ON PU_Task_7 WITH sv_MoveIntrusion.bProgrammedInSequence
+
+#BEGIN_EDIT_BLOCK
+(**************************************** WARNING ********************************************
+ *** The KEBA Kemro K2 System including software is not intended for safety control tasks! ***
+ ***                       For further information see Comment tab!                        ***
+ *********************************************************************************************)
+
+IF NOT sv_bUseProgramSwitches THEN
+   //sequence is programmed by editor
+   //-> activate intrusion depending on the "programmed in sequence" information
+   IF sv_MoveIntrusion.bProgrammedInSequence THEN
+      sv_IntrusionSettings.Mode := nTimeDep;
+   ELSE
+      sv_IntrusionSettings.Mode := nNotUse;
+   END_IF;
+END_IF;
+
+
+;#END_EDIT_BLOCK END_ALGORITHM
+
+POSTUPDATE_ALGORITHM pColdDropProgrammed ON PU_Task_7 WITH sv_MoveColdDrop.bProgrammedInSequence
+
+#BEGIN_EDIT_BLOCK
+(**************************************** WARNING ********************************************
+ *** The KEBA Kemro K2 System including software is not intended for safety control tasks! ***
+ ***                       For further information see Comment tab!                        ***
+ *********************************************************************************************)
+
+IF NOT sv_bUseProgramSwitches THEN
+   //sequence is programmed by editor
+   //-> activate cold drop depending on the "programmed in sequence" information
+   IF sv_MoveColdDrop.bProgrammedInSequence THEN
+      sv_ColdDropSettings.bUse := TRUE;
+   ELSE
+      sv_ColdDropSettings.bUse := FALSE;
+   END_IF;
+END_IF;
+
+
+;#END_EDIT_BLOCK END_ALGORITHM
+
+
+
+END_ALGORITHM_BLOCK
+
+
+
+#END_OF_IEC_PART
+
+@Puma @IecEditor 6 97 @Pou 25 
+@@@BEG_Comment@@@
+@h    ! WARNING !
+@h    The Kemro K2 system (including software) only meets category B according to EN 954-1,
+@h    thus it is not intended for usage in safety-relevant control applications in the field 
+@h    of personal safety (e.g. emergency stop).
+@h    To implement potentially necessary safety-relevant control tasks, always use additional 
+@h    external safety devices that are intended for the particular purpose, and meet the necessary 
+@h    functional safety.
+@h    For further information see EN 954-1 (EN ISO 13849-1) and/or the K2-x00 user manual, chapter 
+@h    "CE conformity, directives and standards".
+
+Following functions are implemented in this AB
+- registration of dummy movments for begin/end inject/plast sequence
+- trigger new creation of machine sequence
+- set/reset activated flags for intrusion and cold drop
+
+@FunctionID: S_FU_05
+@FunctionID: S_FU_04
+@FunctionID: S_ALLG_09
+@@@END_Comment@@@
+
+@BEG_Contents 
+
+@BEG_Func 
+@RT(17)FuncTreeContainer 
+0 
+@END_Func 
+
+@BEG_Const 
+@RT(18)ConstTreeContainer 
+1 
+@Var @RT(26)cMaxIntermediateConditions @RT(0) @T @F @DT @RT(4)DINT @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+0 @RT(2)10 @RT(38)max. number of intermediate conditions 
+@END_Attrib 
+1 1 @F @F @F @F 
+
+@END_Const 
+
+@BEG_Export 
+
+@BEG_Kind 
+@ALGORITHM_BLOCK @RT(14)ABODCFunctions @STRUCTURED_TEXT 
+@RT(0) @RT(0) @RT(0) 
+@END_Kind 
+
+@BEG_Dcl 
+@RT(16)DclTreeContainer 
+19 
+@Var @RT(9)PU_Task_7 @RT(0) @T @F @DT @RT(4)TASK @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 7 @F @F @F @F 
+
+@Var @RT(10)PU_Task_13 @RT(0) @T @F @DT @RT(4)TASK @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 7 @F @F @F @F 
+
+@Var @RT(8)TaskSlow @RT(0) @T @F @DT @RT(4)TASK @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 7 @F @F @F @F 
+
+@Var @RT(13)sv_bInitStart @RT(0) @T @F @DT @RT(4)BOOL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 8 @F @F @F @F 
+
+@Var @RT(26)sv_MoveBeginInjectSequence @RT(0) @T @T @DERIVED 0 @T @T @DT @RT(10)tsMoveData @RT(0) @T @T @UNKNOWN 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 8 @F @F @F @F 
+
+@Var @RT(24)sv_MoveEndInjectSequence @RT(0) @T @T @DERIVED 0 @T @T @DT @RT(10)tsMoveData @RT(0) @T @T @UNKNOWN 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 8 @F @F @F @F 
+
+@Var @RT(25)sv_MoveBeginPlastSequence @RT(0) @T @T @DERIVED 0 @T @T @DT @RT(10)tsMoveData @RT(0) @T @T @UNKNOWN 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 8 @F @F @F @F 
+
+@Var @RT(23)sv_MoveEndPlastSequence @RT(0) @T @T @DERIVED 0 @T @T @DT @RT(10)tsMoveData @RT(0) @T @T @UNKNOWN 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 8 @F @F @F @F 
+
+@Var @RT(20)sv_IntrusionSettings @RT(0) @T @T @DERIVED 0 @F @RT(16)tsIntrusionParam @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 8 @F @F @F @F 
+
+@Var @RT(24)sv_bProgramSwitchChanged @RT(0) @T @F @DT @RT(4)BOOL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(77)TRUE if ODC sequence should be reinitialized because a program switch changed @RT(0) 
+@END_Attrib 
+1 8 @F @F @F @F 
+
+@Var @RT(19)sv_ColdDropSettings @RT(0) @T @T @DERIVED 0 @F @RT(16)tsColdDropParams @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 8 @F @F @F @F 
+
+@Var @RT(25)sv_dDurationInjectAndHold @RT(0) @T @F @DT @RT(4)TIME @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(25)Duration of inject + hold @RT(0) 
+@END_Attrib 
+1 8 @F @F @F @F 
+
+@Var @RT(14)sv_bHoldActive @RT(0) @T @F @DT @RT(4)BOOL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(79)TRUE: holding is active; attention: SV is resetted after end of inject movement @RT(0) 
+@END_Attrib 
+1 8 @F @F @F @F 
+
+@Var @RT(16)sv_bInjectActive @RT(0) @T @F @DT @RT(4)BOOL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(19)Injection is active @RT(0) 
+@END_Attrib 
+1 8 @F @F @F @F 
+
+@Var @RT(29)sv_InstanceDataDecompInterPos @RT(0) @T @T @DERIVED 0 @T @T @DT @RT(25)tyInstanceListArrayDecomp @RT(0) @T @T @UNKNOWN 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 8 @F @F @F @F 
+
+@Var @RT(12)sv_bInitDone @RT(0) @T @T @RENAMED 0 @T @T @DT @RT(4)BOOL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 8 @F @F @F @F 
+
+@Var @RT(16)sv_MoveIntrusion @RT(0) @T @T @DERIVED 0 @F @RT(10)tsMoveData @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 8 @F @F @F @F 
+
+@Var @RT(22)sv_bUseProgramSwitches @RT(0) @T @F @DT @RT(4)BOOL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(84)TRUE: create sequence by using program switches; FALSE: use sequence from ODC editor @RT(0) 
+@END_Attrib 
+1 8 @F @F @F @F 
+
+@Var @RT(15)sv_MoveColdDrop @RT(0) @T @T @RENAMED 0 @T @T @DT @RT(10)tsMoveData @RT(0) @T @T @UNKNOWN 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 8 @F @F @F @F 
+
+@END_Dcl 
+
+@END_Export 
+
+@BEG_Body 
+
+9 
+
+@BEG_Export 
+
+@BEG_Algo 
+@POSTUPDATE_ALGORITHM @RT(10)pInitStart @STRUCTURED_TEXT 
+@RT(0) @RT(13)sv_bInitStart @RT(9)PU_Task_7 @F @F 
+@END_Algo 
+
+@BEG_Dcl 
+@RT(16)DclTreeContainer 
+4 
+@Var @RT(26)abBeginInjSequenceRegister @RT(0) @T @T @DERIVED 0 @T @T @DT @RT(18)ABMovementRegister @RT(0) @T @T @UNKNOWN 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(24)abEndInjSequenceRegister @RT(0) @T @T @DERIVED 0 @T @T @DT @RT(18)ABMovementRegister @RT(0) @T @T @UNKNOWN 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(28)abBeginPlastSequenceRegister @RT(0) @T @T @DERIVED 0 @T @T @DT @RT(18)ABMovementRegister @RT(0) @T @T @UNKNOWN 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(26)abEndPlastSequenceRegister @RT(0) @T @T @DERIVED 0 @T @T @DT @RT(18)ABMovementRegister @RT(0) @T @T @UNKNOWN 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@END_Dcl 
+
+@END_Export 
+
+@BEG_Export 
+
+@BEG_Algo 
+@POSTUPDATE_ALGORITHM @RT(14)pIntrusionMode @STRUCTURED_TEXT 
+@RT(0) @RT(25)sv_IntrusionSettings.Mode @RT(9)PU_Task_7 @F @F 
+@END_Algo 
+
+@BEG_Dcl 
+@RT(16)DclTreeContainer 
+0 
+@END_Dcl 
+
+@END_Export 
+
+@BEG_Export 
+
+@BEG_Algo 
+@POSTUPDATE_ALGORITHM @RT(9)pColdDrop @STRUCTURED_TEXT 
+@RT(0) @RT(24)sv_ColdDropSettings.bUse @RT(9)PU_Task_7 @F @F 
+@END_Algo 
+
+@BEG_Dcl 
+@RT(16)DclTreeContainer 
+0 
+@END_Dcl 
+
+@END_Export 
+
+@BEG_Export 
+
+@BEG_Algo 
+@POSTUPDATE_ALGORITHM @RT(16)pDurationChanged @STRUCTURED_TEXT 
+@RT(0) @RT(59)sv_ColdDropSettings.dColdDropTime,sv_dDurationInjectAndHold @RT(10)PU_Task_13 @F @F 
+@END_Algo 
+
+@BEG_Dcl 
+@RT(16)DclTreeContainer 
+1 
+@Var @RT(18)fbUpdateProperties @RT(0) @T @T @DERIVED 0 @T @T @DT @RT(24)FBUpdateEditorProperties @RT(0) @T @T @UNKNOWN 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@END_Dcl 
+
+@END_Export 
+
+@BEG_Export 
+
+@BEG_Algo 
+@POSTUPDATE_ALGORITHM @RT(13)pInjectActive @STRUCTURED_TEXT 
+@RT(0) @RT(16)sv_bInjectActive @RT(10)PU_Task_13 @F @F 
+@END_Algo 
+
+@BEG_Dcl 
+@RT(16)DclTreeContainer 
+0 
+@END_Dcl 
+
+@END_Export 
+
+@BEG_Export 
+
+@BEG_Algo 
+@PROCESS_ALGORITHM @RT(17)paResetHoldActive @STRUCTURED_TEXT 
+@RT(0) @RT(0) @RT(8)TaskSlow @F @F 
+@END_Algo 
+
+@BEG_Dcl 
+@RT(16)DclTreeContainer 
+0 
+@END_Dcl 
+
+@END_Export 
+
+@BEG_Export 
+
+@BEG_Algo 
+@POSTUPDATE_ALGORITHM @RT(19)pDecompInstanceData @STRUCTURED_TEXT 
+@RT(0) @RT(42)sv_InstanceDataDecompInterPos,sv_bInitDone @RT(9)PU_Task_7 @F @F 
+@END_Algo 
+
+@BEG_Dcl 
+@RT(16)DclTreeContainer 
+5 
+@Var @RT(9)bInitDone @RT(0) @T @F @DT @RT(4)BOOL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(16)PrevInstanceData @RT(0) @T @T @DERIVED 0 @T @T @DT @RT(25)tyInstanceListArrayDecomp @RT(0) @T @T @UNKNOWN 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(1)i @RT(0) @T @T @RENAMED 0 @T @T @DT @RT(4)DINT @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 4 @F @F @F @F 
+
+@Var @RT(7)bUpdate @RT(0) @T @F @DT @RT(4)BOOL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(18)fbUpdateProperties @RT(0) @T @T @DERIVED 0 @T @T @DT @RT(24)FBUpdateEditorProperties @RT(0) @T @T @UNKNOWN 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@END_Dcl 
+
+@END_Export 
+
+@BEG_Export 
+
+@BEG_Algo 
+@POSTUPDATE_ALGORITHM @RT(20)pIntrusionProgrammed @STRUCTURED_TEXT 
+@RT(0) @RT(38)sv_MoveIntrusion.bProgrammedInSequence @RT(9)PU_Task_7 @F @F 
+@END_Algo 
+
+@BEG_Dcl 
+@RT(16)DclTreeContainer 
+0 
+@END_Dcl 
+
+@END_Export 
+
+@BEG_Export 
+
+@BEG_Algo 
+@POSTUPDATE_ALGORITHM @RT(19)pColdDropProgrammed @STRUCTURED_TEXT 
+@RT(0) @RT(37)sv_MoveColdDrop.bProgrammedInSequence @RT(9)PU_Task_7 @F @F 
+@END_Algo 
+
+@BEG_Dcl 
+@RT(16)DclTreeContainer 
+0 
+@END_Dcl 
+
+@END_Export 
+
+@BEG_Body 
+@TL(19)
+(**************************************** WARNING ********************************************
+ *** The KEBA Kemro K2 System including software is not intended for safety control tasks! ***
+ ***                       For further information see Comment tab!                        ***
+ *********************************************************************************************)
+
+IF sv_bInitStart THEN
+   //register begin of inject sequence    
+   abBeginInjSequenceRegister.aRegister(@sv_MoveBeginInjectSequence);
+        
+   //register end of inject sequence
+   abEndInjSequenceRegister.aRegister(@sv_MoveEndInjectSequence);
+   
+   //register begin of plast sequence    
+   abBeginPlastSequenceRegister.aRegister(@sv_MoveBeginPlastSequence);
+        
+   //register end of plast sequence
+   abEndPlastSequenceRegister.aRegister(@sv_MoveEndPlastSequence);
+END_IF;
+
+@END_Body 
+
+@@@BEG_Comment@@@ 
+@TL(5)
+registers the following dummy - movements:
+- begin of inject sequence
+- end of inject sequence
+- begin of plast sequence
+- end of plast sequence
+@@@END_Comment@@@ 
+
+@BEG_Body 
+@TL(8)
+(**************************************** WARNING ********************************************
+ *** The KEBA Kemro K2 System including software is not intended for safety control tasks! ***
+ ***                       For further information see Comment tab!                        ***
+ *********************************************************************************************)
+
+//new sequence must be created
+sv_bProgramSwitchChanged := TRUE;
+
+@END_Body 
+
+@@@BEG_Comment@@@ 
+@TL(0)
+
+@@@END_Comment@@@ 
+
+@BEG_Body 
+@TL(8)
+(**************************************** WARNING ********************************************
+ *** The KEBA Kemro K2 System including software is not intended for safety control tasks! ***
+ ***                       For further information see Comment tab!                        ***
+ *********************************************************************************************)
+  
+//new sequence must be created 
+sv_bProgramSwitchChanged := TRUE;
+
+@END_Body 
+
+@@@BEG_Comment@@@ 
+@TL(0)
+
+@@@END_Comment@@@ 
+
+@BEG_Body 
+@TL(7)
+(**************************************** WARNING ********************************************
+ *** The KEBA Kemro K2 System including software is not intended for safety control tasks! ***
+ ***                       For further information see Comment tab!                        ***
+ *********************************************************************************************)
+
+fbUpdateProperties();
+
+@END_Body 
+
+@@@BEG_Comment@@@ 
+@TL(0)
+
+@@@END_Comment@@@ 
+
+@BEG_Body 
+@TL(11)
+(**************************************** WARNING ********************************************
+ *** The KEBA Kemro K2 System including software is not intended for safety control tasks! ***
+ ***                       For further information see Comment tab!                        ***
+ *********************************************************************************************)
+
+IF NOT sv_bInjectActive THEN
+   START_PROCESS_ALGORITHM(paResetHoldActive);
+END_IF;
+
+
+
+@END_Body 
+
+@@@BEG_Comment@@@ 
+@TL(0)
+
+@@@END_Comment@@@ 
+
+@BEG_Body 
+@TL(15)
+(**************************************** WARNING ********************************************
+ *** The KEBA Kemro K2 System including software is not intended for safety control tasks! ***
+ ***                       For further information see Comment tab!                        ***
+ *********************************************************************************************)
+
+//reset sv_bHoldActive after end of inject movement
+//sv_bHoldActive is used as start condition reached flag if a parallel programmed
+//movement refers to a detected CutOff instead of a position
+//the slow task for resetting sv_bHoldActive is choosen to guarantee that also in 
+//the case of holding time is 0.0s a start condition reached information can be detected
+//by the interpreter
+
+sv_bHoldActive := FALSE;
+STOP_PROCESS_ALGORITHM();
+
+@END_Body 
+
+@@@BEG_Comment@@@ 
+@TL(0)
+
+@@@END_Comment@@@ 
+
+@BEG_Body 
+@TL(32)
+(**************************************** WARNING ********************************************
+ *** The KEBA Kemro K2 System including software is not intended for safety control tasks! ***
+ ***                       For further information see Comment tab!                        ***
+ *********************************************************************************************)
+
+IF NOT bInitDone THEN
+   //save instance data after startup
+   PrevInstanceData := sv_InstanceDataDecompInterPos;
+   bInitDone := TRUE;
+   RETURN;
+END_IF;
+
+FOR i := 1 TO cMaxIntermediateConditions DO
+   
+   bUpdate := FALSE;
+   
+   //copy set time to calculated duration
+   //for representation in machine sequencer
+   IF (sv_InstanceDataDecompInterPos[i].Mode = nDecompTimeDependent) AND
+     (sv_InstanceDataDecompInterPos[i].dTime <> PrevInstanceData[i].dTime) THEN
+      
+      sv_InstanceDataDecompInterPos[i].dCalculatedDuration := sv_InstanceDataDecompInterPos[i].dTime;
+      bUpdate := TRUE;
+   END_IF;
+END_FOR;
+
+IF bUpdate THEN
+   //trigger update of machine sequencer
+   fbUpdateProperties();
+END_IF;
+
+
+@END_Body 
+
+@@@BEG_Comment@@@ 
+@TL(0)
+
+@@@END_Comment@@@ 
+
+@BEG_Body 
+@TL(15)
+(**************************************** WARNING ********************************************
+ *** The KEBA Kemro K2 System including software is not intended for safety control tasks! ***
+ ***                       For further information see Comment tab!                        ***
+ *********************************************************************************************)
+
+IF NOT sv_bUseProgramSwitches THEN
+   //sequence is programmed by editor
+   //-> activate intrusion depending on the "programmed in sequence" information
+   IF sv_MoveIntrusion.bProgrammedInSequence THEN
+      sv_IntrusionSettings.Mode := nTimeDep;
+   ELSE
+      sv_IntrusionSettings.Mode := nNotUse;
+   END_IF;
+END_IF;
+
+@END_Body 
+
+@@@BEG_Comment@@@ 
+@TL(0)
+
+@@@END_Comment@@@ 
+
+@BEG_Body 
+@TL(15)
+(**************************************** WARNING ********************************************
+ *** The KEBA Kemro K2 System including software is not intended for safety control tasks! ***
+ ***                       For further information see Comment tab!                        ***
+ *********************************************************************************************)
+
+IF NOT sv_bUseProgramSwitches THEN
+   //sequence is programmed by editor
+   //-> activate cold drop depending on the "programmed in sequence" information
+   IF sv_MoveColdDrop.bProgrammedInSequence THEN
+      sv_ColdDropSettings.bUse := TRUE;
+   ELSE
+      sv_ColdDropSettings.bUse := FALSE;
+   END_IF;
+END_IF;
+
+@END_Body 
+
+@@@BEG_Comment@@@ 
+@TL(0)
+
+@@@END_Comment@@@ 
+@END_Body 
+
+@END_Contents 

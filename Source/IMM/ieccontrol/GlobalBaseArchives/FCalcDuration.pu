@@ -1,0 +1,848 @@
+IMPORT_OVER_LISTFILE
+ KCTRL_Prof_Light
+
+END_IMPORT
+
+FUNCTION FCalcDuration : TIME #DUMMY_EDIT_BLOCK
+
+VAR_INPUT
+ StartPosition : REAL (* start position of actual movement *);
+ StartVelocity : REAL (* start velocity of actual movement *);
+ EndPosition : REAL (* end position of actual movement *);
+ Profile : KCTRL_Prof_Light (* calculated profile for non constant movement *);
+ StartRamp : REAL (* start ramp for all movements *);
+ StopRamp : REAL (* stop ramp for interposition or constant movement *);
+ ConstOutput : REAL (* constant velocity *);
+ UseConstOutput : BOOL (* movement with constant velocity *);
+END_VAR
+
+VAR
+ bDir : BOOL;
+ iStartIndex : UDINT;
+ iEndIndex : UDINT;
+ iActIndex : UDINT;
+ rDuration : REAL;
+ rEndVelocity : REAL;
+ rEndVelocityStart : REAL;
+ rCuttingPosition : REAL;
+ rCuttingPositionEnd : REAL;
+ rAcceleration : REAL;
+ rDeltaPosStart : REAL;
+ rDeltaPosStop : REAL;
+ rDeltaT1 : REAL;
+ rDeltaT2 : REAL;
+ rDeltaT3 : REAL;
+ rStopRamp : REAL;
+ rPositionDifference : REAL;
+ rStartVelocity : REAL;
+END_VAR
+
+VAR CONSTANT
+ cMaxDuration : REAL := 1.0e10;
+END_VAR
+#BEGIN_EDIT_BLOCK
+rDuration := 0.0;
+
+IF UseConstOutput THEN
+    
+    //Constant movement
+    IF ConstOutput <= 0.0 THEN
+        FCalcDuration := T#0s;
+        RETURN;
+    END_IF;
+    IF StartRamp > 0.0 THEN
+        rDeltaPosStart := 0.5 * ConstOutput*ConstOutput / StartRamp;
+        rDeltaT3 := ConstOutput / StartRamp;
+    ELSE
+        FCalcDuration := T#0s;
+        RETURN;
+    END_IF;
+    IF StopRamp > 0.0 THEN
+        rDeltaPosStop := 0.5 * ConstOutput*ConstOutput / StopRamp;
+        rDeltaT3 := ConstOutput / StopRamp;
+    ELSE
+        rDeltaPosStop := 0.0;
+        rDeltaT3 := 0.0;
+    END_IF;
+    IF (rDeltaPosStop + rDeltaPosStart) < ABS(EndPosition - StartPosition) THEN
+        rDeltaT2 := (ABS(EndPosition - StartPosition) - rDeltaPosStop - rDeltaPosStart) / ConstOutput;    
+    ELSE
+        IF ((StartRamp*StopRamp) > 0.0) THEN
+            rDeltaT1 := SQRT(2.0 * ABS(EndPosition - StartPosition) * StopRamp / StartRamp /(StartRamp + StopRamp));
+            rDeltaT3 := SQRT(2.0 * ABS(EndPosition - StartPosition) * StartRamp / StopRamp /(StartRamp + StopRamp));
+        ELSE
+            rDeltaT1 := 0.0;
+            rDeltaT3 := 0.0;
+        END_IF;        
+        rDeltaT2 := 0.0;        
+    END_IF;
+    
+ELSE
+    IF StartRamp <= 0.0 THEN
+        FCalcDuration := T#0s;
+        RETURN;    
+    END_IF;
+    IF StopRamp <= 0.0 THEN
+        rStopRamp := StartRamp;
+    ELSE
+        rStopRamp := StopRamp;
+    END_IF;
+    IF StartVelocity  < 0.0 THEN
+        rStartVelocity := 0.0;
+    ELSE   
+        rStartVelocity := StartVelocity;
+    END_IF;
+    
+
+    //Profile movement
+    IF (Profile.uNoOfPoints > 0) THEN
+        IF (Profile.Point[Profile.uNoOfPoints].rX > Profile.Point[1].rX) THEN
+            bDir := TRUE;
+        ELSIF (Profile.Point[Profile.uNoOfPoints].rX < Profile.Point[1].rX) THEN
+            bDir := FALSE; 
+        ELSE // only one point
+            IF (Profile.Point[Profile.uNoOfPoints].rY > 0.0) THEN
+                rDuration := ABS((StartPosition - EndPosition) / Profile.Point[Profile.uNoOfPoints].rY); 
+                IF (rDuration > cMaxDuration) OR (rDuration < 0.0) THEN
+                    rDuration := 0.0;                 
+                END_IF;
+                FCalcDuration := LINT_TO_TIME(REAL_TO_LINT(rDuration*1.0e6));
+            ELSE                         
+                FCalcDuration := T#0s;
+            END_IF;
+            RETURN;
+        END_IF;
+        // no movement necessary
+        IF ((bDir      AND (StartPosition >= EndPosition))OR
+           ((NOT bDir) AND (StartPosition <= EndPosition))) THEN 
+            FCalcDuration := T#0s;
+            RETURN;
+        END_IF;
+        // end point not in profile
+        IF ((bDir      AND (Profile.Point[1].rX >= EndPosition))OR
+           ((NOT bDir) AND (Profile.Point[1].rX <= EndPosition))) THEN 
+            FCalcDuration := T#0s;
+            RETURN;
+        END_IF;            
+    ELSE
+        FCalcDuration := T#0s;
+        RETURN;
+    END_IF;
+    
+    // start ramp
+    iActIndex := 0;
+    iStartIndex := Profile.uNoOfPoints;
+    rCuttingPosition := Profile.Point[iStartIndex].rX;
+    WHILE (iActIndex < Profile.uNoOfPoints) DO
+        iActIndex := iActIndex + 1;
+        IF ((bDir      AND (StartPosition < Profile.Point[iActIndex].rX))OR
+           ((NOT bDir) AND (StartPosition > Profile.Point[iActIndex].rX))) THEN        
+            rEndVelocity := SQRT(rStartVelocity*rStartVelocity +
+                                2.0 * StartRamp * ABS(StartPosition - Profile.Point[iActIndex].rX));
+            IF (rEndVelocity >= Profile.Point[iActIndex].rY) THEN
+                iStartIndex := iActIndex;
+                IF (iActIndex > 1) THEN
+                    // avoid divide by "0" if jumps in profile allowed/calculated
+                    IF (Profile.Point[iActIndex].rX = Profile.Point[iActIndex-1].rX) THEN
+                        rCuttingPosition := Profile.Point[iActIndex].rX;
+                    ELSE
+                        rAcceleration := ((Profile.Point[iActIndex].rY * Profile.Point[iActIndex].rY) -
+                                          (Profile.Point[iActIndex-1].rY * Profile.Point[iActIndex-1].rY)) / 
+                                       ABS(Profile.Point[iActIndex].rX - Profile.Point[iActIndex-1].rX);
+                        IF (bDir) THEN
+                            //xEnd = (x_0 + a*p[j].y*p[j].y - a*p[j].x*fact) /((float)1.0-a*fact);                
+                            rCuttingPosition := (StartPosition + 
+                                                 Profile.Point[iStartIndex].rY*Profile.Point[iStartIndex].rY*0.5/StartRamp -
+                                                 Profile.Point[iStartIndex].rX*rAcceleration*0.5/StartRamp)/
+                                                (1.0-0.5*rAcceleration/StartRamp);
+                        ELSE
+                            //xEnd = (x_0 - a*p[j].y*p[j].y - a*p[j].x*fact) /((float)1.0-a*fact);                
+                            rCuttingPosition := (StartPosition - 
+                                                 Profile.Point[iStartIndex].rY*Profile.Point[iStartIndex].rY*0.5/StartRamp -
+                                                 Profile.Point[iStartIndex].rX*rAcceleration*0.5/StartRamp)/
+                                                (1.0-0.5*rAcceleration/StartRamp);
+                        END_IF;
+                    END_IF;
+                ELSE
+                   IF (bDir) THEN
+                        //xEnd = (x_0 + a*p[j].y*p[j].y - a*p[j].x*fact) /((float)1.0-a*fact);                
+                        rCuttingPosition := (StartPosition + Profile.Point[iStartIndex].rY*Profile.Point[iStartIndex].rY*0.5/StartRamp);
+                    ELSE
+                        //xEnd = (x_0 - a*p[j].y*p[j].y - a*p[j].x*fact) /((float)1.0-a*fact);                
+                        rCuttingPosition := (StartPosition - Profile.Point[iStartIndex].rY*Profile.Point[iStartIndex].rY*0.5/StartRamp);
+                    END_IF;
+                    rDuration := 0.0;    
+                END_IF;
+                EXIT;
+            END_IF;
+        END_IF;
+    END_WHILE;
+    
+    // stop ramp
+    iActIndex := 0;
+    iEndIndex := 1;
+    rCuttingPositionEnd := EndPosition;
+    IF ((bDir      AND (EndPosition >= Profile.Point[Profile.uNoOfPoints].rX))OR
+       ((NOT bDir) AND (EndPosition <= Profile.Point[Profile.uNoOfPoints].rX))) THEN
+        rCuttingPositionEnd := EndPosition;//Profile.Point[Profile.uNoOfPoints].rX;
+        iEndIndex := Profile.uNoOfPoints;
+    ELSE
+        iActIndex := Profile.uNoOfPoints;
+        WHILE (iActIndex > 1) DO
+            iActIndex := iActIndex - 1;
+            IF ((bDir      AND (EndPosition >= Profile.Point[iActIndex].rX))OR
+               ((NOT bDir) AND (EndPosition <= Profile.Point[iActIndex].rX))) THEN
+                rEndVelocity := SQRT(rStartVelocity*rStartVelocity +
+                    2.0 * rStopRamp * ABS(EndPosition - Profile.Point[iActIndex].rX));
+            
+                IF (rEndVelocity >= Profile.Point[iActIndex].rY) THEN
+                    iEndIndex := iActIndex;
+                    // avoid divide by "0" if jumps in profile allowed/calculated
+                    IF (Profile.Point[iActIndex+1].rX = Profile.Point[iActIndex].rX) THEN
+                        rCuttingPositionEnd := EndPosition;
+                    ELSE
+                        rAcceleration := ((Profile.Point[iActIndex+1].rY * Profile.Point[iActIndex+1].rY) -
+                                          (Profile.Point[iActIndex].rY * Profile.Point[iActIndex].rY)) / 
+                                       ABS(Profile.Point[iActIndex+1].rX - Profile.Point[iActIndex].rX);
+                        IF (ABS(2.0*rStopRamp+rAcceleration) > 0.0) THEN                    
+                            IF (bDir) THEN
+                                // xCut = xEnd - (yStart*yStart - 2*aProfil*xStart)/(2*aStop+aProfil)
+                                rCuttingPositionEnd := EndPosition - 
+                                                      (Profile.Point[iEndIndex].rY*Profile.Point[iEndIndex].rY +
+                                                      (EndPosition - Profile.Point[iEndIndex].rX)*rAcceleration)/
+                                                      (2.0*rStopRamp+rAcceleration);
+                            ELSE
+                                // xCut = xEnd + (yStart*yStart - 2*aProfil*xStart)/(2*aStop+aProfil)
+                                rCuttingPositionEnd := EndPosition + 
+                                                      (Profile.Point[iEndIndex].rY*Profile.Point[iEndIndex].rY +
+                                                      (Profile.Point[iEndIndex].rX - EndPosition)*rAcceleration)/
+                                                      (2.0*rStopRamp+rAcceleration);
+                            END_IF;
+                        ELSE
+                            rCuttingPositionEnd := Profile.Point[iEndIndex].rX;
+                        END_IF;
+                    END_IF;   
+                    EXIT;
+                ELSE
+                    IF (iActIndex = 1) THEN
+                        IF (bDir) THEN
+                            rCuttingPositionEnd := EndPosition - 
+                                Profile.Point[1].rY * Profile.Point[1].rY * 0.5 / rStopRamp;
+                        ELSE
+                            rCuttingPositionEnd := EndPosition + 
+                                Profile.Point[1].rY * Profile.Point[1].rY * 0.5 / rStopRamp;
+                        END_IF;
+                        EXIT;
+                    END_IF;
+                END_IF;                
+            END_IF;
+            
+        END_WHILE;
+    END_IF;
+    
+    // add up times
+    IF ((bDir      AND (rCuttingPositionEnd >= rCuttingPosition))OR
+       ((NOT bDir) AND (rCuttingPositionEnd <= rCuttingPosition))) THEN
+        
+        // start ramp
+        rEndVelocityStart := SQRT(rStartVelocity*rStartVelocity +
+                            2.0 *ABS(StartPosition - rCuttingPosition) * StartRamp);
+        IF ((rStartVelocity + rEndVelocityStart) > 0.0) THEN
+            rDeltaT1 := 2.0 * ABS((StartPosition - rCuttingPosition) / 
+                                                (rStartVelocity + rEndVelocityStart));
+            IF (iStartIndex <= iEndIndex) THEN
+                rDeltaT1 :=  rDeltaT1 + 
+                    2.0 * ABS((Profile.Point[iStartIndex].rX - rCuttingPosition) / 
+                    (Profile.Point[iStartIndex].rY + rEndVelocityStart));
+            END_IF;
+        ELSE
+            rDeltaT1 := 0.0;
+        END_IF;
+        
+        // stop ramp        iEndIndex := Profile.uNoOfPoints;
+        rEndVelocity := SQRT(2.0 *ABS(EndPosition - rCuttingPositionEnd) * rStopRamp);
+        IF (rEndVelocity > 0.0) THEN
+            rDeltaT2 := 2.0 * ABS((EndPosition - rCuttingPositionEnd) / rEndVelocity);
+            IF (iEndIndex >= iStartIndex) THEN
+                rDeltaT2 :=  rDeltaT2 + 
+                    2.0 * ABS((Profile.Point[iEndIndex].rX - rCuttingPositionEnd) / 
+                    (Profile.Point[iEndIndex].rY + rEndVelocity));
+            ELSE
+                rDeltaT2 :=  rDeltaT2 + 
+                    2.0 * ABS((rCuttingPosition - rCuttingPositionEnd) / 
+                    (rEndVelocityStart + rEndVelocity));
+            END_IF;
+        ELSE
+            rDeltaT2 := 0.0;
+        END_IF;
+
+        // steps between start and stop
+        rDeltaT3 := 0.0;
+        FOR iActIndex:= iStartIndex+1 TO iEndIndex DO
+            IF ((Profile.Point[iActIndex].rY + Profile.Point[iActIndex-1].rY) > 0.0) THEN
+                rDeltaT3 := rDeltaT3 + 2.0 * ABS( 
+                            (Profile.Point[iActIndex].rX - Profile.Point[iActIndex-1].rX)/
+                            (Profile.Point[iActIndex].rY + Profile.Point[iActIndex-1].rY));
+            END_IF;
+        END_FOR;        
+    ELSE //  only start ramp and stop ramp
+        // calc intersection point of two ramps
+        rPositionDifference := ABS(StartPosition - EndPosition);
+        rCuttingPosition := (rStopRamp* rPositionDifference - 0.5 * rStartVelocity*rStartVelocity)/(StartRamp + rStopRamp);
+        IF (rCuttingPosition > 0.0) THEN // position difference > 0 -> end velocity > 0
+            rEndVelocity := SQRT(rStartVelocity*rStartVelocity + 2.0 * rCuttingPosition * StartRamp);
+            rDuration := 2.0 * ((rPositionDifference - rCuttingPosition)/ rEndVelocity + rCuttingPosition /(rEndVelocity + rStartVelocity));
+        ELSE
+            IF rStartVelocity > 0.0 THEN
+               rDuration := 2.0 * rPositionDifference / rStartVelocity; 
+            ELSE
+               rDuration := 0.0;
+            END_IF;
+        END_IF;
+        IF (rDuration > cMaxDuration) OR (rDuration < 0.0) THEN
+            rDuration := 0.0;         
+        END_IF;
+        FCalcDuration := LINT_TO_TIME(REAL_TO_LINT(rDuration*1.0e6));
+        RETURN;       
+    END_IF;
+    
+END_IF;
+
+rDuration := rDeltaT1 + rDeltaT2 + rDeltaT3; 
+IF (rDuration > cMaxDuration) OR (rDuration < 0.0) THEN
+    rDuration := 0.0;         
+END_IF;
+FCalcDuration := LINT_TO_TIME(REAL_TO_LINT(rDuration*1.0e6));
+
+
+;#END_EDIT_BLOCK END_FUNCTION
+
+
+
+#END_OF_IEC_PART
+
+@Puma @IecEditor 6 131 @Pou 25 
+@@@BEG_Comment@@@
+
+@@@END_Comment@@@
+
+@BEG_Contents 
+
+@BEG_Func 
+@RT(17)FuncTreeContainer 
+0 
+@END_Func 
+
+@BEG_Const 
+@RT(18)ConstTreeContainer 
+0 
+@END_Const 
+
+@BEG_Export 
+
+@BEG_Kind 
+@FUNCTION @RT(13)FCalcDuration @STRUCTURED_TEXT 
+@RT(4)TIME @RT(0) @RT(0) 
+@END_Kind 
+
+@BEG_Dcl 
+@RT(16)DclTreeContainer 
+27 
+@Var @RT(13)StartPosition @RT(0) @T @F @DT @RT(4)REAL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(33)start position of actual movement @RT(0) 
+@END_Attrib 
+1 1 @F @F @F @F 
+
+@Var @RT(13)StartVelocity @RT(0) @T @F @DT @RT(4)REAL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(33)start velocity of actual movement @RT(0) 
+@END_Attrib 
+1 1 @F @F @F @F 
+
+@Var @RT(11)EndPosition @RT(0) @T @F @DT @RT(4)REAL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(31)end position of actual movement @RT(0) 
+@END_Attrib 
+1 1 @F @F @F @F 
+
+@Var @RT(7)Profile @RT(0) @T @T @DERIVED 0 @T @T @DT @RT(16)KCTRL_Prof_Light @RT(0) @T @T @UNKNOWN 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(44)calculated profile for non constant movement @RT(0) 
+@END_Attrib 
+1 1 @F @F @F @F 
+
+@Var @RT(9)StartRamp @RT(0) @T @F @DT @RT(4)REAL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(28)start ramp for all movements @RT(0) 
+@END_Attrib 
+1 1 @F @F @F @F 
+
+@Var @RT(8)StopRamp @RT(0) @T @F @DT @RT(4)REAL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(48)stop ramp for interposition or constant movement @RT(0) 
+@END_Attrib 
+1 1 @F @F @F @F 
+
+@Var @RT(11)ConstOutput @RT(0) @T @F @DT @RT(4)REAL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(17)constant velocity @RT(0) 
+@END_Attrib 
+1 1 @F @F @F @F 
+
+@Var @RT(14)UseConstOutput @RT(0) @T @F @DT @RT(4)BOOL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(31)movement with constant velocity @RT(0) 
+@END_Attrib 
+1 1 @F @F @F @F 
+
+@Var @RT(4)bDir @RT(0) @T @F @DT @RT(4)BOOL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(11)iStartIndex @RT(0) @T @F @DT @RT(5)UDINT @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(9)iEndIndex @RT(0) @T @F @DT @RT(5)UDINT @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(9)iActIndex @RT(0) @T @F @DT @RT(5)UDINT @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(9)rDuration @RT(0) @T @F @DT @RT(4)REAL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(12)rEndVelocity @RT(0) @T @F @DT @RT(4)REAL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(17)rEndVelocityStart @RT(0) @T @F @DT @RT(4)REAL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(16)rCuttingPosition @RT(0) @T @F @DT @RT(4)REAL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(19)rCuttingPositionEnd @RT(0) @T @F @DT @RT(4)REAL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(13)rAcceleration @RT(0) @T @F @DT @RT(4)REAL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(14)rDeltaPosStart @RT(0) @T @F @DT @RT(4)REAL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(13)rDeltaPosStop @RT(0) @T @F @DT @RT(4)REAL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(8)rDeltaT1 @RT(0) @T @F @DT @RT(4)REAL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(8)rDeltaT2 @RT(0) @T @F @DT @RT(4)REAL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(8)rDeltaT3 @RT(0) @T @F @DT @RT(4)REAL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(9)rStopRamp @RT(0) @T @F @DT @RT(4)REAL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(19)rPositionDifference @RT(0) @T @F @DT @RT(4)REAL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(14)rStartVelocity @RT(0) @T @F @DT @RT(4)REAL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(12)cMaxDuration @RT(0) @T @F @DT @RT(4)REAL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(6)1.0e10 @RT(0) @RT(0) 
+@END_Attrib 
+1 15 @F @F @F @F 
+
+@END_Dcl 
+
+@END_Export 
+
+@BEG_Body 
+@TL(273)
+rDuration := 0.0;
+
+IF UseConstOutput THEN
+    
+    //Constant movement
+    IF ConstOutput <= 0.0 THEN
+        FCalcDuration := T#0s;
+        RETURN;
+    END_IF;
+    IF StartRamp > 0.0 THEN
+        rDeltaPosStart := 0.5 * ConstOutput*ConstOutput / StartRamp;
+        rDeltaT3 := ConstOutput / StartRamp;
+    ELSE
+        FCalcDuration := T#0s;
+        RETURN;
+    END_IF;
+    IF StopRamp > 0.0 THEN
+        rDeltaPosStop := 0.5 * ConstOutput*ConstOutput / StopRamp;
+        rDeltaT3 := ConstOutput / StopRamp;
+    ELSE
+        rDeltaPosStop := 0.0;
+        rDeltaT3 := 0.0;
+    END_IF;
+    IF (rDeltaPosStop + rDeltaPosStart) < ABS(EndPosition - StartPosition) THEN
+        rDeltaT2 := (ABS(EndPosition - StartPosition) - rDeltaPosStop - rDeltaPosStart) / ConstOutput;    
+    ELSE
+        IF ((StartRamp*StopRamp) > 0.0) THEN
+            rDeltaT1 := SQRT(2.0 * ABS(EndPosition - StartPosition) * StopRamp / StartRamp /(StartRamp + StopRamp));
+            rDeltaT3 := SQRT(2.0 * ABS(EndPosition - StartPosition) * StartRamp / StopRamp /(StartRamp + StopRamp));
+        ELSE
+            rDeltaT1 := 0.0;
+            rDeltaT3 := 0.0;
+        END_IF;        
+        rDeltaT2 := 0.0;        
+    END_IF;
+    
+ELSE
+    IF StartRamp <= 0.0 THEN
+        FCalcDuration := T#0s;
+        RETURN;    
+    END_IF;
+    IF StopRamp <= 0.0 THEN
+        rStopRamp := StartRamp;
+    ELSE
+        rStopRamp := StopRamp;
+    END_IF;
+    IF StartVelocity  < 0.0 THEN
+        rStartVelocity := 0.0;
+    ELSE   
+        rStartVelocity := StartVelocity;
+    END_IF;
+    
+
+    //Profile movement
+    IF (Profile.uNoOfPoints > 0) THEN
+        IF (Profile.Point[Profile.uNoOfPoints].rX > Profile.Point[1].rX) THEN
+            bDir := TRUE;
+        ELSIF (Profile.Point[Profile.uNoOfPoints].rX < Profile.Point[1].rX) THEN
+            bDir := FALSE; 
+        ELSE // only one point
+            IF (Profile.Point[Profile.uNoOfPoints].rY > 0.0) THEN
+                rDuration := ABS((StartPosition - EndPosition) / Profile.Point[Profile.uNoOfPoints].rY); 
+                IF (rDuration > cMaxDuration) OR (rDuration < 0.0) THEN
+                    rDuration := 0.0;                 
+                END_IF;
+                FCalcDuration := LINT_TO_TIME(REAL_TO_LINT(rDuration*1.0e6));
+            ELSE                         
+                FCalcDuration := T#0s;
+            END_IF;
+            RETURN;
+        END_IF;
+        // no movement necessary
+        IF ((bDir      AND (StartPosition >= EndPosition))OR
+           ((NOT bDir) AND (StartPosition <= EndPosition))) THEN 
+            FCalcDuration := T#0s;
+            RETURN;
+        END_IF;
+        // end point not in profile
+        IF ((bDir      AND (Profile.Point[1].rX >= EndPosition))OR
+           ((NOT bDir) AND (Profile.Point[1].rX <= EndPosition))) THEN 
+            FCalcDuration := T#0s;
+            RETURN;
+        END_IF;            
+    ELSE
+        FCalcDuration := T#0s;
+        RETURN;
+    END_IF;
+    
+    // start ramp
+    iActIndex := 0;
+    iStartIndex := Profile.uNoOfPoints;
+    rCuttingPosition := Profile.Point[iStartIndex].rX;
+    WHILE (iActIndex < Profile.uNoOfPoints) DO
+        iActIndex := iActIndex + 1;
+        IF ((bDir      AND (StartPosition < Profile.Point[iActIndex].rX))OR
+           ((NOT bDir) AND (StartPosition > Profile.Point[iActIndex].rX))) THEN        
+            rEndVelocity := SQRT(rStartVelocity*rStartVelocity +
+                                2.0 * StartRamp * ABS(StartPosition - Profile.Point[iActIndex].rX));
+            IF (rEndVelocity >= Profile.Point[iActIndex].rY) THEN
+                iStartIndex := iActIndex;
+                IF (iActIndex > 1) THEN
+                    // avoid divide by "0" if jumps in profile allowed/calculated
+                    IF (Profile.Point[iActIndex].rX = Profile.Point[iActIndex-1].rX) THEN
+                        rCuttingPosition := Profile.Point[iActIndex].rX;
+                    ELSE
+                        rAcceleration := ((Profile.Point[iActIndex].rY * Profile.Point[iActIndex].rY) -
+                                          (Profile.Point[iActIndex-1].rY * Profile.Point[iActIndex-1].rY)) / 
+                                       ABS(Profile.Point[iActIndex].rX - Profile.Point[iActIndex-1].rX);
+                        IF (bDir) THEN
+                            //xEnd = (x_0 + a*p[j].y*p[j].y - a*p[j].x*fact) /((float)1.0-a*fact);                
+                            rCuttingPosition := (StartPosition + 
+                                                 Profile.Point[iStartIndex].rY*Profile.Point[iStartIndex].rY*0.5/StartRamp -
+                                                 Profile.Point[iStartIndex].rX*rAcceleration*0.5/StartRamp)/
+                                                (1.0-0.5*rAcceleration/StartRamp);
+                        ELSE
+                            //xEnd = (x_0 - a*p[j].y*p[j].y - a*p[j].x*fact) /((float)1.0-a*fact);                
+                            rCuttingPosition := (StartPosition - 
+                                                 Profile.Point[iStartIndex].rY*Profile.Point[iStartIndex].rY*0.5/StartRamp -
+                                                 Profile.Point[iStartIndex].rX*rAcceleration*0.5/StartRamp)/
+                                                (1.0-0.5*rAcceleration/StartRamp);
+                        END_IF;
+                    END_IF;
+                ELSE
+                   IF (bDir) THEN
+                        //xEnd = (x_0 + a*p[j].y*p[j].y - a*p[j].x*fact) /((float)1.0-a*fact);                
+                        rCuttingPosition := (StartPosition + Profile.Point[iStartIndex].rY*Profile.Point[iStartIndex].rY*0.5/StartRamp);
+                    ELSE
+                        //xEnd = (x_0 - a*p[j].y*p[j].y - a*p[j].x*fact) /((float)1.0-a*fact);                
+                        rCuttingPosition := (StartPosition - Profile.Point[iStartIndex].rY*Profile.Point[iStartIndex].rY*0.5/StartRamp);
+                    END_IF;
+                    rDuration := 0.0;    
+                END_IF;
+                EXIT;
+            END_IF;
+        END_IF;
+    END_WHILE;
+    
+    // stop ramp
+    iActIndex := 0;
+    iEndIndex := 1;
+    rCuttingPositionEnd := EndPosition;
+    IF ((bDir      AND (EndPosition >= Profile.Point[Profile.uNoOfPoints].rX))OR
+       ((NOT bDir) AND (EndPosition <= Profile.Point[Profile.uNoOfPoints].rX))) THEN
+        rCuttingPositionEnd := EndPosition;//Profile.Point[Profile.uNoOfPoints].rX;
+        iEndIndex := Profile.uNoOfPoints;
+    ELSE
+        iActIndex := Profile.uNoOfPoints;
+        WHILE (iActIndex > 1) DO
+            iActIndex := iActIndex - 1;
+            IF ((bDir      AND (EndPosition >= Profile.Point[iActIndex].rX))OR
+               ((NOT bDir) AND (EndPosition <= Profile.Point[iActIndex].rX))) THEN
+                rEndVelocity := SQRT(rStartVelocity*rStartVelocity +
+                    2.0 * rStopRamp * ABS(EndPosition - Profile.Point[iActIndex].rX));
+            
+                IF (rEndVelocity >= Profile.Point[iActIndex].rY) THEN
+                    iEndIndex := iActIndex;
+                    // avoid divide by "0" if jumps in profile allowed/calculated
+                    IF (Profile.Point[iActIndex+1].rX = Profile.Point[iActIndex].rX) THEN
+                        rCuttingPositionEnd := EndPosition;
+                    ELSE
+                        rAcceleration := ((Profile.Point[iActIndex+1].rY * Profile.Point[iActIndex+1].rY) -
+                                          (Profile.Point[iActIndex].rY * Profile.Point[iActIndex].rY)) / 
+                                       ABS(Profile.Point[iActIndex+1].rX - Profile.Point[iActIndex].rX);
+                        IF (ABS(2.0*rStopRamp+rAcceleration) > 0.0) THEN                    
+                            IF (bDir) THEN
+                                // xCut = xEnd - (yStart*yStart - 2*aProfil*xStart)/(2*aStop+aProfil)
+                                rCuttingPositionEnd := EndPosition - 
+                                                      (Profile.Point[iEndIndex].rY*Profile.Point[iEndIndex].rY +
+                                                      (EndPosition - Profile.Point[iEndIndex].rX)*rAcceleration)/
+                                                      (2.0*rStopRamp+rAcceleration);
+                            ELSE
+                                // xCut = xEnd + (yStart*yStart - 2*aProfil*xStart)/(2*aStop+aProfil)
+                                rCuttingPositionEnd := EndPosition + 
+                                                      (Profile.Point[iEndIndex].rY*Profile.Point[iEndIndex].rY +
+                                                      (Profile.Point[iEndIndex].rX - EndPosition)*rAcceleration)/
+                                                      (2.0*rStopRamp+rAcceleration);
+                            END_IF;
+                        ELSE
+                            rCuttingPositionEnd := Profile.Point[iEndIndex].rX;
+                        END_IF;
+                    END_IF;   
+                    EXIT;
+                ELSE
+                    IF (iActIndex = 1) THEN
+                        IF (bDir) THEN
+                            rCuttingPositionEnd := EndPosition - 
+                                Profile.Point[1].rY * Profile.Point[1].rY * 0.5 / rStopRamp;
+                        ELSE
+                            rCuttingPositionEnd := EndPosition + 
+                                Profile.Point[1].rY * Profile.Point[1].rY * 0.5 / rStopRamp;
+                        END_IF;
+                        EXIT;
+                    END_IF;
+                END_IF;                
+            END_IF;
+            
+        END_WHILE;
+    END_IF;
+    
+    // add up times
+    IF ((bDir      AND (rCuttingPositionEnd >= rCuttingPosition))OR
+       ((NOT bDir) AND (rCuttingPositionEnd <= rCuttingPosition))) THEN
+        
+        // start ramp
+        rEndVelocityStart := SQRT(rStartVelocity*rStartVelocity +
+                            2.0 *ABS(StartPosition - rCuttingPosition) * StartRamp);
+        IF ((rStartVelocity + rEndVelocityStart) > 0.0) THEN
+            rDeltaT1 := 2.0 * ABS((StartPosition - rCuttingPosition) / 
+                                                (rStartVelocity + rEndVelocityStart));
+            IF (iStartIndex <= iEndIndex) THEN
+                rDeltaT1 :=  rDeltaT1 + 
+                    2.0 * ABS((Profile.Point[iStartIndex].rX - rCuttingPosition) / 
+                    (Profile.Point[iStartIndex].rY + rEndVelocityStart));
+            END_IF;
+        ELSE
+            rDeltaT1 := 0.0;
+        END_IF;
+        
+        // stop ramp        iEndIndex := Profile.uNoOfPoints;
+        rEndVelocity := SQRT(2.0 *ABS(EndPosition - rCuttingPositionEnd) * rStopRamp);
+        IF (rEndVelocity > 0.0) THEN
+            rDeltaT2 := 2.0 * ABS((EndPosition - rCuttingPositionEnd) / rEndVelocity);
+            IF (iEndIndex >= iStartIndex) THEN
+                rDeltaT2 :=  rDeltaT2 + 
+                    2.0 * ABS((Profile.Point[iEndIndex].rX - rCuttingPositionEnd) / 
+                    (Profile.Point[iEndIndex].rY + rEndVelocity));
+            ELSE
+                rDeltaT2 :=  rDeltaT2 + 
+                    2.0 * ABS((rCuttingPosition - rCuttingPositionEnd) / 
+                    (rEndVelocityStart + rEndVelocity));
+            END_IF;
+        ELSE
+            rDeltaT2 := 0.0;
+        END_IF;
+
+        // steps between start and stop
+        rDeltaT3 := 0.0;
+        FOR iActIndex:= iStartIndex+1 TO iEndIndex DO
+            IF ((Profile.Point[iActIndex].rY + Profile.Point[iActIndex-1].rY) > 0.0) THEN
+                rDeltaT3 := rDeltaT3 + 2.0 * ABS( 
+                            (Profile.Point[iActIndex].rX - Profile.Point[iActIndex-1].rX)/
+                            (Profile.Point[iActIndex].rY + Profile.Point[iActIndex-1].rY));
+            END_IF;
+        END_FOR;        
+    ELSE //  only start ramp and stop ramp
+        // calc intersection point of two ramps
+        rPositionDifference := ABS(StartPosition - EndPosition);
+        rCuttingPosition := (rStopRamp* rPositionDifference - 0.5 * rStartVelocity*rStartVelocity)/(StartRamp + rStopRamp);
+        IF (rCuttingPosition > 0.0) THEN // position difference > 0 -> end velocity > 0
+            rEndVelocity := SQRT(rStartVelocity*rStartVelocity + 2.0 * rCuttingPosition * StartRamp);
+            rDuration := 2.0 * ((rPositionDifference - rCuttingPosition)/ rEndVelocity + rCuttingPosition /(rEndVelocity + rStartVelocity));
+        ELSE
+            IF rStartVelocity > 0.0 THEN
+               rDuration := 2.0 * rPositionDifference / rStartVelocity; 
+            ELSE
+               rDuration := 0.0;
+            END_IF;
+        END_IF;
+        IF (rDuration > cMaxDuration) OR (rDuration < 0.0) THEN
+            rDuration := 0.0;         
+        END_IF;
+        FCalcDuration := LINT_TO_TIME(REAL_TO_LINT(rDuration*1.0e6));
+        RETURN;       
+    END_IF;
+    
+END_IF;
+
+rDuration := rDeltaT1 + rDeltaT2 + rDeltaT3; 
+IF (rDuration > cMaxDuration) OR (rDuration < 0.0) THEN
+    rDuration := 0.0;         
+END_IF;
+FCalcDuration := LINT_TO_TIME(REAL_TO_LINT(rDuration*1.0e6));
+
+@END_Body 
+
+@END_Contents 

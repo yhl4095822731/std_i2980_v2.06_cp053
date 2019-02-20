@@ -1,0 +1,139 @@
+IMPORT_OVER_LISTFILE
+ FGetSystemName
+, KCAT_HandleData
+, KCAT_Status
+
+END_IMPORT
+
+FUNCTION FCreateSystemName : BOOL #DUMMY_EDIT_BLOCK
+
+VAR
+ HandleData : KCAT_HandleData;
+ sTmp : STRING(255);
+ Status : KCAT_Status;
+END_VAR
+#BEGIN_EDIT_BLOCK
+(**************************************** WARNING ********************************************
+ *** The KEBA Kemro K2 System including software is not intended for safety control tasks! ***
+ ***                       For further information see Comment tab!                        ***
+ *********************************************************************************************)
+
+sTmp := "Application";
+
+HandleData := KCAT_GetHandle(sTmp);
+IF HandleData.Status <> KCAT_Status_OK THEN
+    RETURN; 
+END_IF;
+
+HandleData := KCAT_AddDir(HandleData.Handle, "KePlast");
+IF HandleData.Status <> KCAT_Status_OK THEN
+    RETURN; 
+END_IF;
+
+sTmp := FGetSystemName();
+Status := KCAT_AddValue(HandleData.Handle, "systemName", KCAT_Type_STRING, sTmp); 
+IF Status <> KCAT_Status_OK THEN
+    RETURN; 
+END_IF;
+
+FCreateSystemName := TRUE; 
+
+
+
+;#END_EDIT_BLOCK END_FUNCTION
+
+
+
+#END_OF_IEC_PART
+
+@Puma @IecEditor 6 80 @Pou 25 
+@@@BEG_Comment@@@
+
+@@@END_Comment@@@
+
+@BEG_Contents 
+
+@BEG_Func 
+@RT(17)FuncTreeContainer 
+1 
+@Var @RT(14)FGetSystemName @RT(0) @T @T @DERIVED 0 @F @RT(21)FUNCTION : STRING(31) @F 
+@T 
+@BEG_Attrib 
+0 @RT(0) @RT(0) 
+@END_Attrib 
+1 1 @F @F @F @F 
+
+@END_Func 
+
+@BEG_Const 
+@RT(18)ConstTreeContainer 
+0 
+@END_Const 
+
+@BEG_Export 
+
+@BEG_Kind 
+@FUNCTION @RT(17)FCreateSystemName @STRUCTURED_TEXT 
+@RT(4)BOOL @RT(0) @RT(0) 
+@END_Kind 
+
+@BEG_Dcl 
+@RT(16)DclTreeContainer 
+3 
+@Var @RT(10)HandleData @RT(0) @T @T @DERIVED 0 @F @RT(15)KCAT_HandleData @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(4)sTmp @RT(0) @T @F @DT @RT(11)STRING(255) @RT(0) @T @T @STRING 0 @F @RT(3)255 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(6)Status @RT(0) @T @T @DERIVED 0 @F @RT(11)KCAT_Status @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@END_Dcl 
+
+@END_Export 
+
+@BEG_Body 
+@TL(26)
+(**************************************** WARNING ********************************************
+ *** The KEBA Kemro K2 System including software is not intended for safety control tasks! ***
+ ***                       For further information see Comment tab!                        ***
+ *********************************************************************************************)
+
+sTmp := "Application";
+
+HandleData := KCAT_GetHandle(sTmp);
+IF HandleData.Status <> KCAT_Status_OK THEN
+    RETURN; 
+END_IF;
+
+HandleData := KCAT_AddDir(HandleData.Handle, "KePlast");
+IF HandleData.Status <> KCAT_Status_OK THEN
+    RETURN; 
+END_IF;
+
+sTmp := FGetSystemName();
+Status := KCAT_AddValue(HandleData.Handle, "systemName", KCAT_Type_STRING, sTmp); 
+IF Status <> KCAT_Status_OK THEN
+    RETURN; 
+END_IF;
+
+FCreateSystemName := TRUE; 
+
+
+@END_Body 
+
+@END_Contents 

@@ -1,0 +1,1746 @@
+(*
+@h    ! WARNING !
+@h    The Kemro K2 system (including software) only meets category B according to EN 954-1,
+@h    thus it is not intended for usage in safety-relevant control applications in the field 
+@h    of personal safety (e.g. emergency stop).
+@h    To implement potentially necessary safety-relevant control tasks, always use additional 
+@h    external safety devices that are intended for the particular purpose, and meet the necessary 
+@h    functional safety.
+@h    For further information see EN 954-1 (EN ISO 13849-1) and/or the K2-x00 user manual, chapter 
+@h    "CE conformity, directives and standards".
+
+Following functions are implemented in this AB
+- react on changes of ejector mode and selector "fwd during mold open" 
+  (trigger new creation of machine sequence)
+- set/reset sv_bActivated
+- maintain sv_bStartConditionReached if ejector moves parallel to mold open
+- modify cycle start conditions if ejector mode "hold" is selected
+
+
+@FunctionID: S_FU_04
+@FunctionID: S_ALLG_09
+*)
+
+IMPORT_OVER_LISTFILE
+ GET_SYNC_REFTO
+, CHECK_REF
+, SET_EVENT
+, cCompMold
+, tnEjectorMode
+, tsMoveData
+, tsSetTimes
+, tevMovementState
+, KAPPL_VisProfile
+, tsShakeParams
+, tsAddDeviceInfo
+, tOptionId
+, tnWorkPosMode
+, tyNumberOfDevices
+, tnOperationMode
+, tsDeviceId
+, tevModifyCycleStartCondition
+, tevModifyCycleStartCondData
+, KSYS_Status
+, tevMovementStateData
+, FBUpdateEditorProperties
+
+END_IMPORT
+
+ALGORITHM_BLOCK ABODCFunctions #DUMMY_EDIT_BLOCK
+
+SYSTEM_VAR
+ sv_EjectorMode : tnEjectorMode;
+ sv_bProgramSwitchChanged : BOOL (* TRUE if ODC sequence should be reinitialized because a program switch changed *);
+ sv_bActivated : BOOL (* TRUE if ejector is activated (mode <> nNoUse) *);
+ sv_MoveBwd : tsMoveData;
+ sv_EjectorBwdTimesSet : tsSetTimes;
+ sv_bInitDone : BOOL;
+ sv_iODCSelector : INT (* combination of ejector mode and ejector parallel flag *);
+ sv_MoveFwd : tsMoveData;
+ sv_bStartConditionReached : BOOL;
+ sv_bTRUE : BOOL;
+ sv_bInitStart : BOOL;
+ sv_bDeviceRegisterDone : BOOL;
+ sv_bUseProgramSwitches : BOOL;
+ sv_MoveShake : tsMoveData;
+ sv_iShakeCounter : DINT;
+ sv_EjectorBwdVisShake : KAPPL_VisProfile;
+ sv_ShakeParams : tsShakeParams;
+ sv_rSetFwdPosition : REAL (* set fwd position *);
+ sv_rSetBwdPosition : REAL (* set fwd position *);
+ sv_EjectorFwdVis : KAPPL_VisProfile;
+ sv_EjectorBwdVis : KAPPL_VisProfile;
+ sv_dCalculatedDurationFwd : TIME (* Calculated duration for ejector fwd *);
+ sv_dCalculatedDurationBwd : TIME (* Calculated duration for ejector bwd *);
+ sv_dCalculatedDurationShake : TIME (* Calculated duration for complete ejector shake *);
+ sv_EjectorFwdTimesSet : tsSetTimes;
+ sv_bEjectorFwd : BOOL;
+ sv_bEjectorBwd : BOOL;
+ sv_AddDeviceInfo : tsAddDeviceInfo;
+ sv_iActState : DINT (* actual state (used for displaying a text in odc editor) *);
+ sv_Options : tOptionId;
+ ai_Position : REAL;
+ sv_bVerticalMachine : BOOL;
+ sv_bOverrideEjectorSafety : BOOL;
+ sv_NumberOfDevices : tyNumberOfDevices;
+ sv_bTransducerAvailable : BOOL;
+ sv_rShakeTargetPos : REAL;
+ sv_iEditorPropertiesChanged : DINT;
+ sv_bFALSE : BOOL;
+ sv_OperationMode : tnOperationMode;
+ sv_DeviceId : tsDeviceId;
+END_VAR
+
+SYSTEM_OBJECT
+ PU_Task_7 : TASK;
+ PU_Task_3 : TASK;
+ PU_Task_13 : TASK;
+ evMovementState : tevMovementState;
+ EV_Task_7 : TASK;
+ TaskAnalog : TASK;
+ evModifyCycleStartCondition : tevModifyCycleStartCondition;
+END_OBJECT
+
+VAR
+ mpbFwdDuringMoldOpen : REFTO BOOL (* ejector fwd during mold open *);
+ mpiODCSequenceUpdated : REFTO DINT (* reference to sysvar that indicates a change of the sequence *);
+ mevMovementState : tevMovementState;
+ mprMoldPosition : REFTO REAL (* reference to mold position *);
+ mprStartPosition : REFTO REAL (* reference to ejector fwd start positon *);
+ mpWorkPosMode : REFTO tnWorkPosMode;
+END_VAR
+
+ALGORITHM aSetODCSelector
+
+
+VAR
+ iSelector : INT;
+END_VAR
+#BEGIN_EDIT_BLOCK
+(**************************************** WARNING ********************************************
+ *** The KEBA Kemro K2 System including software is not intended for safety control tasks! ***
+ ***                       For further information see Comment tab!                        ***
+ *********************************************************************************************)
+
+IF sv_bVerticalMachine THEN
+   mpbFwdDuringMoldOpen^ := FALSE; //disable ejector parallel on vertical machine
+END_IF;
+
+// sv_iODCSelector values
+// 0: not used, 1: hold, 2: continous or vibrate, 3: parallel hold, 4: parallel continous or vibrate
+// 5: after mold close hold, 6 after mold close continous or vibrate
+
+CASE sv_EjectorMode OF
+      nNoUse: 
+         iSelector := 0;        
+      nHold:
+         iSelector := 1;        
+      nNormal, nVibrate:
+         iSelector := 2;    
+ELSE
+   // unknown mode
+   iSelector := 0; 
+END_CASE;
+
+IF sv_EjectorMode <> nNoUse AND sv_bVerticalMachine AND CHECK_REF(mpWorkPosMode^) AND mpWorkPosMode^ = nWorkPosDual THEN
+   //special mode ejector after mold close is selected in vertical machine
+   iSelector := iSelector + 4;
+END_IF;
+IF sv_EjectorMode <> nNoUse AND mpbFwdDuringMoldOpen^ THEN
+   //ejector parallel is selected
+   iSelector := iSelector + 2;
+END_IF;
+
+sv_iODCSelector := iSelector;
+
+
+;#END_EDIT_BLOCK END_ALGORITHM
+
+ALGORITHM aCheckMoldPos
+
+#BEGIN_EDIT_BLOCK
+(**************************************** WARNING ********************************************
+ *** The KEBA Kemro K2 System including software is not intended for safety control tasks! ***
+ ***                       For further information see Comment tab!                        ***
+ *********************************************************************************************)
+
+IF mprMoldPosition^ >= mprStartPosition^ THEN
+    sv_bStartConditionReached := TRUE;
+ELSE
+    sv_bStartConditionReached := FALSE;
+END_IF;
+
+
+
+;#END_EDIT_BLOCK END_ALGORITHM
+
+POSTUPDATE_ALGORITHM pODCSelector ON PU_Task_7 WITH sv_iODCSelector
+
+#BEGIN_EDIT_BLOCK
+(**************************************** WARNING ********************************************
+ *** The KEBA Kemro K2 System including software is not intended for safety control tasks! ***
+ ***                       For further information see Comment tab!                        ***
+ *********************************************************************************************)
+
+sv_bProgramSwitchChanged := TRUE;
+
+
+;#END_EDIT_BLOCK END_ALGORITHM
+
+POSTUPDATE_ALGORITHM pEjecorMode ON PU_Task_7 WITH sv_EjectorMode,mpbFwdDuringMoldOpen^,mpWorkPosMode^
+
+#BEGIN_EDIT_BLOCK
+(**************************************** WARNING ********************************************
+ *** The KEBA Kemro K2 System including software is not intended for safety control tasks! ***
+ ***                       For further information see Comment tab!                        ***
+ *********************************************************************************************)
+
+//update activated information
+sv_bActivated := (sv_EjectorMode <> nNoUse);
+
+//update selector variable
+aSetODCSelector();
+
+
+;#END_EDIT_BLOCK END_ALGORITHM
+
+POSTUPDATE_ALGORITHM pInitDone ON PU_Task_3(1) WITH sv_bInitDone
+
+#BEGIN_EDIT_BLOCK
+(**************************************** WARNING ********************************************
+ *** The KEBA Kemro K2 System including software is not intended for safety control tasks! ***
+ ***                       For further information see Comment tab!                        ***
+ *********************************************************************************************)
+
+sv_bActivated := (sv_EjectorMode <> nNoUse);
+
+//set selector variable before sequence creation starts
+aSetODCSelector();
+
+
+;#END_EDIT_BLOCK END_ALGORITHM
+
+POSTUPDATE_ALGORITHM pNewSequence ON PU_Task_7 WITH mpiODCSequenceUpdated^
+
+
+VAR
+ evModifyCycleStartCondData : tevModifyCycleStartCondData;
+END_VAR
+#BEGIN_EDIT_BLOCK
+(**************************************** WARNING ********************************************
+ *** The KEBA Kemro K2 System including software is not intended for safety control tasks! ***
+ ***                       For further information see Comment tab!                        ***
+ *********************************************************************************************)
+
+IF sv_bUseProgramSwitches AND mpbFwdDuringMoldOpen^ THEN
+   //ejector parallel is used
+   sv_MoveFwd.pbStartConditionReached := @sv_bStartConditionReached;
+   mevMovementState := evMovementState;
+   
+   //update start condition reached information
+   aCheckMoldPos();
+ELSE
+   sv_MoveFwd.pbStartConditionReached := @sv_bTRUE;
+   mevMovementState := EMPTY;
+END_IF;
+
+IF sv_bUseProgramSwitches AND (sv_EjectorMode = nHold) THEN
+   //add ejector bwd movement as additional cycle start condition
+   evModifyCycleStartCondData.iMode := 1;        
+   evModifyCycleStartCondData.DeviceId := sv_DeviceId;
+   evModifyCycleStartCondData.MoveDir := cMoveBwd;
+   evModifyCycleStartCondData.MoveId := cMoveBwd;
+   evModifyCycleStartCondData.iCount := 1;   
+   SET_EVENT(evModifyCycleStartCondition, evModifyCycleStartCondData);
+   
+   IF sv_bVerticalMachine THEN
+      //VIMM: also add ejector fwd as an additional cycle start condition
+      evModifyCycleStartCondData.iMode := 1;        
+      evModifyCycleStartCondData.DeviceId := sv_DeviceId;
+      evModifyCycleStartCondData.MoveDir := cMoveFwd;
+      evModifyCycleStartCondData.MoveId := cMoveFwd;
+      evModifyCycleStartCondData.iCount := 1;   
+      SET_EVENT(evModifyCycleStartCondition, evModifyCycleStartCondData);
+   END_IF;
+END_IF;
+
+
+
+;#END_EDIT_BLOCK END_ALGORITHM
+
+POSTUPDATE_ALGORITHM pInitStart ON PU_Task_7 WITH sv_bInitStart
+
+
+VAR
+ state : KSYS_Status;
+ bHydraulic : BOOL;
+END_VAR
+#BEGIN_EDIT_BLOCK
+(**************************************** WARNING ********************************************
+ *** The KEBA Kemro K2 System including software is not intended for safety control tasks! ***
+ ***                       For further information see Comment tab!                        ***
+ *********************************************************************************************)
+
+//get references
+mpiODCSequenceUpdated := GET_SYNC_REFTO('ODC1.sv_iODCSequenceUpdated', T#0s, state);
+mpbFwdDuringMoldOpen := GET_SYNC_REFTO('CentralCoordination1.sv_bEjectorFwdDuringMldOpen', T#0s, state);
+mprMoldPosition := GET_SYNC_REFTO('Mold1.sv_rMoldPosition', T#0s, state);
+mprStartPosition := GET_SYNC_REFTO('CentralCoordination1.sv_rEjectorFwdStartPosition', T#0s, state);
+
+IF (sv_NumberOfDevices[cCompRotaryTable] = 1) THEN
+   mpWorkPosMode := GET_SYNC_REFTO('RotaryTable1.sv_WorkPosMode', t#0s, state);
+ELSIF (sv_NumberOfDevices[cCompSlideTable] = 1) THEN
+   mpWorkPosMode := GET_SYNC_REFTO('SlideTable1.sv_WorkPosMode', t#0s, state);
+END_IF;
+
+//display ejector state instead of position (if no transducer available)
+bHydraulic := ((sv_Options AND cOptionHydraulic) = cOptionHydraulic);
+IF bHydraulic AND NOT IS_LINKED(ai_Position) THEN
+   sv_AddDeviceInfo.prActValue := EMPTY;
+   sv_AddDeviceInfo.piActState := @sv_iActState;
+END_IF;
+
+
+
+;#END_EDIT_BLOCK END_ALGORITHM
+
+EVENT_ALGORITHM evaMovementState ON EV_Task_7 WITH mevMovementState
+
+
+VAR_INPUT
+ evMovementStateData : tevMovementStateData;
+END_VAR
+#BEGIN_EDIT_BLOCK
+ (**************************************** WARNING ********************************************
+  *** The KEBA Kemro K2 System including software is not intended for safety control tasks! ***
+  ***                       For further information see Comment tab!                        ***
+  *********************************************************************************************)
+ 
+IF NOT (evMovementStateData.DeviceId.CompId = cCompMold AND evMovementStateData.DeviceId.IndexId = 1) THEN
+   //movement state event doesn´t come from the mold 
+   RETURN;
+END_IF;
+                  
+IF evMovementStateData.MoveDir = cMoveBwd THEN
+   //mold bwd movement
+   IF evMovementStateData.State = nActive THEN
+      //mold bwd started      
+      START_PROCESS_ALGORITHM(paCheckMoldPos);
+   ELSE
+      //mold bwd stopped
+      STOP_PROCESS_ALGORITHM(paCheckMoldPos);
+   END_IF;
+ELSE
+   //mold fwd movement stopped -> update variable
+   IF evMovementStateData.State = nInactive THEN
+      aCheckMoldPos();
+   END_IF;
+END_IF;
+
+
+
+
+;#END_EDIT_BLOCK END_ALGORITHM
+
+PROCESS_ALGORITHM paCheckMoldPos ON TaskAnalog
+
+#BEGIN_EDIT_BLOCK
+(**************************************** WARNING ********************************************
+ *** The KEBA Kemro K2 System including software is not intended for safety control tasks! ***
+ ***                       For further information see Comment tab!                        ***
+ *********************************************************************************************)
+
+aCheckMoldPos();
+IF mprMoldPosition^ >= mprStartPosition^ THEN
+   STOP_PROCESS_ALGORITHM();
+END_IF;
+
+
+;#END_EDIT_BLOCK END_ALGORITHM
+
+POSTUPDATE_ALGORITHM pSetActivated ON PU_Task_7 WITH sv_bDeviceRegisterDone,sv_bUseProgramSwitches,sv_bOverrideEjectorSafety
+
+#BEGIN_EDIT_BLOCK
+(**************************************** WARNING ********************************************
+ *** The KEBA Kemro K2 System including software is not intended for safety control tasks! ***
+ ***                       For further information see Comment tab!                        ***
+ *********************************************************************************************)
+
+IF (NOT sv_bUseProgramSwitches) OR sv_bOverrideEjectorSafety THEN
+   //editor used or override activated
+   sv_MoveBwd.pbActivated := @sv_bTRUE;
+   sv_MoveFwd.pbActivated := @sv_bTRUE;
+ELSE
+   //activated information comes from program switch
+   sv_MoveBwd.pbActivated := @sv_bActivated;
+   sv_MoveFwd.pbActivated := @sv_bActivated;
+END_IF;
+
+
+;#END_EDIT_BLOCK END_ALGORITHM
+
+POSTUPDATE_ALGORITHM pSetShakeActivated ON PU_Task_7 WITH sv_bDeviceRegisterDone,sv_bUseProgramSwitches,sv_bOverrideEjectorSafety,sv_iShakeCounter,sv_OperationMode
+
+#BEGIN_EDIT_BLOCK
+(**************************************** WARNING ********************************************
+ *** The KEBA Kemro K2 System including software is not intended for safety control tasks! ***
+ ***                       For further information see Comment tab!                        ***
+ *********************************************************************************************)
+
+IF (NOT sv_bUseProgramSwitches) OR sv_bOverrideEjectorSafety THEN
+   //editor used or "override ejector safety" activated
+   sv_MoveShake.pbActivated := @sv_bTRUE;
+ELSE
+   IF (sv_iShakeCounter = 1) AND (sv_OperationMode >= nHalfAutomatic) THEN
+      //deactivate shake movement 
+      sv_MoveShake.pbActivated := @sv_bFALSE;
+   ELSE
+      sv_MoveShake.pbActivated := @sv_bActivated;
+   END_IF;
+END_IF;
+
+
+;#END_EDIT_BLOCK END_ALGORITHM
+
+POSTUPDATE_ALGORITHM pShakeParams ON PU_Task_7 WITH sv_bInitDone,sv_iShakeCounter,sv_EjectorBwdVisShake.Profile
+
+
+VAR
+ iPoints : DINT;
+END_VAR
+#BEGIN_EDIT_BLOCK
+(**************************************** WARNING ********************************************
+ *** The KEBA Kemro K2 System including software is not intended for safety control tasks! ***
+ ***                       For further information see Comment tab!                        ***
+ *********************************************************************************************)
+
+sv_ShakeParams.iShakeCounter := (sv_iShakeCounter - 1);
+
+iPoints := UDINT_TO_DINT(sv_EjectorBwdVisShake.Profile.iNoOfPoints);
+sv_ShakeParams.rShakePosition := sv_EjectorBwdVisShake.Profile.Points[iPoints + 1].rStartPos;
+
+sv_rShakeTargetPos := sv_ShakeParams.rShakePosition;
+
+
+;#END_EDIT_BLOCK END_ALGORITHM
+
+POSTUPDATE_ALGORITHM pSetFwdPosition ON PU_Task_7 WITH sv_bInitStart,sv_EjectorFwdVis.Profile
+
+#BEGIN_EDIT_BLOCK
+(**************************************** WARNING ********************************************
+ *** The KEBA Kemro K2 System including software is not intended for safety control tasks! ***
+ ***                       For further information see Comment tab!                        ***
+ *********************************************************************************************)
+
+sv_rSetFwdPosition := sv_EjectorFwdVis.Profile.Points[sv_EjectorFwdVis.Profile.iNoOfPoints + 1].rStartPos;
+
+
+;#END_EDIT_BLOCK END_ALGORITHM
+
+POSTUPDATE_ALGORITHM pSetBwdPosition ON PU_Task_7 WITH sv_bInitStart,sv_EjectorBwdVis.Profile
+
+#BEGIN_EDIT_BLOCK
+(**************************************** WARNING ********************************************
+ *** The KEBA Kemro K2 System including software is not intended for safety control tasks! ***
+ ***                       For further information see Comment tab!                        ***
+ *********************************************************************************************)
+
+sv_rSetBwdPosition := sv_EjectorBwdVis.Profile.Points[sv_EjectorBwdVis.Profile.iNoOfPoints + 1].rStartPos;
+
+
+;#END_EDIT_BLOCK END_ALGORITHM
+
+POSTUPDATE_ALGORITHM pDurationChanged ON PU_Task_13 WITH sv_dCalculatedDurationFwd, sv_dCalculatedDurationBwd, sv_dCalculatedDurationShake, sv_EjectorFwdTimesSet.dSetDelayTime, sv_EjectorBwdTimesSet.dSetDelayTime
+
+
+VAR
+ fbUpdateProperties : FBUpdateEditorProperties;
+END_VAR
+#BEGIN_EDIT_BLOCK
+(**************************************** WARNING ********************************************
+ *** The KEBA Kemro K2 System including software is not intended for safety control tasks! ***
+ ***                       For further information see Comment tab!                        ***
+ *********************************************************************************************)
+
+fbUpdateProperties();
+
+
+;#END_EDIT_BLOCK END_ALGORITHM
+
+POSTUPDATE_ALGORITHM pEjectorState ON PU_Task_7 WITH sv_bInitDone,sv_bEjectorFwd,sv_bEjectorBwd
+
+#BEGIN_EDIT_BLOCK
+(**************************************** WARNING ********************************************
+ *** The KEBA Kemro K2 System including software is not intended for safety control tasks! ***
+ ***                       For further information see Comment tab!                        ***
+ *********************************************************************************************)
+
+IF sv_bEjectorBwd THEN
+   //ejector is bwd
+   sv_iActState := 0;
+ELSIF sv_bEjectorFwd THEN
+   //ejector is fwd
+   sv_iActState := 1;
+ELSE
+   //ejector in "middle" position
+   sv_iActState := 2;
+END_IF;
+
+
+;#END_EDIT_BLOCK END_ALGORITHM
+
+POSTUPDATE_ALGORITHM pShakeProperties ON PU_Task_7 WITH sv_bInitDone,sv_bUseProgramSwitches
+
+#BEGIN_EDIT_BLOCK
+(**************************************** WARNING ********************************************
+ *** The KEBA Kemro K2 System including software is not intended for safety control tasks! ***
+ ***                       For further information see Comment tab!                        ***
+ *********************************************************************************************)
+
+IF sv_bUseProgramSwitches OR NOT sv_bTransducerAvailable THEN
+   //do not display shake target position in machine sequencer properties
+   sv_MoveShake.EditorData.sLGInstanceProperties := 'LG_EjectorShake2';
+ELSE
+   sv_MoveShake.EditorData.sLGInstanceProperties := 'LG_EjectorShake;LG_EjectorShake2';
+END_IF;
+
+sv_iEditorPropertiesChanged := sv_iEditorPropertiesChanged + 1;
+
+
+;#END_EDIT_BLOCK END_ALGORITHM
+
+
+
+END_ALGORITHM_BLOCK
+
+
+
+#END_OF_IEC_PART
+
+@Puma @IecEditor 6 97 @Pou 25 
+@@@BEG_Comment@@@
+@h    ! WARNING !
+@h    The Kemro K2 system (including software) only meets category B according to EN 954-1,
+@h    thus it is not intended for usage in safety-relevant control applications in the field 
+@h    of personal safety (e.g. emergency stop).
+@h    To implement potentially necessary safety-relevant control tasks, always use additional 
+@h    external safety devices that are intended for the particular purpose, and meet the necessary 
+@h    functional safety.
+@h    For further information see EN 954-1 (EN ISO 13849-1) and/or the K2-x00 user manual, chapter 
+@h    "CE conformity, directives and standards".
+
+Following functions are implemented in this AB
+- react on changes of ejector mode and selector "fwd during mold open" 
+  (trigger new creation of machine sequence)
+- set/reset sv_bActivated
+- maintain sv_bStartConditionReached if ejector moves parallel to mold open
+- modify cycle start conditions if ejector mode "hold" is selected
+
+
+@FunctionID: S_FU_04
+@FunctionID: S_ALLG_09
+@@@END_Comment@@@
+
+@BEG_Contents 
+
+@BEG_Func 
+@RT(17)FuncTreeContainer 
+3 
+@Var @RT(14)GET_SYNC_REFTO @RT(0) @T @T @DERIVED 0 @F @RT(22)KEBA_STANDARD_FUNCTION @F 
+@T 
+@BEG_Attrib 
+0 @RT(0) @RT(0) 
+@END_Attrib 
+1 1 @F @F @F @F 
+
+@Var @RT(9)CHECK_REF @RT(0) @T @T @DERIVED 0 @F @RT(23)KEBA_STANDARD_PROCEDURE @F 
+@T 
+@BEG_Attrib 
+0 @RT(0) @RT(0) 
+@END_Attrib 
+1 1 @F @F @F @F 
+
+@Var @RT(9)SET_EVENT @RT(0) @T @T @DERIVED 0 @F @RT(23)KEBA_STANDARD_PROCEDURE @F 
+@T 
+@BEG_Attrib 
+0 @RT(0) @RT(0) 
+@END_Attrib 
+1 1 @F @F @F @F 
+
+@END_Func 
+
+@BEG_Const 
+@RT(18)ConstTreeContainer 
+1 
+@Var @RT(9)cCompMold @RT(0) @T @F @DT @RT(4)DINT @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+0 @RT(3)101 @RT(14)Component Mold 
+@END_Attrib 
+1 1 @F @F @F @F 
+
+@END_Const 
+
+@BEG_Export 
+
+@BEG_Kind 
+@ALGORITHM_BLOCK @RT(14)ABODCFunctions @STRUCTURED_TEXT 
+@RT(0) @RT(0) @RT(0) 
+@END_Kind 
+
+@BEG_Dcl 
+@RT(16)DclTreeContainer 
+53 
+@Var @RT(14)sv_EjectorMode @RT(0) @T @T @RENAMED 0 @T @T @DT @RT(13)tnEjectorMode @RT(0) @T @T @UNKNOWN 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 8 @F @F @F @F 
+
+@Var @RT(9)PU_Task_7 @RT(0) @T @F @DT @RT(4)TASK @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 7 @F @F @F @F 
+
+@Var @RT(24)sv_bProgramSwitchChanged @RT(0) @T @F @DT @RT(4)BOOL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(77)TRUE if ODC sequence should be reinitialized because a program switch changed @RT(0) 
+@END_Attrib 
+1 8 @F @F @F @F 
+
+@Var @RT(13)sv_bActivated @RT(0) @T @F @DT @RT(4)BOOL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(45)TRUE if ejector is activated (mode <> nNoUse) @RT(0) 
+@END_Attrib 
+1 8 @F @F @F @F 
+
+@Var @RT(10)sv_MoveBwd @RT(0) @T @T @DERIVED 0 @T @T @DT @RT(10)tsMoveData @RT(0) @T @T @UNKNOWN 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 8 @F @F @F @F 
+
+@Var @RT(21)sv_EjectorBwdTimesSet @RT(0) @T @T @DERIVED 0 @T @T @DT @RT(10)tsSetTimes @RT(0) @T @T @UNKNOWN 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 8 @F @F @F @F 
+
+@Var @RT(12)sv_bInitDone @RT(0) @T @T @RENAMED 0 @T @T @DT @RT(4)BOOL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 8 @F @F @F @F 
+
+@Var @RT(20)mpbFwdDuringMoldOpen @RT(0) @T @T @REFTO 0 @T @DT @RT(4)BOOL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(28)ejector fwd during mold open @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(15)sv_iODCSelector @RT(0) @T @F @DT @RT(3)INT @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(53)combination of ejector mode and ejector parallel flag @RT(0) 
+@END_Attrib 
+1 8 @F @F @F @F 
+
+@Var @RT(9)PU_Task_3 @RT(0) @T @F @DT @RT(4)TASK @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 7 @F @F @F @F 
+
+@Var @RT(10)PU_Task_13 @RT(0) @T @F @DT @RT(4)TASK @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 7 @F @F @F @F 
+
+@Var @RT(21)mpiODCSequenceUpdated @RT(0) @T @T @REFTO 0 @T @DT @RT(4)DINT @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(59)reference to sysvar that indicates a change of the sequence @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(10)sv_MoveFwd @RT(0) @T @T @DERIVED 0 @T @T @DT @RT(10)tsMoveData @RT(0) @T @T @UNKNOWN 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 8 @F @F @F @F 
+
+@Var @RT(25)sv_bStartConditionReached @RT(0) @T @F @DT @RT(4)BOOL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 8 @F @F @F @F 
+
+@Var @RT(8)sv_bTRUE @RT(0) @T @F @DT @RT(4)BOOL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 8 @F @F @F @F 
+
+@Var @RT(13)sv_bInitStart @RT(0) @T @F @DT @RT(4)BOOL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 8 @F @F @F @F 
+
+@Var @RT(15)evMovementState @RT(0) @T @T @DERIVED 0 @T @T @DT @RT(16)tevMovementState @RT(0) @T @T @UNKNOWN 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 7 @F @F @F @F 
+
+@Var @RT(16)mevMovementState @RT(0) @T @T @RENAMED 0 @T @T @DT @RT(16)tevMovementState @RT(0) @T @T @UNKNOWN 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(9)EV_Task_7 @RT(0) @T @F @DT @RT(4)TASK @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 7 @F @F @F @F 
+
+@Var @RT(15)mprMoldPosition @RT(0) @T @T @REFTO 0 @T @DT @RT(4)REAL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(26)reference to mold position @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(16)mprStartPosition @RT(0) @T @T @REFTO 0 @T @DT @RT(4)REAL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(38)reference to ejector fwd start positon @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(10)TaskAnalog @RT(0) @T @F @DT @RT(4)TASK @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 7 @F @F @F @F 
+
+@Var @RT(22)sv_bDeviceRegisterDone @RT(0) @T @T @RENAMED 0 @T @T @DT @RT(4)BOOL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 8 @F @F @F @F 
+
+@Var @RT(22)sv_bUseProgramSwitches @RT(0) @T @T @RENAMED 0 @T @T @DT @RT(4)BOOL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 8 @F @F @F @F 
+
+@Var @RT(12)sv_MoveShake @RT(0) @T @T @DERIVED 0 @T @T @DT @RT(10)tsMoveData @RT(0) @T @T @UNKNOWN 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 8 @F @F @F @F 
+
+@Var @RT(16)sv_iShakeCounter @RT(0) @T @T @RENAMED 0 @T @T @DT @RT(4)DINT @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 8 @F @F @F @F 
+
+@Var @RT(21)sv_EjectorBwdVisShake @RT(0) @T @T @DERIVED 0 @T @T @DT @RT(16)KAPPL_VisProfile @RT(0) @T @T @UNKNOWN 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 8 @F @F @F @F 
+
+@Var @RT(14)sv_ShakeParams @RT(0) @T @T @DERIVED 0 @T @T @DT @RT(13)tsShakeParams @RT(0) @T @T @UNKNOWN 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 8 @F @F @F @F 
+
+@Var @RT(18)sv_rSetFwdPosition @RT(0) @T @F @DT @RT(4)REAL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(16)set fwd position @RT(0) 
+@END_Attrib 
+1 8 @F @F @F @F 
+
+@Var @RT(18)sv_rSetBwdPosition @RT(0) @T @F @DT @RT(4)REAL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(16)set fwd position @RT(0) 
+@END_Attrib 
+1 8 @F @F @F @F 
+
+@Var @RT(16)sv_EjectorFwdVis @RT(0) @T @T @DERIVED 0 @T @T @DT @RT(16)KAPPL_VisProfile @RT(0) @T @T @UNKNOWN 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 8 @F @F @F @F 
+
+@Var @RT(16)sv_EjectorBwdVis @RT(0) @T @T @DERIVED 0 @T @T @DT @RT(16)KAPPL_VisProfile @RT(0) @T @T @UNKNOWN 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 8 @F @F @F @F 
+
+@Var @RT(25)sv_dCalculatedDurationFwd @RT(0) @T @F @DT @RT(4)TIME @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(35)Calculated duration for ejector fwd @RT(0) 
+@END_Attrib 
+1 8 @F @F @F @F 
+
+@Var @RT(25)sv_dCalculatedDurationBwd @RT(0) @T @F @DT @RT(4)TIME @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(35)Calculated duration for ejector bwd @RT(0) 
+@END_Attrib 
+1 8 @F @F @F @F 
+
+@Var @RT(27)sv_dCalculatedDurationShake @RT(0) @T @F @DT @RT(4)TIME @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(46)Calculated duration for complete ejector shake @RT(0) 
+@END_Attrib 
+1 8 @F @F @F @F 
+
+@Var @RT(21)sv_EjectorFwdTimesSet @RT(0) @T @T @DERIVED 0 @T @T @DT @RT(10)tsSetTimes @RT(0) @T @T @UNKNOWN 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 8 @F @F @F @F 
+
+@Var @RT(14)sv_bEjectorFwd @RT(0) @T @T @RENAMED 0 @T @T @DT @RT(4)BOOL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 8 @F @F @F @F 
+
+@Var @RT(14)sv_bEjectorBwd @RT(0) @T @T @RENAMED 0 @T @T @DT @RT(4)BOOL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 8 @F @F @F @F 
+
+@Var @RT(16)sv_AddDeviceInfo @RT(0) @T @T @DERIVED 0 @T @T @DT @RT(15)tsAddDeviceInfo @RT(0) @T @T @UNKNOWN 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 8 @F @F @F @F 
+
+@Var @RT(12)sv_iActState @RT(0) @T @F @DT @RT(4)DINT @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(55)actual state (used for displaying a text in odc editor) @RT(0) 
+@END_Attrib 
+1 8 @F @F @F @F 
+
+@Var @RT(10)sv_Options @RT(0) @T @T @DERIVED 0 @T @T @DT @RT(9)tOptionId @RT(0) @T @T @UNKNOWN 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 8 @F @F @F @F 
+
+@Var @RT(11)ai_Position @RT(0) @T @F @DT @RT(4)REAL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 8 @F @F @F @F 
+
+@Var @RT(19)sv_bVerticalMachine @RT(0) @T @T @RENAMED 0 @T @T @DT @RT(4)BOOL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 8 @F @F @F @F 
+
+@Var @RT(13)mpWorkPosMode @RT(0) @T @T @REFTO 0 @F @DERIVED 0 @T @T @DT @RT(13)tnWorkPosMode @RT(0) @T @T @UNKNOWN 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(25)sv_bOverrideEjectorSafety @RT(0) @T @F @DT @RT(4)BOOL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 8 @F @F @F @F 
+
+@Var @RT(18)sv_NumberOfDevices @RT(0) @T @T @DERIVED 0 @T @T @DT @RT(17)tyNumberOfDevices @RT(0) @T @T @UNKNOWN 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 8 @F @F @F @F 
+
+@Var @RT(23)sv_bTransducerAvailable @RT(0) @T @F @DT @RT(4)BOOL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 8 @F @F @F @F 
+
+@Var @RT(18)sv_rShakeTargetPos @RT(0) @T @T @RENAMED 0 @T @T @DT @RT(4)REAL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 8 @F @F @F @F 
+
+@Var @RT(27)sv_iEditorPropertiesChanged @RT(0) @T @F @DT @RT(4)DINT @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 8 @F @F @F @F 
+
+@Var @RT(9)sv_bFALSE @RT(0) @T @F @DT @RT(4)BOOL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 8 @F @F @F @F 
+
+@Var @RT(16)sv_OperationMode @RT(0) @T @T @DERIVED 0 @T @T @DT @RT(15)tnOperationMode @RT(0) @T @T @UNKNOWN 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 8 @F @F @F @F 
+
+@Var @RT(11)sv_DeviceId @RT(0) @T @T @RENAMED 0 @T @T @DT @RT(10)tsDeviceId @RT(0) @T @T @UNKNOWN 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 8 @F @F @F @F 
+
+@Var @RT(27)evModifyCycleStartCondition @RT(0) @T @T @DERIVED 0 @T @T @DT @RT(28)tevModifyCycleStartCondition @RT(0) @T @T @UNKNOWN 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 7 @F @F @F @F 
+
+@END_Dcl 
+
+@END_Export 
+
+@BEG_Body 
+
+17 
+
+@BEG_Export 
+
+@BEG_Algo 
+@ALGORITHM @RT(15)aSetODCSelector @STRUCTURED_TEXT 
+@RT(0) @RT(0) @RT(0) @F @F 
+@END_Algo 
+
+@BEG_Dcl 
+@RT(16)DclTreeContainer 
+1 
+@Var @RT(9)iSelector @RT(0) @T @F @DT @RT(3)INT @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@END_Dcl 
+
+@END_Export 
+
+@BEG_Export 
+
+@BEG_Algo 
+@ALGORITHM @RT(13)aCheckMoldPos @STRUCTURED_TEXT 
+@RT(0) @RT(0) @RT(0) @F @F 
+@END_Algo 
+
+@BEG_Dcl 
+@RT(16)DclTreeContainer 
+0 
+@END_Dcl 
+
+@END_Export 
+
+@BEG_Export 
+
+@BEG_Algo 
+@POSTUPDATE_ALGORITHM @RT(12)pODCSelector @STRUCTURED_TEXT 
+@RT(0) @RT(15)sv_iODCSelector @RT(9)PU_Task_7 @F @F 
+@END_Algo 
+
+@BEG_Dcl 
+@RT(16)DclTreeContainer 
+0 
+@END_Dcl 
+
+@END_Export 
+
+@BEG_Export 
+
+@BEG_Algo 
+@POSTUPDATE_ALGORITHM @RT(11)pEjecorMode @STRUCTURED_TEXT 
+@RT(0) @RT(51)sv_EjectorMode,mpbFwdDuringMoldOpen^,mpWorkPosMode^ @RT(9)PU_Task_7 @F @F 
+@END_Algo 
+
+@BEG_Dcl 
+@RT(16)DclTreeContainer 
+0 
+@END_Dcl 
+
+@END_Export 
+
+@BEG_Export 
+
+@BEG_Algo 
+@POSTUPDATE_ALGORITHM @RT(9)pInitDone @STRUCTURED_TEXT 
+@RT(0) @RT(12)sv_bInitDone @RT(12)PU_Task_3(1) @F @F 
+@END_Algo 
+
+@BEG_Dcl 
+@RT(16)DclTreeContainer 
+0 
+@END_Dcl 
+
+@END_Export 
+
+@BEG_Export 
+
+@BEG_Algo 
+@POSTUPDATE_ALGORITHM @RT(12)pNewSequence @STRUCTURED_TEXT 
+@RT(0) @RT(22)mpiODCSequenceUpdated^ @RT(9)PU_Task_7 @F @F 
+@END_Algo 
+
+@BEG_Dcl 
+@RT(16)DclTreeContainer 
+1 
+@Var @RT(26)evModifyCycleStartCondData @RT(0) @T @T @DERIVED 0 @F @RT(27)tevModifyCycleStartCondData @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@END_Dcl 
+
+@END_Export 
+
+@BEG_Export 
+
+@BEG_Algo 
+@POSTUPDATE_ALGORITHM @RT(10)pInitStart @STRUCTURED_TEXT 
+@RT(0) @RT(13)sv_bInitStart @RT(9)PU_Task_7 @F @F 
+@END_Algo 
+
+@BEG_Dcl 
+@RT(16)DclTreeContainer 
+2 
+@Var @RT(5)state @RT(0) @T @T @DERIVED 0 @T @T @DT @RT(11)KSYS_Status @RT(0) @T @T @UNKNOWN 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(10)bHydraulic @RT(0) @T @F @DT @RT(4)BOOL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@END_Dcl 
+
+@END_Export 
+
+@BEG_Export 
+
+@BEG_Algo 
+@EVENT_ALGORITHM @RT(16)evaMovementState @STRUCTURED_TEXT 
+@RT(0) @RT(16)mevMovementState @RT(9)EV_Task_7 @F @F 
+@END_Algo 
+
+@BEG_Dcl 
+@RT(16)DclTreeContainer 
+1 
+@Var @RT(19)evMovementStateData @RT(0) @T @T @DERIVED 0 @T @T @DT @RT(20)tevMovementStateData @RT(0) @T @T @UNKNOWN 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 1 @F @F @F @F 
+
+@END_Dcl 
+
+@END_Export 
+
+@BEG_Export 
+
+@BEG_Algo 
+@PROCESS_ALGORITHM @RT(14)paCheckMoldPos @STRUCTURED_TEXT 
+@RT(0) @RT(0) @RT(10)TaskAnalog @F @F 
+@END_Algo 
+
+@BEG_Dcl 
+@RT(16)DclTreeContainer 
+0 
+@END_Dcl 
+
+@END_Export 
+
+@BEG_Export 
+
+@BEG_Algo 
+@POSTUPDATE_ALGORITHM @RT(13)pSetActivated @STRUCTURED_TEXT 
+@RT(0) @RT(71)sv_bDeviceRegisterDone,sv_bUseProgramSwitches,sv_bOverrideEjectorSafety @RT(9)PU_Task_7 @F @F 
+@END_Algo 
+
+@BEG_Dcl 
+@RT(16)DclTreeContainer 
+0 
+@END_Dcl 
+
+@END_Export 
+
+@BEG_Export 
+
+@BEG_Algo 
+@POSTUPDATE_ALGORITHM @RT(18)pSetShakeActivated @STRUCTURED_TEXT 
+@RT(0) @RT(105)sv_bDeviceRegisterDone,sv_bUseProgramSwitches,sv_bOverrideEjectorSafety,sv_iShakeCounter,sv_OperationMode @RT(9)PU_Task_7 @F @F 
+@END_Algo 
+
+@BEG_Dcl 
+@RT(16)DclTreeContainer 
+0 
+@END_Dcl 
+
+@END_Export 
+
+@BEG_Export 
+
+@BEG_Algo 
+@POSTUPDATE_ALGORITHM @RT(12)pShakeParams @STRUCTURED_TEXT 
+@RT(0) @RT(59)sv_bInitDone,sv_iShakeCounter,sv_EjectorBwdVisShake.Profile @RT(9)PU_Task_7 @F @F 
+@END_Algo 
+
+@BEG_Dcl 
+@RT(16)DclTreeContainer 
+1 
+@Var @RT(7)iPoints @RT(0) @T @F @DT @RT(4)DINT @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@END_Dcl 
+
+@END_Export 
+
+@BEG_Export 
+
+@BEG_Algo 
+@POSTUPDATE_ALGORITHM @RT(15)pSetFwdPosition @STRUCTURED_TEXT 
+@RT(0) @RT(38)sv_bInitStart,sv_EjectorFwdVis.Profile @RT(9)PU_Task_7 @F @F 
+@END_Algo 
+
+@BEG_Dcl 
+@RT(16)DclTreeContainer 
+0 
+@END_Dcl 
+
+@END_Export 
+
+@BEG_Export 
+
+@BEG_Algo 
+@POSTUPDATE_ALGORITHM @RT(15)pSetBwdPosition @STRUCTURED_TEXT 
+@RT(0) @RT(38)sv_bInitStart,sv_EjectorBwdVis.Profile @RT(9)PU_Task_7 @F @F 
+@END_Algo 
+
+@BEG_Dcl 
+@RT(16)DclTreeContainer 
+0 
+@END_Dcl 
+
+@END_Export 
+
+@BEG_Export 
+
+@BEG_Algo 
+@POSTUPDATE_ALGORITHM @RT(16)pDurationChanged @STRUCTURED_TEXT 
+@RT(0) @RT(155)sv_dCalculatedDurationFwd, sv_dCalculatedDurationBwd, sv_dCalculatedDurationShake, sv_EjectorFwdTimesSet.dSetDelayTime, sv_EjectorBwdTimesSet.dSetDelayTime @RT(10)PU_Task_13 @F @F 
+@END_Algo 
+
+@BEG_Dcl 
+@RT(16)DclTreeContainer 
+1 
+@Var @RT(18)fbUpdateProperties @RT(0) @T @T @DERIVED 0 @T @T @DT @RT(24)FBUpdateEditorProperties @RT(0) @T @T @UNKNOWN 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@END_Dcl 
+
+@END_Export 
+
+@BEG_Export 
+
+@BEG_Algo 
+@POSTUPDATE_ALGORITHM @RT(13)pEjectorState @STRUCTURED_TEXT 
+@RT(0) @RT(42)sv_bInitDone,sv_bEjectorFwd,sv_bEjectorBwd @RT(9)PU_Task_7 @F @F 
+@END_Algo 
+
+@BEG_Dcl 
+@RT(16)DclTreeContainer 
+0 
+@END_Dcl 
+
+@END_Export 
+
+@BEG_Export 
+
+@BEG_Algo 
+@POSTUPDATE_ALGORITHM @RT(16)pShakeProperties @STRUCTURED_TEXT 
+@RT(0) @RT(35)sv_bInitDone,sv_bUseProgramSwitches @RT(9)PU_Task_7 @F @F 
+@END_Algo 
+
+@BEG_Dcl 
+@RT(16)DclTreeContainer 
+0 
+@END_Dcl 
+
+@END_Export 
+
+@BEG_Body 
+@TL(36)
+(**************************************** WARNING ********************************************
+ *** The KEBA Kemro K2 System including software is not intended for safety control tasks! ***
+ ***                       For further information see Comment tab!                        ***
+ *********************************************************************************************)
+
+IF sv_bVerticalMachine THEN
+   mpbFwdDuringMoldOpen^ := FALSE; //disable ejector parallel on vertical machine
+END_IF;
+
+// sv_iODCSelector values
+// 0: not used, 1: hold, 2: continous or vibrate, 3: parallel hold, 4: parallel continous or vibrate
+// 5: after mold close hold, 6 after mold close continous or vibrate
+
+CASE sv_EjectorMode OF
+      nNoUse: 
+         iSelector := 0;        
+      nHold:
+         iSelector := 1;        
+      nNormal, nVibrate:
+         iSelector := 2;    
+ELSE
+   // unknown mode
+   iSelector := 0; 
+END_CASE;
+
+IF sv_EjectorMode <> nNoUse AND sv_bVerticalMachine AND CHECK_REF(mpWorkPosMode^) AND mpWorkPosMode^ = nWorkPosDual THEN
+   //special mode ejector after mold close is selected in vertical machine
+   iSelector := iSelector + 4;
+END_IF;
+IF sv_EjectorMode <> nNoUse AND mpbFwdDuringMoldOpen^ THEN
+   //ejector parallel is selected
+   iSelector := iSelector + 2;
+END_IF;
+
+sv_iODCSelector := iSelector;
+
+@END_Body 
+
+@@@BEG_Comment@@@ 
+@TL(0)
+
+@@@END_Comment@@@ 
+
+@BEG_Body 
+@TL(12)
+(**************************************** WARNING ********************************************
+ *** The KEBA Kemro K2 System including software is not intended for safety control tasks! ***
+ ***                       For further information see Comment tab!                        ***
+ *********************************************************************************************)
+
+IF mprMoldPosition^ >= mprStartPosition^ THEN
+    sv_bStartConditionReached := TRUE;
+ELSE
+    sv_bStartConditionReached := FALSE;
+END_IF;
+
+
+@END_Body 
+
+@@@BEG_Comment@@@ 
+@TL(0)
+
+@@@END_Comment@@@ 
+
+@BEG_Body 
+@TL(7)
+(**************************************** WARNING ********************************************
+ *** The KEBA Kemro K2 System including software is not intended for safety control tasks! ***
+ ***                       For further information see Comment tab!                        ***
+ *********************************************************************************************)
+
+sv_bProgramSwitchChanged := TRUE;
+
+@END_Body 
+
+@@@BEG_Comment@@@ 
+@TL(0)
+
+@@@END_Comment@@@ 
+
+@BEG_Body 
+@TL(11)
+(**************************************** WARNING ********************************************
+ *** The KEBA Kemro K2 System including software is not intended for safety control tasks! ***
+ ***                       For further information see Comment tab!                        ***
+ *********************************************************************************************)
+
+//update activated information
+sv_bActivated := (sv_EjectorMode <> nNoUse);
+
+//update selector variable
+aSetODCSelector();
+
+@END_Body 
+
+@@@BEG_Comment@@@ 
+@TL(0)
+
+@@@END_Comment@@@ 
+
+@BEG_Body 
+@TL(10)
+(**************************************** WARNING ********************************************
+ *** The KEBA Kemro K2 System including software is not intended for safety control tasks! ***
+ ***                       For further information see Comment tab!                        ***
+ *********************************************************************************************)
+
+sv_bActivated := (sv_EjectorMode <> nNoUse);
+
+//set selector variable before sequence creation starts
+aSetODCSelector();
+
+@END_Body 
+
+@@@BEG_Comment@@@ 
+@TL(0)
+
+@@@END_Comment@@@ 
+
+@BEG_Body 
+@TL(38)
+(**************************************** WARNING ********************************************
+ *** The KEBA Kemro K2 System including software is not intended for safety control tasks! ***
+ ***                       For further information see Comment tab!                        ***
+ *********************************************************************************************)
+
+IF sv_bUseProgramSwitches AND mpbFwdDuringMoldOpen^ THEN
+   //ejector parallel is used
+   sv_MoveFwd.pbStartConditionReached := @sv_bStartConditionReached;
+   mevMovementState := evMovementState;
+   
+   //update start condition reached information
+   aCheckMoldPos();
+ELSE
+   sv_MoveFwd.pbStartConditionReached := @sv_bTRUE;
+   mevMovementState := EMPTY;
+END_IF;
+
+IF sv_bUseProgramSwitches AND (sv_EjectorMode = nHold) THEN
+   //add ejector bwd movement as additional cycle start condition
+   evModifyCycleStartCondData.iMode := 1;        
+   evModifyCycleStartCondData.DeviceId := sv_DeviceId;
+   evModifyCycleStartCondData.MoveDir := cMoveBwd;
+   evModifyCycleStartCondData.MoveId := cMoveBwd;
+   evModifyCycleStartCondData.iCount := 1;   
+   SET_EVENT(evModifyCycleStartCondition, evModifyCycleStartCondData);
+   
+   IF sv_bVerticalMachine THEN
+      //VIMM: also add ejector fwd as an additional cycle start condition
+      evModifyCycleStartCondData.iMode := 1;        
+      evModifyCycleStartCondData.DeviceId := sv_DeviceId;
+      evModifyCycleStartCondData.MoveDir := cMoveFwd;
+      evModifyCycleStartCondData.MoveId := cMoveFwd;
+      evModifyCycleStartCondData.iCount := 1;   
+      SET_EVENT(evModifyCycleStartCondition, evModifyCycleStartCondData);
+   END_IF;
+END_IF;
+
+
+@END_Body 
+
+@@@BEG_Comment@@@ 
+@TL(0)
+
+@@@END_Comment@@@ 
+
+@BEG_Body 
+@TL(25)
+(**************************************** WARNING ********************************************
+ *** The KEBA Kemro K2 System including software is not intended for safety control tasks! ***
+ ***                       For further information see Comment tab!                        ***
+ *********************************************************************************************)
+
+//get references
+mpiODCSequenceUpdated := GET_SYNC_REFTO('ODC1.sv_iODCSequenceUpdated', T#0s, state);
+mpbFwdDuringMoldOpen := GET_SYNC_REFTO('CentralCoordination1.sv_bEjectorFwdDuringMldOpen', T#0s, state);
+mprMoldPosition := GET_SYNC_REFTO('Mold1.sv_rMoldPosition', T#0s, state);
+mprStartPosition := GET_SYNC_REFTO('CentralCoordination1.sv_rEjectorFwdStartPosition', T#0s, state);
+
+IF (sv_NumberOfDevices[cCompRotaryTable] = 1) THEN
+   mpWorkPosMode := GET_SYNC_REFTO('RotaryTable1.sv_WorkPosMode', t#0s, state);
+ELSIF (sv_NumberOfDevices[cCompSlideTable] = 1) THEN
+   mpWorkPosMode := GET_SYNC_REFTO('SlideTable1.sv_WorkPosMode', t#0s, state);
+END_IF;
+
+//display ejector state instead of position (if no transducer available)
+bHydraulic := ((sv_Options AND cOptionHydraulic) = cOptionHydraulic);
+IF bHydraulic AND NOT IS_LINKED(ai_Position) THEN
+   sv_AddDeviceInfo.prActValue := EMPTY;
+   sv_AddDeviceInfo.piActState := @sv_iActState;
+END_IF;
+
+
+@END_Body 
+
+@@@BEG_Comment@@@ 
+@TL(0)
+
+@@@END_Comment@@@ 
+
+@BEG_Body 
+@TL(28)
+ (**************************************** WARNING ********************************************
+  *** The KEBA Kemro K2 System including software is not intended for safety control tasks! ***
+  ***                       For further information see Comment tab!                        ***
+  *********************************************************************************************)
+ 
+IF NOT (evMovementStateData.DeviceId.CompId = cCompMold AND evMovementStateData.DeviceId.IndexId = 1) THEN
+   //movement state event doesn´t come from the mold 
+   RETURN;
+END_IF;
+                  
+IF evMovementStateData.MoveDir = cMoveBwd THEN
+   //mold bwd movement
+   IF evMovementStateData.State = nActive THEN
+      //mold bwd started      
+      START_PROCESS_ALGORITHM(paCheckMoldPos);
+   ELSE
+      //mold bwd stopped
+      STOP_PROCESS_ALGORITHM(paCheckMoldPos);
+   END_IF;
+ELSE
+   //mold fwd movement stopped -> update variable
+   IF evMovementStateData.State = nInactive THEN
+      aCheckMoldPos();
+   END_IF;
+END_IF;
+
+
+
+@END_Body 
+
+@@@BEG_Comment@@@ 
+@TL(0)
+
+@@@END_Comment@@@ 
+
+@BEG_Body 
+@TL(10)
+(**************************************** WARNING ********************************************
+ *** The KEBA Kemro K2 System including software is not intended for safety control tasks! ***
+ ***                       For further information see Comment tab!                        ***
+ *********************************************************************************************)
+
+aCheckMoldPos();
+IF mprMoldPosition^ >= mprStartPosition^ THEN
+   STOP_PROCESS_ALGORITHM();
+END_IF;
+
+@END_Body 
+
+@@@BEG_Comment@@@ 
+@TL(0)
+
+@@@END_Comment@@@ 
+
+@BEG_Body 
+@TL(15)
+(**************************************** WARNING ********************************************
+ *** The KEBA Kemro K2 System including software is not intended for safety control tasks! ***
+ ***                       For further information see Comment tab!                        ***
+ *********************************************************************************************)
+
+IF (NOT sv_bUseProgramSwitches) OR sv_bOverrideEjectorSafety THEN
+   //editor used or override activated
+   sv_MoveBwd.pbActivated := @sv_bTRUE;
+   sv_MoveFwd.pbActivated := @sv_bTRUE;
+ELSE
+   //activated information comes from program switch
+   sv_MoveBwd.pbActivated := @sv_bActivated;
+   sv_MoveFwd.pbActivated := @sv_bActivated;
+END_IF;
+
+@END_Body 
+
+@@@BEG_Comment@@@ 
+@TL(0)
+
+@@@END_Comment@@@ 
+
+@BEG_Body 
+@TL(17)
+(**************************************** WARNING ********************************************
+ *** The KEBA Kemro K2 System including software is not intended for safety control tasks! ***
+ ***                       For further information see Comment tab!                        ***
+ *********************************************************************************************)
+
+IF (NOT sv_bUseProgramSwitches) OR sv_bOverrideEjectorSafety THEN
+   //editor used or "override ejector safety" activated
+   sv_MoveShake.pbActivated := @sv_bTRUE;
+ELSE
+   IF (sv_iShakeCounter = 1) AND (sv_OperationMode >= nHalfAutomatic) THEN
+      //deactivate shake movement 
+      sv_MoveShake.pbActivated := @sv_bFALSE;
+   ELSE
+      sv_MoveShake.pbActivated := @sv_bActivated;
+   END_IF;
+END_IF;
+
+@END_Body 
+
+@@@BEG_Comment@@@ 
+@TL(0)
+
+@@@END_Comment@@@ 
+
+@BEG_Body 
+@TL(12)
+(**************************************** WARNING ********************************************
+ *** The KEBA Kemro K2 System including software is not intended for safety control tasks! ***
+ ***                       For further information see Comment tab!                        ***
+ *********************************************************************************************)
+
+sv_ShakeParams.iShakeCounter := (sv_iShakeCounter - 1);
+
+iPoints := UDINT_TO_DINT(sv_EjectorBwdVisShake.Profile.iNoOfPoints);
+sv_ShakeParams.rShakePosition := sv_EjectorBwdVisShake.Profile.Points[iPoints + 1].rStartPos;
+
+sv_rShakeTargetPos := sv_ShakeParams.rShakePosition;
+
+@END_Body 
+
+@@@BEG_Comment@@@ 
+@TL(0)
+
+@@@END_Comment@@@ 
+
+@BEG_Body 
+@TL(7)
+(**************************************** WARNING ********************************************
+ *** The KEBA Kemro K2 System including software is not intended for safety control tasks! ***
+ ***                       For further information see Comment tab!                        ***
+ *********************************************************************************************)
+
+sv_rSetFwdPosition := sv_EjectorFwdVis.Profile.Points[sv_EjectorFwdVis.Profile.iNoOfPoints + 1].rStartPos;
+
+@END_Body 
+
+@@@BEG_Comment@@@ 
+@TL(0)
+
+@@@END_Comment@@@ 
+
+@BEG_Body 
+@TL(7)
+(**************************************** WARNING ********************************************
+ *** The KEBA Kemro K2 System including software is not intended for safety control tasks! ***
+ ***                       For further information see Comment tab!                        ***
+ *********************************************************************************************)
+
+sv_rSetBwdPosition := sv_EjectorBwdVis.Profile.Points[sv_EjectorBwdVis.Profile.iNoOfPoints + 1].rStartPos;
+
+@END_Body 
+
+@@@BEG_Comment@@@ 
+@TL(0)
+
+@@@END_Comment@@@ 
+
+@BEG_Body 
+@TL(7)
+(**************************************** WARNING ********************************************
+ *** The KEBA Kemro K2 System including software is not intended for safety control tasks! ***
+ ***                       For further information see Comment tab!                        ***
+ *********************************************************************************************)
+
+fbUpdateProperties();
+
+@END_Body 
+
+@@@BEG_Comment@@@ 
+@TL(0)
+
+@@@END_Comment@@@ 
+
+@BEG_Body 
+@TL(16)
+(**************************************** WARNING ********************************************
+ *** The KEBA Kemro K2 System including software is not intended for safety control tasks! ***
+ ***                       For further information see Comment tab!                        ***
+ *********************************************************************************************)
+
+IF sv_bEjectorBwd THEN
+   //ejector is bwd
+   sv_iActState := 0;
+ELSIF sv_bEjectorFwd THEN
+   //ejector is fwd
+   sv_iActState := 1;
+ELSE
+   //ejector in "middle" position
+   sv_iActState := 2;
+END_IF;
+
+@END_Body 
+
+@@@BEG_Comment@@@ 
+@TL(0)
+
+@@@END_Comment@@@ 
+
+@BEG_Body 
+@TL(14)
+(**************************************** WARNING ********************************************
+ *** The KEBA Kemro K2 System including software is not intended for safety control tasks! ***
+ ***                       For further information see Comment tab!                        ***
+ *********************************************************************************************)
+
+IF sv_bUseProgramSwitches OR NOT sv_bTransducerAvailable THEN
+   //do not display shake target position in machine sequencer properties
+   sv_MoveShake.EditorData.sLGInstanceProperties := 'LG_EjectorShake2';
+ELSE
+   sv_MoveShake.EditorData.sLGInstanceProperties := 'LG_EjectorShake;LG_EjectorShake2';
+END_IF;
+
+sv_iEditorPropertiesChanged := sv_iEditorPropertiesChanged + 1;
+
+@END_Body 
+
+@@@BEG_Comment@@@ 
+@TL(0)
+
+@@@END_Comment@@@ 
+@END_Body 
+
+@END_Contents 

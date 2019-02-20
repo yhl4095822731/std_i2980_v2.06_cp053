@@ -1,0 +1,170 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<base:Mask xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xmlns:base="http://www.keba.at/viewedit.model.base" widgetId="kvs.mask" name="EjectorMask1">
+  <resolution width="714" height="476"/>
+  <position x="1" y="1"/>
+  <attributeValues key="Background" value="BG_Desktop:30,30,30"/>
+  <attributeValues key="Title" value="Ejector settings"/>
+  <attributeValues key="Icon" value="Ejector1/hmi/images/iconEjector.gif"/>
+  <widgetInstances xsi:type="base:ContainerWidgetInstance" widgetId="keplast.kvs.borderpanelsmall" name="panelEjectorFwd" layoutConstraint="null">
+    <resolution width="714" height="234"/>
+    <position/>
+    <attributeValues key="Title" value="Ejector forward"/>
+    <widgetInstances widgetId="keplast.kvs.kprofile.table" name="profileTableFwd" layoutConstraint="LEFT">
+      <resolution width="347" height="139"/>
+      <position x="6" y="33"/>
+      <attributeValues key="ProfileName" value="Ejector1.sv_EjectorFwdVisRel"/>
+      <attributeValues key="IsLeftRightIncreasing" value="true"/>
+      <attributeValues key="IsUpDownIncreasing" value="true"/>
+      <attributeValues key="VariableActPosition" value="Ejector1.sv_rEjectorPositionRel"/>
+      <attributeValues key="VariableMaxPosition" value="Ejector1.sv_rEjectorLimDist"/>
+      <attributeValues key="VariableIsReachedLeft" value="Ejector1.sv_bEjectorBwd"/>
+      <attributeValues key="VariableIsReachedRight" value="Ejector1.sv_bEjectorFwd"/>
+      <attributeValues key="VisiblePressure" value="false"/>
+      <attributeValues key="VisibleVelocity" value="true"/>
+      <attributeValues key="TextLastStage" value="End"/>
+      <attributeValues key="VariableUpperLimit" value="Ejector1.sv_rEjectorLimDist"/>
+      <attributeValues key="PreferredDisplayedStages" value="3"/>
+      <attributeValues key="MaxDisplayedStages" value="3"/>
+    </widgetInstances>
+    <widgetInstances widgetId="keplast.kvs.kprofile.nofstages" name="profileStagesFieldFwd" layoutConstraint="TITLE_RIGHT">
+      <resolution width="120" height="22"/>
+      <position x="591" y="3"/>
+      <attributeValues key="Profile" value="Ejector1.sv_EjectorFwdVisRel"/>
+    </widgetInstances>
+    <widgetInstances xsi:type="base:ContainerWidgetInstance" widgetId="kvs.panel" name="panelFwdRight" layoutConstraint="RIGHT">
+      <resolution width="320" height="194"/>
+      <position x="391" y="36"/>
+      <widgetInstances xsi:type="base:ContainerWidgetInstance" widgetId="kvs.panel" name="panelFwdRightParameters" layoutConstraint="SOUTH">
+        <resolution width="320" height="87"/>
+        <position y="107"/>
+        <widgetInstances xsi:type="base:ContainerWidgetInstance" widgetId="kvs.panel" name="cEjectorMode" layoutConstraint="null">
+          <resolution width="320" height="29"/>
+          <position/>
+          <widgetInstances widgetId="keplast.kvs.varlabeltip" name="varLabelEjectorMode" layoutConstraint="null">
+            <resolution width="156" height="29"/>
+            <position x="3"/>
+            <attributeValues key="TextLabelType" value="Short Variable Label"/>
+            <attributeValues key="Variable" value="Ejector1.sv_EjectorMode"/>
+            <attributeValues key="Alignment" value="MIDDLE/LEFT"/>
+            <attributeValues key="PreferredSize" value="156, 29"/>
+          </widgetInstances>
+          <widgetInstances widgetId="keplast.kvs.sequencercontrolledselectlist" name="selectListEjectorMode" layoutConstraint="null">
+            <resolution width="123" height="29"/>
+            <position x="159"/>
+            <attributeValues key="Variable" value="Ejector1.sv_EjectorMode"/>
+            <attributeValues key="PreferredSize" value="123, 29"/>
+          </widgetInstances>
+          <layout layoutID="keplast.kvs.layout.beanlayout" name="BeanLayout">
+            <attributeValues key="UseUnitFieldGap" value="true"/>
+          </layout>
+        </widgetInstances>
+        <widgetInstances widgetId="keplast.kvs.numfieldtext" name="numfieldShakeCount" layoutConstraint="null">
+          <resolution width="320" height="29"/>
+          <position y="29"/>
+          <attributeValues key="Variable" value="Ejector1.sv_iShakeCounter"/>
+          <dynamicAttributes key="Enabled">
+            <value function="n1_GT_const : ViewEditFunctions" equal="true" unequal="false">
+              <parameter key="1" value="kvariable; Ejector1.sv_EjectorMode"/>
+              <parameter key="2" value="double; 1"/>
+            </value>
+          </dynamicAttributes>
+        </widgetInstances>
+        <layout layoutID="kvs.layout.GridLayout" name="GridLayout">
+          <attributeValues key="Rows" value="3"/>
+          <attributeValues key="Columns" value="1"/>
+        </layout>
+      </widgetInstances>
+      <widgetInstances xsi:type="base:ContainerWidgetInstance" widgetId="kvs.panel" name="panelViewFwd" layoutConstraint="NORTH">
+        <resolution width="320" height="108"/>
+        <position/>
+        <border name="EmptyBorder" id="kv.border.EmptyBorder">
+          <attributeValues key="InnerInsets" value="0, 5, 5, 42"/>
+        </border>
+        <widgetInstances widgetId="keplast.kvs.kprofile.view" name="profileViewFwd" layoutConstraint="NORTH">
+          <resolution width="273" height="103"/>
+          <position x="5"/>
+          <attributeValues key="Profile" value="Ejector1.sv_EjectorFwdVisRel"/>
+        </widgetInstances>
+        <layout layoutID="kvs.layout.BorderLayout" name="BorderLayout"/>
+      </widgetInstances>
+      <layout layoutID="kvs.layout.BorderLayout" name="BorderLayout"/>
+    </widgetInstances>
+    <widgetInstances widgetId="keplast.kvs.separator" name="separator1" layoutConstraint="SEPARATOR">
+      <resolution width="2" height="197"/>
+      <position x="356" y="33"/>
+    </widgetInstances>
+    <layout layoutID="keplast.kvs.layout.multisplitlayout" name="MultiSplitLayout">
+      <attributeValues key="InsetsRight" value="3, 33, 0, 0"/>
+    </layout>
+  </widgetInstances>
+  <widgetInstances xsi:type="base:ContainerWidgetInstance" widgetId="keplast.kvs.borderpanelsmall" name="panelEjectorBwd" layoutConstraint="null">
+    <resolution width="714" height="234"/>
+    <position y="242"/>
+    <attributeValues key="Title" value="Ejector backward"/>
+    <widgetInstances widgetId="keplast.kvs.kprofile.table" name="profileTableBwd" layoutConstraint="LEFT">
+      <resolution width="347" height="139"/>
+      <position x="6" y="33"/>
+      <attributeValues key="ProfileName" value="Ejector1.sv_EjectorBwdVisRel"/>
+      <attributeValues key="PreferredDisplayedStages" value="3"/>
+      <attributeValues key="MaxDisplayedStages" value="3"/>
+      <attributeValues key="IsLeftRightIncreasing" value="true"/>
+      <attributeValues key="IsUpDownIncreasing" value="false"/>
+      <attributeValues key="VariableActPosition" value="Ejector1.sv_rEjectorPositionRel"/>
+      <attributeValues key="VariableMaxPosition" value="Ejector1.sv_rEjectorLimDist"/>
+      <attributeValues key="VariableIsReachedLeft" value="Ejector1.sv_bEjectorBwd"/>
+      <attributeValues key="VariableIsReachedRight" value="Ejector1.sv_bEjectorFwd"/>
+      <attributeValues key="VisiblePressure" value="false"/>
+      <attributeValues key="VisibleVelocity" value="true"/>
+      <attributeValues key="TextLastStage" value="End"/>
+    </widgetInstances>
+    <widgetInstances widgetId="keplast.kvs.kprofile.nofstages" name="profileStagesFieldBwd" layoutConstraint="TITLE_RIGHT">
+      <resolution width="120" height="22"/>
+      <position x="591" y="3"/>
+      <attributeValues key="Profile" value="Ejector1.sv_EjectorBwdVisRel"/>
+    </widgetInstances>
+    <widgetInstances xsi:type="base:ContainerWidgetInstance" widgetId="kvs.panel" name="panelBwdRight" layoutConstraint="RIGHT">
+      <resolution width="320" height="194"/>
+      <position x="391" y="36"/>
+      <widgetInstances xsi:type="base:ContainerWidgetInstance" widgetId="kvs.panel" name="panelBwdRightDummy" layoutConstraint="CENTER">
+        <resolution width="320" height="76"/>
+        <position y="108"/>
+        <attributeValues key="PreferredSize" value="10, 1000"/>
+        <layout layoutID="kvs.layout.BorderLayout" name="BorderLayout"/>
+      </widgetInstances>
+      <widgetInstances xsi:type="base:ContainerWidgetInstance" widgetId="kvs.panel" name="panelBwdRightParameters" layoutConstraint="SOUTH">
+        <resolution width="320" height="10"/>
+        <position y="184"/>
+        <layout layoutID="kvs.layout.GridLayout" name="GridLayout">
+          <attributeValues key="Rows" value="0"/>
+          <attributeValues key="Columns" value="1"/>
+        </layout>
+      </widgetInstances>
+      <widgetInstances xsi:type="base:ContainerWidgetInstance" widgetId="kvs.panel" name="panelViewBwd" layoutConstraint="NORTH">
+        <resolution width="320" height="108"/>
+        <position/>
+        <border name="EmptyBorder" id="kv.border.EmptyBorder">
+          <attributeValues key="InnerInsets" value="0, 5, 5, 42"/>
+        </border>
+        <widgetInstances widgetId="keplast.kvs.kprofile.view" name="profileViewBwd" layoutConstraint="NORTH">
+          <resolution width="273" height="103"/>
+          <position x="5"/>
+          <attributeValues key="Profile" value="Ejector1.sv_EjectorBwdVisRel"/>
+        </widgetInstances>
+        <layout layoutID="kvs.layout.BorderLayout" name="BorderLayout"/>
+      </widgetInstances>
+      <layout layoutID="kvs.layout.BorderLayout" name="BorderLayout"/>
+    </widgetInstances>
+    <widgetInstances widgetId="keplast.kvs.separator" name="separator2" layoutConstraint="SEPARATOR">
+      <resolution width="2" height="197"/>
+      <position x="356" y="33"/>
+    </widgetInstances>
+    <layout layoutID="keplast.kvs.layout.multisplitlayout" name="MultiSplitLayout">
+      <attributeValues key="InsetsRight" value="3, 33, 0, 0"/>
+    </layout>
+  </widgetInstances>
+  <layout layoutID="kvs.layout.GridLayout" name="GridLayout">
+    <attributeValues key="Rows" value="2"/>
+    <attributeValues key="Columns" value="1"/>
+    <attributeValues key="Vgap" value="8"/>
+  </layout>
+</base:Mask>

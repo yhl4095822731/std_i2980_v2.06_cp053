@@ -1,0 +1,1284 @@
+(*
+@h    ! WARNING !
+@h    The Kemro K2 system (including software) only meets category B according to EN 954-1,
+@h    thus it is not intended for usage in safety-relevant control applications in the field 
+@h    of personal safety (e.g. emergency stop).
+@h    To implement potentially necessary safety-relevant control tasks, always use additional 
+@h    external safety devices that are intended for the particular purpose, and meet the necessary 
+@h    functional safety.
+@h    For further information see EN 954-1 (EN ISO 13849-1) and/or the K2-x00 user manual, chapter 
+@h    "CE conformity, directives and standards".
+
+Do steps for automatic injection calibration (plant/dead time analysis)
+*)
+
+IMPORT_OVER_LISTFILE
+ SET_EVENT
+, SET_ALARM
+, KMEM_ArrayCreate
+, KMEM_ArraySet
+, KMEM_ArrayDelete
+, tnCalibMode_Both
+, tnCalibState_Error
+, tnCalibState_Aborted
+, cMaxInjectionCount
+, tnCalibMode_Raising
+, tnCalibMode_Falling
+, tnCalibState_Done
+, cMoveFwd
+, cMoveInject
+, cMoveInjectCalib
+, cMoveBwd
+, cMoveDecompAftPlast
+, nSetup
+, tnCalibState_Running
+, cCalibShiftData
+, cCalibMeasuredVel
+, cCalibMeasuredOutput
+, tsControlParameters
+, tnOperationMode
+, tsDeviceId
+, tsCalibMovement
+, tsCalculatedInjectData2
+, tsDeadTimeParameters
+, tevStartRequest
+, ABAutoCalibRedoListener
+, tsCalculatedInjectData
+, tevStartRequestData
+, tyCalculatedDataArray
+, tnCalibMode
+, FBAutoCalibLog
+, FBStopStartedMovements
+, FBCheckReady
+, tsCalibShiftData
+, KMEM_CreateData
+, KMEM_Status
+
+END_IMPORT
+
+ALGORITHM_BLOCK ABInjectionCalibCycle #DUMMY_EDIT_BLOCK
+
+SYSTEM_VAR
+ sv_bDoInjectionCalib : BOOL;
+ sv_InjectControlParams : tsControlParameters;
+ sv_OperationMode : tnOperationMode;
+ sv_DeviceId : tsDeviceId;
+ sv_CalibStateInjection : tsCalibMovement;
+ sv_TmpInjectionData : tsCalculatedInjectData2;
+ sv_InjectDeadTimeParams : tsDeadTimeParameters;
+END_VAR
+
+SYSTEM_OBJECT
+ TaskMid : TASK;
+ evStartRequest : tevStartRequest;
+ PU_Task_7 : TASK;
+END_OBJECT
+
+VAR
+ abAutoCalibRedoListenerInj : ABAutoCalibRedoListener;
+END_VAR
+
+PROCESS_ALGORITHM paRun ON TaskMid
+
+
+VAR_TEMP
+ tmpMeanData : tsCalculatedInjectData;
+ i : DINT;
+END_VAR
+
+VAR
+ evStartRequestData : tevStartRequestData;
+ iInjectionCount : DINT;
+ calculatedParameters : tyCalculatedDataArray;
+ calibMode : tnCalibMode := tnCalibMode_Both;
+ fbLog : FBAutoCalibLog;
+ fbStopStartedMovements : FBStopStartedMovements;
+ fbCheckReady : FBCheckReady;
+ ShiftData : tsCalibShiftData;
+ ShiftArrayCreateData : KMEM_CreateData;
+ MeasuredVelArrayCreateData : KMEM_CreateData;
+ MeasuredPosArrayCreateData : KMEM_CreateData;
+ MeasuredOutputArrayCreateData : KMEM_CreateData;
+ DifferencedArrayCreateData : KMEM_CreateData;
+ SecondStageArrayCreateData : KMEM_CreateData;
+ ThirdStageArrayCreateData : KMEM_CreateData;
+ s : KMEM_Status;
+ iSize : UDINT;
+ rTmp : REAL;
+END_VAR
+
+(* IecGraph-Code *)
+
+(* init step *)
+INITIAL_STEP S_INIT:
+AInit (P);
+ACreateArrays (P);
+END_STEP
+
+ACTION AInit: #BEGIN_EDIT_BLOCK
+sv_bDoInjectionCalib := TRUE;
+iInjectionCount := 1;
+sv_TmpInjectionData.CalibMode := calibMode;
+sv_TmpInjectionData.bValid := FALSE;
+sv_TmpInjectionData.bInvalid := FALSE;
+
+;#END_EDIT_BLOCK END_ACTION (*AInit*)
+
+(* steps *)
+STEP S_RESET:
+AStopmovements (P);
+Action24 (P);
+END_STEP
+
+ACTION Action24: #BEGIN_EDIT_BLOCK
+IF sv_CalibStateInjection.Status <> tnCalibState_Error THEN
+   sv_CalibStateInjection.Status := tnCalibState_Aborted;
+   fbLog('Injection calib aborted');
+ELSE
+    fbLog('Injection calib error');
+END_IF;
+
+;#END_EDIT_BLOCK END_ACTION (*Action24*)
+STEP S_STOP:
+ADeleteArrays (P);
+Action22 (P);
+END_STEP
+
+ACTION Action22: #BEGIN_EDIT_BLOCK
+sv_bDoInjectionCalib := FALSE;
+STOP_PROCESS_ALGORITHM();
+
+;#END_EDIT_BLOCK END_ACTION (*Action22*)
+STEP S_DECOMP:
+ADoDecompression (P);
+Action8 (N);
+END_STEP
+
+ACTION Action8: #BEGIN_EDIT_BLOCK
+fbCheckReady(DeviceId := sv_DeviceId)
+
+;#END_EDIT_BLOCK END_ACTION (*Action8*)
+STEP S_INJECT:
+ADoProfile (P);
+Action9 (N);
+END_STEP
+
+ACTION Action9: #BEGIN_EDIT_BLOCK
+fbCheckReady(DeviceId := sv_DeviceId)
+
+;#END_EDIT_BLOCK END_ACTION (*Action9*)
+STEP S_WAIT_CALC:
+END_STEP
+
+STEP S_SAVE_CALC:
+Action17 (P);
+END_STEP
+
+ACTION Action17: #BEGIN_EDIT_BLOCK
+calculatedParameters[iInjectionCount] := sv_TmpInjectionData;
+
+;#END_EDIT_BLOCK END_ACTION (*Action17*)
+STEP S_NEXT_CYCLE:
+Action16 (P);
+END_STEP
+
+ACTION Action16: #BEGIN_EDIT_BLOCK
+iInjectionCount := iInjectionCount +1;
+
+;#END_EDIT_BLOCK END_ACTION (*Action16*)
+STEP S_DONE:
+Action18 (P);
+Action14 (P);
+END_STEP
+
+ACTION Action14: #BEGIN_EDIT_BLOCK
+sv_CalibStateInjection.Status := tnCalibState_Done;
+
+;#END_EDIT_BLOCK END_ACTION (*Action14*)
+
+(* transitions *)
+GO_ON_TRANSITION Trans15 (* Trans15 *) FROM S_RESET TO S_STOP :=  #BEGIN_EDIT_BLOCK
+TRUE
+;#END_EDIT_BLOCK
+END_TRANSITION
+
+TRANSITION Trans18 (* Trans18 *) FROM S_STOP TO S_INIT :=  #BEGIN_EDIT_BLOCK
+TRUE
+;#END_EDIT_BLOCK
+END_TRANSITION
+
+TRANSITION Trans1 (* Trans1 *) FROM S_INIT TO S_DECOMP :=  #BEGIN_EDIT_BLOCK
+TRUE
+;#END_EDIT_BLOCK
+END_TRANSITION
+
+TRANSITION Trans5 (* Trans5 *) FROM S_DECOMP TO S_INJECT :=  #BEGIN_EDIT_BLOCK
+fbCheckReady.bReady
+;#END_EDIT_BLOCK
+END_TRANSITION
+
+TRANSITION Trans2 (* Trans2 *) FROM S_INJECT TO S_WAIT_CALC :=  #BEGIN_EDIT_BLOCK
+fbCheckReady.bReady
+;#END_EDIT_BLOCK
+END_TRANSITION
+
+TRANSITION Trans21 (* Trans21 *) FROM S_WAIT_CALC TO S_SAVE_CALC :=  #BEGIN_EDIT_BLOCK
+sv_TmpInjectionData.bValid
+;#END_EDIT_BLOCK
+END_TRANSITION
+
+TRANSITION Trans22 (* Trans22 *) FROM S_WAIT_CALC TO S_RESET :=  #BEGIN_EDIT_BLOCK
+sv_TmpInjectionData.bInvalid
+;#END_EDIT_BLOCK
+END_TRANSITION
+
+TRANSITION Trans10 (* Trans10 *) FROM S_SAVE_CALC TO S_DONE :=  #BEGIN_EDIT_BLOCK
+iInjectionCount >= cMaxInjectionCount
+;#END_EDIT_BLOCK
+END_TRANSITION
+
+TRANSITION Trans11 (* Trans11 *) FROM S_SAVE_CALC TO S_NEXT_CYCLE :=  #BEGIN_EDIT_BLOCK
+iInjectionCount < cMaxInjectionCount
+;#END_EDIT_BLOCK
+END_TRANSITION
+
+TRANSITION Trans14 (* Trans14 *) FROM S_NEXT_CYCLE TO S_DECOMP :=  #BEGIN_EDIT_BLOCK
+TRUE
+;#END_EDIT_BLOCK
+END_TRANSITION
+
+TRANSITION Trans19 (* Trans19 *) FROM S_DONE TO S_STOP :=  #BEGIN_EDIT_BLOCK
+TRUE
+;#END_EDIT_BLOCK
+END_TRANSITION
+
+(* end IecGraph-Code *)
+(* sfc-code *)
+
+(* stand alone actions *)
+ACTION ADoProfile: #BEGIN_EDIT_BLOCK
+(**************************************** WARNING ********************************************
+ *** The KEBA Kemro K2 System including software is not intended for safety control tasks! ***
+ ***                       For further information see Comment tab!                        ***
+ *********************************************************************************************)
+
+evStartRequestData.DeviceId := sv_DeviceId;
+evStartRequestData.MoveDir := cMoveFwd; 
+evStartRequestData.MoveId := cMoveInjectCalib;
+SET_EVENT(evStartRequest, evStartRequestData); 
+
+;#END_EDIT_BLOCK END_ACTION (*ADoProfile*)
+ACTION ADoDecompression: #BEGIN_EDIT_BLOCK
+(**************************************** WARNING ********************************************
+ *** The KEBA Kemro K2 System including software is not intended for safety control tasks! ***
+ ***                       For further information see Comment tab!                        ***
+ *********************************************************************************************)
+
+evStartRequestData.DeviceId := sv_DeviceId;
+evStartRequestData.MoveDir := cMoveBwd; 
+evStartRequestData.MoveId := cMoveDecompAftPlast;
+SET_EVENT(evStartRequest, evStartRequestData); 
+
+;#END_EDIT_BLOCK END_ACTION (*ADoDecompression*)
+ACTION AStopmovements: #BEGIN_EDIT_BLOCK
+(**************************************** WARNING ********************************************
+ *** The KEBA Kemro K2 System including software is not intended for safety control tasks! ***
+ ***                       For further information see Comment tab!                        ***
+ *********************************************************************************************)
+
+fbStopStartedMovements();
+
+;#END_EDIT_BLOCK END_ACTION (*AStopmovements*)
+ACTION Action18: #BEGIN_EDIT_BLOCK
+(**************************************** WARNING ********************************************
+ *** The KEBA Kemro K2 System including software is not intended for safety control tasks! ***
+ ***                       For further information see Comment tab!                        ***
+ *********************************************************************************************)
+
+tmpMeanData.rControllerKR := 0.0;
+tmpMeanData.rControllerW  := 0.0;
+tmpMeanData.tPlantDeadTime:= t#0ms;
+tmpMeanData.rPlantK       := 0.0;
+tmpMeanData.tPlantT1      := t#0ms;
+tmpMeanData.tPlantT2      := t#0ms;
+(* calculate mean value of all parameters *)
+(* fixme: check if we need to calculate from falling and raising first
+   and then calculate over the arry *)
+
+FOR i:= 1 TO cMaxInjectionCount DO //FIXME: test
+    IF calibMode = tnCalibMode_Both THEN
+        tmpMeanData.rControllerKR := tmpMeanData.rControllerKR + calculatedParameters[i].Falling.rControllerKR + calculatedParameters[i].Raising.rControllerKR;
+        tmpMeanData.rControllerW  := tmpMeanData.rControllerW  + calculatedParameters[i].Falling.rControllerW  + calculatedParameters[i].Raising.rControllerW;
+        tmpMeanData.tPlantDeadTime:= tmpMeanData.tPlantDeadTime+ calculatedParameters[i].Falling.tPlantDeadTime+ calculatedParameters[i].Raising.tPlantDeadTime;
+        tmpMeanData.rPlantK       := tmpMeanData.rPlantK       + calculatedParameters[i].Falling.rPlantK       + calculatedParameters[i].Raising.rPlantK;
+        tmpMeanData.tPlantT1      := tmpMeanData.tPlantT1      + calculatedParameters[i].Falling.tPlantT1      + calculatedParameters[i].Raising.tPlantT1;
+        tmpMeanData.tPlantT2      := tmpMeanData.tPlantT2      + calculatedParameters[i].Falling.tPlantT2      + calculatedParameters[i].Raising.tPlantT2;
+    ELSIF calibMode = tnCalibMode_Raising THEN
+        tmpMeanData.rControllerKR := tmpMeanData.rControllerKR + calculatedParameters[i].Raising.rControllerKR;
+        tmpMeanData.rControllerW  := tmpMeanData.rControllerW  + calculatedParameters[i].Raising.rControllerW;
+        tmpMeanData.tPlantDeadTime:= tmpMeanData.tPlantDeadTime+ calculatedParameters[i].Raising.tPlantDeadTime;
+        tmpMeanData.rPlantK       := tmpMeanData.rPlantK       + calculatedParameters[i].Raising.rPlantK;
+        tmpMeanData.tPlantT1      := tmpMeanData.tPlantT1      + calculatedParameters[i].Raising.tPlantT1;
+        tmpMeanData.tPlantT2      := tmpMeanData.tPlantT2      + calculatedParameters[i].Raising.tPlantT2;
+    ELSIF calibMode = tnCalibMode_Falling THEN
+        tmpMeanData.rControllerKR := tmpMeanData.rControllerKR + calculatedParameters[i].Falling.rControllerKR ;
+        tmpMeanData.rControllerW  := tmpMeanData.rControllerW  + calculatedParameters[i].Falling.rControllerW;
+        tmpMeanData.tPlantDeadTime:= tmpMeanData.tPlantDeadTime+ calculatedParameters[i].Falling.tPlantDeadTime;
+        tmpMeanData.rPlantK       := tmpMeanData.rPlantK       + calculatedParameters[i].Falling.rPlantK;
+        tmpMeanData.tPlantT1      := tmpMeanData.tPlantT1      + calculatedParameters[i].Falling.tPlantT1;
+        tmpMeanData.tPlantT2      := tmpMeanData.tPlantT2      + calculatedParameters[i].Falling.tPlantT2;
+    END_IF;
+END_FOR;
+
+tmpMeanData.rControllerKR := tmpMeanData.rControllerKR / DINT_TO_REAL(cMaxInjectionCount);
+tmpMeanData.rControllerW  := tmpMeanData.rControllerW  / DINT_TO_REAL(cMaxInjectionCount);
+tmpMeanData.tPlantDeadTime:= tmpMeanData.tPlantDeadTime/ DINT_TO_REAL(cMaxInjectionCount);
+tmpMeanData.rPlantK       := tmpMeanData.rPlantK       / DINT_TO_REAL(cMaxInjectionCount);
+tmpMeanData.tPlantT1      := tmpMeanData.tPlantT1      / DINT_TO_REAL(cMaxInjectionCount);
+tmpMeanData.tPlantT2      := tmpMeanData.tPlantT2      / DINT_TO_REAL(cMaxInjectionCount);
+
+IF calibMode = tnCalibMode_Both THEN
+    (* if only one edge no division is needed *)
+    tmpMeanData.rControllerKR := tmpMeanData.rControllerKR / 2.0;
+    tmpMeanData.rControllerW  := tmpMeanData.rControllerW  / 2.0;
+    tmpMeanData.tPlantDeadTime:= DIVTIME(tmpMeanData.tPlantDeadTime, 2);
+    tmpMeanData.rPlantK       := tmpMeanData.rPlantK/ 2.0;
+    tmpMeanData.tPlantT1      := DIVTIME(tmpMeanData.tPlantT1, 2);
+    tmpMeanData.tPlantT2      := DIVTIME(tmpMeanData.tPlantT2, 2);
+END_IF;
+
+sv_InjectDeadTimeParams.bCompensationEnabled := TRUE;
+sv_InjectDeadTimeParams.dDeadTime := tmpMeanData.tPlantDeadTime;
+sv_InjectDeadTimeParams.dPT2T1 := tmpMeanData.tPlantT1;
+sv_InjectDeadTimeParams.dPT2T2 := tmpMeanData.tPlantT2;
+sv_InjectDeadTimeParams.rPT2K  := tmpMeanData.rPlantK;
+
+sv_InjectControlParams.rKS := 1.0;
+sv_InjectControlParams.dTN := t#0s;
+sv_InjectControlParams.dTV := t#0s;
+sv_InjectControlParams.rP  := tmpMeanData.rControllerKR;
+
+sv_InjectControlParams.bUsePIDControl := TRUE;
+
+;#END_EDIT_BLOCK END_ACTION (*Action18*)
+ACTION ACreateArrays: #BEGIN_EDIT_BLOCK
+(**************************************** WARNING ********************************************
+ *** The KEBA Kemro K2 System including software is not intended for safety control tasks! ***
+ ***                       For further information see Comment tab!                        ***
+ *********************************************************************************************)
+
+//create dynamic arrays which are necessary for PID parameter detection
+iSize := DINT_TO_UDINT(cMaxShiftData) + 1;
+ShiftArrayCreateData := KMEM_ArrayCreate(cCalibShiftData, ShiftData, iSize);
+
+iSize := DINT_TO_UDINT(cMaxRecordedData);
+MeasuredVelArrayCreateData := KMEM_ArrayCreate(cCalibMeasuredVel, rTmp, iSize);
+MeasuredPosArrayCreateData := KMEM_ArrayCreate(cCalibMeasuredPos, rTmp, iSize);
+MeasuredOutputArrayCreateData := KMEM_ArrayCreate(cCalibMeasuredOutput, rTmp, iSize);
+
+DifferencedArrayCreateData := KMEM_ArrayCreate(cCalibDifferenced, rTmp, iSize);
+SecondStageArrayCreateData := KMEM_ArrayCreate(cCalibSecondStage, rTmp, iSize);
+ThirdStageArrayCreateData := KMEM_ArrayCreate(cCalibThirdStage, rTmp, iSize);
+
+;#END_EDIT_BLOCK END_ACTION (*ACreateArrays*)
+ACTION ADeleteArrays: #BEGIN_EDIT_BLOCK
+(**************************************** WARNING ********************************************
+ *** The KEBA Kemro K2 System including software is not intended for safety control tasks! ***
+ ***                       For further information see Comment tab!                        ***
+ *********************************************************************************************)
+
+s := KMEM_ArrayDelete(ShiftArrayCreateData.Handle);
+s := KMEM_ArrayDelete(MeasuredVelArrayCreateData.Handle);
+s := KMEM_ArrayDelete(MeasuredPosArrayCreateData.Handle);
+s := KMEM_ArrayDelete(MeasuredOutputArrayCreateData.Handle);
+s := KMEM_ArrayDelete(DifferencedArrayCreateData.Handle);
+s := KMEM_ArrayDelete(SecondStageArrayCreateData.Handle);
+s := KMEM_ArrayDelete(ThirdStageArrayCreateData.Handle);
+
+;#END_EDIT_BLOCK END_ACTION (*ADeleteArrays*)
+
+(* exits *)
+
+EXIT_TRANSITION E_NotSetupMode := #BEGIN_EDIT_BLOCK
+(**************************************** WARNING ********************************************
+ *** The KEBA Kemro K2 System including software is not intended for safety control tasks! ***
+ ***                       For further information see Comment tab!                        ***
+ *********************************************************************************************)
+
+sv_OperationMode <> nSetup
+;#END_EDIT_BLOCK
+PRIORITY 1 WITH  INITIAL_STEP S_RESET: END_STEP
+END_TRANSITION
+
+EXIT_TRANSITION E_NotCalibratingAnymore := #BEGIN_EDIT_BLOCK
+// abort calibration, when not in running state and not finished
+sv_CalibStateInjection.Status <> tnCalibState_Running AND (S_INIT.X OR S_DECOMP.X OR S_INJECT.X OR S_WAIT_CALC.X)
+;#END_EDIT_BLOCK
+PRIORITY 1 WITH  INITIAL_STEP S_RESET: END_STEP
+END_TRANSITION
+(* end sfc-code *)
+
+
+END_ALGORITHM
+
+POSTUPDATE_ALGORITHM pStart ON PU_Task_7 WITH sv_CalibStateInjection.Status
+
+#BEGIN_EDIT_BLOCK
+(**************************************** WARNING ********************************************
+ *** The KEBA Kemro K2 System including software is not intended for safety control tasks! ***
+ ***                       For further information see Comment tab!                        ***
+ *********************************************************************************************)
+
+IF sv_OperationMode = nSetup THEN    
+   IF sv_CalibStateInjection.Status = tnCalibState_Running THEN
+      START_PROCESS_ALGORITHM(paRun);
+   END_IF;
+END_IF;
+
+
+
+;#END_EDIT_BLOCK END_ALGORITHM
+
+
+
+END_ALGORITHM_BLOCK
+
+
+
+#END_OF_IEC_PART
+
+@Puma @IecEditor 6 97 @Pou 25 
+@@@BEG_Comment@@@
+@h    ! WARNING !
+@h    The Kemro K2 system (including software) only meets category B according to EN 954-1,
+@h    thus it is not intended for usage in safety-relevant control applications in the field 
+@h    of personal safety (e.g. emergency stop).
+@h    To implement potentially necessary safety-relevant control tasks, always use additional 
+@h    external safety devices that are intended for the particular purpose, and meet the necessary 
+@h    functional safety.
+@h    For further information see EN 954-1 (EN ISO 13849-1) and/or the K2-x00 user manual, chapter 
+@h    "CE conformity, directives and standards".
+
+Do steps for automatic injection calibration (plant/dead time analysis)
+@@@END_Comment@@@
+
+@BEG_Contents 
+
+@BEG_Func 
+@RT(17)FuncTreeContainer 
+5 
+@Var @RT(9)SET_EVENT @RT(0) @T @T @DERIVED 0 @F @RT(23)KEBA_STANDARD_PROCEDURE @F 
+@T 
+@BEG_Attrib 
+0 @RT(0) @RT(0) 
+@END_Attrib 
+1 1 @F @F @F @F 
+
+@Var @RT(9)SET_ALARM @RT(0) @T @T @DERIVED 0 @F @RT(23)KEBA_STANDARD_PROCEDURE @F 
+@T 
+@BEG_Attrib 
+0 @RT(0) @RT(0) 
+@END_Attrib 
+1 1 @F @F @F @F 
+
+@Var @RT(16)KMEM_ArrayCreate @RT(0) @T @T @DERIVED 0 @F @RT(22)KEBA_STANDARD_FUNCTION @F 
+@T 
+@BEG_Attrib 
+0 @RT(0) @RT(0) 
+@END_Attrib 
+1 1 @F @F @F @F 
+
+@Var @RT(13)KMEM_ArraySet @RT(0) @T @T @DERIVED 0 @F @RT(22)KEBA_STANDARD_FUNCTION @F 
+@T 
+@BEG_Attrib 
+0 @RT(0) @RT(0) 
+@END_Attrib 
+1 1 @F @F @F @F 
+
+@Var @RT(16)KMEM_ArrayDelete @RT(0) @T @T @DERIVED 0 @F @RT(22)KEBA_STANDARD_FUNCTION @F 
+@T 
+@BEG_Attrib 
+0 @RT(0) @RT(0) 
+@END_Attrib 
+1 1 @F @F @F @F 
+
+@END_Func 
+
+@BEG_Const 
+@RT(18)ConstTreeContainer 
+17 
+@Var @RT(16)tnCalibMode_Both @RT(0) @T @T @DERIVED 0 @F @RT(11)tnCalibMode @F 
+@T 
+@BEG_Attrib 
+0 @RT(1)2 @RT(0) 
+@END_Attrib 
+1 1 @F @F @F @F 
+
+@Var @RT(18)tnCalibState_Error @RT(0) @T @T @DERIVED 0 @F @RT(12)tnCalibState @F 
+@T 
+@BEG_Attrib 
+0 @RT(1)3 @RT(32)error occured during calibration 
+@END_Attrib 
+1 1 @F @F @F @F 
+
+@Var @RT(20)tnCalibState_Aborted @RT(0) @T @T @DERIVED 0 @F @RT(12)tnCalibState @F 
+@T 
+@BEG_Attrib 
+0 @RT(1)4 @RT(19)calibration aborted 
+@END_Attrib 
+1 1 @F @F @F @F 
+
+@Var @RT(18)cMaxInjectionCount @RT(0) @T @F @DT @RT(4)DINT @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+0 @RT(1)3 @RT(41)how often to do injection for calibration 
+@END_Attrib 
+1 1 @F @F @F @F 
+
+@Var @RT(19)tnCalibMode_Raising @RT(0) @T @T @DERIVED 0 @F @RT(11)tnCalibMode @F 
+@T 
+@BEG_Attrib 
+0 @RT(1)0 @RT(0) 
+@END_Attrib 
+1 1 @F @F @F @F 
+
+@Var @RT(19)tnCalibMode_Falling @RT(0) @T @T @DERIVED 0 @F @RT(11)tnCalibMode @F 
+@T 
+@BEG_Attrib 
+0 @RT(1)1 @RT(0) 
+@END_Attrib 
+1 1 @F @F @F @F 
+
+@Var @RT(17)tnCalibState_Done @RT(0) @T @T @DERIVED 0 @F @RT(12)tnCalibState @F 
+@T 
+@BEG_Attrib 
+0 @RT(1)2 @RT(33)calibration finished successfully 
+@END_Attrib 
+1 1 @F @F @F @F 
+
+@Var @RT(8)cMoveFwd @RT(0) @T @F @DT @RT(4)DINT @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+0 @RT(2)12 @RT(16)movement forward 
+@END_Attrib 
+1 1 @F @F @F @F 
+
+@Var @RT(11)cMoveInject @RT(0) @T @F @DT @RT(4)DINT @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+0 @RT(2)14 @RT(15)inject movement 
+@END_Attrib 
+1 1 @F @F @F @F 
+
+@Var @RT(16)cMoveInjectCalib @RT(0) @T @F @DT @RT(4)DINT @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+0 @RT(2)70 @RT(48)calibration movement for servo inject controller 
+@END_Attrib 
+1 1 @F @F @F @F 
+
+@Var @RT(8)cMoveBwd @RT(0) @T @F @DT @RT(4)DINT @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+0 @RT(2)11 @RT(17)movement backward 
+@END_Attrib 
+1 1 @F @F @F @F 
+
+@Var @RT(19)cMoveDecompAftPlast @RT(0) @T @F @DT @RT(4)DINT @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+0 @RT(2)27 @RT(25)decompression after plast 
+@END_Attrib 
+1 1 @F @F @F @F 
+
+@Var @RT(6)nSetup @RT(0) @T @T @DERIVED 0 @F @RT(15)tnOperationMode @F 
+@T 
+@BEG_Attrib 
+0 @RT(1)0 @RT(36)Setup mode only for service engineer 
+@END_Attrib 
+1 1 @F @F @F @F 
+
+@Var @RT(20)tnCalibState_Running @RT(0) @T @T @DERIVED 0 @F @RT(12)tnCalibState @F 
+@T 
+@BEG_Attrib 
+0 @RT(1)1 @RT(23)calibration in progress 
+@END_Attrib 
+1 1 @F @F @F @F 
+
+@Var @RT(15)cCalibShiftData @RT(0) @T @F @DT @RT(10)STRING(31) @RT(0) @T @T @STRING 0 @F @RT(2)31 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+0 @RT(11)'ShiftData' @RT(36)name of dynamic array for Shift Data 
+@END_Attrib 
+1 1 @F @F @F @F 
+
+@Var @RT(17)cCalibMeasuredVel @RT(0) @T @F @DT @RT(10)STRING(31) @RT(0) @T @T @STRING 0 @F @RT(2)31 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+0 @RT(13)'MeasuredVel' @RT(97)name of dynamic array for measured velocities (used during automatic detection of PID parameters) 
+@END_Attrib 
+1 1 @F @F @F @F 
+
+@Var @RT(20)cCalibMeasuredOutput @RT(0) @T @F @DT @RT(10)STRING(31) @RT(0) @T @T @STRING 0 @F @RT(2)31 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+0 @RT(16)'MeasuredOutput' @RT(100)name of dynamic array for measured output values (used during automatic detection of PID parameters) 
+@END_Attrib 
+1 1 @F @F @F @F 
+
+@END_Const 
+
+@BEG_Export 
+
+@BEG_Kind 
+@ALGORITHM_BLOCK @RT(21)ABInjectionCalibCycle @STRUCTURED_TEXT 
+@RT(0) @RT(0) @RT(0) 
+@END_Kind 
+
+@BEG_Dcl 
+@RT(16)DclTreeContainer 
+11 
+@Var @RT(20)sv_bDoInjectionCalib @RT(0) @T @F @DT @RT(4)BOOL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 8 @F @F @F @F 
+
+@Var @RT(22)sv_InjectControlParams @RT(0) @T @T @DERIVED 0 @T @T @DT @RT(19)tsControlParameters @RT(0) @T @T @UNKNOWN 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 8 @F @F @F @F 
+
+@Var @RT(16)sv_OperationMode @RT(0) @T @T @DERIVED 0 @T @T @DT @RT(15)tnOperationMode @RT(0) @T @T @UNKNOWN 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 8 @F @F @F @F 
+
+@Var @RT(11)sv_DeviceId @RT(0) @T @T @DERIVED 0 @T @T @DT @RT(10)tsDeviceId @RT(0) @T @T @UNKNOWN 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 8 @F @F @F @F 
+
+@Var @RT(22)sv_CalibStateInjection @RT(0) @T @T @DERIVED 0 @T @T @DT @RT(15)tsCalibMovement @RT(0) @T @T @UNKNOWN 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 8 @F @F @F @F 
+
+@Var @RT(19)sv_TmpInjectionData @RT(0) @T @T @DERIVED 0 @T @T @DT @RT(23)tsCalculatedInjectData2 @RT(0) @T @T @UNKNOWN 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 8 @F @F @F @F 
+
+@Var @RT(23)sv_InjectDeadTimeParams @RT(0) @T @T @DERIVED 0 @T @T @DT @RT(20)tsDeadTimeParameters @RT(0) @T @T @UNKNOWN 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 8 @F @F @F @F 
+
+@Var @RT(7)TaskMid @RT(0) @T @F @DT @RT(4)TASK @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 7 @F @F @F @F 
+
+@Var @RT(14)evStartRequest @RT(0) @T @T @DERIVED 0 @T @T @DT @RT(15)tevStartRequest @RT(0) @T @T @UNKNOWN 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 7 @F @F @F @F 
+
+@Var @RT(9)PU_Task_7 @RT(0) @T @F @DT @RT(4)TASK @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 7 @F @F @F @F 
+
+@Var @RT(26)abAutoCalibRedoListenerInj @RT(0) @T @T @DERIVED 0 @T @T @DT @RT(23)ABAutoCalibRedoListener @RT(0) @T @T @UNKNOWN 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@END_Dcl 
+
+@END_Export 
+
+@BEG_Body 
+
+2 
+
+@BEG_Export 
+
+@BEG_Algo 
+@PROCESS_ALGORITHM @RT(5)paRun @SEQUENTIAL_FLOW_CHART 
+@RT(0) @RT(0) @RT(7)TaskMid @F @F 
+@END_Algo 
+
+@BEG_Dcl 
+@RT(16)DclTreeContainer 
+20 
+@Var @RT(11)tmpMeanData @RT(0) @T @T @DERIVED 0 @T @T @DT @RT(22)tsCalculatedInjectData @RT(0) @T @T @UNKNOWN 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 4 @F @F @F @F 
+
+@Var @RT(1)i @RT(0) @T @F @DT @RT(4)DINT @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 4 @F @F @F @F 
+
+@Var @RT(18)evStartRequestData @RT(0) @T @T @DERIVED 0 @T @T @DT @RT(19)tevStartRequestData @RT(0) @T @T @UNKNOWN 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(15)iInjectionCount @RT(0) @T @F @DT @RT(4)DINT @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(20)calculatedParameters @RT(0) @T @T @DERIVED 0 @T @T @DT @RT(21)tyCalculatedDataArray @RT(0) @T @T @UNKNOWN 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(9)calibMode @RT(0) @T @T @DERIVED 0 @T @T @DT @RT(11)tnCalibMode @RT(0) @T @T @UNKNOWN 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(16)tnCalibMode_Both @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(5)fbLog @RT(0) @T @T @DERIVED 0 @T @T @DT @RT(14)FBAutoCalibLog @RT(0) @T @T @UNKNOWN 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(22)fbStopStartedMovements @RT(0) @T @T @DERIVED 0 @T @T @DT @RT(22)FBStopStartedMovements @RT(0) @T @T @UNKNOWN 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(12)fbCheckReady @RT(0) @T @T @DERIVED 0 @T @T @DT @RT(12)FBCheckReady @RT(0) @T @T @UNKNOWN 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(9)ShiftData @RT(0) @T @T @DERIVED 0 @T @T @DT @RT(16)tsCalibShiftData @RT(0) @T @T @UNKNOWN 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(20)ShiftArrayCreateData @RT(0) @T @T @DERIVED 0 @T @T @DT @RT(15)KMEM_CreateData @RT(0) @T @T @UNKNOWN 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(26)MeasuredVelArrayCreateData @RT(0) @T @T @DERIVED 0 @T @T @DT @RT(15)KMEM_CreateData @RT(0) @T @T @UNKNOWN 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(26)MeasuredPosArrayCreateData @RT(0) @T @T @DERIVED 0 @T @T @DT @RT(15)KMEM_CreateData @RT(0) @T @T @UNKNOWN 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(29)MeasuredOutputArrayCreateData @RT(0) @T @T @DERIVED 0 @T @T @DT @RT(15)KMEM_CreateData @RT(0) @T @T @UNKNOWN 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(26)DifferencedArrayCreateData @RT(0) @T @T @DERIVED 0 @T @T @DT @RT(15)KMEM_CreateData @RT(0) @T @T @UNKNOWN 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(26)SecondStageArrayCreateData @RT(0) @T @T @DERIVED 0 @T @T @DT @RT(15)KMEM_CreateData @RT(0) @T @T @UNKNOWN 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(25)ThirdStageArrayCreateData @RT(0) @T @T @DERIVED 0 @T @T @DT @RT(15)KMEM_CreateData @RT(0) @T @T @UNKNOWN 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(1)s @RT(0) @T @T @DERIVED 0 @T @T @DT @RT(11)KMEM_Status @RT(0) @T @T @UNKNOWN 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(5)iSize @RT(0) @T @F @DT @RT(5)UDINT @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(4)rTmp @RT(0) @T @F @DT @RT(4)REAL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@END_Dcl 
+
+@END_Export 
+
+@BEG_Export 
+
+@BEG_Algo 
+@POSTUPDATE_ALGORITHM @RT(6)pStart @STRUCTURED_TEXT 
+@RT(0) @RT(29)sv_CalibStateInjection.Status @RT(9)PU_Task_7 @F @F 
+@END_Algo 
+
+@BEG_Dcl 
+@RT(16)DclTreeContainer 
+0 
+@END_Dcl 
+
+@END_Export 
+
+@BEG_SfcBody 
+19 13 12 
+
+@BEG_SfcData 2 
+@StepSeq @RT(4)sseq @F 17 
+@Step @RT(7)S_RESET @F @F @T @F @RT(0) @F 
+@AcbCont @RT(7)unnamed @F 2 
+@Acb @RT(14)AStopmovements @F @F @RT(1)P @RT(0) @F @F @F @F 
+@Acb @RT(8)Action24 @F @T @RT(1)P @RT(0) @F @F @T @TL(7)
+IF sv_CalibStateInjection.Status <> tnCalibState_Error THEN
+   sv_CalibStateInjection.Status := tnCalibState_Aborted;
+   fbLog('Injection calib aborted');
+ELSE
+    fbLog('Injection calib error');
+END_IF;
+
+@F 
+
+@Trans @RT(7)Trans15 @F @T @F @F @T @F @TL(2)
+TRUE
+
+@RT(7)Trans15 @F 
+@Step @RT(6)S_STOP @F @F @T @F @RT(0) @F 
+@AcbCont @RT(7)unnamed @F 2 
+@Acb @RT(13)ADeleteArrays @F @F @RT(1)P @RT(0) @F @F @F @F 
+@Acb @RT(8)Action22 @F @T @RT(1)P @RT(0) @F @F @T @TL(3)
+sv_bDoInjectionCalib := FALSE;
+STOP_PROCESS_ALGORITHM();
+
+@F 
+
+@Trans @RT(7)Trans18 @F @T @F @F @T @T @TL(2)
+TRUE
+
+@RT(7)Trans18 @F 
+@Step @RT(6)S_INIT @F @T @F @F @RT(0) @F 
+@AcbCont @RT(7)unnamed @F 2 
+@Acb @RT(5)AInit @F @T @RT(1)P @RT(0) @F @F @T @TL(6)
+sv_bDoInjectionCalib := TRUE;
+iInjectionCount := 1;
+sv_TmpInjectionData.CalibMode := calibMode;
+sv_TmpInjectionData.bValid := FALSE;
+sv_TmpInjectionData.bInvalid := FALSE;
+
+@F 
+@Acb @RT(13)ACreateArrays @F @F @RT(1)P @RT(0) @F @F @F @F 
+
+@Trans @RT(6)Trans1 @F @T @F @F @T @T @TL(2)
+TRUE
+
+@RT(6)Trans1 @F 
+@Step @RT(8)S_DECOMP @F @F @T @F @RT(0) @F 
+@AcbCont @RT(7)unnamed @F 2 
+@Acb @RT(16)ADoDecompression @F @F @RT(1)P @RT(0) @F @F @F @F 
+@Acb @RT(7)Action8 @F @T @RT(1)N @RT(0) @F @F @T @TL(2)
+fbCheckReady(DeviceId := sv_DeviceId)
+
+@F 
+
+@Trans @RT(6)Trans5 @F @T @F @F @T @T @TL(2)
+fbCheckReady.bReady
+
+@RT(6)Trans5 @F 
+@Step @RT(8)S_INJECT @F @F @F @F @RT(0) @F 
+@AcbCont @RT(7)unnamed @F 2 
+@Acb @RT(10)ADoProfile @F @F @RT(1)P @RT(0) @F @F @F @F 
+@Acb @RT(7)Action9 @F @T @RT(1)N @RT(0) @F @F @T @TL(2)
+fbCheckReady(DeviceId := sv_DeviceId)
+
+@F 
+
+@Trans @RT(6)Trans2 @F @T @F @F @T @T @TL(2)
+fbCheckReady.bReady
+
+@RT(6)Trans2 @F 
+@Step @RT(11)S_WAIT_CALC @F @F @F @F @RT(0) @F 
+@AcbCont @RT(7)unnamed @F 0 
+
+@AltBranch @RT(3)alt @F 2 
+@TransSeq @RT(4)tseq @F 1 
+@Trans @RT(7)Trans21 @F @T @F @F @T @T @TL(2)
+sv_TmpInjectionData.bValid
+
+@RT(7)Trans21 @F 
+
+@TransSeq @RT(4)tseq @F 2 
+@Trans @RT(7)Trans22 @F @T @F @F @T @T @TL(2)
+sv_TmpInjectionData.bInvalid
+
+@RT(7)Trans22 @F 
+@Goto @RT(7)S_RESET @F @F 
+
+
+@Step @RT(11)S_SAVE_CALC @F @F @F @F @RT(0) @F 
+@AcbCont @RT(7)unnamed @F 1 
+@Acb @RT(8)Action17 @F @T @RT(1)P @RT(0) @F @F @T @TL(2)
+calculatedParameters[iInjectionCount] := sv_TmpInjectionData;
+
+@F 
+
+@AltBranch @RT(3)alt @F 2 
+@TransSeq @RT(4)tseq @F 1 
+@Trans @RT(7)Trans10 @F @T @F @F @T @T @TL(2)
+iInjectionCount >= cMaxInjectionCount
+
+@RT(7)Trans10 @F 
+
+@TransSeq @RT(4)tseq @F 4 
+@Trans @RT(7)Trans11 @F @T @F @F @T @T @TL(2)
+iInjectionCount < cMaxInjectionCount
+
+@RT(7)Trans11 @F 
+@Step @RT(12)S_NEXT_CYCLE @F @F @F @F @RT(0) @F 
+@AcbCont @RT(7)unnamed @F 1 
+@Acb @RT(8)Action16 @F @T @RT(1)P @RT(0) @F @F @T @TL(2)
+iInjectionCount := iInjectionCount +1;
+
+@F 
+
+@Trans @RT(7)Trans14 @F @T @F @F @T @T @TL(2)
+TRUE
+
+@RT(7)Trans14 @F 
+@Goto @RT(8)S_DECOMP @F @F 
+
+
+@Step @RT(6)S_DONE @F @F @F @F @RT(0) @F 
+@AcbCont @RT(7)unnamed @F 2 
+@Acb @RT(8)Action18 @F @F @RT(1)P @RT(0) @F @F @F @F 
+@Acb @RT(8)Action14 @F @T @RT(1)P @RT(0) @F @F @T @TL(2)
+sv_CalibStateInjection.Status := tnCalibState_Done;
+
+@F 
+
+@Trans @RT(7)Trans19 @F @T @F @F @T @T @TL(2)
+TRUE
+
+@RT(7)Trans19 @F 
+@Goto @RT(6)S_STOP @F @F 
+@END_SfcData 
+@SaActions 6 
+@SaText @RT(10)ADoProfile 1 @TL(10)
+(**************************************** WARNING ********************************************
+ *** The KEBA Kemro K2 System including software is not intended for safety control tasks! ***
+ ***                       For further information see Comment tab!                        ***
+ *********************************************************************************************)
+
+evStartRequestData.DeviceId := sv_DeviceId;
+evStartRequestData.MoveDir := cMoveFwd; 
+evStartRequestData.MoveId := cMoveInjectCalib;
+SET_EVENT(evStartRequest, evStartRequestData); 
+
+
+@SaText @RT(16)ADoDecompression 1 @TL(10)
+(**************************************** WARNING ********************************************
+ *** The KEBA Kemro K2 System including software is not intended for safety control tasks! ***
+ ***                       For further information see Comment tab!                        ***
+ *********************************************************************************************)
+
+evStartRequestData.DeviceId := sv_DeviceId;
+evStartRequestData.MoveDir := cMoveBwd; 
+evStartRequestData.MoveId := cMoveDecompAftPlast;
+SET_EVENT(evStartRequest, evStartRequestData); 
+
+
+@SaText @RT(14)AStopmovements 1 @TL(7)
+(**************************************** WARNING ********************************************
+ *** The KEBA Kemro K2 System including software is not intended for safety control tasks! ***
+ ***                       For further information see Comment tab!                        ***
+ *********************************************************************************************)
+
+fbStopStartedMovements();
+
+
+@SaText @RT(8)Action18 1 @TL(70)
+(**************************************** WARNING ********************************************
+ *** The KEBA Kemro K2 System including software is not intended for safety control tasks! ***
+ ***                       For further information see Comment tab!                        ***
+ *********************************************************************************************)
+
+tmpMeanData.rControllerKR := 0.0;
+tmpMeanData.rControllerW  := 0.0;
+tmpMeanData.tPlantDeadTime:= t#0ms;
+tmpMeanData.rPlantK       := 0.0;
+tmpMeanData.tPlantT1      := t#0ms;
+tmpMeanData.tPlantT2      := t#0ms;
+(* calculate mean value of all parameters *)
+(* fixme: check if we need to calculate from falling and raising first
+   and then calculate over the arry *)
+
+FOR i:= 1 TO cMaxInjectionCount DO //FIXME: test
+    IF calibMode = tnCalibMode_Both THEN
+        tmpMeanData.rControllerKR := tmpMeanData.rControllerKR + calculatedParameters[i].Falling.rControllerKR + calculatedParameters[i].Raising.rControllerKR;
+        tmpMeanData.rControllerW  := tmpMeanData.rControllerW  + calculatedParameters[i].Falling.rControllerW  + calculatedParameters[i].Raising.rControllerW;
+        tmpMeanData.tPlantDeadTime:= tmpMeanData.tPlantDeadTime+ calculatedParameters[i].Falling.tPlantDeadTime+ calculatedParameters[i].Raising.tPlantDeadTime;
+        tmpMeanData.rPlantK       := tmpMeanData.rPlantK       + calculatedParameters[i].Falling.rPlantK       + calculatedParameters[i].Raising.rPlantK;
+        tmpMeanData.tPlantT1      := tmpMeanData.tPlantT1      + calculatedParameters[i].Falling.tPlantT1      + calculatedParameters[i].Raising.tPlantT1;
+        tmpMeanData.tPlantT2      := tmpMeanData.tPlantT2      + calculatedParameters[i].Falling.tPlantT2      + calculatedParameters[i].Raising.tPlantT2;
+    ELSIF calibMode = tnCalibMode_Raising THEN
+        tmpMeanData.rControllerKR := tmpMeanData.rControllerKR + calculatedParameters[i].Raising.rControllerKR;
+        tmpMeanData.rControllerW  := tmpMeanData.rControllerW  + calculatedParameters[i].Raising.rControllerW;
+        tmpMeanData.tPlantDeadTime:= tmpMeanData.tPlantDeadTime+ calculatedParameters[i].Raising.tPlantDeadTime;
+        tmpMeanData.rPlantK       := tmpMeanData.rPlantK       + calculatedParameters[i].Raising.rPlantK;
+        tmpMeanData.tPlantT1      := tmpMeanData.tPlantT1      + calculatedParameters[i].Raising.tPlantT1;
+        tmpMeanData.tPlantT2      := tmpMeanData.tPlantT2      + calculatedParameters[i].Raising.tPlantT2;
+    ELSIF calibMode = tnCalibMode_Falling THEN
+        tmpMeanData.rControllerKR := tmpMeanData.rControllerKR + calculatedParameters[i].Falling.rControllerKR ;
+        tmpMeanData.rControllerW  := tmpMeanData.rControllerW  + calculatedParameters[i].Falling.rControllerW;
+        tmpMeanData.tPlantDeadTime:= tmpMeanData.tPlantDeadTime+ calculatedParameters[i].Falling.tPlantDeadTime;
+        tmpMeanData.rPlantK       := tmpMeanData.rPlantK       + calculatedParameters[i].Falling.rPlantK;
+        tmpMeanData.tPlantT1      := tmpMeanData.tPlantT1      + calculatedParameters[i].Falling.tPlantT1;
+        tmpMeanData.tPlantT2      := tmpMeanData.tPlantT2      + calculatedParameters[i].Falling.tPlantT2;
+    END_IF;
+END_FOR;
+
+tmpMeanData.rControllerKR := tmpMeanData.rControllerKR / DINT_TO_REAL(cMaxInjectionCount);
+tmpMeanData.rControllerW  := tmpMeanData.rControllerW  / DINT_TO_REAL(cMaxInjectionCount);
+tmpMeanData.tPlantDeadTime:= tmpMeanData.tPlantDeadTime/ DINT_TO_REAL(cMaxInjectionCount);
+tmpMeanData.rPlantK       := tmpMeanData.rPlantK       / DINT_TO_REAL(cMaxInjectionCount);
+tmpMeanData.tPlantT1      := tmpMeanData.tPlantT1      / DINT_TO_REAL(cMaxInjectionCount);
+tmpMeanData.tPlantT2      := tmpMeanData.tPlantT2      / DINT_TO_REAL(cMaxInjectionCount);
+
+IF calibMode = tnCalibMode_Both THEN
+    (* if only one edge no division is needed *)
+    tmpMeanData.rControllerKR := tmpMeanData.rControllerKR / 2.0;
+    tmpMeanData.rControllerW  := tmpMeanData.rControllerW  / 2.0;
+    tmpMeanData.tPlantDeadTime:= DIVTIME(tmpMeanData.tPlantDeadTime, 2);
+    tmpMeanData.rPlantK       := tmpMeanData.rPlantK/ 2.0;
+    tmpMeanData.tPlantT1      := DIVTIME(tmpMeanData.tPlantT1, 2);
+    tmpMeanData.tPlantT2      := DIVTIME(tmpMeanData.tPlantT2, 2);
+END_IF;
+
+sv_InjectDeadTimeParams.bCompensationEnabled := TRUE;
+sv_InjectDeadTimeParams.dDeadTime := tmpMeanData.tPlantDeadTime;
+sv_InjectDeadTimeParams.dPT2T1 := tmpMeanData.tPlantT1;
+sv_InjectDeadTimeParams.dPT2T2 := tmpMeanData.tPlantT2;
+sv_InjectDeadTimeParams.rPT2K  := tmpMeanData.rPlantK;
+
+sv_InjectControlParams.rKS := 1.0;
+sv_InjectControlParams.dTN := t#0s;
+sv_InjectControlParams.dTV := t#0s;
+sv_InjectControlParams.rP  := tmpMeanData.rControllerKR;
+
+sv_InjectControlParams.bUsePIDControl := TRUE;
+
+
+@SaText @RT(13)ACreateArrays 1 @TL(18)
+(**************************************** WARNING ********************************************
+ *** The KEBA Kemro K2 System including software is not intended for safety control tasks! ***
+ ***                       For further information see Comment tab!                        ***
+ *********************************************************************************************)
+
+//create dynamic arrays which are necessary for PID parameter detection
+iSize := DINT_TO_UDINT(cMaxShiftData) + 1;
+ShiftArrayCreateData := KMEM_ArrayCreate(cCalibShiftData, ShiftData, iSize);
+
+iSize := DINT_TO_UDINT(cMaxRecordedData);
+MeasuredVelArrayCreateData := KMEM_ArrayCreate(cCalibMeasuredVel, rTmp, iSize);
+MeasuredPosArrayCreateData := KMEM_ArrayCreate(cCalibMeasuredPos, rTmp, iSize);
+MeasuredOutputArrayCreateData := KMEM_ArrayCreate(cCalibMeasuredOutput, rTmp, iSize);
+
+DifferencedArrayCreateData := KMEM_ArrayCreate(cCalibDifferenced, rTmp, iSize);
+SecondStageArrayCreateData := KMEM_ArrayCreate(cCalibSecondStage, rTmp, iSize);
+ThirdStageArrayCreateData := KMEM_ArrayCreate(cCalibThirdStage, rTmp, iSize);
+
+
+@SaText @RT(13)ADeleteArrays 1 @TL(13)
+(**************************************** WARNING ********************************************
+ *** The KEBA Kemro K2 System including software is not intended for safety control tasks! ***
+ ***                       For further information see Comment tab!                        ***
+ *********************************************************************************************)
+
+s := KMEM_ArrayDelete(ShiftArrayCreateData.Handle);
+s := KMEM_ArrayDelete(MeasuredVelArrayCreateData.Handle);
+s := KMEM_ArrayDelete(MeasuredPosArrayCreateData.Handle);
+s := KMEM_ArrayDelete(MeasuredOutputArrayCreateData.Handle);
+s := KMEM_ArrayDelete(DifferencedArrayCreateData.Handle);
+s := KMEM_ArrayDelete(SecondStageArrayCreateData.Handle);
+s := KMEM_ArrayDelete(ThirdStageArrayCreateData.Handle);
+
+
+@SaTrans 0 
+@SaExits 2 
+@SaExit @SaText @RT(14)E_NotSetupMode 1 @TL(7)
+(**************************************** WARNING ********************************************
+ *** The KEBA Kemro K2 System including software is not intended for safety control tasks! ***
+ ***                       For further information see Comment tab!                        ***
+ *********************************************************************************************)
+
+sv_OperationMode <> nSetup
+
+@RT(7)S_RESET @RT(1)1 @F @F @SaSfc @RT(14)E_NotSetupMode 5 @RT(5)DUMMY 
+@BEG_SfcData 2 
+@ExitSeq @RT(4)sseq @F 3 
+@Step @RT(8)unnamed1 @F @T @F @F @RT(0) @F 
+@AcbCont @RT(7)unnamed @F 0 
+
+@Trans @RT(8)unnamed3 @F @T @F @F @T @T @TL(2)
+
+
+@RT(8)unnamed3 @F 
+@Goto @RT(9)unlabeled @F @F 
+@END_SfcData 
+
+@SaExit @SaText @RT(23)E_NotCalibratingAnymore 1 @TL(3)
+// abort calibration, when not in running state and not finished
+sv_CalibStateInjection.Status <> tnCalibState_Running AND (S_INIT.X OR S_DECOMP.X OR S_INJECT.X OR S_WAIT_CALC.X)
+
+@RT(7)S_RESET @RT(1)1 @F @F @SaSfc @RT(23)E_NotCalibratingAnymore 5 @RT(5)DUMMY 
+@BEG_SfcData 2 
+@ExitSeq @RT(4)sseq @F 3 
+@Step @RT(8)unnamed4 @F @T @F @F @RT(0) @F 
+@AcbCont @RT(7)unnamed @F 0 
+
+@Trans @RT(8)unnamed6 @F @T @F @F @T @T @TL(2)
+
+
+@RT(8)unnamed6 @F 
+@Goto @RT(9)unlabeled @F @F 
+@END_SfcData 
+
+@END_SfcBody 
+
+@@@BEG_Comment@@@ 
+@TL(0)
+
+@@@END_Comment@@@ 
+
+@BEG_Body 
+@TL(12)
+(**************************************** WARNING ********************************************
+ *** The KEBA Kemro K2 System including software is not intended for safety control tasks! ***
+ ***                       For further information see Comment tab!                        ***
+ *********************************************************************************************)
+
+IF sv_OperationMode = nSetup THEN    
+   IF sv_CalibStateInjection.Status = tnCalibState_Running THEN
+      START_PROCESS_ALGORITHM(paRun);
+   END_IF;
+END_IF;
+
+
+@END_Body 
+
+@@@BEG_Comment@@@ 
+@TL(0)
+
+@@@END_Comment@@@ 
+@END_Body 
+
+@END_Contents 

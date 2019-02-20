@@ -1,0 +1,158 @@
+(*
+@h    ! WARNING !
+@h    The Kemro K2 system (including software) only meets category B according to EN 954-1,
+@h    thus it is not intended for usage in safety-relevant control applications in the field 
+@h    of personal safety (e.g. emergency stop).
+@h    To implement potentially necessary safety-relevant control tasks, always use additional 
+@h    external safety devices that are intended for the particular purpose, and meet the necessary 
+@h    functional safety.
+@h    For further information see EN 954-1 (EN ISO 13849-1) and/or the K2-x00 user manual, chapter 
+@h    "CE conformity, directives and standards".
+
+Function to read a configuration value of type string from uos catalog
+*)
+
+IMPORT_OVER_LISTFILE
+ KCAT_HandleData
+, KCAT_Status
+
+END_IMPORT
+
+FUNCTION FGetCatConfigValueString : STRING(255) #DUMMY_EDIT_BLOCK
+
+VAR_INPUT
+ Path : STRING(255) (* node name of config value to read (for example 'KVB_FND.PostScriptDir') *);
+ DefaultValue : STRING(255) (* default value is used as return value if status not ok *);
+END_VAR
+
+VAR
+ DataHandle : KCAT_HandleData;
+ sValue : STRING(255);
+ Status : KCAT_Status;
+END_VAR
+#BEGIN_EDIT_BLOCK
+(**************************************** WARNING ********************************************
+ *** The KEBA Kemro K2 System including software is not intended for safety control tasks! ***
+ ***                       For further information see Comment tab!                        ***
+ *********************************************************************************************)
+
+    FGetCatConfigValueString := DefaultValue;
+    DataHandle := KCAT_GetHandle(Path);   
+    IF DataHandle.Status = KCAT_Status_OK THEN
+        Status := KCAT_GetValue(Handle := DataHandle.Handle,
+                                Buffer := sValue);        
+        IF Status<>KCAT_Status_OK THEN
+            RETURN;         
+        END_IF;
+    
+        FGetCatConfigValueString := sValue; 
+    END_IF;    
+
+;#END_EDIT_BLOCK END_FUNCTION
+
+
+
+#END_OF_IEC_PART
+
+@Puma @IecEditor 6 68 @Pou 25 
+@@@BEG_Comment@@@
+@h    ! WARNING !
+@h    The Kemro K2 system (including software) only meets category B according to EN 954-1,
+@h    thus it is not intended for usage in safety-relevant control applications in the field 
+@h    of personal safety (e.g. emergency stop).
+@h    To implement potentially necessary safety-relevant control tasks, always use additional 
+@h    external safety devices that are intended for the particular purpose, and meet the necessary 
+@h    functional safety.
+@h    For further information see EN 954-1 (EN ISO 13849-1) and/or the K2-x00 user manual, chapter 
+@h    "CE conformity, directives and standards".
+
+Function to read a configuration value of type string from uos catalog
+@@@END_Comment@@@
+
+@BEG_Contents 
+
+@BEG_Func 
+@RT(17)FuncTreeContainer 
+0 
+@END_Func 
+
+@BEG_Const 
+@RT(18)ConstTreeContainer 
+0 
+@END_Const 
+
+@BEG_Export 
+
+@BEG_Kind 
+@FUNCTION @RT(24)FGetCatConfigValueString @STRUCTURED_TEXT 
+@RT(11)STRING(255) @RT(0) @RT(0) 
+@END_Kind 
+
+@BEG_Dcl 
+@RT(16)DclTreeContainer 
+5 
+@Var @RT(10)DataHandle @RT(0) @T @T @DERIVED 0 @T @T @DT @RT(15)KCAT_HandleData @RT(0) @T @T @UNKNOWN 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(6)sValue @RT(0) @T @F @DT @RT(11)STRING(255) @RT(0) @T @T @STRING 0 @F @RT(3)255 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(6)Status @RT(0) @T @T @DERIVED 0 @T @T @DT @RT(11)KCAT_Status @RT(0) @T @T @UNKNOWN 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(4)Path @RT(0) @T @F @DT @RT(11)STRING(255) @RT(0) @T @T @STRING 0 @F @RT(3)255 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(71)node name of config value to read (for example 'KVB_FND.PostScriptDir') @RT(0) 
+@END_Attrib 
+1 1 @F @F @F @F 
+
+@Var @RT(12)DefaultValue @RT(0) @T @F @DT @RT(11)STRING(255) @RT(0) @T @T @STRING 0 @F @RT(3)255 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(54)default value is used as return value if status not ok @RT(0) 
+@END_Attrib 
+1 1 @F @F @F @F 
+
+@END_Dcl 
+
+@END_Export 
+
+@BEG_Body 
+@TL(16)
+(**************************************** WARNING ********************************************
+ *** The KEBA Kemro K2 System including software is not intended for safety control tasks! ***
+ ***                       For further information see Comment tab!                        ***
+ *********************************************************************************************)
+
+    FGetCatConfigValueString := DefaultValue;
+    DataHandle := KCAT_GetHandle(Path);   
+    IF DataHandle.Status = KCAT_Status_OK THEN
+        Status := KCAT_GetValue(Handle := DataHandle.Handle,
+                                Buffer := sValue);        
+        IF Status<>KCAT_Status_OK THEN
+            RETURN;         
+        END_IF;
+    
+        FGetCatConfigValueString := sValue; 
+    END_IF;    
+@END_Body 
+
+@END_Contents 

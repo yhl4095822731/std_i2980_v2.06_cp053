@@ -1,0 +1,1418 @@
+(*
+Do automatic RPM calibration of machine
+*)
+
+IMPORT_OVER_LISTFILE
+ GET_TASK_INTERVAL
+, SET_ALARM
+, KFILE_Open
+, KFILE_WriteString
+, KFILE_Close
+, KAPPL_CalibSelection_HydrMotor
+, CALIB_FILE_PATH
+, KCTRL_Stable_Param
+, KAPPL_LintabData
+, tsCalibMovement
+, KAPPL_Plastics_AutoCalibration
+, tsHydrMaxValues
+, KSWO_Status
+, KFILE_Status
+, KFILE_Open_Data
+, R_TRIG
+, KAPPL_CalibParam
+, KCTRL_Lintab_Point_Light
+, TON
+, FBAutoCalibLog
+, F_TRIG
+
+END_IMPORT
+
+ALGORITHM_BLOCK ABRPMCalib #DUMMY_EDIT_BLOCK
+
+SYSTEM_VAR
+ sv_RPMStableParam : KCTRL_Stable_Param;
+ sv_TmpRpmLintab : KAPPL_LintabData;
+ sv_CalibStateRPM : tsCalibMovement;
+ sv_HydrMaxValuesPlast : tsHydrMaxValues (* hydraulic max values for plast *);
+END_VAR
+
+SYSTEM_OBJECT
+ TaskSlow : TASK;
+ TaskInject : TASK;
+ erRPMCalibNoMovement : ALARM;
+ erCalibrationRPMNotStable : ALARM;
+END_OBJECT
+
+VAR
+ mpbDebugCalibration : REFTO BOOL (* RefTo sv_TraceLevel.bDebugCalibration *);
+ mbStarted : BOOL;
+ mrOutputV : REAL (* Calculated output for velocity, swo recording *);
+ mrOutputP : REAL (* Calculated output for pressure, swo recording *);
+ mrActScrewRpm : REAL (* Actual rotation speed *);
+ mMeasDone : BOOL (* Measurement done *);
+ mbMeasRdy : BOOL;
+ fbAutoCalib : KAPPL_Plastics_AutoCalibration;
+ msFuName : STRING(32);
+ mbCalcDone : BOOL;
+ mbCalcActive : BOOL;
+END_VAR
+
+PROCESS_ALGORITHM paCalc ON TaskSlow
+
+#BEGIN_EDIT_BLOCK
+(**************************************** WARNING ********************************************
+ *** The KEBA Kemro K2 System including software is not intended for safety control tasks! ***
+ ***                       For further information see Comment tab!                        ***
+ *********************************************************************************************)
+
+fbAutoCalib(MeasureActive := FALSE);
+IF fbAutoCalib.NextStartReady OR fbAutoCalib.Done OR fbAutoCalib.Error THEN
+   mbCalcDone := TRUE;
+   mbCalcActive := FALSE;
+   STOP_PROCESS_ALGORITHM();
+END_IF;
+
+
+
+;#END_EDIT_BLOCK END_ALGORITHM
+
+(*
+Initialisation 
+*)
+
+ALGORITHM aInit
+
+
+VAR_INPUT
+ pbDebugCalibration : REFTO BOOL (* flag to activate debug trace *);
+END_VAR
+
+VAR
+ variableName : STRING(255);
+ status : KSWO_Status;
+END_VAR
+#BEGIN_EDIT_BLOCK
+(**************************************** WARNING ********************************************
+ *** The KEBA Kemro K2 System including software is not intended for safety control tasks! ***
+ ***                       For further information see Comment tab!                        ***
+ *********************************************************************************************)
+
+msFuName := GET_MY_FU_NAME();
+
+mpbDebugCalibration := pbDebugCalibration;
+// Add variables to Kemro.Scope if debugging is selected
+IF mpbDebugCalibration^ THEN
+   variableName := CONCAT(msFuName,'.RPMCalib.mbStarted');
+   status := KSWO_AddVariable( Task := TaskInject,
+                              Name := variableName,
+                              Variable := mbStarted);
+
+   variableName := CONCAT(msFuName,'.RPMCalib.mrOutputV');
+   status := KSWO_AddVariable( Task := TaskInject,
+                              Name := variableName,
+                              Variable := mrOutputV);
+
+   variableName := CONCAT(msFuName,'.RPMCalib.mrOutputP');
+   status := KSWO_AddVariable( Task := TaskInject,
+                              Name := variableName,
+                              Variable := mrOutputP);
+
+   variableName := CONCAT(msFuName,'.RPMCalib.mMeasDone');
+   status := KSWO_AddVariable( Task := TaskInject,
+                              Name := variableName,
+                              Variable := mMeasDone);
+
+   variableName := CONCAT(msFuName,'.RPMCalib.mrActScrewRpm');
+   status := KSWO_AddVariable( Task := TaskInject,
+                              Name := variableName,
+                              Variable := mrActScrewRpm);
+   
+   
+END_IF;
+
+
+
+
+;#END_EDIT_BLOCK END_ALGORITHM
+
+(*
+If debugging is selected, write results of each step of calibration process to autocalibRPM_steps_*.txt-file
+*)
+
+PROCESS_ALGORITHM paDebug ON TaskSlow
+
+
+VAR_TEMP
+ i : UDINT;
+END_VAR
+
+VAR
+ status : KFILE_Status;
+ tmpstr : STRING(255);
+ dummy : DINT;
+ count : UDINT;
+ filetoken : KFILE_Open_Data;
+ calibcount : UDINT := 1;
+ bIsDir : BOOL;
+ sPath : STRING(255);
+ bInitDone : BOOL;
+ sWorkPath : STRING(255);
+END_VAR
+#BEGIN_EDIT_BLOCK
+(**************************************** WARNING ********************************************
+ *** The KEBA Kemro K2 System including software is not intended for safety control tasks! ***
+ ***                       For further information see Comment tab!                        ***
+ *********************************************************************************************)
+
+IF NOT bInitDone THEN
+   sWorkPath := FGetCatConfigValueString('System.workPath', '/harddisk0/');
+   bInitDone := TRUE;
+END_IF;
+
+sPath := CONCAT(sWorkPath, CALIB_FILE_PATH, msFuName, '/');
+
+status := KFILE_IsDir (Name := sPath, IsDirectory := bIsDir);
+IF status = KFILE_Status_NOTOK THEN
+     status := KFILE_MakeDir (Path := sPath);
+END_IF;
+
+count := fbAutoCalib.ArraySize;
+filetoken := KFILE_Open(Name:= CONCAT(sPath,'autocalibRPM_steps_',UDINT_TO_STRING(calibcount), '.txt'), Mode := KFILE_Mode_ReadWriteDelete);
+IF count > 1 THEN
+   FOR i:=1 TO count - 1 DO
+       tmpstr := CONCAT(UDINT_TO_STRING(i), ';', REAL_TO_STRING(fbAutoCalib.Array[i].rX), ';',
+                        REAL_TO_STRING(fbAutoCalib.Array[i].rY * fbAutoCalib.rMaxVal / 100.0),'$N');
+       dummy := KFILE_WriteString(Token := filetoken.Token, Length := 0, Buffer := tmpstr);   
+   END_FOR;
+END_IF;
+status := KFILE_Close(Token := filetoken.Token);  
+calibcount := calibcount + 1;
+STOP_PROCESS_ALGORITHM();
+   
+
+
+;#END_EDIT_BLOCK END_ALGORITHM
+
+(*
+this block s used for RPM calibration
+all outputs are in %
+
+You can take two parts of calibration, because normaly there is a big hysteresis:
+1. Between every testoutput the screw have too stand still (Find machine Limit).
+2. Between every testoutput the screw rotates with (allowed) maximal speed.
+
+It is not solved how to handle the results of the different ways of calibration.
+*)
+
+ALGORITHM aRun
+
+
+VAR_INPUT
+ bStart : BOOL (* start constant calib block *);
+ bStop : BOOL (* stop constant calib block *);
+END_VAR
+
+VAR_OUTPUT
+ bActive : BOOL (* movement is active *);
+ rOutputPre : REAL (* pressure output *);
+ rOutputVel : REAL (* velocity output *);
+ bPreOutputReached : BOOL (* preoutput ready *);
+ bError : BOOL (* flag to indicate if error occured *);
+ iErrorInfo : DINT (* additional error info *);
+END_VAR
+
+VAR_INPUT
+ rActScrewRpm : REAL (* actual velocity of srew rotation *);
+ dDelayTime : TIME (* Delay Time between preoutput and  constoutput *);
+ rMaxAllowedAbsoluteValue : REAL (* Given machine limit (sv_rMaxRpm) *);
+END_VAR
+
+VAR_TEMP
+ uTmpCnt : UDINT;
+END_VAR
+
+VAR
+ bTakeResultPart2 : BOOL := FALSE (* TRUE => Before every test the screw is rotating with highest speed, both calibration are made *);
+ fbREdge_Start : R_TRIG (* Detection of starting calib process *);
+ bStarted : BOOL;
+ Param : KAPPL_CalibParam (* Calibration parameters *);
+ Lintab : KCTRL_Lintab_Point_Light;
+ iWaitCnt : DINT (* Delaytime in number of  TaskCycle *);
+ dTaskCycleTime : TIME;
+ bBetweenMovement : BOOL (* TRUE => Not in test movement *);
+ bLintabDetectDirectionUp : BOOL := FALSE (* TRUE => Stand still between test movements *);
+ dBetweenMovementTime : TIME := T#4s (* Time for stand still or max. rotation speed between the test movements *);
+ fbTONBetweenMoveTime : TON (* Measure time for stand still or max. rotation *);
+ fbLog : FBAutoCalibLog;
+ fbFEdgeLintabDetectDirection : F_TRIG := (CLK:=FALSE);
+ bMeasRdy : BOOL;
+ pStableParam : REFTO KCTRL_Stable_Param;
+END_VAR
+#BEGIN_EDIT_BLOCK
+(**************************************** WARNING ********************************************
+ *** The KEBA Kemro K2 System including software is not intended for safety control tasks! ***
+ ***                       For further information see Comment tab!                        ***
+ *********************************************************************************************)
+
+fbREdge_Start(CLK := bStart);
+
+// Starting Calib Part 1 (See Algo Comment)
+// It is done in every case, because here machinelimit is found
+// Set parameters
+IF fbREdge_Start.Q THEN
+    bMeasRdy := FALSE;
+    bLintabDetectDirectionUp := TRUE;
+    bStarted := TRUE;
+    bBetweenMovement := TRUE;
+    bActive := TRUE;
+    bPreOutputReached := FALSE;
+    // By using 13 points the aequidistant points are 0, 1, ..., 10
+    Param.uNoOfPoints := 13;
+    Param.rMaxVoltage := 10.0;
+    Param.rMinVoltage := 0.0;
+    // Given machine limit (Injection1.sv_rMaxRpm)
+    // IF rMaxAllowedAbsoluteValue = 0.0 use no machine limit
+    Param.rMaxAllowedAbsoluteValue := rMaxAllowedAbsoluteValue;
+    Param.LintabType := KAPPL_CalibSelection_HydrMotor;
+    fbTONBetweenMoveTime.PT := dBetweenMovementTime;
+    pStableParam := @sv_RPMStableParam;
+    fbAutoCalib(ReParam := TRUE, MeasureActive := FALSE, Param := Param, pStableParam := pStableParam, bDebugCalibration := mpbDebugCalibration^);
+    fbAutoCalib(ReParam := FALSE, MeasureActive := FALSE);                                                                        
+    fbLog('RPM calib started, Part 1: Stand still between calib movements');
+    dTaskCycleTime := GET_TASK_INTERVAL();
+    iWaitCnt := LINT_TO_DINT(TIME_TO_LINT(dDelayTime))/LINT_TO_DINT(TIME_TO_LINT(dTaskCycleTime));
+    mbCalcActive := FALSE;
+END_IF;
+
+// Starting Calib Part 2, maximal allowed rotation during test movements
+fbFEdgeLintabDetectDirection(CLK := bLintabDetectDirectionUp);
+IF fbFEdgeLintabDetectDirection.Q THEN
+    bMeasRdy := FALSE;
+    bStarted := TRUE;
+    bBetweenMovement := TRUE;
+    bActive := TRUE;
+    bPreOutputReached := FALSE;
+    // Maxvalue is checked in Part 1
+    Param.rMaxVoltage := sv_TmpRpmLintab.LintabPoints.Point[Lintab.uNoOfPoints].rY / 10.0;
+    // Every value could be used
+    Param.rMaxAllowedAbsoluteValue := 0.0;
+    pStableParam := @sv_RPMStableParam;
+    fbAutoCalib(ReParam := TRUE, MeasureActive := FALSE, Param := Param, pStableParam := pStableParam, bDebugCalibration := mpbDebugCalibration^);
+    fbAutoCalib(ReParam := FALSE, MeasureActive := FALSE);
+    fbLog('RPM calib started, Part 2: Maximal allowed power between calib movements');
+END_IF;
+
+IF bStop THEN
+    bStarted := FALSE;
+    bActive := FALSE;
+END_IF;
+
+IF bStarted AND bBetweenMovement THEN
+   // Set output of idle movement   
+   IF iWaitCnt > 0 THEN
+       // Delaytime 
+       iWaitCnt := iWaitCnt - 1;    
+   ELSE
+       iWaitCnt := LINT_TO_DINT(TIME_TO_LINT(dDelayTime))/LINT_TO_DINT(TIME_TO_LINT(dTaskCycleTime));
+       bBetweenMovement := FALSE;
+       fbTONBetweenMoveTime(IN := TRUE);
+       rOutputPre := fbAutoCalib.PumpPressureVoltage / 10.0 * sv_HydrMaxValuesPlast.rMaxPressure;
+       IF bLintabDetectDirectionUp THEN
+          // no rotation
+          rOutputVel := 0.0;
+       ELSE
+          // max rotation speed
+          rOutputVel := Param.rMaxVoltage * 10.0;
+       END_IF;         
+   END_IF;
+ELSIF bStarted AND NOT bBetweenMovement AND NOT bMeasRdy AND fbTONBetweenMoveTime.Q THEN
+    // Set output of calibration movement
+    IF iWaitCnt > 0 THEN
+       iWaitCnt := iWaitCnt - 1;    
+    ELSE
+        rOutputPre := fbAutoCalib.PumpPressureVoltage / 10.0 * sv_HydrMaxValuesPlast.rMaxPressure;
+        rOutputVel := fbAutoCalib.PumpVelocityVoltage / 10.0 * 100.0;
+        
+        // Measurement
+        fbAutoCalib(MeasureActive := TRUE, ScrewVelFiltered := rActScrewRpm); 
+    
+        // Measurement ready
+        IF fbAutoCalib.MeasDone THEN
+           bMeasRdy := TRUE;
+           bBetweenMovement := TRUE;
+           fbTONBetweenMoveTime(IN := FALSE);
+           
+           //use slow task for calculation
+           IF NOT mbCalcActive THEN
+              mbCalcActive := TRUE;
+              mbCalcDone   := FALSE;
+              START_PROCESS_ALGORITHM(paCalc);
+           END_IF;
+        END_IF;
+    END_IF;
+    bPreOutputReached := TRUE;
+ELSIF NOT bStarted THEN     
+    rOutputPre := 0.0;
+    rOutputVel := 0.0;
+    bPreOutputReached := FALSE;
+ELSE
+   // Calculate idle timer
+   fbTONBetweenMoveTime(IN := TRUE);
+      
+   // Check fbAutoCalib state
+   IF fbAutoCalib.Done THEN
+      //autocalib block is designed for outputting a voltage from 0 - 10V -> scale to %
+      IF fbAutoCalib.Lintab.uNoOfPoints > 1 THEN
+         Lintab.uNoOfPoints := fbAutoCalib.Lintab.uNoOfPoints;
+         FOR uTmpCnt := 1 TO fbAutoCalib.Lintab.uNoOfPoints DO
+            Lintab.Point[uTmpCnt].rX := fbAutoCalib.Lintab.Point[uTmpCnt].rX;
+            Lintab.Point[uTmpCnt].rY := fbAutoCalib.Lintab.Point[uTmpCnt].rY * 10.0;                               
+         END_FOR;
+      END_IF;
+            
+      // End of part 1
+      IF bLintabDetectDirectionUp THEN
+         fbLog('RPM calib done, Part 1');
+         sv_TmpRpmLintab.LintabPoints := Lintab;
+         bLintabDetectDirectionUp := FALSE;
+         IF mpbDebugCalibration^ THEN
+            START_PROCESS_ALGORITHM(paDebug);
+         END_IF; 
+    
+         // At the moment take result of first part and finish
+         // calibration, otherwise start part 2
+         IF NOT bTakeResultPart2 THEN
+            bStarted := FALSE;
+            bActive := FALSE;
+         END_IF;
+      ELSE
+         fbLog('RPM calib done, Part 2');
+         IF bTakeResultPart2 THEN
+            sv_TmpRpmLintab.LintabPoints := Lintab;
+         END_IF;
+         IF mpbDebugCalibration^ THEN
+            START_PROCESS_ALGORITHM(paDebug);
+         END_IF; 
+         // Stop Calibration
+         bStarted := FALSE;
+         bActive := FALSE;
+      END_IF; // END: fbAutoCalib.Done
+      
+      //reset output values
+      rOutputPre := 0.0;
+      rOutputVel := 0.0;
+           
+   ELSIF fbAutoCalib.Error THEN
+      bStarted := FALSE;
+      bActive := FALSE;
+      rOutputPre := 0.0;
+      rOutputVel := 0.0;
+      fbLog(CONCAT('RPM calib error :',DINT_TO_STRING(fbAutoCalib.ErrorInfo)));
+      STOP_PROCESS_ALGORITHM(paCalc);           
+   // Calibration not finished, another rotation speed has to be tested in next cycle. 
+   // Before that stop screw or use max. speed    
+   ELSIF fbAutoCalib.NextStartReady THEN
+      //autocalib block is designed for outputting a voltage from 0 - 10V -> scale to %
+      //copy lintab during calibration to show on HMI
+      IF fbAutoCalib.Lintab.uNoOfPoints > 1 THEN
+         Lintab.uNoOfPoints := fbAutoCalib.Lintab.uNoOfPoints;
+         FOR uTmpCnt := 1 TO fbAutoCalib.Lintab.uNoOfPoints DO
+            Lintab.Point[uTmpCnt].rX := fbAutoCalib.Lintab.Point[uTmpCnt].rX;
+            Lintab.Point[uTmpCnt].rY := fbAutoCalib.Lintab.Point[uTmpCnt].rY * 10.0;                               
+         END_FOR;
+      END_IF;
+      sv_CalibStateRPM.pDisplayLintab^.LintabPoints := Lintab;
+      bMeasRdy := FALSE;
+      // calculate new data in next cycle
+   END_IF;
+END_IF;
+
+// Write actual measure data to Kemro.Scope if debugging selected
+IF mpbDebugCalibration^ THEN
+   mbStarted := bStarted;
+   mrOutputV := rOutputVel;
+   mrOutputP := rOutputPre;
+   mrActScrewRpm := rActScrewRpm;
+   mMeasDone := fbAutoCalib.MeasDone; 
+   mbMeasRdy := bMeasRdy;
+END_IF;
+    
+IF NOT bStart THEN
+   bError := FALSE;
+   iErrorInfo := cApplPlasticsNoError;
+ELSE
+   bError := fbAutoCalib.Error;
+   iErrorInfo := fbAutoCalib.ErrorInfo;
+END_IF;
+
+IF (iErrorInfo = cValueChangeDuringCalibTooLow) THEN
+   SET_ALARM(Name := erRPMCalibNoMovement);
+ELSIF iErrorInfo <> cApplPlasticsNoError THEN    
+   SET_ALARM(erCalibrationRPMNotStable);
+END_IF;
+  
+
+
+
+
+;#END_EDIT_BLOCK END_ALGORITHM
+
+
+
+END_ALGORITHM_BLOCK
+
+
+
+#END_OF_IEC_PART
+
+@Puma @IecEditor 6 97 @Pou 25 
+@@@BEG_Comment@@@
+Do automatic RPM calibration of machine
+@@@END_Comment@@@
+
+@BEG_Contents 
+
+@BEG_Func 
+@RT(17)FuncTreeContainer 
+5 
+@Var @RT(17)GET_TASK_INTERVAL @RT(0) @T @T @DERIVED 0 @F @RT(22)KEBA_STANDARD_FUNCTION @F 
+@T 
+@BEG_Attrib 
+0 @RT(0) @RT(0) 
+@END_Attrib 
+1 1 @F @F @F @F 
+
+@Var @RT(9)SET_ALARM @RT(0) @T @T @DERIVED 0 @F @RT(23)KEBA_STANDARD_PROCEDURE @F 
+@T 
+@BEG_Attrib 
+0 @RT(0) @RT(0) 
+@END_Attrib 
+1 1 @F @F @F @F 
+
+@Var @RT(10)KFILE_Open @RT(0) @T @T @DERIVED 0 @F @RT(22)KEBA_STANDARD_FUNCTION @F 
+@T 
+@BEG_Attrib 
+0 @RT(0) @RT(0) 
+@END_Attrib 
+1 1 @F @F @F @F 
+
+@Var @RT(17)KFILE_WriteString @RT(0) @T @T @DERIVED 0 @F @RT(22)KEBA_STANDARD_FUNCTION @F 
+@T 
+@BEG_Attrib 
+0 @RT(0) @RT(0) 
+@END_Attrib 
+1 1 @F @F @F @F 
+
+@Var @RT(11)KFILE_Close @RT(0) @T @T @DERIVED 0 @F @RT(22)KEBA_STANDARD_FUNCTION @F 
+@T 
+@BEG_Attrib 
+0 @RT(0) @RT(0) 
+@END_Attrib 
+1 1 @F @F @F @F 
+
+@END_Func 
+
+@BEG_Const 
+@RT(18)ConstTreeContainer 
+2 
+@Var @RT(30)KAPPL_CalibSelection_HydrMotor @RT(0) @T @T @DERIVED 0 @F @RT(20)KAPPL_CalibSelection @F 
+@T 
+@BEG_Attrib 
+0 @RT(1)4 @RT(0) 
+@END_Attrib 
+1 1 @F @F @F @F 
+
+@Var @RT(15)CALIB_FILE_PATH @RT(0) @T @F @DT @RT(11)STRING(255) @RT(0) @T @T @STRING 0 @F @RT(3)255 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+0 @RT(26)'/protocol/log/autocalib/' @RT(0) 
+@END_Attrib 
+1 1 @F @F @F @F 
+
+@END_Const 
+
+@BEG_Export 
+
+@BEG_Kind 
+@ALGORITHM_BLOCK @RT(10)ABRPMCalib @STRUCTURED_TEXT 
+@RT(0) @RT(0) @RT(0) 
+@END_Kind 
+
+@BEG_Dcl 
+@RT(16)DclTreeContainer 
+19 
+@Var @RT(17)sv_RPMStableParam @RT(0) @T @T @DERIVED 0 @F @RT(18)KCTRL_Stable_Param @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 8 @F @F @F @F 
+
+@Var @RT(8)TaskSlow @RT(0) @T @T @RENAMED 0 @T @T @DT @RT(4)TASK @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 7 @F @F @F @F 
+
+@Var @RT(15)sv_TmpRpmLintab @RT(0) @T @T @DERIVED 0 @T @T @DT @RT(16)KAPPL_LintabData @RT(0) @T @T @UNKNOWN 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 8 @F @F @F @F 
+
+@Var @RT(16)sv_CalibStateRPM @RT(0) @T @T @DERIVED 0 @F @RT(15)tsCalibMovement @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 8 @F @F @F @F 
+
+@Var @RT(19)mpbDebugCalibration @RT(0) @T @T @REFTO 0 @T @DT @RT(4)BOOL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(37)RefTo sv_TraceLevel.bDebugCalibration @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(10)TaskInject @RT(0) @T @F @DT @RT(4)TASK @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 7 @F @F @F @F 
+
+@Var @RT(9)mbStarted @RT(0) @T @F @DT @RT(4)BOOL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(9)mrOutputV @RT(0) @T @F @DT @RT(4)REAL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(45)Calculated output for velocity, swo recording @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(9)mrOutputP @RT(0) @T @F @DT @RT(4)REAL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(45)Calculated output for pressure, swo recording @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(13)mrActScrewRpm @RT(0) @T @F @DT @RT(4)REAL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(21)Actual rotation speed @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(9)mMeasDone @RT(0) @T @F @DT @RT(4)BOOL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(16)Measurement done @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(9)mbMeasRdy @RT(0) @T @F @DT @RT(4)BOOL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(11)fbAutoCalib @RT(0) @T @T @DERIVED 0 @F @RT(30)KAPPL_Plastics_AutoCalibration @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(20)erRPMCalibNoMovement @RT(0) @T @F @DT @RT(5)ALARM @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 7 @F @F @F @F 
+
+@Var @RT(25)erCalibrationRPMNotStable @RT(0) @T @F @DT @RT(5)ALARM @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 7 @F @F @F @F 
+
+@Var @RT(8)msFuName @RT(0) @T @F @DT @RT(10)STRING(32) @RT(0) @T @T @STRING 0 @F @RT(2)32 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(21)sv_HydrMaxValuesPlast @RT(0) @T @T @DERIVED 0 @T @T @DT @RT(15)tsHydrMaxValues @RT(0) @T @T @UNKNOWN 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(30)hydraulic max values for plast @RT(0) 
+@END_Attrib 
+1 8 @F @F @F @F 
+
+@Var @RT(10)mbCalcDone @RT(0) @T @F @DT @RT(4)BOOL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(12)mbCalcActive @RT(0) @T @F @DT @RT(4)BOOL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@END_Dcl 
+
+@END_Export 
+
+@BEG_Body 
+
+4 
+
+@BEG_Export 
+
+@BEG_Algo 
+@PROCESS_ALGORITHM @RT(6)paCalc @STRUCTURED_TEXT 
+@RT(0) @RT(0) @RT(8)TaskSlow @F @F 
+@END_Algo 
+
+@BEG_Dcl 
+@RT(16)DclTreeContainer 
+0 
+@END_Dcl 
+
+@END_Export 
+
+@BEG_Export 
+
+@BEG_Algo 
+@ALGORITHM @RT(5)aInit @STRUCTURED_TEXT 
+@RT(0) @RT(0) @RT(0) @F @F 
+@END_Algo 
+
+@BEG_Dcl 
+@RT(16)DclTreeContainer 
+3 
+@Var @RT(18)pbDebugCalibration @RT(0) @T @T @REFTO 0 @T @DT @RT(4)BOOL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(28)flag to activate debug trace @RT(0) 
+@END_Attrib 
+1 1 @F @F @F @F 
+
+@Var @RT(12)variableName @RT(0) @T @F @DT @RT(11)STRING(255) @RT(0) @T @T @STRING 0 @F @RT(3)255 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(6)status @RT(0) @T @T @DERIVED 0 @T @T @DT @RT(11)KSWO_Status @RT(0) @T @T @UNKNOWN 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@END_Dcl 
+
+@END_Export 
+
+@BEG_Export 
+
+@BEG_Algo 
+@PROCESS_ALGORITHM @RT(7)paDebug @STRUCTURED_TEXT 
+@RT(0) @RT(0) @RT(8)TaskSlow @F @F 
+@END_Algo 
+
+@BEG_Dcl 
+@RT(16)DclTreeContainer 
+11 
+@Var @RT(6)status @RT(0) @T @T @DERIVED 0 @T @T @DT @RT(12)KFILE_Status @RT(0) @T @T @UNKNOWN 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(6)tmpstr @RT(0) @T @F @DT @RT(11)STRING(255) @RT(0) @T @T @STRING 0 @F @RT(3)255 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(5)dummy @RT(0) @T @F @DT @RT(4)DINT @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(5)count @RT(0) @T @F @DT @RT(5)UDINT @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(9)filetoken @RT(0) @T @T @RENAMED 0 @T @T @DT @RT(15)KFILE_Open_Data @RT(0) @T @T @UNKNOWN 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(10)calibcount @RT(0) @T @T @RENAMED 0 @T @T @DT @RT(5)UDINT @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(1)1 @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(1)i @RT(0) @T @F @DT @RT(5)UDINT @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 4 @F @F @F @F 
+
+@Var @RT(6)bIsDir @RT(0) @T @F @DT @RT(4)BOOL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(5)sPath @RT(0) @T @F @DT @RT(11)STRING(255) @RT(0) @T @T @STRING 0 @F @RT(3)255 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(9)bInitDone @RT(0) @T @F @DT @RT(4)BOOL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(9)sWorkPath @RT(0) @T @F @DT @RT(11)STRING(255) @RT(0) @T @T @STRING 0 @F @RT(3)255 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@END_Dcl 
+
+@END_Export 
+
+@BEG_Export 
+
+@BEG_Algo 
+@ALGORITHM @RT(4)aRun @STRUCTURED_TEXT 
+@RT(0) @RT(0) @RT(0) @F @F 
+@END_Algo 
+
+@BEG_Dcl 
+@RT(16)DclTreeContainer 
+27 
+@Var @RT(6)bStart @RT(0) @T @F @DT @RT(4)BOOL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(26)start constant calib block @RT(0) 
+@END_Attrib 
+1 1 @F @F @F @F 
+
+@Var @RT(5)bStop @RT(0) @T @F @DT @RT(4)BOOL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(25)stop constant calib block @RT(0) 
+@END_Attrib 
+1 1 @F @F @F @F 
+
+@Var @RT(7)bActive @RT(0) @T @F @DT @RT(4)BOOL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(18)movement is active @RT(0) 
+@END_Attrib 
+1 3 @F @F @F @F 
+
+@Var @RT(10)rOutputPre @RT(0) @T @F @DT @RT(4)REAL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(15)pressure output @RT(0) 
+@END_Attrib 
+1 3 @F @F @F @F 
+
+@Var @RT(10)rOutputVel @RT(0) @T @F @DT @RT(4)REAL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(15)velocity output @RT(0) 
+@END_Attrib 
+1 3 @F @F @F @F 
+
+@Var @RT(17)bPreOutputReached @RT(0) @T @F @DT @RT(4)BOOL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(15)preoutput ready @RT(0) 
+@END_Attrib 
+1 3 @F @F @F @F 
+
+@Var @RT(6)bError @RT(0) @T @F @DT @RT(4)BOOL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(33)flag to indicate if error occured @RT(0) 
+@END_Attrib 
+1 3 @F @F @F @F 
+
+@Var @RT(10)iErrorInfo @RT(0) @T @F @DT @RT(4)DINT @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(21)additional error info @RT(0) 
+@END_Attrib 
+1 3 @F @F @F @F 
+
+@Var @RT(12)rActScrewRpm @RT(0) @T @F @DT @RT(4)REAL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(32)actual velocity of srew rotation @RT(0) 
+@END_Attrib 
+1 1 @F @F @F @F 
+
+@Var @RT(10)dDelayTime @RT(0) @T @F @DT @RT(4)TIME @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(45)Delay Time between preoutput and  constoutput @RT(0) 
+@END_Attrib 
+1 1 @F @F @F @F 
+
+@Var @RT(24)rMaxAllowedAbsoluteValue @RT(0) @T @F @DT @RT(4)REAL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(32)Given machine limit (sv_rMaxRpm) @RT(0) 
+@END_Attrib 
+1 1 @F @F @F @F 
+
+@Var @RT(7)uTmpCnt @RT(0) @T @F @DT @RT(5)UDINT @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 4 @F @F @F @F 
+
+@Var @RT(16)bTakeResultPart2 @RT(0) @T @F @DT @RT(4)BOOL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(5)FALSE @RT(93)TRUE => Before every test the screw is rotating with highest speed, both calibration are made @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(13)fbREdge_Start @RT(0) @T @T @DERIVED 0 @T @T @DT @RT(6)R_TRIG @RT(0) @T @T @UNKNOWN 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(35)Detection of starting calib process @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(8)bStarted @RT(0) @T @F @DT @RT(4)BOOL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(5)Param @RT(0) @T @T @DERIVED 0 @T @T @DT @RT(16)KAPPL_CalibParam @RT(0) @T @T @UNKNOWN 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(22)Calibration parameters @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(6)Lintab @RT(0) @T @T @DERIVED 0 @T @T @DT @RT(24)KCTRL_Lintab_Point_Light @RT(0) @T @T @UNKNOWN 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(8)iWaitCnt @RT(0) @T @F @DT @RT(4)DINT @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(33)Delaytime in number of  TaskCycle @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(14)dTaskCycleTime @RT(0) @T @F @DT @RT(4)TIME @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(16)bBetweenMovement @RT(0) @T @F @DT @RT(4)BOOL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(28)TRUE => Not in test movement @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(24)bLintabDetectDirectionUp @RT(0) @T @F @DT @RT(4)BOOL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(5)FALSE @RT(42)TRUE => Stand still between test movements @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(20)dBetweenMovementTime @RT(0) @T @F @DT @RT(4)TIME @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(4)T#4s @RT(70)Time for stand still or max. rotation speed between the test movements @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(20)fbTONBetweenMoveTime @RT(0) @T @T @DERIVED 0 @F @RT(3)TON @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(45)Measure time for stand still or max. rotation @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(5)fbLog @RT(0) @T @T @DERIVED 0 @T @T @DT @RT(14)FBAutoCalibLog @RT(0) @T @T @UNKNOWN 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(28)fbFEdgeLintabDetectDirection @RT(0) @T @T @DERIVED 0 @T @T @DT @RT(6)F_TRIG @RT(0) @T @T @UNKNOWN 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(12)(CLK:=FALSE) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(8)bMeasRdy @RT(0) @T @F @DT @RT(4)BOOL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(12)pStableParam @RT(0) @T @T @REFTO 0 @F @DERIVED 0 @T @T @DT @RT(18)KCTRL_Stable_Param @RT(0) @T @T @UNKNOWN 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@END_Dcl 
+
+@END_Export 
+
+@BEG_Body 
+@TL(13)
+(**************************************** WARNING ********************************************
+ *** The KEBA Kemro K2 System including software is not intended for safety control tasks! ***
+ ***                       For further information see Comment tab!                        ***
+ *********************************************************************************************)
+
+fbAutoCalib(MeasureActive := FALSE);
+IF fbAutoCalib.NextStartReady OR fbAutoCalib.Done OR fbAutoCalib.Error THEN
+   mbCalcDone := TRUE;
+   mbCalcActive := FALSE;
+   STOP_PROCESS_ALGORITHM();
+END_IF;
+
+
+@END_Body 
+
+@@@BEG_Comment@@@ 
+@TL(0)
+
+@@@END_Comment@@@ 
+
+@BEG_Body 
+@TL(40)
+(**************************************** WARNING ********************************************
+ *** The KEBA Kemro K2 System including software is not intended for safety control tasks! ***
+ ***                       For further information see Comment tab!                        ***
+ *********************************************************************************************)
+
+msFuName := GET_MY_FU_NAME();
+
+mpbDebugCalibration := pbDebugCalibration;
+// Add variables to Kemro.Scope if debugging is selected
+IF mpbDebugCalibration^ THEN
+   variableName := CONCAT(msFuName,'.RPMCalib.mbStarted');
+   status := KSWO_AddVariable( Task := TaskInject,
+                              Name := variableName,
+                              Variable := mbStarted);
+
+   variableName := CONCAT(msFuName,'.RPMCalib.mrOutputV');
+   status := KSWO_AddVariable( Task := TaskInject,
+                              Name := variableName,
+                              Variable := mrOutputV);
+
+   variableName := CONCAT(msFuName,'.RPMCalib.mrOutputP');
+   status := KSWO_AddVariable( Task := TaskInject,
+                              Name := variableName,
+                              Variable := mrOutputP);
+
+   variableName := CONCAT(msFuName,'.RPMCalib.mMeasDone');
+   status := KSWO_AddVariable( Task := TaskInject,
+                              Name := variableName,
+                              Variable := mMeasDone);
+
+   variableName := CONCAT(msFuName,'.RPMCalib.mrActScrewRpm');
+   status := KSWO_AddVariable( Task := TaskInject,
+                              Name := variableName,
+                              Variable := mrActScrewRpm);
+   
+   
+END_IF;
+
+
+
+@END_Body 
+
+@@@BEG_Comment@@@ 
+@TL(1)
+Initialisation 
+@@@END_Comment@@@ 
+
+@BEG_Body 
+@TL(31)
+(**************************************** WARNING ********************************************
+ *** The KEBA Kemro K2 System including software is not intended for safety control tasks! ***
+ ***                       For further information see Comment tab!                        ***
+ *********************************************************************************************)
+
+IF NOT bInitDone THEN
+   sWorkPath := FGetCatConfigValueString('System.workPath', '/harddisk0/');
+   bInitDone := TRUE;
+END_IF;
+
+sPath := CONCAT(sWorkPath, CALIB_FILE_PATH, msFuName, '/');
+
+status := KFILE_IsDir (Name := sPath, IsDirectory := bIsDir);
+IF status = KFILE_Status_NOTOK THEN
+     status := KFILE_MakeDir (Path := sPath);
+END_IF;
+
+count := fbAutoCalib.ArraySize;
+filetoken := KFILE_Open(Name:= CONCAT(sPath,'autocalibRPM_steps_',UDINT_TO_STRING(calibcount), '.txt'), Mode := KFILE_Mode_ReadWriteDelete);
+IF count > 1 THEN
+   FOR i:=1 TO count - 1 DO
+       tmpstr := CONCAT(UDINT_TO_STRING(i), ';', REAL_TO_STRING(fbAutoCalib.Array[i].rX), ';',
+                        REAL_TO_STRING(fbAutoCalib.Array[i].rY * fbAutoCalib.rMaxVal / 100.0),'$N');
+       dummy := KFILE_WriteString(Token := filetoken.Token, Length := 0, Buffer := tmpstr);   
+   END_FOR;
+END_IF;
+status := KFILE_Close(Token := filetoken.Token);  
+calibcount := calibcount + 1;
+STOP_PROCESS_ALGORITHM();
+   
+
+@END_Body 
+
+@@@BEG_Comment@@@ 
+@TL(1)
+If debugging is selected, write results of each step of calibration process to autocalibRPM_steps_*.txt-file
+@@@END_Comment@@@ 
+
+@BEG_Body 
+@TL(205)
+(**************************************** WARNING ********************************************
+ *** The KEBA Kemro K2 System including software is not intended for safety control tasks! ***
+ ***                       For further information see Comment tab!                        ***
+ *********************************************************************************************)
+
+fbREdge_Start(CLK := bStart);
+
+// Starting Calib Part 1 (See Algo Comment)
+// It is done in every case, because here machinelimit is found
+// Set parameters
+IF fbREdge_Start.Q THEN
+    bMeasRdy := FALSE;
+    bLintabDetectDirectionUp := TRUE;
+    bStarted := TRUE;
+    bBetweenMovement := TRUE;
+    bActive := TRUE;
+    bPreOutputReached := FALSE;
+    // By using 13 points the aequidistant points are 0, 1, ..., 10
+    Param.uNoOfPoints := 13;
+    Param.rMaxVoltage := 10.0;
+    Param.rMinVoltage := 0.0;
+    // Given machine limit (Injection1.sv_rMaxRpm)
+    // IF rMaxAllowedAbsoluteValue = 0.0 use no machine limit
+    Param.rMaxAllowedAbsoluteValue := rMaxAllowedAbsoluteValue;
+    Param.LintabType := KAPPL_CalibSelection_HydrMotor;
+    fbTONBetweenMoveTime.PT := dBetweenMovementTime;
+    pStableParam := @sv_RPMStableParam;
+    fbAutoCalib(ReParam := TRUE, MeasureActive := FALSE, Param := Param, pStableParam := pStableParam, bDebugCalibration := mpbDebugCalibration^);
+    fbAutoCalib(ReParam := FALSE, MeasureActive := FALSE);                                                                        
+    fbLog('RPM calib started, Part 1: Stand still between calib movements');
+    dTaskCycleTime := GET_TASK_INTERVAL();
+    iWaitCnt := LINT_TO_DINT(TIME_TO_LINT(dDelayTime))/LINT_TO_DINT(TIME_TO_LINT(dTaskCycleTime));
+    mbCalcActive := FALSE;
+END_IF;
+
+// Starting Calib Part 2, maximal allowed rotation during test movements
+fbFEdgeLintabDetectDirection(CLK := bLintabDetectDirectionUp);
+IF fbFEdgeLintabDetectDirection.Q THEN
+    bMeasRdy := FALSE;
+    bStarted := TRUE;
+    bBetweenMovement := TRUE;
+    bActive := TRUE;
+    bPreOutputReached := FALSE;
+    // Maxvalue is checked in Part 1
+    Param.rMaxVoltage := sv_TmpRpmLintab.LintabPoints.Point[Lintab.uNoOfPoints].rY / 10.0;
+    // Every value could be used
+    Param.rMaxAllowedAbsoluteValue := 0.0;
+    pStableParam := @sv_RPMStableParam;
+    fbAutoCalib(ReParam := TRUE, MeasureActive := FALSE, Param := Param, pStableParam := pStableParam, bDebugCalibration := mpbDebugCalibration^);
+    fbAutoCalib(ReParam := FALSE, MeasureActive := FALSE);
+    fbLog('RPM calib started, Part 2: Maximal allowed power between calib movements');
+END_IF;
+
+IF bStop THEN
+    bStarted := FALSE;
+    bActive := FALSE;
+END_IF;
+
+IF bStarted AND bBetweenMovement THEN
+   // Set output of idle movement   
+   IF iWaitCnt > 0 THEN
+       // Delaytime 
+       iWaitCnt := iWaitCnt - 1;    
+   ELSE
+       iWaitCnt := LINT_TO_DINT(TIME_TO_LINT(dDelayTime))/LINT_TO_DINT(TIME_TO_LINT(dTaskCycleTime));
+       bBetweenMovement := FALSE;
+       fbTONBetweenMoveTime(IN := TRUE);
+       rOutputPre := fbAutoCalib.PumpPressureVoltage / 10.0 * sv_HydrMaxValuesPlast.rMaxPressure;
+       IF bLintabDetectDirectionUp THEN
+          // no rotation
+          rOutputVel := 0.0;
+       ELSE
+          // max rotation speed
+          rOutputVel := Param.rMaxVoltage * 10.0;
+       END_IF;         
+   END_IF;
+ELSIF bStarted AND NOT bBetweenMovement AND NOT bMeasRdy AND fbTONBetweenMoveTime.Q THEN
+    // Set output of calibration movement
+    IF iWaitCnt > 0 THEN
+       iWaitCnt := iWaitCnt - 1;    
+    ELSE
+        rOutputPre := fbAutoCalib.PumpPressureVoltage / 10.0 * sv_HydrMaxValuesPlast.rMaxPressure;
+        rOutputVel := fbAutoCalib.PumpVelocityVoltage / 10.0 * 100.0;
+        
+        // Measurement
+        fbAutoCalib(MeasureActive := TRUE, ScrewVelFiltered := rActScrewRpm); 
+    
+        // Measurement ready
+        IF fbAutoCalib.MeasDone THEN
+           bMeasRdy := TRUE;
+           bBetweenMovement := TRUE;
+           fbTONBetweenMoveTime(IN := FALSE);
+           
+           //use slow task for calculation
+           IF NOT mbCalcActive THEN
+              mbCalcActive := TRUE;
+              mbCalcDone   := FALSE;
+              START_PROCESS_ALGORITHM(paCalc);
+           END_IF;
+        END_IF;
+    END_IF;
+    bPreOutputReached := TRUE;
+ELSIF NOT bStarted THEN     
+    rOutputPre := 0.0;
+    rOutputVel := 0.0;
+    bPreOutputReached := FALSE;
+ELSE
+   // Calculate idle timer
+   fbTONBetweenMoveTime(IN := TRUE);
+      
+   // Check fbAutoCalib state
+   IF fbAutoCalib.Done THEN
+      //autocalib block is designed for outputting a voltage from 0 - 10V -> scale to %
+      IF fbAutoCalib.Lintab.uNoOfPoints > 1 THEN
+         Lintab.uNoOfPoints := fbAutoCalib.Lintab.uNoOfPoints;
+         FOR uTmpCnt := 1 TO fbAutoCalib.Lintab.uNoOfPoints DO
+            Lintab.Point[uTmpCnt].rX := fbAutoCalib.Lintab.Point[uTmpCnt].rX;
+            Lintab.Point[uTmpCnt].rY := fbAutoCalib.Lintab.Point[uTmpCnt].rY * 10.0;                               
+         END_FOR;
+      END_IF;
+            
+      // End of part 1
+      IF bLintabDetectDirectionUp THEN
+         fbLog('RPM calib done, Part 1');
+         sv_TmpRpmLintab.LintabPoints := Lintab;
+         bLintabDetectDirectionUp := FALSE;
+         IF mpbDebugCalibration^ THEN
+            START_PROCESS_ALGORITHM(paDebug);
+         END_IF; 
+    
+         // At the moment take result of first part and finish
+         // calibration, otherwise start part 2
+         IF NOT bTakeResultPart2 THEN
+            bStarted := FALSE;
+            bActive := FALSE;
+         END_IF;
+      ELSE
+         fbLog('RPM calib done, Part 2');
+         IF bTakeResultPart2 THEN
+            sv_TmpRpmLintab.LintabPoints := Lintab;
+         END_IF;
+         IF mpbDebugCalibration^ THEN
+            START_PROCESS_ALGORITHM(paDebug);
+         END_IF; 
+         // Stop Calibration
+         bStarted := FALSE;
+         bActive := FALSE;
+      END_IF; // END: fbAutoCalib.Done
+      
+      //reset output values
+      rOutputPre := 0.0;
+      rOutputVel := 0.0;
+           
+   ELSIF fbAutoCalib.Error THEN
+      bStarted := FALSE;
+      bActive := FALSE;
+      rOutputPre := 0.0;
+      rOutputVel := 0.0;
+      fbLog(CONCAT('RPM calib error :',DINT_TO_STRING(fbAutoCalib.ErrorInfo)));
+      STOP_PROCESS_ALGORITHM(paCalc);           
+   // Calibration not finished, another rotation speed has to be tested in next cycle. 
+   // Before that stop screw or use max. speed    
+   ELSIF fbAutoCalib.NextStartReady THEN
+      //autocalib block is designed for outputting a voltage from 0 - 10V -> scale to %
+      //copy lintab during calibration to show on HMI
+      IF fbAutoCalib.Lintab.uNoOfPoints > 1 THEN
+         Lintab.uNoOfPoints := fbAutoCalib.Lintab.uNoOfPoints;
+         FOR uTmpCnt := 1 TO fbAutoCalib.Lintab.uNoOfPoints DO
+            Lintab.Point[uTmpCnt].rX := fbAutoCalib.Lintab.Point[uTmpCnt].rX;
+            Lintab.Point[uTmpCnt].rY := fbAutoCalib.Lintab.Point[uTmpCnt].rY * 10.0;                               
+         END_FOR;
+      END_IF;
+      sv_CalibStateRPM.pDisplayLintab^.LintabPoints := Lintab;
+      bMeasRdy := FALSE;
+      // calculate new data in next cycle
+   END_IF;
+END_IF;
+
+// Write actual measure data to Kemro.Scope if debugging selected
+IF mpbDebugCalibration^ THEN
+   mbStarted := bStarted;
+   mrOutputV := rOutputVel;
+   mrOutputP := rOutputPre;
+   mrActScrewRpm := rActScrewRpm;
+   mMeasDone := fbAutoCalib.MeasDone; 
+   mbMeasRdy := bMeasRdy;
+END_IF;
+    
+IF NOT bStart THEN
+   bError := FALSE;
+   iErrorInfo := cApplPlasticsNoError;
+ELSE
+   bError := fbAutoCalib.Error;
+   iErrorInfo := fbAutoCalib.ErrorInfo;
+END_IF;
+
+IF (iErrorInfo = cValueChangeDuringCalibTooLow) THEN
+   SET_ALARM(Name := erRPMCalibNoMovement);
+ELSIF iErrorInfo <> cApplPlasticsNoError THEN    
+   SET_ALARM(erCalibrationRPMNotStable);
+END_IF;
+  
+
+
+
+@END_Body 
+
+@@@BEG_Comment@@@ 
+@TL(8)
+this block s used for RPM calibration
+all outputs are in %
+
+You can take two parts of calibration, because normaly there is a big hysteresis:
+1. Between every testoutput the screw have too stand still (Find machine Limit).
+2. Between every testoutput the screw rotates with (allowed) maximal speed.
+
+It is not solved how to handle the results of the different ways of calibration.
+@@@END_Comment@@@ 
+@END_Body 
+
+@END_Contents 

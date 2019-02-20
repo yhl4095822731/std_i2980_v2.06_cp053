@@ -1,0 +1,51 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<base:Mask xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xmlns:base="http://www.keba.at/viewedit.model.base" widgetId="kvs.mask" name="EnergyCycleChart">
+  <resolution width="714" height="476"/>
+  <position x="1" y="1"/>
+  <attributeValues key="Title" value="Energy by time"/>
+  <attributeValues key="Icon" value="Energy/hmi/images/iconEnergyCycleChart.gif"/>
+  <widgetInstances xsi:type="base:ContainerWidgetInstance" widgetId="keplast.kvs.borderpanelsmall" name="borderPanelChart" layoutConstraint="0, 0, 100, 100">
+    <resolution width="714" height="476"/>
+    <position/>
+    <attributeValues key="Title" value="Energy by time"/>
+    <widgetInstances xsi:type="base:CompositeWidgetInstance" widgetId="d15380cc-a761-460c-9aa1-9d851df99905" name="chartKeyPanel" layoutConstraint="SOUTH">
+      <resolution width="708" height="40"/>
+      <position x="3" y="432"/>
+    </widgetInstances>
+    <widgetInstances xsi:type="base:ContainerWidgetInstance" widgetId="kvs.panel" name="container1" layoutConstraint="CENTER">
+      <resolution width="708" height="399"/>
+      <position x="3" y="33"/>
+      <border name="EmptyBorder" id="kv.border.EmptyBorder">
+        <attributeValues key="OuterInsets" value="0, 0, 0, 0"/>
+        <attributeValues key="InnerInsets" value="3, 3, 3, 3"/>
+      </border>
+      <widgetInstances xsi:type="base:ContainerWidgetInstance" widgetId="kvs.panel" name="container3" layoutConstraint="CENTER">
+        <resolution width="702" height="307"/>
+        <position x="3" y="3"/>
+        <widgetInstances widgetId="keplast.kvs.mschart" name="msChart" layoutConstraint="null">
+          <resolution width="702" height="307"/>
+          <position/>
+          <attributeValues key="MsProfileData" value="ChartEnergyCycle;4"/>
+        </widgetInstances>
+        <layout layoutID="kvs.layout.GridLayout" name="GridLayout"/>
+      </widgetInstances>
+      <widgetInstances xsi:type="base:ContainerWidgetInstance" widgetId="kvs.panel" name="container2" layoutConstraint="SOUTH">
+        <resolution width="702" height="86"/>
+        <position x="3" y="310"/>
+        <border name="EmptyBorder" id="kv.border.EmptyBorder">
+          <attributeValues key="InnerInsets" value="3, 0, 3, 0"/>
+        </border>
+        <widgetInstances widgetId="keplast.kvs.mschart" name="msChartMovements" layoutConstraint="null">
+          <resolution width="702" height="80"/>
+          <position y="3"/>
+          <attributeValues key="PreferredSize" value="714, 80"/>
+          <attributeValues key="MsProfileData" value="ChartEnergyCycle;0..3"/>
+        </widgetInstances>
+        <layout layoutID="kvs.layout.GridLayout" name="GridLayout"/>
+      </widgetInstances>
+      <layout layoutID="kvs.layout.BorderLayout" name="BorderLayout"/>
+    </widgetInstances>
+    <layout layoutID="kvs.layout.BorderLayout" name="BorderLayout"/>
+  </widgetInstances>
+  <layout layoutID="kvs.layout.PercentLayout" name="PercentLayout"/>
+</base:Mask>

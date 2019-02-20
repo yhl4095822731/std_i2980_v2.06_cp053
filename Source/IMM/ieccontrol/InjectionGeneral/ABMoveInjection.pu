@@ -1,0 +1,5892 @@
+(*
+@h    ! WARNING !
+@h    The Kemro K2 system (including software) only meets category B according to EN 954-1,
+@h    thus it is not intended for usage in safety-relevant control applications in the field 
+@h    of personal safety (e.g. emergency stop).
+@h    To implement potentially necessary safety-relevant control tasks, always use additional 
+@h    external safety devices that are intended for the particular purpose, and meet the necessary 
+@h    functional safety.
+@h    For further information see EN 954-1 (EN ISO 13849-1) and/or the K2-x00 user manual, chapter 
+@h    "CE conformity, directives and standards".
+
+In this AB the inject movements are realized.
+This means inject movement with cutoff detection, inject movement in setup mode,
+inject movement to interrupt position,
+calibration for screw transducer (forward) and also the inject movement for auto purging
+
+@FunctionID: S_KPIEC_PRINJ_01
+@FunctionID: S_KPIEC_PRINJ_02
+@FunctionID: S_KPIEC_CALTRANS_04
+
+
+*)
+
+IMPORT_OVER_LISTFILE
+ GET_MY_FU_NAME
+, WRITE_SVREAL_DIRECT
+, SET_ALARM
+, WRITE_SV_DIRECT
+, GET_SYNC_REFTO
+, RESET_ALARM
+, FCalcScrewSize
+, KSWO_AddVariable
+, cLockGroupHeatingNozzle
+, cLockGroupSafetyGateNozzle
+, cLockGroupSafetyGateMold
+, cLockGroupMotor
+, nActive
+, nDeviceState
+, nKAPPL_IMM_ServoValve
+, nInactive
+, cMoveInjectPurge
+, cMoveColdDrop
+, nSetup
+, tnCalibState_Error
+, nKAPPL_VelocityControl
+, nKAPPL_PressureControl
+, nDeactivate
+, nInjectPosition
+, nInjectPressure
+, nAfterInject
+, nParallelICM
+, nSequentialICM
+, cMoveFwdInterPos
+, cMoveHold
+, cMoveInject
+, cCompAccumulator
+, KSYS_Status_OK
+, nNotUsed
+, nPosDependent
+, nTimeDependent
+, cMoveFwd
+, tnOperationMode
+, tsMoveData
+, KAPPL_VisProfile
+, tsControlParameters
+, tsCutOffCriterions
+, tsVelPre
+, KCTRL_Lintab_Point
+, tsMinOutput
+, KAPPL_VisProfilePlast
+, tsDecompParam
+, tsPurgeSettings
+, tsSetTimes
+, tsActTimes
+, KAPPL_LintabData
+, tsDeadTimeParameters
+, KAPPL_IMM_Type
+, KAPPL_ServoValveControllerMode
+, tsColdDropParams
+, tsCalibMovement
+, tyNumberOfDevices
+, tsTraceLevel
+, tyInstanceListArray
+, tsDeviceId
+, KAPPL_LintabData_2P
+, tyInterCondTimeArray
+, tsHydrMaxValues
+, tevStart
+, tsMoveCtrl
+, ABInject
+, ABConstMovement
+, ABConstCalib
+, ABInjectionCalib
+, ABBackPressureCalib
+, ABLintabApply
+, tsCompDataArray
+, ABStepOutput
+, TON
+, tnICMActivateMode
+, tnICMMode
+, ABMovementRegister
+, FBSetMovementState
+, FBDebugTrace2
+, R_TRIG
+, KSYS_Status
+, tevStartData
+, KSWO_Status
+
+END_IMPORT
+
+ALGORITHM_BLOCK ABMoveInjection #DUMMY_EDIT_BLOCK
+
+SYSTEM_VAR
+ sv_rVelocitySet : REAL;
+ sv_OperationMode : tnOperationMode;
+ sv_MoveInject : tsMoveData;
+ sv_MoveInjectInterPos : tsMoveData;
+ sv_InjectProfVis : KAPPL_VisProfile;
+ sv_HoldProfVis : KAPPL_VisProfile;
+ sv_InjectControlParams : tsControlParameters;
+ sv_HoldingControlParams : tsControlParameters;
+ sv_rScrewPosition : REAL;
+ sv_CutOffParams : tsCutOffCriterions;
+ sv_dActHoldTime : TIME;
+ sv_ConstInjectSetup : tsVelPre (* const output for inject in setup mode *);
+ sv_ConstInjectSetupServo : tsVelPre (* const output for servovalve for inject in setup mode *);
+ sv_MoveHold : tsMoveData;
+ sv_rPressure : REAL;
+ sv_rVelocity : REAL;
+ sv_TmpLintabPoint : KCTRL_Lintab_Point;
+ ai_Position : REAL;
+ sv_dStandStillDetectTime : TIME (* time for standstill detection *);
+ sv_rMaxVoltageDiff : REAL (* max. voltage difference to detect stand still *);
+ sv_bOutputActive : BOOL (* Output is active *);
+ sv_bPreOutputReady : BOOL (* PreOutput is ready *);
+ sv_bDoTransducerCalib : BOOL;
+ sv_bTransducerError : BOOL;
+ sv_MinOutputInject : tsMinOutput;
+ sv_rCutOffPosition : REAL (* position where cut off was detected *);
+ sv_MoveInjectPurge : tsMoveData;
+ sv_MoveInjectCalib : tsMoveData;
+ sv_PlastProfVis : KAPPL_VisProfilePlast;
+ sv_DecompAftPlastSettings : tsDecompParam;
+ sv_PurgeSettings : tsPurgeSettings;
+ sv_InjectTimesSet : tsSetTimes;
+ sv_InjectTimesAct : tsActTimes;
+ sv_rActPressure : REAL (* actual pressure *);
+ sv_bDoInjectionCalib : BOOL;
+ sv_ConstInjectionCalib : tsVelPre;
+ sv_bInitStart : BOOL;
+ sv_bDoBackPressureCalib : BOOL;
+ sv_ConstBackPressureCalib : tsVelPre;
+ sv_bCutOffDetected : BOOL;
+ sv_LintabOutFwdP : KAPPL_LintabData;
+ sv_LintabOutFwdV : KAPPL_LintabData;
+ sv_rPressureAbs : REAL;
+ sv_rSetPressureAbs : REAL;
+ sv_rVelocityAbs : REAL;
+ sv_rSetVelocityAbs : REAL;
+ sv_rScrewVolume : REAL;
+ sv_bInitDone : BOOL;
+ sv_rMaxPressureFwd : REAL;
+ sv_rMaxSpeedFwdSpec : REAL;
+ sv_rScrewDiameter : REAL;
+ sv_InjectDeadTimeParams : tsDeadTimeParameters (* dead time parameters for inject PID *);
+ sv_HoldingDeadTimeParams : tsDeadTimeParameters (* dead time parameters for holding PID *);
+ sv_rActPressureHydr : REAL;
+ sv_rScrewPositionAbs : REAL;
+ sv_IMM_Type : KAPPL_IMM_Type (* type of mold machine *);
+ sv_rHoldPosition : REAL (* position after end of holding *);
+ sv_rCavityPressure1 : REAL;
+ sv_rCavityPressure2 : REAL;
+ sv_rCavityPressure3 : REAL;
+ sv_rCavityPressure4 : REAL;
+ sv_rCavityPressure5 : REAL;
+ sv_rCavityPressure6 : REAL;
+ sv_rCavityPressure7 : REAL;
+ sv_rCavityPressure8 : REAL;
+ sv_rCavityPressure : REAL;
+ sv_iSelCavityPressureSensor : DINT (* which cavity pressure sensor will be used for cut off *);
+ sv_bInjectActive : BOOL (* Injection is active *);
+ sv_rMaxSpeedFwd : REAL;
+ sv_rServoOutput : REAL;
+ sv_ServoValveControllerMode : KAPPL_ServoValveControllerMode;
+ sv_MoveColdDrop : tsMoveData;
+ sv_ColdDropSettings : tsColdDropParams;
+ sv_CalibState : tsCalibMovement;
+ sv_rCutOffPressure : REAL (* spec Injectpressure at cut off *);
+ sv_CalibStateBackPressure : tsCalibMovement;
+ sv_CalibStateInjection : tsCalibMovement;
+ sv_LintabOutFwdVServo : KAPPL_LintabData;
+ sv_NumberOfDevices : tyNumberOfDevices;
+ sv_PressureLimitControlParams : tsControlParameters (* parameter for pressure limit controler during precutoff *);
+ sv_PressureLimitVelocityParams : tsControlParameters;
+ sv_rMaxHoldPresAllow : REAL (* maximum specific pressure for injection *);
+ sv_rMaxInjPresAllow : REAL (* maximum specific pressure for injection *);
+ sv_TraceLevel : tsTraceLevel;
+ sv_dCalculatedDurationInject : TIME (* Calculated duration for inject + hold *);
+ sv_rInjectCalcDurationStartPos : REAL (* Start position for calculation of inject duration *);
+ sv_rInjectInterruptPosition : REAL (* interrupt position (for instanceable inject movement) *);
+ sv_rInjectInterruptAcc : REAL (* Acceleration to continune after inject interrupt position *);
+ sv_rInjectInterruptDec : REAL (* Deceleration to reach inject interrupt position *);
+ sv_InstanceDataInjectInterPos : tyInstanceListArray (* array with target positions of inject interpos movements *);
+ sv_DeviceId : tsDeviceId;
+ sv_dCalculatedDurationHold : TIME (* Calculated hold duration *);
+ sv_dDurationInjectAndHold : TIME (* Duration of inject + hold *);
+ sv_bHoldActive : BOOL (* TRUE: holding is active; attention: SV is resetted after end of inject movement *);
+ sv_ScrewLintab : KAPPL_LintabData_2P;
+ sv_PressureLintab : KAPPL_LintabData_2P;
+ sv_CavityPressLintab1 : KAPPL_LintabData_2P;
+ sv_CavityPressLintab2 : KAPPL_LintabData_2P;
+ sv_CavityPressLintab3 : KAPPL_LintabData_2P;
+ sv_CavityPressLintab4 : KAPPL_LintabData_2P;
+ sv_CavityPressLintab5 : KAPPL_LintabData_2P;
+ sv_CavityPressLintab6 : KAPPL_LintabData_2P;
+ sv_CavityPressLintab7 : KAPPL_LintabData_2P;
+ sv_CavityPressLintab8 : KAPPL_LintabData_2P;
+ sv_rCutOffCavityPressure : REAL;
+ sv_ColdDropTimesAct : tsActTimes;
+ sv_ColdDropTimesSet : tsSetTimes;
+ sv_rMaxSpeedFwdAccu : REAL;
+ sv_rCushion : REAL (* smallest screw position during hold phase *);
+ sv_iActiveStage : DINT;
+ sv_rMaxPlausFirstInjectStage : REAL;
+ sv_bInjectionActive : BOOL (* any inject (screw fwd) movement is active   Attention: this variable is set in every operation mode *);
+ sv_bMoveIdent : BOOL;
+ sv_rIdentPosition : REAL;
+ sv_rIdentStopRamp : REAL;
+ sv_dSetDelayTimeOffFwd : TIME;
+ sv_rScrewStroke : REAL;
+ sv_bMoveToServoCalibStartPos : BOOL;
+ sv_rScrewSetPosition : REAL;
+ sv_rScrewZeroPosition : REAL;
+ sv_rCoiningSetInjectPress : REAL (* set inject pressure to activate the coining *);
+ sv_rCoiningSetScrewPosition : REAL (* set screw position to activate the coining *);
+ sv_dCoiningSetDelayTime : TIME (* set delay time to activate the coining *);
+ sv_rCoiningActInjectPress : REAL (* actual inject pressure to activate the coining *);
+ sv_rCoiningActScrewPosition : REAL (* actual screw position to activate the coining *);
+ sv_dCoiningActDelayTime : TIME (* actual delay time to activate the coining *);
+ sv_rVentingSetInjectPress : REAL (* set inject pressure to activate the venting *);
+ sv_rVentingSetScrewPosition : REAL (* set screw position to activate the venting *);
+ sv_dVentingSetDelayTime : TIME (* set delay time to activate the venting *);
+ sv_rVentingActInjectPress : REAL (* actual inject pressure to activate the venting *);
+ sv_rVentingActScrewPosition : REAL (* actual screw position to activate the venting *);
+ sv_dVentingActDelayTime : TIME (* actual delay time to activate the venting *);
+ sv_bInjectWaitForICM : BOOL;
+ sv_dActInjectHoldTime : TIME (* actual time (contains inject and hold) *);
+ sv_ActiveTimesInjectInterPos : tyInterCondTimeArray;
+ sv_bDoPumpPressureCalib : BOOL;
+ sv_HydrMaxValuesInject : tsHydrMaxValues (* hydraulic max values for inject *);
+ sv_rMaxSpeedFwdCalc : REAL;
+ sv_rScrewSizeFactor : REAL;
+ sv_bUseCalcedPressureStartRamp : BOOL;
+ sv_bIgnoreStopAtCutOffNoHold : BOOL (* ignore stop at cutoff position if hold time is 0s *);
+END_VAR
+
+SYSTEM_VAR_IN
+ di_ExtCutOff : BOOL;
+END_VAR
+
+SYSTEM_OBJECT
+ TaskSlow : TASK;
+ EV_Task_3 : TASK;
+ evStart : tevStart;
+ PU_Task_7 : TASK;
+ TaskInject : TASK;
+ erAllowablePresTooHigh : ALARM;
+ erPIDParamDetectionError : ALARM;
+ PU_Task_3 : TASK;
+END_OBJECT
+
+VAR_EXTERNAL
+ g_MoveCtrl : tsMoveCtrl;
+END_VAR
+
+VAR
+ bICMReady : BOOL (* ICM ready *);
+ abInject : ABInject;
+ abInjectSetup : ABConstMovement;
+ abInjectSetupServo : ABConstMovement;
+ abInjectPurge : ABConstMovement;
+ abScrewFwdCalib : ABConstCalib;
+ abInjectionFwdCalib : ABInjectionCalib;
+ abBackPressureCalib : ABBackPressureCalib;
+ abLintabApplyVel : ABLintabApply;
+ abLintabApplyPres : ABLintabApply;
+ abLintabApplyServoVel : ABLintabApply;
+ abLintabApplyServoPres : ABLintabApply;
+ mbExtCutOffLinked : BOOL;
+ abConstColdDrop : ABConstMovement;
+ pbUseAccumulator : REFTO BOOL;
+ bAccumulatorAvailable : BOOL;
+ ComparatorData : tsCompDataArray;
+ abInjectStep : ABStepOutput;
+ prVelOutputICM : REFTO REAL (* velocity output ICM *);
+ pbCoiningDone : REFTO BOOL;
+ fbTonVentingAfterInject : TON;
+ fbTonCoiningAfterInject : TON;
+ pbVentingDone : REFTO BOOL;
+ pbCoiningActive : REFTO BOOL;
+ pbVentingActive : REFTO BOOL;
+ mpCoiningActivateMode : REFTO tnICMActivateMode (* activating mode for coining *);
+ mpVentingActivateMode : REFTO tnICMActivateMode (* activating mode for venting *);
+ mpICMMode : REFTO tnICMMode (* sequential or parallel *);
+ mpbVentingStartPointDetected : REFTO BOOL (* start condition for venting is reached *);
+ mbICMLinked : BOOL;
+ mpbCoiningStartPointDetected : REFTO BOOL (* start condition for coining is reached *);
+ prMinOutputVenting : REFTO REAL (* pointer to min output venting *);
+ prMinOutputCoining : REFTO REAL (* pointer to min output coining *);
+END_VAR
+
+(*
+This algorithm is necessary for registering the available movements
+and the according parameters (Lockgroups, icon path, delay time, ....)
+*)
+
+ALGORITHM aRegister
+
+
+VAR
+ abInjectRegister : ABMovementRegister;
+ abHoldRegister : ABMovementRegister;
+ abInjectPurgeRegister : ABMovementRegister;
+ abColdDropRegister : ABMovementRegister;
+ abInjectCalibRegister : ABMovementRegister;
+ abInjectInterPosRegister : ABMovementRegister;
+END_VAR
+#BEGIN_EDIT_BLOCK
+(**************************************** WARNING ********************************************
+ *** The KEBA Kemro K2 System including software is not intended for safety control tasks! ***
+ ***                       For further information see Comment tab!                        ***
+ *********************************************************************************************)
+
+//register inject movement
+sv_MoveInject.pdStartDelaySet := @sv_InjectTimesSet.dSetDelayTime;
+sv_MoveInject.pdStartDelayAct := @sv_InjectTimesAct.dActDelayTime;
+sv_MoveInject.pdActiveTimeAct := @sv_dActInjectHoldTime;
+sv_MoveInject.pdTimeLimit     := @sv_InjectTimesSet.dMaxMoveTime;
+
+sv_MoveInject.LockGroups[1] := cLockGroupHeatingNozzle;
+sv_MoveInject.LockGroups[2] := cLockGroupSafetyGateNozzle;
+sv_MoveInject.LockGroups[3] := cLockGroupSafetyGateMold;
+sv_MoveInject.LockGroups[4] := cLockGroupMotor;
+
+sv_MoveInject.sIconPath := CONCAT(GET_MY_FU_NAME(), '\hmi\images\movScrewFwd.gif');
+abInjectRegister.aRegister(@sv_MoveInject);
+
+
+//register instanceable inject movement
+sv_MoveInjectInterPos.pdActiveTimeAct := @sv_InjectTimesAct.dActMoveTime;
+sv_MoveInjectInterPos.pdTimeLimit     := @sv_InjectTimesSet.dMaxMoveTime;
+sv_MoveInjectInterPos.LockGroups[1] := cLockGroupHeatingNozzle;
+sv_MoveInjectInterPos.LockGroups[2] := cLockGroupSafetyGateNozzle;
+sv_MoveInjectInterPos.LockGroups[3] := cLockGroupSafetyGateMold;
+sv_MoveInjectInterPos.LockGroups[4] := cLockGroupMotor;
+sv_MoveInjectInterPos.sIconPath := CONCAT(GET_MY_FU_NAME(), '\hmi\images\movScrewInterposFwd.gif');
+abInjectInterPosRegister.aRegister(@sv_MoveInjectInterPos);
+
+
+//register inject part of purge movement
+sv_MoveInjectPurge.LockGroups[1] := cLockGroupHeatingNozzle;
+sv_MoveInjectPurge.LockGroups[2] := cLockGroupSafetyGateNozzle;
+sv_MoveInjectPurge.LockGroups[3] := cLockGroupSafetyGateMold;
+sv_MoveInjectPurge.LockGroups[4] := cLockGroupMotor;
+sv_MoveInjectPurge.sIconPath := sv_MoveInject.sIconPath;
+abInjectPurgeRegister.aRegister(@sv_MoveInjectPurge);
+
+//register inject calib movement
+sv_MoveInjectCalib.LockGroups[1] := cLockGroupHeatingNozzle;
+sv_MoveInjectCalib.LockGroups[2] := cLockGroupSafetyGateNozzle;
+sv_MoveInjectCalib.LockGroups[3] := cLockGroupSafetyGateMold;
+sv_MoveInjectCalib.sIconPath := sv_MoveInject.sIconPath;
+abInjectCalibRegister.aRegister(@sv_MoveInjectCalib);
+
+
+//register hold (necessary for displaying hold icon after detection of CutOff)
+sv_MoveHold.LockGroups[1] := cLockGroupHeatingNozzle;
+sv_MoveHold.LockGroups[2] := cLockGroupSafetyGateNozzle;
+sv_MoveHold.LockGroups[3] := cLockGroupSafetyGateMold;
+sv_MoveHold.LockGroups[4] := cLockGroupMotor;
+sv_MoveHold.sIconPath := CONCAT(GET_MY_FU_NAME(), '\hmi\images\movScrewHold.gif');
+sv_MoveHold.pdActiveTimeAct := @sv_dActHoldTime;
+sv_MoveHold.pdTimeLimit     := @sv_InjectTimesSet.dMaxMoveTime;
+abHoldRegister.aRegister(@sv_MoveHold);
+
+
+//register cold drop movement
+sv_MoveColdDrop.LockGroups[1] := cLockGroupHeatingNozzle;
+sv_MoveColdDrop.LockGroups[2] := cLockGroupSafetyGateNozzle;
+sv_MoveColdDrop.LockGroups[3] := cLockGroupSafetyGateMold;
+sv_MoveColdDrop.LockGroups[4] := cLockGroupMotor;
+sv_MoveColdDrop.sIconPath := CONCAT(GET_MY_FU_NAME(), '\hmi\images\movColdDrop.gif');
+sv_MoveColdDrop.pdStartDelaySet := @sv_ColdDropTimesSet.dSetDelayTime;
+sv_MoveColdDrop.pdStartDelayAct := @sv_ColdDropTimesAct.dActDelayTime;
+sv_MoveColdDrop.pdActiveTimeAct := @sv_ColdDropTimesAct.dActMoveTime;
+sv_MoveColdDrop.pdTimeLimit     := @sv_ColdDropTimesSet.dMaxMoveTime;
+sv_ColdDropTimesSet.dMaxMoveTime := sv_InjectTimesSet.dMaxMoveTime;
+abColdDropRegister.aRegister(@sv_MoveColdDrop);
+
+
+;#END_EDIT_BLOCK END_ALGORITHM
+
+(*
+This algorithm is responsible for executing the movement.
+Depending on MoveId, OperationMode and activated transducer calibration the according
+movement is executed.
+The different actions contain the movement blocks and the according parameters.
+*)
+
+ALGORITHM aRun
+
+
+VAR_INPUT
+ bStop : BOOL (* flag if the movement should be stopped *);
+END_VAR
+
+VAR_OUTPUT
+ bReady : BOOL (* information if movement is ready *);
+END_VAR
+
+VAR_TEMP
+ rCavityPressure : REAL;
+ dTemp1 : TIME;
+ rTemp1 : REAL;
+ rTemp2 : REAL;
+ b : BOOL;
+END_VAR
+
+VAR
+ fbSetMovementState : FBSetMovementState;
+ dummypoint : KCTRL_Lintab_Point;
+ rServoOutput : REAL;
+ bError : BOOL;
+ dummy : DINT;
+ iErrorInfo : DINT;
+ dSetDelayTimeOn : TIME;
+ dSetDelayTimeOff : TIME;
+ fbDebugTrace2 : FBDebugTrace2;
+ rPressureAbs : REAL;
+ rVelocityAbs : REAL;
+ rPressure : REAL;
+ rVelocity : REAL;
+ bICMInterruptStop : BOOL;
+ bICMDeactivated : BOOL;
+ bFirstInjectDone : BOOL;
+ bICMPostCutOffDone : BOOL;
+ fbREdge_CutOff : R_TRIG;
+ dNull : TIME := t#0s;
+END_VAR
+
+(* IecGraph-Code *)
+
+(* init step *)
+INITIAL_STEP START:
+AStart (P);
+END_STEP
+
+ACTION AStart: #BEGIN_EDIT_BLOCK
+bReady := FALSE;
+fbSetMovementState(MoveId   := g_MoveCtrl.pData^.MoveId,
+                   MoveDir  := g_MoveCtrl.pData^.MoveDir,
+                   State    := nActive);
+sv_bInjectionActive := TRUE;
+fbDebugTrace2(nDeviceState, 'Inject started');
+
+;#END_EDIT_BLOCK END_ACTION (*AStart*)
+
+(* steps *)
+STEP S_Purge:
+AResetInjectPurge (P);
+AInjectPurge (N);
+AResetInjectPurgeServo (P);
+AConstSetupServo (N);
+ACopySetPositionPurge (P0);
+END_STEP
+
+ACTION ACopySetPositionPurge: #BEGIN_EDIT_BLOCK
+b := WRITE_SVREAL_DIRECT(sv_rScrewSetPosition, sv_rScrewPositionAbs);
+
+;#END_EDIT_BLOCK END_ACTION (*ACopySetPositionPurge*)
+STEP Step13:
+END_STEP
+
+STEP S_ColdDrop:
+AInitColdDrop (P);
+AColdDrop (N);
+AConstSetupServo (N);
+END_STEP
+
+STEP S_CheckOperationMode:
+END_STEP
+
+STEP S_Inject:
+AInit (P);
+aICMInterruptStop (N);
+aInject (N);
+AInjectTime (N);
+APumpOutput (N);
+ASetServoMode (N);
+aCheckStartConditionICM (N);
+aCheckPostCutOffICM (N);
+ACopySetPosition (P0);
+END_STEP
+
+ACTION ACopySetPosition: #BEGIN_EDIT_BLOCK
+b := WRITE_SVREAL_DIRECT(sv_rScrewSetPosition, sv_rScrewPositionAbs);
+
+;#END_EDIT_BLOCK END_ACTION (*ACopySetPosition*)
+STEP Reset_ICM_CutOff:
+Action53 (P);
+aInject (N);
+END_STEP
+
+ACTION Action53: #BEGIN_EDIT_BLOCK
+//Reset
+sv_bInjectWaitForICM := FALSE;
+bICMPostCutOffDone := FALSE;
+
+;#END_EDIT_BLOCK END_ACTION (*Action53*)
+STEP S_ICM_Ready:
+aCheckICMReady (N);
+END_STEP
+
+STEP S_CheckIfCalib:
+END_STEP
+
+STEP S_ConstMove:
+AResetConstBlock (P);
+AConstSetupServo (N);
+AConstSetup (N);
+END_STEP
+
+STEP S_Calib:
+AResetCalibBlock (P);
+AConstSetupServo (N);
+ATransducerCalib (N);
+ACheckCalibError (N);
+END_STEP
+
+STEP S_Calib2:
+AResetCalibBlock2 (P);
+AConstSetupServo (N);
+ATransducerCalib2 (N);
+END_STEP
+
+STEP S_CalibInj:
+AResetInjectionCalib (P);
+AInjectionCalib (N);
+ACheckInjectionCalibError (N);
+END_STEP
+
+STEP S_CalibBackP:
+AResetCalibBackPressure (P);
+ABackPressureCalib (N);
+ACheckBackPressureCalibError (N);
+END_STEP
+
+STEP S_MoveIdent:
+AResetIdentBlock (P);
+AStepOutput (N);
+AConstSetupServo (N);
+AStopServo (P0);
+END_STEP
+
+ACTION AStopServo: #BEGIN_EDIT_BLOCK
+IF sv_IMM_Type = nKAPPL_IMM_ServoValve THEN
+    sv_rServoOutput := 0.0;
+END_IF;
+
+;#END_EDIT_BLOCK END_ACTION (*AStopServo*)
+STEP S_Ready:
+AReady (P);
+END_STEP
+
+ACTION AReady: #BEGIN_EDIT_BLOCK
+bReady := TRUE;
+fbSetMovementState(MoveId   := g_MoveCtrl.pData^.MoveId,
+                   MoveDir  := g_MoveCtrl.pData^.MoveDir,
+                   State    := nInactive);
+sv_bInjectionActive := FALSE;
+fbDebugTrace2(nDeviceState, 'Inject ready');
+
+;#END_EDIT_BLOCK END_ACTION (*AReady*)
+
+(* transitions *)
+GO_ON_TRANSITION TNotPurge (* TNotPurge *) FROM START TO Step13 :=  #BEGIN_EDIT_BLOCK
+g_MoveCtrl.pData^.MoveId <> cMoveInjectPurge
+
+;#END_EDIT_BLOCK
+END_TRANSITION
+
+GO_ON_TRANSITION TPurge (* TPurge *) FROM START TO S_Purge :=  #BEGIN_EDIT_BLOCK
+g_MoveCtrl.pData^.MoveId = cMoveInjectPurge
+;#END_EDIT_BLOCK
+END_TRANSITION
+
+TRANSITION TInjectPurgeReady (* TInjectPurgeReady *) FROM S_Purge TO S_Ready :=  #BEGIN_EDIT_BLOCK
+NOT abInjectPurge.aRun.bActive
+;#END_EDIT_BLOCK
+END_TRANSITION
+
+GO_ON_TRANSITION TNotColdDrop (* TNotColdDrop *) FROM Step13 TO S_CheckOperationMode :=  #BEGIN_EDIT_BLOCK
+g_MoveCtrl.pData^.MoveId <> cMoveColdDrop
+;#END_EDIT_BLOCK
+END_TRANSITION
+
+GO_ON_TRANSITION TColdDrop (* TColdDrop *) FROM Step13 TO S_ColdDrop :=  #BEGIN_EDIT_BLOCK
+g_MoveCtrl.pData^.MoveId = cMoveColdDrop
+;#END_EDIT_BLOCK
+END_TRANSITION
+
+GO_ON_TRANSITION TColdDropReady (* TColdDropReady *) FROM S_ColdDrop TO S_Ready :=  #BEGIN_EDIT_BLOCK
+NOT abConstColdDrop.aRun.bActive
+;#END_EDIT_BLOCK
+END_TRANSITION
+
+GO_ON_TRANSITION TNotSetup (* TNotSetup *) FROM S_CheckOperationMode TO S_Inject :=  #BEGIN_EDIT_BLOCK
+(sv_OperationMode > nSetup)
+;#END_EDIT_BLOCK
+END_TRANSITION
+
+GO_ON_TRANSITION TInjectReadyICMLinked (* TInjectReadyICMLinked *) FROM S_Inject TO S_ICM_Ready :=  #BEGIN_EDIT_BLOCK
+(NOT abInject.aRun.bActive)
+AND mbICMLinked 
+AND (bICMDeactivated 
+     OR bStop OR bFirstInjectDone)
+
+//ICM is linked
+
+;#END_EDIT_BLOCK
+END_TRANSITION
+
+GO_ON_TRANSITION PostCutOff_ICM (* PostCutOff_ICM *) FROM S_Inject TO Reset_ICM_CutOff :=  #BEGIN_EDIT_BLOCK
+bICMPostCutOffDone
+;#END_EDIT_BLOCK
+END_TRANSITION
+
+GO_ON_TRANSITION Trans40 (* Trans40 *) FROM Reset_ICM_CutOff TO S_ICM_Ready :=  #BEGIN_EDIT_BLOCK
+NOT abInject.aRun.bActive
+;#END_EDIT_BLOCK
+END_TRANSITION
+
+GO_ON_TRANSITION TInjectReadyICMNotLinked (* TInjectReadyICMNotLinked *) FROM S_Inject TO S_Ready :=  #BEGIN_EDIT_BLOCK
+(NOT abInject.aRun.bActive)
+AND (NOT mbICMLinked)
+
+//ICM is unlinked
+;#END_EDIT_BLOCK
+END_TRANSITION
+
+GO_ON_TRANSITION TICMReady (* TICMReady *) FROM S_ICM_Ready TO S_Ready :=  #BEGIN_EDIT_BLOCK
+bICMReady
+;#END_EDIT_BLOCK
+END_TRANSITION
+
+GO_ON_TRANSITION TSetup (* TSetup *) FROM S_CheckOperationMode TO S_CheckIfCalib :=  #BEGIN_EDIT_BLOCK
+(sv_OperationMode = nSetup)
+;#END_EDIT_BLOCK
+END_TRANSITION
+
+GO_ON_TRANSITION TNotCalib (* TNotCalib *) FROM S_CheckIfCalib TO S_ConstMove :=  #BEGIN_EDIT_BLOCK
+NOT sv_bDoTransducerCalib
+AND NOT sv_bDoInjectionCalib
+AND NOT sv_bDoBackPressureCalib
+AND NOT sv_bDoPumpPressureCalib
+AND NOT sv_bMoveIdent
+;#END_EDIT_BLOCK
+END_TRANSITION
+
+TRANSITION TInjectSetupReady (* TInjectSetupReady *) FROM S_ConstMove TO S_Ready :=  #BEGIN_EDIT_BLOCK
+NOT abInjectSetup.aRun.bActive
+;#END_EDIT_BLOCK
+END_TRANSITION
+
+GO_ON_TRANSITION TCalibActivated (* TCalibActivated *) FROM S_CheckIfCalib TO S_Calib :=  #BEGIN_EDIT_BLOCK
+sv_bDoTransducerCalib
+;#END_EDIT_BLOCK
+END_TRANSITION
+
+TRANSITION TCalibReady (* TCalibReady *) FROM S_Calib TO S_Ready :=  #BEGIN_EDIT_BLOCK
+NOT abScrewFwdCalib.aRun.bActive OR bError 
+;#END_EDIT_BLOCK
+END_TRANSITION
+
+GO_ON_TRANSITION TMoveUntilEnd (* TMoveUntilEnd *) FROM S_CheckIfCalib TO S_Calib2 :=  #BEGIN_EDIT_BLOCK
+sv_bDoPumpPressureCalib
+;#END_EDIT_BLOCK
+END_TRANSITION
+
+TRANSITION TCalibReady2 (* TCalibReady2 *) FROM S_Calib2 TO S_Ready :=  #BEGIN_EDIT_BLOCK
+NOT abScrewFwdCalib.aRun.bActive 
+;#END_EDIT_BLOCK
+END_TRANSITION
+
+GO_ON_TRANSITION TInjectionCalib (* TInjectionCalib *) FROM S_CheckIfCalib TO S_CalibInj :=  #BEGIN_EDIT_BLOCK
+sv_bDoInjectionCalib
+;#END_EDIT_BLOCK
+END_TRANSITION
+
+TRANSITION TInjectionCalibReady (* TInjectionCalibReady *) FROM S_CalibInj TO S_Ready :=  #BEGIN_EDIT_BLOCK
+NOT abInjectionFwdCalib.aRun.bActive OR bError
+;#END_EDIT_BLOCK
+END_TRANSITION
+
+GO_ON_TRANSITION Trans24 (* Trans24 *) FROM S_CheckIfCalib TO S_CalibBackP :=  #BEGIN_EDIT_BLOCK
+sv_bDoBackPressureCalib
+;#END_EDIT_BLOCK
+END_TRANSITION
+
+TRANSITION Trans25 (* Trans25 *) FROM S_CalibBackP TO S_Ready :=  #BEGIN_EDIT_BLOCK
+ NOT abBackPressureCalib.aRun.bActive OR bError
+;#END_EDIT_BLOCK
+END_TRANSITION
+
+GO_ON_TRANSITION TMoveIdentActivated (* TMoveIdentActivated *) FROM S_CheckIfCalib TO S_MoveIdent :=  #BEGIN_EDIT_BLOCK
+sv_bMoveIdent
+;#END_EDIT_BLOCK
+END_TRANSITION
+
+TRANSITION TMoveIdentReady (* TMoveIdentReady *) FROM S_MoveIdent TO S_Ready :=  #BEGIN_EDIT_BLOCK
+NOT abInjectStep.aRun.bActive
+;#END_EDIT_BLOCK
+END_TRANSITION
+
+TRANSITION TReady (* TReady *) FROM S_Ready TO START :=  #BEGIN_EDIT_BLOCK
+TRUE
+;#END_EDIT_BLOCK
+END_TRANSITION
+
+(* end IecGraph-Code *)
+(* sfc-code *)
+
+(* stand alone actions *)
+ACTION AResetCalibBlock: #BEGIN_EDIT_BLOCK
+(**************************************** WARNING ********************************************
+ *** The KEBA Kemro K2 System including software is not intended for safety control tasks! ***
+ ***                       For further information see Comment tab!                        ***
+ *********************************************************************************************)
+
+bError := FALSE;
+abScrewFwdCalib.aRun(bStart := FALSE,
+                     LintabPoint := sv_TmpLintabPoint);
+abInjectSetupServo.aRun(bStart := FALSE);
+IF abScrewFwdCalib.aRun.bError OR abInjectSetupServo.aRun.bError THEN
+   sv_CalibState.Status := tnCalibState_Error;
+   bError := TRUE; 
+   dummy := Print("Calib Error: Reset calib block failed"); 
+END_IF;
+
+;#END_EDIT_BLOCK END_ACTION (*AResetCalibBlock*)
+ACTION AResetConstBlock: #BEGIN_EDIT_BLOCK
+(**************************************** WARNING ********************************************
+ *** The KEBA Kemro K2 System including software is not intended for safety control tasks! ***
+ ***                       For further information see Comment tab!                        ***
+ *********************************************************************************************)
+ 
+abInjectSetup.aRun(bStart := FALSE);
+abInjectSetupServo.aRun(bStart := FALSE);
+
+;#END_EDIT_BLOCK END_ACTION (*AResetConstBlock*)
+ACTION AResetInjectPurge: #BEGIN_EDIT_BLOCK
+(**************************************** WARNING ********************************************
+ *** The KEBA Kemro K2 System including software is not intended for safety control tasks! ***
+ ***                       For further information see Comment tab!                        ***
+ *********************************************************************************************)
+
+abInjectPurge.aRun(bStart := FALSE);
+
+;#END_EDIT_BLOCK END_ACTION (*AResetInjectPurge*)
+ACTION AResetInjectionCalib: #BEGIN_EDIT_BLOCK
+(**************************************** WARNING ********************************************
+ *** The KEBA Kemro K2 System including software is not intended for safety control tasks! ***
+ ***                       For further information see Comment tab!                        ***
+ *********************************************************************************************)
+
+//this must be started, when screw is already in backward position
+//absolute position (mm) is used because it shows up in recorded data later
+//rActPosition is needed for detecting stroke
+bError := FALSE;
+abInjectionFwdCalib.aRun(bStart := FALSE, rActPosition := sv_rScrewPositionAbs);
+
+//set servovalve controller mode
+sv_ServoValveControllerMode := nKAPPL_VelocityControl;
+
+abInjectSetupServo.aRun(bStart := FALSE);
+IF abInjectionFwdCalib.aRun.bError OR abInjectSetupServo.aRun.bError THEN
+   sv_CalibStateInjection.Status := tnCalibState_Error;
+   bError := TRUE; 
+   dummy := Print("Calib Error: Reset calib block failed"); 
+END_IF;
+
+;#END_EDIT_BLOCK END_ACTION (*AResetInjectionCalib*)
+ACTION AResetCalibBackPressure: #BEGIN_EDIT_BLOCK
+(**************************************** WARNING ********************************************
+ *** The KEBA Kemro K2 System including software is not intended for safety control tasks! ***
+ ***                       For further information see Comment tab!                        ***
+ *********************************************************************************************)
+
+bError := FALSE;
+abBackPressureCalib.aRun(bStart := FALSE);
+
+//set servo valve controller mode
+sv_ServoValveControllerMode := nKAPPL_PressureControl;
+
+;#END_EDIT_BLOCK END_ACTION (*AResetCalibBackPressure*)
+ACTION AResetCalibBlock2: #BEGIN_EDIT_BLOCK
+(**************************************** WARNING ********************************************
+ *** The KEBA Kemro K2 System including software is not intended for safety control tasks! ***
+ ***                       For further information see Comment tab!                        ***
+ *********************************************************************************************)
+
+//the point is set to dummy, as this block is only used for moving screw back
+abScrewFwdCalib.aRun(bStart := FALSE,
+                     LintabPoint := dummypoint);
+
+;#END_EDIT_BLOCK END_ACTION (*AResetCalibBlock2*)
+ACTION AConstSetupServo: #BEGIN_EDIT_BLOCK
+IF sv_IMM_Type = nKAPPL_IMM_ServoValve THEN
+   abInjectSetupServo.aRun(bStart := TRUE,
+                           bStop := bStop,
+                           bDirection := FALSE,
+                           rActPos := sv_rScrewPositionAbs,
+                           bUsePosDetect := sv_bMoveToServoCalibStartPos,
+                           rTargetPos := (0.01*sv_rScrewStroke),
+                           rStartOutputPre := 0.0,
+                           rStartOutputVel := 0.0,
+                           dDelayTimeOn := sv_InjectTimesSet.dSetDelayTimePump,
+                           dDelayTimeOff := sv_InjectTimesSet.dSetDelayTimeValve);    
+    b := WRITE_SVREAL_DIRECT(sv_rServoOutput, abInjectSetupServo.aRun.rOutputVel); 
+    bError := bError OR abInjectSetupServo.aRun.bError;
+END_IF;
+
+;#END_EDIT_BLOCK END_ACTION (*AConstSetupServo*)
+ACTION ASetServoMode: #BEGIN_EDIT_BLOCK
+IF sv_IMM_Type = nKAPPL_IMM_ServoValve THEN 
+   IF sv_bInjectActive AND NOT sv_bCutOffDetected THEN
+      sv_ServoValveControllerMode := nKAPPL_VelocityControl;
+   ELSIF sv_bInjectActive AND sv_bCutOffDetected THEN
+      sv_ServoValveControllerMode := nKAPPL_PressureControl;
+   END_IF;
+END_IF;
+
+;#END_EDIT_BLOCK END_ACTION (*ASetServoMode*)
+ACTION ACheckCalibError: #BEGIN_EDIT_BLOCK
+IF bError THEN
+   sv_CalibState.Status := tnCalibState_Error;
+   dummy := Print("Calib Error: %i", iErrorInfo);
+END_IF;
+
+;#END_EDIT_BLOCK END_ACTION (*ACheckCalibError*)
+ACTION ACheckBackPressureCalibError: #BEGIN_EDIT_BLOCK
+(**************************************** WARNING ********************************************
+ *** The KEBA Kemro K2 System including software is not intended for safety control tasks! ***
+ ***                       For further information see Comment tab!                        ***
+ *********************************************************************************************)
+
+IF bError THEN
+   sv_CalibStateBackPressure.Status := tnCalibState_Error;
+   SET_ALARM(erPIDParamDetectionError);
+   dummy := Print("Hold PID parameter detection error: %i", iErrorInfo);
+END_IF;
+
+
+;#END_EDIT_BLOCK END_ACTION (*ACheckBackPressureCalibError*)
+ACTION ACheckInjectionCalibError: #BEGIN_EDIT_BLOCK
+(**************************************** WARNING ********************************************
+ *** The KEBA Kemro K2 System including software is not intended for safety control tasks! ***
+ ***                       For further information see Comment tab!                        ***
+ *********************************************************************************************)
+
+IF bError THEN
+   sv_CalibStateInjection.Status := tnCalibState_Error;
+   SET_ALARM(erPIDParamDetectionError);
+   dummy := Print("Inject PID parameter detection error: %i", iErrorInfo);
+END_IF;
+
+;#END_EDIT_BLOCK END_ACTION (*ACheckInjectionCalibError*)
+ACTION AInit: #BEGIN_EDIT_BLOCK
+(**************************************** WARNING ********************************************
+ *** The KEBA Kemro K2 System including software is not intended for safety control tasks! ***
+ ***                       For further information see Comment tab!                        ***
+ *********************************************************************************************)
+
+abInject.aRun(bStart:=FALSE,
+              dMaxMoveTime:=sv_InjectTimesSet.dMaxMoveTime);
+
+b := WRITE_SVREAL_DIRECT(sv_rScrewZeroPosition, sv_rScrewPosition);
+                          
+//Injection Compression Molding
+IF mbICMLinked THEN
+    //Instance timer for mode after cut off detected
+    fbTonVentingAfterInject(IN:= FALSE,
+                        PT:= sv_dVentingSetDelayTime);
+    
+    fbTonCoiningAfterInject(IN:= FALSE,
+                            PT:= sv_dCoiningSetDelayTime);
+
+    //Reset flag
+    bICMReady := FALSE;            
+    bICMInterruptStop := FALSE; 
+    bICMDeactivated := FALSE;         
+    bICMPostCutOffDone := FALSE;
+    bFirstInjectDone := FALSE; 
+
+    //Reset the actual value for ICM 
+    IF NOT pbVentingDone^THEN
+        sv_rVentingActInjectPress := 0.0;
+        sv_rVentingActScrewPosition := 0.0;
+        sv_dVentingActDelayTime := T#0s;            
+    END_IF;
+    
+    IF NOT pbCoiningDone^ THEN
+        sv_rCoiningActInjectPress := 0.0;
+        sv_rCoiningActScrewPosition := 0.0;
+        sv_dCoiningActDelayTime := T#0s;         
+    END_IF;    
+
+END_IF;
+
+//save last inject time
+b := WRITE_SV_DIRECT(sv_InjectTimesAct.dLastMoveTime, sv_InjectTimesAct.dActMoveTime);
+
+// reset act hold time
+b := WRITE_SV_DIRECT(sv_dActHoldTime, dNull);
+
+;#END_EDIT_BLOCK END_ACTION (*AInit*)
+ACTION AResetInjectPurgeServo: #BEGIN_EDIT_BLOCK
+IF sv_IMM_Type = nKAPPL_IMM_ServoValve THEN
+   abInjectSetupServo.aRun(bStart := FALSE,bStop:=TRUE);
+END_IF;
+
+;#END_EDIT_BLOCK END_ACTION (*AResetInjectPurgeServo*)
+ACTION AInitColdDrop: #BEGIN_EDIT_BLOCK
+(**************************************** WARNING ********************************************
+ *** The KEBA Kemro K2 System including software is not intended for safety control tasks! ***
+ ***                       For further information see Comment tab!                        ***
+ *********************************************************************************************)
+
+abConstColdDrop.aRun(bStart := FALSE);
+
+//set move time
+abConstColdDrop.aSetMoveTime(dSetMoveTime := sv_ColdDropSettings.dColdDropTime);
+
+;#END_EDIT_BLOCK END_ACTION (*AInitColdDrop*)
+ACTION AResetIdentBlock: #BEGIN_EDIT_BLOCK
+abInjectStep.aRun(bStart := FALSE);
+IF sv_IMM_Type = nKAPPL_IMM_ServoValve THEN
+   abInjectSetupServo.aRun(bStart := FALSE);    
+END_IF;
+
+
+;#END_EDIT_BLOCK END_ACTION (*AResetIdentBlock*)
+ACTION aCheckStartConditionICM: #BEGIN_EDIT_BLOCK
+IF mbICMLinked THEN
+    IF ((mpCoiningActivateMode^ <> nDeactivate) 
+        OR (mpVentingActivateMode^ <> nDeactivate)) THEN   
+        
+        //check the start condition for venting
+        //avoid double checking during coining movement
+        IF  (NOT mpbVentingStartPointDetected^) AND (NOT pbVentingDone^) AND (mpVentingActivateMode^ <> nDeactivate) THEN
+            
+            //venting activation mode: inject position  
+            IF (mpVentingActivateMode^ = nInjectPosition) AND (sv_rScrewPosition < sv_rVentingSetScrewPosition) THEN
+                sv_rVentingActScrewPosition := sv_rScrewPosition; //copy the actual screw pos
+                mpbVentingStartPointDetected^ := TRUE; 
+            END_IF;
+            
+            //venting activation mode: inject pressure  
+            IF (mpVentingActivateMode^ = nInjectPressure) AND (sv_rActPressure > sv_rVentingSetInjectPress) THEN
+                sv_rVentingActInjectPress := sv_rActPressure; //copy the actual inject pressure   
+                mpbVentingStartPointDetected^ := TRUE; 
+            END_IF;
+            
+            //venting activation mode: after inject with delay time             
+            IF (mpVentingActivateMode^ = nAfterInject) AND sv_bCutOffDetected THEN
+                fbTonVentingAfterInject(IN:= TRUE);     
+                
+                IF fbTonVentingAfterInject.Q THEN    
+                    sv_dVentingActDelayTime := fbTonVentingAfterInject.ET;
+                    mpbVentingStartPointDetected^ := TRUE;
+                END_IF;
+            END_IF;
+        END_IF;
+        
+        //check the start condition of coining 
+        IF (NOT mpbCoiningStartPointDetected^) AND (NOT pbCoiningDone^) AND (mpCoiningActivateMode^ <> nDeactivate) THEN
+            
+            //coining activation mode: inject position  
+            IF (mpCoiningActivateMode^ = nInjectPosition) AND (sv_rScrewPosition < sv_rCoiningSetScrewPosition) THEN
+                sv_rCoiningActScrewPosition := sv_rScrewPosition; //copy the actual screw pos  
+                mpbCoiningStartPointDetected^ := TRUE;
+            END_IF;
+            
+            //coining activation mode: inject pressure  
+            IF (mpCoiningActivateMode^ = nInjectPressure) AND (sv_rActPressure > sv_rCoiningSetInjectPress) THEN
+                sv_rCoiningActInjectPress := sv_rActPressure;  //copy the actual inject pressure  
+                mpbCoiningStartPointDetected^ := TRUE;
+            END_IF;    
+        
+            //coining activation mode: after inject with delay time
+            IF (mpCoiningActivateMode^ = nAfterInject) AND sv_bCutOffDetected THEN
+            
+                fbTonCoiningAfterInject(IN:= TRUE);                           
+                
+                IF fbTonCoiningAfterInject.Q THEN
+                    sv_dCoiningActDelayTime := fbTonCoiningAfterInject.ET;
+                    mpbCoiningStartPointDetected^ := TRUE;
+                END_IF;
+            END_IF;
+        END_IF;
+    ELSE 
+        bICMDeactivated := TRUE;
+    END_IF;
+    
+END_IF;
+
+
+;#END_EDIT_BLOCK END_ACTION (*aCheckStartConditionICM*)
+ACTION APumpOutput: #BEGIN_EDIT_BLOCK
+IF NOT mbICMLinked THEN
+    //ICM is not linked (APPCO)
+    b := WRITE_SVREAL_DIRECT(sv_rPressure, rPressure);
+    b := WRITE_SVREAL_DIRECT(sv_rVelocity, rVelocity);   
+
+ELSE  //ICM is linked (APPCO)
+    
+    //ICM is deactivated 
+    IF (mpVentingActivateMode^ = nDeactivate) AND (mpCoiningActivateMode^ = nDeactivate) THEN
+       b := WRITE_SVREAL_DIRECT(sv_rPressure, rPressure);
+       b := WRITE_SVREAL_DIRECT(sv_rVelocity, rVelocity);   
+    ELSE 
+        //ICM is activated and the machine is in movement injection 
+        IF (NOT pbVentingActive^) AND (NOT pbCoiningActive^) THEN
+            //add a mimimal output in case of ICM 
+            rTemp1 := MAX(rPressure, sv_MinOutputInject.rPressure);
+            rTemp2 := MAX(rVelocity, sv_MinOutputInject.rVelocity);
+            b := WRITE_SVREAL_DIRECT(sv_rPressure, rTemp1);
+            b := WRITE_SVREAL_DIRECT(sv_rVelocity, rTemp2);           
+        ELSE 
+            //in movement of coining or venting               
+            b := WRITE_SVREAL_DIRECT(sv_rPressure, sv_HydrMaxValuesInject.rMaxPressure);
+           
+            IF pbVentingActive^ THEN
+                rTemp1 := MAX((prVelOutputICM^ + rVelocity), prMinOutputVenting^);
+            ELSE 
+                rTemp1 := MAX((prVelOutputICM^ + rVelocity), prMinOutputCoining^);    
+            END_IF; 
+            b := WRITE_SVREAL_DIRECT(sv_rVelocity, rTemp1);
+           
+        END_IF;
+    END_IF;
+END_IF;
+
+
+
+;#END_EDIT_BLOCK END_ACTION (*APumpOutput*)
+ACTION aCheckICMReady: #BEGIN_EDIT_BLOCK
+//check if ICM is ready 
+IF (mpCoiningActivateMode^ = nDeactivate) 
+    AND (mpVentingActivateMode^ = nDeactivate) THEN 
+    //no ICM -> Mode 0
+    
+    bICMReady := TRUE; 
+ELSIF (mpICMMode^ = nParallelICM AND 
+       ((pbCoiningDone^ AND (mpCoiningActivateMode^ <> nDeactivate)) 
+        OR (pbVentingDone^ AND (mpCoiningActivateMode^ = nDeactivate)))) THEN     
+    //parallel: inject active till coining is done  -> Mode 1, 2, 5
+    
+    bICMReady := TRUE; 
+ELSIF (mpICMMode^ = nSequentialICM AND mpbVentingStartPointDetected^) AND (NOT pbVentingDone^)  THEN    
+    //sequential: inject is stopped and start point for venting is detected before starting venting -> Mode 3  
+    
+    bICMReady := TRUE; 
+ELSIF (mpICMMode^ = nSequentialICM) AND pbCoiningDone^ 
+        AND (mpCoiningActivateMode^ <> nDeactivate) THEN   
+    //sequential and use venting: inject active till coining done -> Mode 3  
+    
+    bICMReady := TRUE;
+ELSIF (mpICMMode^ = nSequentialICM) AND pbVentingDone^ 
+        AND (mpCoiningActivateMode^ = nDeactivate) THEN     
+    //sequential without coining: inject active till venting done -> Mode 6  
+    
+    bICMReady := TRUE;
+    
+ELSIF bStop THEN 
+    //stopped by release of button
+    bICMReady := TRUE;
+END_IF;                 
+
+;#END_EDIT_BLOCK END_ACTION (*aCheckICMReady*)
+ACTION aICMInterruptStop: #BEGIN_EDIT_BLOCK
+IF mbICMLinked THEN
+   //Rising eage of cut off detection
+   fbREdge_CutOff(CLK:= sv_bCutOffDetected);
+   
+   //cut off detectd and injection waiting for finishing the  ICM   
+   IF (NOT sv_bInjectWaitForICM) THEN    
+        IF (mpCoiningActivateMode^ <> nDeactivate) OR (mpVentingActivateMode^ <> nDeactivate) THEN
+            sv_bInjectWaitForICM := fbREdge_CutOff.Q;
+        END_IF;          
+    END_IF;
+    
+   //Interrupt stop of 1st inject if use sequential mode,
+   //when the start condition is detected and venting is not done
+   IF mpbVentingStartPointDetected^ AND (NOT pbVentingDone^) AND (mpICMMode^ = nSequentialICM) THEN
+        bICMInterruptStop := TRUE; 
+        bFirstInjectDone := TRUE;
+   END_IF; 
+   
+   //Cutoff detected before the 2nd inject in sequential mode -> interrupt stop for injection  
+   IF pbVentingDone^ AND (mpICMMode^ = nSequentialICM) THEN
+        bICMInterruptStop := sv_bCutOffDetected;
+   END_IF;
+   
+   //in parallel movement: cutoff is detected, injection is still waiting for ICM till it's done 
+   IF ((mpVentingActivateMode^ <> nDeactivate) OR (mpCoiningActivateMode^ <> nDeactivate)) 
+       AND fbREdge_CutOff.Q AND sv_bInjectWaitForICM THEN
+
+       bICMInterruptStop := TRUE; 
+   END_IF;  
+END_IF;
+
+;#END_EDIT_BLOCK END_ACTION (*aICMInterruptStop*)
+ACTION aCheckPostCutOffICM: #BEGIN_EDIT_BLOCK
+IF mbICMLinked THEN
+   IF  (sv_bInjectWaitForICM)AND (NOT pbVentingActive^)
+            AND (NOT pbCoiningActive^) 
+                AND ((pbVentingDone^) OR (mpVentingActivateMode^ = nDeactivate))
+                    AND ((pbCoiningDone^) OR (mpCoiningActivateMode^ = nDeactivate)) THEN
+       
+       
+       bICMPostCutOffDone := TRUE;
+   END_IF;
+END_IF;
+
+;#END_EDIT_BLOCK END_ACTION (*aCheckPostCutOffICM*)
+ACTION AInjectTime: #BEGIN_EDIT_BLOCK
+(**************************************** WARNING ********************************************
+ *** The KEBA Kemro K2 System including software is not intended for safety control tasks! ***
+ ***                       For further information see Comment tab!                        ***
+ *********************************************************************************************)
+
+IF g_MoveCtrl.pData^.MoveId <> cMoveFwdInterPos THEN
+   dTemp1 := sv_InjectTimesAct.dActMoveTime + sv_dActHoldTime;
+   b := WRITE_SV_DIRECT(sv_dActInjectHoldTime, dTemp1);
+ELSE
+   b := WRITE_SV_DIRECT(sv_ActiveTimesInjectInterPos[g_MoveCtrl.iCount], sv_InjectTimesAct.dActMoveTime);
+END_IF;
+
+;#END_EDIT_BLOCK END_ACTION (*AInjectTime*)
+ACTION ATransducerCalib2: #BEGIN_EDIT_BLOCK
+(**************************************** WARNING ********************************************
+ *** The KEBA Kemro K2 System including software is not intended for safety control tasks! ***
+ ***                       For further information see Comment tab!                        ***
+ *********************************************************************************************)
+
+abScrewFwdCalib.aRun(bStop := bStop OR sv_bTransducerError,
+                     bStart := TRUE,
+                     rActVoltage := ai_Position,
+                     rMaxVoltageDiff := sv_rMaxVoltageDiff,
+                     dStandStillDetectTime := sv_dStandStillDetectTime,
+                     LintabPoint := dummypoint,
+                     rSetValue := 0.0,
+                     bActive => sv_bOutputActive,
+                     rOutputPre => sv_rPressureAbs,
+                     rOutputVel => sv_rVelocityAbs,
+                     bPreOutputReached => sv_bPreOutputReady);
+sv_bDoTransducerCalib := NOT (abScrewFwdCalib.aRun.bPointDetected);
+
+abLintabApplyPres.aCalc(rX := sv_rPressureAbs,
+                        rY => sv_rPressure);
+
+abLintabApplyVel.aCalc(rX := sv_rVelocityAbs,
+                       rY => sv_rVelocity);
+
+;#END_EDIT_BLOCK END_ACTION (*ATransducerCalib2*)
+ACTION ATransducerCalib: #BEGIN_EDIT_BLOCK
+(**************************************** WARNING ********************************************
+ *** The KEBA Kemro K2 System including software is not intended for safety control tasks! ***
+ ***                       For further information see Comment tab!                        ***
+ *********************************************************************************************)
+
+abScrewFwdCalib.aRun(bStop := bStop OR sv_bTransducerError,
+                     bStart := TRUE,
+                     rActVoltage := ai_Position,
+                     rMaxVoltageDiff := sv_rMaxVoltageDiff,
+                     dStandStillDetectTime := sv_dStandStillDetectTime,
+                     LintabPoint := sv_TmpLintabPoint,
+                     rSetValue := 0.0,
+                     dDelayTimeOn := sv_InjectTimesSet.dSetDelayTimePump,
+                     dDelayTimeOff := sv_InjectTimesSet.dSetDelayTimeValve,
+                     bActive => sv_bOutputActive,
+                     rOutputPre => sv_rPressureAbs,
+                     rOutputVel => sv_rVelocityAbs,
+                     bPreOutputReached => sv_bPreOutputReady,
+                     iErrorInfo => iErrorInfo);
+sv_bDoTransducerCalib := NOT (abScrewFwdCalib.aRun.bPointDetected);
+bError := abScrewFwdCalib.aRun.bError OR bError;
+
+abLintabApplyPres.aCalc(rX := sv_rPressureAbs,
+                        rY => sv_rPressure);
+
+abLintabApplyVel.aCalc(rX := sv_rVelocityAbs,
+                       rY => sv_rVelocity);
+
+;#END_EDIT_BLOCK END_ACTION (*ATransducerCalib*)
+ACTION AStepOutput: #BEGIN_EDIT_BLOCK
+(**************************************** WARNING ********************************************
+ *** The KEBA Kemro K2 System including software is not intended for safety control tasks! ***
+ ***                       For further information see Comment tab!                        ***
+ *********************************************************************************************)
+
+abInjectStep.aRun(bUsePosDetect := sv_rIdentPosition <> 0.0,
+                  rPositionDown := (sv_rScrewPositionAbs + sv_rIdentPosition) * 0.5,
+                  rLowOutput := sv_rMaxSpeedFwd * 0.1,
+                  bStart := TRUE,
+                  bStop := bStop,
+                  bDirection := FALSE,
+                  rActPos := sv_rScrewPositionAbs,
+                  rTargetPos := sv_rIdentPosition,
+                  dDelayTimeOn := sv_InjectTimesSet.dSetDelayTimePump,
+                  dDelayTimeOff := sv_dSetDelayTimeOffFwd,
+                  rPositionUp := sv_rScrewPositionAbs,
+                  rHighOutput := sv_ConstInjectSetup.Velocity.Output.rOutputValue,
+                  dMaxMoveTime := sv_InjectTimesSet.dMaxMoveTime,
+                  rStopRamp := sv_rIdentStopRamp,
+                  bActive => sv_bOutputActive,
+                  rOutputPre => sv_rPressureAbs,
+                  rOutputVel => sv_rVelocityAbs,
+                  bPreOutputReached => sv_bPreOutputReady);
+
+
+abLintabApplyPres.aCalc(rX := sv_rPressureAbs,
+                        rY => sv_rPressure);
+
+abLintabApplyVel.aCalc(rX := sv_rVelocityAbs,
+                       rY => sv_rVelocity);
+
+;#END_EDIT_BLOCK END_ACTION (*AStepOutput*)
+ACTION AInjectPurge: #BEGIN_EDIT_BLOCK
+(**************************************** WARNING ********************************************
+ *** The KEBA Kemro K2 System including software is not intended for safety control tasks! ***
+ ***                       For further information see Comment tab!                        ***
+ *********************************************************************************************)
+
+abInjectPurge.aRun(bStart := TRUE,
+                   bStop := bStop,
+                   bDirection := FALSE,
+                   rActPos := sv_rScrewPosition,
+                   rTargetPos := sv_PurgeSettings.InjectParams.rEndPos,
+                   bUsePosDetect := TRUE,
+                   dDelayTimeOn := sv_InjectTimesSet.dSetDelayTimePump,
+                   dDelayTimeOff := sv_InjectTimesSet.dSetDelayTimeValve,
+                   bActive => sv_bOutputActive,
+                   bPreOutputReached => sv_bPreOutputReady);
+
+b := WRITE_SVREAL_DIRECT(sv_rPressureAbs, abInjectPurge.aRun.rOutputPre);
+b := WRITE_SVREAL_DIRECT(sv_rVelocityAbs, abInjectPurge.aRun.rOutputVel);
+
+abLintabApplyPres.aCalc(rX := sv_rPressureAbs);
+b := WRITE_SVREAL_DIRECT(sv_rPressure, abLintabApplyPres.aCalc.rY);
+
+abLintabApplyVel.aCalc(rX := sv_rVelocityAbs);
+b := WRITE_SVREAL_DIRECT(sv_rVelocity, abLintabApplyVel.aCalc.rY);
+
+;#END_EDIT_BLOCK END_ACTION (*AInjectPurge*)
+ACTION AInjectionCalib: #BEGIN_EDIT_BLOCK
+(**************************************** WARNING ********************************************
+ *** The KEBA Kemro K2 System including software is not intended for safety control tasks! ***
+ ***                       For further information see Comment tab!                        ***
+ *********************************************************************************************)
+
+abInjectionFwdCalib.aRun(bStop := bStop OR sv_bTransducerError,
+                         bStart := TRUE,
+                         rActPosition := sv_rScrewPositionAbs,
+                         rVelocity := sv_rVelocity,
+                         dDelayTimeOn := sv_InjectTimesSet.dSetDelayTimePump,
+                         dDelayTimeOff := sv_InjectTimesSet.dSetDelayTimeValve,
+                         bActive => sv_bOutputActive,
+                         rOutputPre => sv_rPressure,
+                         rOutputVel => sv_rVelocity,
+                         rOutputServo => sv_rServoOutput,
+                         bPreOutputReached => sv_bPreOutputReady,
+                         iErrorInfo => iErrorInfo);
+bError := abInjectionFwdCalib.aRun.bError OR bError;
+
+;#END_EDIT_BLOCK END_ACTION (*AInjectionCalib*)
+ACTION aInject: #BEGIN_EDIT_BLOCK
+(**************************************** WARNING ********************************************
+ *** The KEBA Kemro K2 System including software is not intended for safety control tasks! ***
+ ***                       For further information see Comment tab!                        ***
+ *********************************************************************************************)
+
+rCavityPressure := MUX(sv_iSelCavityPressureSensor - 1, 
+                       sv_rCavityPressure1, 
+                       sv_rCavityPressure2,
+                       sv_rCavityPressure3,
+                       sv_rCavityPressure4,
+                       sv_rCavityPressure5,
+                       sv_rCavityPressure6,
+                       sv_rCavityPressure7,                       
+                       sv_rCavityPressure8);
+b := WRITE_SVREAL_DIRECT(sv_rCavityPressure, rCavityPressure);
+
+IF (sv_IMM_Type = nKAPPL_IMM_ServoValve) THEN
+   dSetDelayTimeOn := sv_InjectTimesSet.dSetDelayTimeValve;
+   dSetDelayTimeOff := T#0s;
+ELSE     
+   dSetDelayTimeOn := sv_InjectTimesSet.dSetDelayTimePump;
+   dSetDelayTimeOff := sv_InjectTimesSet.dSetDelayTimeValve;
+END_IF;
+
+abInject.aRun(di_ExtCutOff := mbExtCutOffLinked AND di_ExtCutOff,
+              bUseInterruptPos := g_MoveCtrl.pData^.MoveId = cMoveFwdInterPos,
+              bStop := (bStop OR sv_bTransducerError)OR bICMInterruptStop,
+              bStart := TRUE,
+              rActScrewPosition := sv_rScrewPosition,
+              rMaxInjectSpeed := sv_rMaxSpeedFwdSpec,
+              rMaxPossiblePressure := sv_rMaxPressureFwd,
+              InjectControlParams := sv_InjectControlParams,
+              InjectDeadTimeParams := sv_InjectDeadTimeParams,
+              HoldingControlParams := sv_HoldingControlParams,
+              HoldingDeadTimeParams := sv_HoldingDeadTimeParams,
+              dMaxMoveTime := sv_InjectTimesSet.dMaxMoveTime,
+              CutOffParams := sv_CutOffParams,
+              rActMoldPressure := sv_rCavityPressure,
+              rActInjectPressure := sv_rActPressure,
+              PressureLimitControlParams := sv_PressureLimitControlParams,
+              PressureLimitControlVelocityPar := sv_PressureLimitVelocityParams,
+              IMM_Type := sv_IMM_Type,
+              dDelayTimeOn := dSetDelayTimeOn,
+              dDelayTimeOff := dSetDelayTimeOff,
+              rInterruptPos := sv_rInjectInterruptPosition,
+              rInterruptDec := sv_rInjectInterruptDec,
+              rInterruptAcc := sv_rInjectInterruptAcc,
+              bUseCalcedPressureStartRamp := sv_bUseCalcedPressureStartRamp,
+              bIgnoreStopAtCutOffNoHold := sv_bIgnoreStopAtCutOffNoHold,
+              rPressureOutput => rPressureAbs,
+              rVelocityOutput => rVelocityAbs,
+              bActive => sv_bOutputActive,
+              bCutOffDetected => sv_bCutOffDetected,
+              iActiveInjectStage => sv_iActiveStage,
+              bPreOutputReached => sv_bPreOutputReady,
+              rServoOutput => rServoOutput);
+
+sv_bInjectActive := sv_bOutputActive;
+sv_bHoldActive := sv_bCutOffDetected;
+
+// Do not use WRITE_SVREAL_DIRECT() here: these SV's are changed once per cycle and could be the signalled
+sv_rHoldPosition := abInject.aRun.rHoldDonePosition; 
+sv_rCushion := abInject.aRun.rCushion;
+sv_rCutOffPosition := abInject.aRun.rCutOffPosition;
+sv_rCutOffPressure := abInject.aRun.rCutOffPressure;
+sv_rCutOffCavityPressure := abInject.aRun.rCutOffCavityPressure;
+                                                                
+b := WRITE_SVREAL_DIRECT(sv_rSetPressureAbs, abInject.aRun.rPressureSet);
+b := WRITE_SVREAL_DIRECT(sv_rSetVelocityAbs, abInject.aRun.rVelocitySet);
+b := WRITE_SV_DIRECT(sv_InjectTimesAct.dActMoveTime, abInject.aRun.dActMoveTime);
+b := WRITE_SV_DIRECT(sv_dActHoldTime, abInject.aRun.dActHoldingTime);       
+
+
+abLintabApplyPres.aCalc(rX := rPressureAbs, rY => rPressure);
+abLintabApplyVel.aCalc(rX := rVelocityAbs, rY => rVelocity);
+
+abLintabApplyServoVel.aCalc(rX := sv_rSetVelocityAbs);
+b := WRITE_SVREAL_DIRECT(sv_rVelocitySet, abLintabApplyServoVel.aCalc.rY);
+
+
+IF (sv_bInjectActive AND (NOT sv_bCutOffDetected)) THEN
+   abLintabApplyServoVel.aCalc(rX := rServoOutput);
+   b := WRITE_SVREAL_DIRECT(sv_rServoOutput, abLintabApplyServoVel.aCalc.rY);
+ELSE
+   abLintabApplyServoPres.aCalc(rX := rServoOutput);
+   b := WRITE_SVREAL_DIRECT(sv_rServoOutput, abLintabApplyServoPres.aCalc.rY);
+END_IF;
+
+
+
+;#END_EDIT_BLOCK END_ACTION (*aInject*)
+ACTION AConstSetup: #BEGIN_EDIT_BLOCK
+(**************************************** WARNING ********************************************
+ *** The KEBA Kemro K2 System including software is not intended for safety control tasks! ***
+ ***                       For further information see Comment tab!                        ***
+ *********************************************************************************************)
+
+abInjectSetup.aRun(rTargetPos := 0.01 * sv_rScrewStroke,
+                   bStart := TRUE,
+                   bStop := bStop,
+                   bDirection := FALSE,
+                   rActPos := sv_rScrewPositionAbs,
+                   bUsePosDetect := sv_bMoveToServoCalibStartPos,
+                   dDelayTimeOn := sv_InjectTimesSet.dSetDelayTimePump,
+                   dDelayTimeOff := sv_InjectTimesSet.dSetDelayTimeValve,
+                   rOutputPre => sv_rPressureAbs,
+                   rOutputVel => sv_rVelocityAbs,
+                   bActive => sv_bOutputActive,
+                   bPreOutputReached => sv_bPreOutputReady);
+
+abLintabApplyPres.aCalc(rX := sv_rPressureAbs,
+                        rY => sv_rPressure);
+
+abLintabApplyVel.aCalc(rX := sv_rVelocityAbs,
+                       rY => sv_rVelocity);
+
+;#END_EDIT_BLOCK END_ACTION (*AConstSetup*)
+ACTION AColdDrop: #BEGIN_EDIT_BLOCK
+(**************************************** WARNING ********************************************
+ *** The KEBA Kemro K2 System including software is not intended for safety control tasks! ***
+ ***                       For further information see Comment tab!                        ***
+ *********************************************************************************************)
+
+abConstColdDrop.aRun(bStart := TRUE,
+                     bStop := bStop,
+                     bDirection := FALSE,
+                     rActPos := sv_rScrewPosition,
+                     rTargetPos := 0.0,
+                     bUsePosDetect := TRUE,
+                     dMaxTime := sv_ColdDropTimesSet.dMaxMoveTime,
+                     dDelayTimeOn := sv_InjectTimesSet.dSetDelayTimePump,
+                     dDelayTimeOff := sv_InjectTimesSet.dSetDelayTimeValve,
+                     bActive => sv_bOutputActive,
+                     bPreOutputReached => sv_bPreOutputReady);
+
+b := WRITE_SVREAL_DIRECT(sv_rPressureAbs, abConstColdDrop.aRun.rOutputPre);
+b := WRITE_SVREAL_DIRECT(sv_rVelocityAbs, abConstColdDrop.aRun.rOutputVel);
+b := WRITE_SV_DIRECT(sv_ColdDropTimesAct.dActMoveTime, abConstColdDrop.aRun.dActTime);
+
+
+abLintabApplyPres.aCalc(rX := sv_rPressureAbs);
+b := WRITE_SVREAL_DIRECT(sv_rPressure, abLintabApplyPres.aCalc.rY);
+
+
+abLintabApplyVel.aCalc(rX := sv_rVelocityAbs);
+b := WRITE_SVREAL_DIRECT(sv_rVelocity, abLintabApplyVel.aCalc.rY);
+
+;#END_EDIT_BLOCK END_ACTION (*AColdDrop*)
+ACTION ABackPressureCalib: #BEGIN_EDIT_BLOCK
+(**************************************** WARNING ********************************************
+ *** The KEBA Kemro K2 System including software is not intended for safety control tasks! ***
+ ***                       For further information see Comment tab!                        ***
+ *********************************************************************************************)
+
+abBackPressureCalib.aRun(bStop := bStop OR sv_bTransducerError,
+                         bStart := TRUE,
+                         rPressure := sv_rActPressureHydr,
+                         dDelayTimeOn := sv_InjectTimesSet.dSetDelayTimePump,
+                         dDelayTimeOff := sv_InjectTimesSet.dSetDelayTimeValve,
+                         bActive => sv_bOutputActive,
+                         rOutputPre => sv_rPressure,
+                         rOutputVel => sv_rVelocity,
+                         bPreOutputReached => sv_bPreOutputReady,
+                         iErrorInfo => iErrorInfo);
+
+sv_rVelocitySet := sv_rVelocity;
+bError := abBackPressureCalib.aRun.bError OR bError;
+
+;#END_EDIT_BLOCK END_ACTION (*ABackPressureCalib*)
+(* end sfc-code *)
+
+
+END_ALGORITHM
+
+ALGORITHM aInitOrigin
+
+#BEGIN_EDIT_BLOCK
+(**************************************** WARNING ********************************************
+ *** The KEBA Kemro K2 System including software is not intended for safety control tasks! ***
+ ***                       For further information see Comment tab!                        ***
+ *********************************************************************************************)
+
+abInject.aInit(pInjectProfile := @sv_InjectProfVis,
+               pHoldProfile := @sv_HoldProfVis,
+               MoveIdInject := sv_MoveInject.MoveId,
+               MoveIdHold := cMoveHold,
+               pScrewDiameter := @sv_rScrewDiameter,
+               ComparatorData := ComparatorData,
+               pdCalcedInjectDuration := @sv_dCalculatedDurationInject,
+               pdCalcedHoldDuration := @sv_dCalculatedDurationHold,
+               prCalcDurationStartPosition := @sv_rInjectCalcDurationStartPos,
+               pCutOffParams := @sv_CutOffParams,
+               pInstanceDataInterPos := @sv_InstanceDataInjectInterPos);
+
+abInjectSetup.aInit(pConst := @sv_ConstInjectSetup,
+                    MoveId := cMoveInject);
+
+abInjectSetupServo.aInit(pConst := @sv_ConstInjectSetupServo,
+                         MoveId := cMoveInject);
+
+abScrewFwdCalib.aInit(pConst := @sv_ConstInjectSetup,
+                      MoveId := cMoveInject);
+
+abInjectionFwdCalib.aInit(pConst := @sv_ConstInjectionCalib,
+                          MoveId := cMoveInject,
+                          prMaxPressure := @sv_HydrMaxValuesInject.rMaxPressure,
+                          MeasureTask := TaskInject,
+                          IMM_Type := sv_IMM_Type,
+                          pbDebugCalibration := @sv_TraceLevel.bDebugCalibration);
+
+abBackPressureCalib.aInit(pConst := @sv_ConstBackPressureCalib,
+                          MoveId := cMoveInject,
+                          prMaxPressure := @sv_HydrMaxValuesInject.rMaxPressure,
+                          MeasureTask := TaskInject,
+                          pbDebugCalibration := @sv_TraceLevel.bDebugCalibration);
+
+abInjectPurge.aInit(pConst := @sv_PurgeSettings.InjectParams.ConstOutput,
+                    MoveId := cMoveInjectPurge);
+
+abConstColdDrop.aInit(pConst := @sv_ColdDropSettings.ConstOutput,
+                      MoveId := cMoveColdDrop);
+
+abLintabApplyPres.aInit(pLintab := @sv_LintabOutFwdP);
+
+abLintabApplyVel.aInit(pLintab := @sv_LintabOutFwdV);
+
+abLintabApplyServoPres.aInit(pLintab := @sv_LintabOutFwdP,
+                             bLinearExtrapolation := TRUE);
+
+abLintabApplyServoVel.aInit(pLintab := @sv_LintabOutFwdVServo,
+                            bLinearExtrapolation := TRUE);
+
+
+;#END_EDIT_BLOCK END_ALGORITHM
+
+ALGORITHM aInit
+
+
+VAR
+ Status : KSYS_Status;
+END_VAR
+#BEGIN_EDIT_BLOCK
+// NOTE: this algo is a workaround for CR_0035590 & CR_0035591 the islinked should be done in aInitOrigin.
+// check for external cut off input linked
+mbExtCutOffLinked := IS_LINKED(di_ExtCutOff);
+
+IF sv_NumberOfDevices[cCompAccumulator] > 0 THEN      
+   pbUseAccumulator := GET_SYNC_REFTO('Accumulator1.sv_bUseAccumulator', T#0s, Status);
+   bAccumulatorAvailable := Status = KSYS_Status_OK;
+END_IF;
+
+sv_LintabOutFwdVServo.LintabPoints.uNoOfPoints := 2;
+sv_LintabOutFwdVServo.LintabPoints.Point[1].rX := 0.0;
+sv_LintabOutFwdVServo.LintabPoints.Point[1].rY := 0.0;
+sv_LintabOutFwdVServo.LintabPoints.Point[2].rX := sv_rMaxSpeedFwdSpec;
+sv_LintabOutFwdVServo.LintabPoints.Point[2].rY := 100.0;
+
+// References to Lintabs and Paramters for comparater-functionality
+ComparatorData[1].sEndpointName := CONCAT(GET_MY_FU_NAME(), '.ai_Position');
+ComparatorData[1].ScrewDiameter := @sv_rScrewDiameter;
+ComparatorData[1].pLintabPoints := @sv_ScrewLintab.LintabPoints.Point;
+ComparatorData[1].piUsedLintabPoints := @sv_ScrewLintab.LintabPoints.uNoOfPoints;
+
+ComparatorData[2].sEndpointName := CONCAT(GET_MY_FU_NAME(), '.ai_Pressure');
+ComparatorData[2].pLintabPoints := @sv_PressureLintab.LintabPoints.Point;
+ComparatorData[2].piUsedLintabPoints := @sv_PressureLintab.LintabPoints.uNoOfPoints;
+ComparatorData[2].pSpecificPressureLintabPoints := @sv_LintabOutFwdP.LintabPoints.Point;
+ComparatorData[2].piUsedSpecPressureLintabPoints := @sv_LintabOutFwdP.LintabPoints.uNoOfPoints;
+
+ComparatorData[3].sEndpointName := 'Mold1.ai_CavityPressure1';
+ComparatorData[3].pLintabPoints := @sv_CavityPressLintab1.LintabPoints.Point;
+ComparatorData[3].piUsedLintabPoints := @sv_CavityPressLintab1.LintabPoints.uNoOfPoints;
+
+ComparatorData[4].sEndpointName := 'Mold1.ai_CavityPressure2';
+ComparatorData[4].pLintabPoints := @sv_CavityPressLintab2.LintabPoints.Point;
+ComparatorData[4].piUsedLintabPoints := @sv_CavityPressLintab2.LintabPoints.uNoOfPoints;
+
+ComparatorData[5].sEndpointName := 'Mold1.ai_CavityPressure3';
+ComparatorData[5].pLintabPoints := @sv_CavityPressLintab3.LintabPoints.Point;
+ComparatorData[5].piUsedLintabPoints := @sv_CavityPressLintab3.LintabPoints.uNoOfPoints;
+
+ComparatorData[6].sEndpointName := 'Mold1.ai_CavityPressure4';
+ComparatorData[6].pLintabPoints := @sv_CavityPressLintab4.LintabPoints.Point;
+ComparatorData[6].piUsedLintabPoints := @sv_CavityPressLintab4.LintabPoints.uNoOfPoints;
+
+ComparatorData[7].sEndpointName := 'Mold1.ai_CavityPressure5';
+ComparatorData[7].pLintabPoints := @sv_CavityPressLintab5.LintabPoints.Point;
+ComparatorData[7].piUsedLintabPoints := @sv_CavityPressLintab5.LintabPoints.uNoOfPoints;
+
+ComparatorData[8].sEndpointName := 'Mold1.ai_CavityPressure6';
+ComparatorData[8].pLintabPoints := @sv_CavityPressLintab6.LintabPoints.Point;
+ComparatorData[8].piUsedLintabPoints := @sv_CavityPressLintab6.LintabPoints.uNoOfPoints;
+
+ComparatorData[9].sEndpointName := 'Mold1.ai_CavityPressure7';
+ComparatorData[9].pLintabPoints := @sv_CavityPressLintab7.LintabPoints.Point;
+ComparatorData[9].piUsedLintabPoints := @sv_CavityPressLintab7.LintabPoints.uNoOfPoints;
+
+ComparatorData[10].sEndpointName := 'Mold1.ai_CavityPressure8';
+ComparatorData[10].pLintabPoints := @sv_CavityPressLintab8.LintabPoints.Point;
+ComparatorData[10].piUsedLintabPoints := @sv_CavityPressLintab8.LintabPoints.uNoOfPoints;
+
+// call origin aInit argorithm
+aInitOrigin();
+
+// ident movement
+abInjectStep.aInit(pConst:=@sv_ConstInjectSetup,                       
+                   MoveId:=cMoveInject,
+                   prMaxSpeed:=@sv_rMaxSpeedFwdSpec);
+
+IF IS_LINKED(sv_bInjectWaitForICM) THEN
+    // pointer ICM 
+    mpCoiningActivateMode :=  GET_SYNC_REFTO('Mold1.sv_CoiningActivateMode', T#0s, Status);
+    mpVentingActivateMode :=  GET_SYNC_REFTO('Mold1.sv_VentingActivateMode', T#0s, Status);
+    mpICMMode :=  GET_SYNC_REFTO('Mold1.sv_ICMMode', T#0s, Status);
+    mpbVentingStartPointDetected :=  GET_SYNC_REFTO('Mold1.sv_bVentingStartPointDetected', T#0s, Status);
+    mpbCoiningStartPointDetected :=  GET_SYNC_REFTO('Mold1.sv_bCoiningStartPointDetected', T#0s, Status);
+       
+    prVelOutputICM := GET_SYNC_REFTO('Mold1.sv_rVelOutputICM', T#0s, Status);
+    pbCoiningDone := GET_SYNC_REFTO('Mold1.sv_bCoiningDone', T#0s, Status);
+    pbVentingDone := GET_SYNC_REFTO('Mold1.sv_bVentingDone', T#0s, Status);
+    
+    pbCoiningActive := GET_SYNC_REFTO('Mold1.sv_bCoiningActive', T#0s, Status);
+    pbVentingActive := GET_SYNC_REFTO('Mold1.sv_bVentingActive', T#0s, Status);
+
+    prMinOutputVenting := GET_SYNC_REFTO('Mold1.sv_rMinOutputVelVenting', T#0s, Status);
+    prMinOutputCoining := GET_SYNC_REFTO('Mold1.sv_rMinOutputVelCoining', T#0s, Status);
+    
+    mbICMLinked := TRUE; 
+END_IF;            
+
+
+
+;#END_EDIT_BLOCK END_ALGORITHM
+
+POSTUPDATE_ALGORITHM pMinOutputChanged ON PU_Task_7 WITH sv_MinOutputInject,sv_bInitStart
+
+#BEGIN_EDIT_BLOCK
+(**************************************** WARNING ********************************************
+ *** The KEBA Kemro K2 System including software is not intended for safety control tasks! ***
+ ***                       For further information see Comment tab!                        ***
+ *********************************************************************************************)
+
+//copy minoutput to inject profile
+sv_InjectProfVis.rMinOutputVel := sv_MinOutputInject.rVelocity;
+sv_InjectProfVis.rMinOutputPress := sv_MinOutputInject.rPressure;
+
+//copy minoutput to const inject movement in setup mode
+sv_ConstInjectSetup.Velocity.rMinOutput := sv_MinOutputInject.rVelocity;
+sv_ConstInjectSetup.Pressure.rMinOutput := sv_MinOutputInject.rPressure;
+
+
+;#END_EDIT_BLOCK END_ALGORITHM
+
+POSTUPDATE_ALGORITHM pStrokeChanged ON PU_Task_7 WITH sv_rScrewVolume
+
+#BEGIN_EDIT_BLOCK
+(**************************************** WARNING ********************************************
+ *** The KEBA Kemro K2 System including software is not intended for safety control tasks! ***
+ ***                       For further information see Comment tab!                        ***
+ *********************************************************************************************)
+
+//copy screw volume to first profile point (not visible on hmi)
+sv_InjectProfVis.Profile.Points[1].rStartPos := sv_rScrewVolume;
+
+
+
+
+;#END_EDIT_BLOCK END_ALGORITHM
+
+POSTUPDATE_ALGORITHM pAllowableValChanged ON TaskSlow WITH sv_rMaxInjPresAllow,sv_rMaxPressureFwd,sv_bInitDone,sv_rMaxHoldPresAllow
+
+#BEGIN_EDIT_BLOCK
+(**************************************** WARNING ********************************************
+ *** The KEBA Kemro K2 System including software is not intended for safety control tasks! ***
+ ***                       For further information see Comment tab!                        ***
+ *********************************************************************************************)
+
+// on change of systempressure, max allowed inject or hold pressure, check for plausibility
+// (1 postkomma digit)
+
+IF ((REAL_TO_DINT(sv_rMaxInjPresAllow * 10.0) > REAL_TO_DINT(sv_rMaxPressureFwd * 10.0)) 
+    OR (REAL_TO_DINT(sv_rMaxHoldPresAllow * 10.0) > REAL_TO_DINT(sv_rMaxPressureFwd * 10.0))) THEN
+   SET_ALARM(erAllowablePresTooHigh);
+ELSE 
+   RESET_ALARM(erAllowablePresTooHigh);
+END_IF;
+
+
+;#END_EDIT_BLOCK END_ALGORITHM
+
+POSTUPDATE_ALGORITHM pMaxSpeedChanged ON PU_Task_7 WITH sv_rScrewDiameter,sv_rMaxSpeedFwd,sv_rMaxSpeedFwdCalc,sv_rMaxSpeedFwdAccu,pbUseAccumulator^,sv_bInitDone
+
+
+VAR
+ rSizeScrew : REAL;
+ rMaxSpeedFwdOut : REAL;
+END_VAR
+#BEGIN_EDIT_BLOCK
+(**************************************** WARNING ********************************************
+ *** The KEBA Kemro K2 System including software is not intended for safety control tasks! ***
+ ***                       For further information see Comment tab!                        ***
+ *********************************************************************************************)
+
+rSizeScrew := FCalcScrewSize(rDiameter := sv_rScrewDiameter);
+sv_rScrewSizeFactor := rSizeScrew * 1.0e-3;
+
+//convert speed mm/s * mm² / 1000 -> cm³/s
+IF bAccumulatorAvailable AND pbUseAccumulator^ THEN
+   sv_rMaxSpeedFwdSpec := sv_rMaxSpeedFwdAccu * rSizeScrew / 1000.0;
+   rMaxSpeedFwdOut := sv_rMaxSpeedFwdSpec;
+ELSE
+   sv_rMaxSpeedFwdSpec := sv_rMaxSpeedFwd * rSizeScrew / 1000.0;  
+   rMaxSpeedFwdOut := sv_rMaxSpeedFwdCalc * rSizeScrew / 1000.0;
+END_IF;
+
+//lintab between cm�/s and %
+sv_LintabOutFwdV.LintabPoints.uNoOfPoints := 2;
+sv_LintabOutFwdV.LintabPoints.Point[1].rX := 0.0;
+sv_LintabOutFwdV.LintabPoints.Point[1].rY := 0.0;
+sv_LintabOutFwdV.LintabPoints.Point[2].rX := rMaxSpeedFwdOut;
+sv_LintabOutFwdV.LintabPoints.Point[2].rY := 100.0;
+
+sv_LintabOutFwdVServo := sv_LintabOutFwdV;
+
+
+;#END_EDIT_BLOCK END_ALGORITHM
+
+POSTUPDATE_ALGORITHM pReCalcInjStartPosition ON PU_Task_7 WITH sv_PlastProfVis.Profile,sv_DecompAftPlastSettings,sv_bInitDone
+
+#BEGIN_EDIT_BLOCK
+(**************************************** WARNING ********************************************
+ *** The KEBA Kemro K2 System including software is not intended for safety control tasks! ***
+ ***                       For further information see Comment tab!                        ***
+ *********************************************************************************************)
+
+CASE sv_DecompAftPlastSettings.Mode OF
+    
+    nNotUsed:
+        //Start position of inject = plast end position
+        sv_rInjectCalcDurationStartPos := sv_PlastProfVis.Profile.Points[sv_PlastProfVis.Profile.iNoOfPoints + 1].rStartPos;
+        sv_rMaxPlausFirstInjectStage := sv_PlastProfVis.Profile.Points[sv_PlastProfVis.Profile.iNoOfPoints + 1].rStartPos;
+   
+    nPosDependent:
+        //Start position of inject = plast end position + decomp position
+        sv_rInjectCalcDurationStartPos := sv_PlastProfVis.Profile.Points[sv_PlastProfVis.Profile.iNoOfPoints + 1].rStartPos + sv_DecompAftPlastSettings.rDecompPos;
+        sv_rMaxPlausFirstInjectStage := sv_PlastProfVis.Profile.Points[sv_PlastProfVis.Profile.iNoOfPoints + 1].rStartPos + sv_DecompAftPlastSettings.rDecompPos; 
+   
+    nTimeDependent:
+        //Start position of inject = plast end position + offset
+        //Todo: Use time, velocity and ramp setting to calculate target position,...
+        sv_rInjectCalcDurationStartPos := sv_PlastProfVis.Profile.Points[sv_PlastProfVis.Profile.iNoOfPoints + 1].rStartPos + 5.0;
+        sv_rMaxPlausFirstInjectStage := sv_rScrewVolume;    
+   
+END_CASE;
+
+
+;#END_EDIT_BLOCK END_ALGORITHM
+
+(*
+get instance data if start event for inject to intermediate position
+is received
+
+attention:
+taskslot is asigned to make sure that execution is done before evaStart in ABControl.pu
+*)
+
+EVENT_ALGORITHM evaStart ON EV_Task_3(50) WITH evStart
+
+
+VAR_INPUT
+ evStartData : tevStartData;
+END_VAR
+
+VAR_TEMP
+ i : DINT;
+END_VAR
+#BEGIN_EDIT_BLOCK
+(**************************************** WARNING ********************************************
+ *** The KEBA Kemro K2 System including software is not intended for safety control tasks! ***
+ ***                       For further information see Comment tab!                        ***
+ *********************************************************************************************)
+
+IF evStartData.DeviceId = sv_DeviceId AND evStartData.MoveId = cMoveFwdInterPos THEN
+   //inject movement to intermediate position started
+   //->get according instance data
+   
+   //avoid out of range errors
+   i := MAX(1,evStartData.IntermediateCond);
+   
+   sv_rInjectInterruptPosition := sv_InstanceDataInjectInterPos[i].rTargetValue;
+   sv_rInjectInterruptDec := sv_InstanceDataInjectInterPos[i].rDeceleration;
+   sv_rInjectInterruptAcc := sv_InstanceDataInjectInterPos[i].rAcceleration;
+   
+   //adapt reference to duration variable
+   sv_MoveInjectInterPos.pdCalculatedDuration := @sv_InstanceDataInjectInterPos[i].dCalculatedDuration;
+    
+   //adapt reference to delay time
+   sv_MoveInjectInterPos.pdStartDelaySet := @sv_InstanceDataInjectInterPos[i].dDelay; 
+END_IF;
+
+
+;#END_EDIT_BLOCK END_ALGORITHM
+
+POSTUPDATE_ALGORITHM pDuration ON PU_Task_7 WITH sv_dCalculatedDurationHold,sv_dCalculatedDurationInject
+
+#BEGIN_EDIT_BLOCK
+(**************************************** WARNING ********************************************
+ *** The KEBA Kemro K2 System including software is not intended for safety control tasks! ***
+ ***                       For further information see Comment tab!                        ***
+ *********************************************************************************************)
+
+sv_dDurationInjectAndHold := sv_dCalculatedDurationInject + sv_dCalculatedDurationHold;
+
+
+;#END_EDIT_BLOCK END_ALGORITHM
+
+POSTUPDATE_ALGORITHM pCpyAccelerationsPreCutOff ON PU_Task_7 WITH sv_InjectProfVis.Profile.Points[2].rVelRamp
+
+
+VAR_TEMP
+ i : UDINT;
+END_VAR
+#BEGIN_EDIT_BLOCK
+FOR i:= 3 TO 20 DO
+    sv_InjectProfVis.Profile.Points[i].rVelRamp := sv_InjectProfVis.Profile.Points[2].rVelRamp;
+END_FOR;
+
+
+
+;#END_EDIT_BLOCK END_ALGORITHM
+
+POSTUPDATE_ALGORITHM pCpyAccelerationsPostCutOff ON PU_Task_7 WITH sv_HoldProfVis.Profile.Points[2].rPressRamp
+
+
+VAR_TEMP
+ i : UDINT;
+END_VAR
+#BEGIN_EDIT_BLOCK
+FOR i:= 3 TO 20 DO
+    sv_HoldProfVis.Profile.Points[i].rPressRamp := sv_HoldProfVis.Profile.Points[2].rPressRamp;
+END_FOR;
+
+
+
+;#END_EDIT_BLOCK END_ALGORITHM
+
+POSTUPDATE_ALGORITHM pCheckPressureLimitController ON PU_Task_7 WITH sv_bInitDone,sv_PressureLimitControlParams.bUsePIDControl,sv_PressureLimitVelocityParams.bUsePIDControl
+
+
+VAR
+ mInitPresLimitCtrl : BOOL := FALSE;
+ mUsePresLimitPIDCtrl : BOOL := FALSE;
+ mUsePresLimitVelocityCtrl : BOOL := FALSE;
+END_VAR
+#BEGIN_EDIT_BLOCK
+(**************************************** WARNING ********************************************
+ *** The KEBA Kemro K2 System including software is not intended for safety control tasks! ***
+ ***                       For further information see Comment tab!                        ***
+ *********************************************************************************************)
+
+IF sv_bInitDone AND NOT mInitPresLimitCtrl THEN
+   mUsePresLimitPIDCtrl := sv_PressureLimitControlParams.bUsePIDControl;
+   mUsePresLimitVelocityCtrl := sv_PressureLimitVelocityParams.bUsePIDControl;
+   mInitPresLimitCtrl := TRUE;
+ELSE
+   IF (NOT mUsePresLimitPIDCtrl) AND sv_PressureLimitControlParams.bUsePIDControl THEN
+      sv_PressureLimitVelocityParams.bUsePIDControl := FALSE;
+      mUsePresLimitPIDCtrl := TRUE;
+      mUsePresLimitVelocityCtrl := FALSE;      
+   ELSIF (NOT mUsePresLimitVelocityCtrl) AND sv_PressureLimitVelocityParams.bUsePIDControl THEN
+      sv_PressureLimitControlParams.bUsePIDControl := FALSE;  
+      mUsePresLimitPIDCtrl := FALSE;
+      mUsePresLimitVelocityCtrl := TRUE;
+   END_IF;   
+END_IF;
+
+
+;#END_EDIT_BLOCK END_ALGORITHM
+
+PROCESS_ALGORITHM paInit ON TaskSlow AUTOSTART
+
+
+VAR
+ variableName : STRING(255);
+ swoState : KSWO_Status;
+END_VAR
+#BEGIN_EDIT_BLOCK
+(**************************************** WARNING ********************************************
+ *** The KEBA Kemro K2 System including software is not intended for safety control tasks! ***
+ ***                       For further information see Comment tab!                        ***
+ *********************************************************************************************)
+
+variableName := CONCAT(GET_MY_FU_NAME(),'.Inject.ActInjectTime ');
+swoState := KSWO_AddVariable(Task := TaskInject,
+                             Name := variableName,
+                             Variable := sv_dActInjectHoldTime); // use sum of inject and hold instead of sv_InjectTimesAct.dActMoveTime;
+
+STOP_PROCESS_ALGORITHM();
+
+
+;#END_EDIT_BLOCK END_ALGORITHM
+
+POSTUPDATE_ALGORITHM pSendHoldMovementState ON PU_Task_3 WITH sv_bInjectActive,sv_bCutOffDetected
+
+
+VAR
+ fbSetMovementState : FBSetMovementState;
+END_VAR
+#BEGIN_EDIT_BLOCK
+(**************************************** WARNING ********************************************
+ *** The KEBA Kemro K2 System including software is not intended for safety control tasks! ***
+ ***                       For further information see Comment tab!                        ***
+ *********************************************************************************************)
+
+IF sv_bInjectActive AND sv_bCutOffDetected THEN
+   //send movement state event for hold movement
+   fbSetMovementState(MoveId := cMoveHold,
+                      MoveDir := cMoveFwd,
+                      State := nActive);
+END_IF;
+
+
+
+
+;#END_EDIT_BLOCK END_ALGORITHM
+
+
+
+END_ALGORITHM_BLOCK
+
+
+
+#END_OF_IEC_PART
+
+@Puma @IecEditor 6 168 @Pou 25 
+@@@BEG_Comment@@@
+@h    ! WARNING !
+@h    The Kemro K2 system (including software) only meets category B according to EN 954-1,
+@h    thus it is not intended for usage in safety-relevant control applications in the field 
+@h    of personal safety (e.g. emergency stop).
+@h    To implement potentially necessary safety-relevant control tasks, always use additional 
+@h    external safety devices that are intended for the particular purpose, and meet the necessary 
+@h    functional safety.
+@h    For further information see EN 954-1 (EN ISO 13849-1) and/or the K2-x00 user manual, chapter 
+@h    "CE conformity, directives and standards".
+
+In this AB the inject movements are realized.
+This means inject movement with cutoff detection, inject movement in setup mode,
+inject movement to interrupt position,
+calibration for screw transducer (forward) and also the inject movement for auto purging
+
+@FunctionID: S_KPIEC_PRINJ_01
+@FunctionID: S_KPIEC_PRINJ_02
+@FunctionID: S_KPIEC_CALTRANS_04
+
+
+@@@END_Comment@@@
+
+@BEG_Contents 
+
+@BEG_Func 
+@RT(17)FuncTreeContainer 
+8 
+@Var @RT(14)GET_MY_FU_NAME @RT(0) @T @F @DT @RT(0) @RT(0) @T @T @UNKNOWN 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+0 @RT(0) @RT(0) 
+@END_Attrib 
+1 1 @F @F @F @F 
+
+@Var @RT(19)WRITE_SVREAL_DIRECT @RT(0) @T @F @DT @RT(0) @RT(0) @T @T @UNKNOWN 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+0 @RT(0) @RT(0) 
+@END_Attrib 
+1 1 @F @F @F @F 
+
+@Var @RT(9)SET_ALARM @RT(0) @T @F @DT @RT(0) @RT(0) @T @T @UNKNOWN 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+0 @RT(0) @RT(0) 
+@END_Attrib 
+1 1 @F @F @F @F 
+
+@Var @RT(15)WRITE_SV_DIRECT @RT(0) @T @F @DT @RT(0) @RT(0) @T @T @UNKNOWN 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+0 @RT(0) @RT(0) 
+@END_Attrib 
+1 1 @F @F @F @F 
+
+@Var @RT(14)GET_SYNC_REFTO @RT(0) @T @F @DT @RT(0) @RT(0) @T @T @UNKNOWN 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+0 @RT(0) @RT(0) 
+@END_Attrib 
+1 1 @F @F @F @F 
+
+@Var @RT(11)RESET_ALARM @RT(0) @T @F @DT @RT(0) @RT(0) @T @T @UNKNOWN 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+0 @RT(0) @RT(0) 
+@END_Attrib 
+1 1 @F @F @F @F 
+
+@Var @RT(14)FCalcScrewSize @RT(0) @T @F @DT @RT(0) @RT(0) @T @T @UNKNOWN 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+0 @RT(0) @RT(0) 
+@END_Attrib 
+1 1 @F @F @F @F 
+
+@Var @RT(16)KSWO_AddVariable @RT(0) @T @F @DT @RT(0) @RT(0) @T @T @UNKNOWN 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+0 @RT(0) @RT(0) 
+@END_Attrib 
+1 1 @F @F @F @F 
+
+@END_Func 
+
+@BEG_Const 
+@RT(18)ConstTreeContainer 
+29 
+@Var @RT(23)cLockGroupHeatingNozzle @RT(0) @T @F @DT @RT(0) @RT(0) @T @T @UNKNOWN 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+0 @RT(0) @RT(0) 
+@END_Attrib 
+1 1 @F @F @F @F 
+
+@Var @RT(26)cLockGroupSafetyGateNozzle @RT(0) @T @F @DT @RT(0) @RT(0) @T @T @UNKNOWN 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+0 @RT(0) @RT(0) 
+@END_Attrib 
+1 1 @F @F @F @F 
+
+@Var @RT(24)cLockGroupSafetyGateMold @RT(0) @T @F @DT @RT(0) @RT(0) @T @T @UNKNOWN 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+0 @RT(0) @RT(0) 
+@END_Attrib 
+1 1 @F @F @F @F 
+
+@Var @RT(15)cLockGroupMotor @RT(0) @T @F @DT @RT(0) @RT(0) @T @T @UNKNOWN 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+0 @RT(0) @RT(0) 
+@END_Attrib 
+1 1 @F @F @F @F 
+
+@Var @RT(7)nActive @RT(0) @T @F @DT @RT(0) @RT(0) @T @T @UNKNOWN 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+0 @RT(0) @RT(0) 
+@END_Attrib 
+1 1 @F @F @F @F 
+
+@Var @RT(12)nDeviceState @RT(0) @T @F @DT @RT(0) @RT(0) @T @T @UNKNOWN 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+0 @RT(0) @RT(0) 
+@END_Attrib 
+1 1 @F @F @F @F 
+
+@Var @RT(21)nKAPPL_IMM_ServoValve @RT(0) @T @F @DT @RT(0) @RT(0) @T @T @UNKNOWN 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+0 @RT(0) @RT(0) 
+@END_Attrib 
+1 1 @F @F @F @F 
+
+@Var @RT(9)nInactive @RT(0) @T @F @DT @RT(0) @RT(0) @T @T @UNKNOWN 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+0 @RT(0) @RT(0) 
+@END_Attrib 
+1 1 @F @F @F @F 
+
+@Var @RT(16)cMoveInjectPurge @RT(0) @T @F @DT @RT(0) @RT(0) @T @T @UNKNOWN 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+0 @RT(0) @RT(0) 
+@END_Attrib 
+1 1 @F @F @F @F 
+
+@Var @RT(13)cMoveColdDrop @RT(0) @T @F @DT @RT(0) @RT(0) @T @T @UNKNOWN 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+0 @RT(0) @RT(0) 
+@END_Attrib 
+1 1 @F @F @F @F 
+
+@Var @RT(6)nSetup @RT(0) @T @F @DT @RT(0) @RT(0) @T @T @UNKNOWN 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+0 @RT(0) @RT(0) 
+@END_Attrib 
+1 1 @F @F @F @F 
+
+@Var @RT(18)tnCalibState_Error @RT(0) @T @F @DT @RT(0) @RT(0) @T @T @UNKNOWN 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+0 @RT(0) @RT(0) 
+@END_Attrib 
+1 1 @F @F @F @F 
+
+@Var @RT(22)nKAPPL_VelocityControl @RT(0) @T @F @DT @RT(0) @RT(0) @T @T @UNKNOWN 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+0 @RT(0) @RT(0) 
+@END_Attrib 
+1 1 @F @F @F @F 
+
+@Var @RT(22)nKAPPL_PressureControl @RT(0) @T @F @DT @RT(0) @RT(0) @T @T @UNKNOWN 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+0 @RT(0) @RT(0) 
+@END_Attrib 
+1 1 @F @F @F @F 
+
+@Var @RT(11)nDeactivate @RT(0) @T @F @DT @RT(0) @RT(0) @T @T @UNKNOWN 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+0 @RT(0) @RT(0) 
+@END_Attrib 
+1 1 @F @F @F @F 
+
+@Var @RT(15)nInjectPosition @RT(0) @T @F @DT @RT(0) @RT(0) @T @T @UNKNOWN 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+0 @RT(0) @RT(0) 
+@END_Attrib 
+1 1 @F @F @F @F 
+
+@Var @RT(15)nInjectPressure @RT(0) @T @F @DT @RT(0) @RT(0) @T @T @UNKNOWN 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+0 @RT(0) @RT(0) 
+@END_Attrib 
+1 1 @F @F @F @F 
+
+@Var @RT(12)nAfterInject @RT(0) @T @F @DT @RT(0) @RT(0) @T @T @UNKNOWN 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+0 @RT(0) @RT(0) 
+@END_Attrib 
+1 1 @F @F @F @F 
+
+@Var @RT(12)nParallelICM @RT(0) @T @F @DT @RT(0) @RT(0) @T @T @UNKNOWN 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+0 @RT(0) @RT(0) 
+@END_Attrib 
+1 1 @F @F @F @F 
+
+@Var @RT(14)nSequentialICM @RT(0) @T @F @DT @RT(0) @RT(0) @T @T @UNKNOWN 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+0 @RT(0) @RT(0) 
+@END_Attrib 
+1 1 @F @F @F @F 
+
+@Var @RT(16)cMoveFwdInterPos @RT(0) @T @F @DT @RT(0) @RT(0) @T @T @UNKNOWN 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+0 @RT(0) @RT(0) 
+@END_Attrib 
+1 1 @F @F @F @F 
+
+@Var @RT(9)cMoveHold @RT(0) @T @F @DT @RT(0) @RT(0) @T @T @UNKNOWN 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+0 @RT(0) @RT(0) 
+@END_Attrib 
+1 1 @F @F @F @F 
+
+@Var @RT(11)cMoveInject @RT(0) @T @F @DT @RT(0) @RT(0) @T @T @UNKNOWN 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+0 @RT(0) @RT(0) 
+@END_Attrib 
+1 1 @F @F @F @F 
+
+@Var @RT(16)cCompAccumulator @RT(0) @T @F @DT @RT(0) @RT(0) @T @T @UNKNOWN 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+0 @RT(0) @RT(0) 
+@END_Attrib 
+1 1 @F @F @F @F 
+
+@Var @RT(14)KSYS_Status_OK @RT(0) @T @F @DT @RT(0) @RT(0) @T @T @UNKNOWN 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+0 @RT(0) @RT(0) 
+@END_Attrib 
+1 1 @F @F @F @F 
+
+@Var @RT(8)nNotUsed @RT(0) @T @F @DT @RT(0) @RT(0) @T @T @UNKNOWN 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+0 @RT(0) @RT(0) 
+@END_Attrib 
+1 1 @F @F @F @F 
+
+@Var @RT(13)nPosDependent @RT(0) @T @F @DT @RT(0) @RT(0) @T @T @UNKNOWN 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+0 @RT(0) @RT(0) 
+@END_Attrib 
+1 1 @F @F @F @F 
+
+@Var @RT(14)nTimeDependent @RT(0) @T @F @DT @RT(0) @RT(0) @T @T @UNKNOWN 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+0 @RT(0) @RT(0) 
+@END_Attrib 
+1 1 @F @F @F @F 
+
+@Var @RT(8)cMoveFwd @RT(0) @T @F @DT @RT(0) @RT(0) @T @T @UNKNOWN 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+0 @RT(0) @RT(0) 
+@END_Attrib 
+1 1 @F @F @F @F 
+
+@END_Const 
+
+@BEG_Export 
+
+@BEG_Kind 
+@ALGORITHM_BLOCK @RT(15)ABMoveInjection @STRUCTURED_TEXT 
+@RT(0) @RT(0) @RT(0) 
+@END_Kind 
+
+@BEG_Dcl 
+@RT(16)DclTreeContainer 
+184 
+@Var @RT(15)sv_rVelocitySet @RT(0) @T @F @DT @RT(4)REAL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 8 @F @F @F @F 
+
+@Var @RT(16)sv_OperationMode @RT(0) @T @T @DERIVED 0 @T @T @DT @RT(15)tnOperationMode @RT(0) @T @T @UNKNOWN 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 8 @F @F @F @F 
+
+@Var @RT(13)sv_MoveInject @RT(0) @T @T @DERIVED 0 @T @T @DT @RT(10)tsMoveData @RT(0) @T @T @UNKNOWN 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 8 @F @F @F @F 
+
+@Var @RT(21)sv_MoveInjectInterPos @RT(0) @T @T @DERIVED 0 @T @T @DT @RT(10)tsMoveData @RT(0) @T @T @UNKNOWN 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 8 @F @F @F @F 
+
+@Var @RT(16)sv_InjectProfVis @RT(0) @T @T @DERIVED 0 @T @T @DT @RT(16)KAPPL_VisProfile @RT(0) @T @T @UNKNOWN 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 8 @F @F @F @F 
+
+@Var @RT(14)sv_HoldProfVis @RT(0) @T @T @DERIVED 0 @T @T @DT @RT(16)KAPPL_VisProfile @RT(0) @T @T @UNKNOWN 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 8 @F @F @F @F 
+
+@Var @RT(22)sv_InjectControlParams @RT(0) @T @T @DERIVED 0 @T @T @DT @RT(19)tsControlParameters @RT(0) @T @T @UNKNOWN 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 8 @F @F @F @F 
+
+@Var @RT(23)sv_HoldingControlParams @RT(0) @T @T @DERIVED 0 @T @T @DT @RT(19)tsControlParameters @RT(0) @T @T @UNKNOWN 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 8 @F @F @F @F 
+
+@Var @RT(17)sv_rScrewPosition @RT(0) @T @F @DT @RT(4)REAL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 8 @F @F @F @F 
+
+@Var @RT(15)sv_CutOffParams @RT(0) @T @T @DERIVED 0 @T @T @DT @RT(18)tsCutOffCriterions @RT(0) @T @T @UNKNOWN 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 8 @F @F @F @F 
+
+@Var @RT(15)sv_dActHoldTime @RT(0) @T @F @DT @RT(4)TIME @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 8 @F @F @F @F 
+
+@Var @RT(19)sv_ConstInjectSetup @RT(0) @T @T @DERIVED 0 @T @T @DT @RT(8)tsVelPre @RT(0) @T @T @UNKNOWN 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(37)const output for inject in setup mode @RT(0) 
+@END_Attrib 
+1 8 @F @F @F @F 
+
+@Var @RT(24)sv_ConstInjectSetupServo @RT(0) @T @T @DERIVED 0 @T @T @DT @RT(8)tsVelPre @RT(0) @T @T @UNKNOWN 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(52)const output for servovalve for inject in setup mode @RT(0) 
+@END_Attrib 
+1 8 @F @F @F @F 
+
+@Var @RT(11)sv_MoveHold @RT(0) @T @T @DERIVED 0 @T @T @DT @RT(10)tsMoveData @RT(0) @T @T @UNKNOWN 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 8 @F @F @F @F 
+
+@Var @RT(12)sv_rPressure @RT(0) @T @F @DT @RT(4)REAL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 8 @F @F @F @F 
+
+@Var @RT(12)sv_rVelocity @RT(0) @T @F @DT @RT(4)REAL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 8 @F @F @F @F 
+
+@Var @RT(17)sv_TmpLintabPoint @RT(0) @T @T @DERIVED 0 @T @T @DT @RT(18)KCTRL_Lintab_Point @RT(0) @T @T @UNKNOWN 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 8 @F @F @F @F 
+
+@Var @RT(11)ai_Position @RT(0) @T @F @DT @RT(4)REAL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 8 @F @F @F @F 
+
+@Var @RT(24)sv_dStandStillDetectTime @RT(0) @T @F @DT @RT(4)TIME @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(29)time for standstill detection @RT(0) 
+@END_Attrib 
+1 8 @F @F @F @F 
+
+@Var @RT(18)sv_rMaxVoltageDiff @RT(0) @T @F @DT @RT(4)REAL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(45)max. voltage difference to detect stand still @RT(0) 
+@END_Attrib 
+1 8 @F @F @F @F 
+
+@Var @RT(16)sv_bOutputActive @RT(0) @T @F @DT @RT(4)BOOL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(16)Output is active @RT(0) 
+@END_Attrib 
+1 8 @F @F @F @F 
+
+@Var @RT(18)sv_bPreOutputReady @RT(0) @T @F @DT @RT(4)BOOL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(18)PreOutput is ready @RT(0) 
+@END_Attrib 
+1 8 @F @F @F @F 
+
+@Var @RT(21)sv_bDoTransducerCalib @RT(0) @T @F @DT @RT(4)BOOL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 8 @F @F @F @F 
+
+@Var @RT(19)sv_bTransducerError @RT(0) @T @F @DT @RT(4)BOOL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 8 @F @F @F @F 
+
+@Var @RT(18)sv_MinOutputInject @RT(0) @T @T @DERIVED 0 @T @T @DT @RT(11)tsMinOutput @RT(0) @T @T @UNKNOWN 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 8 @F @F @F @F 
+
+@Var @RT(18)sv_rCutOffPosition @RT(0) @T @F @DT @RT(4)REAL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(35)position where cut off was detected @RT(0) 
+@END_Attrib 
+1 8 @F @F @F @F 
+
+@Var @RT(18)sv_MoveInjectPurge @RT(0) @T @T @DERIVED 0 @T @T @DT @RT(10)tsMoveData @RT(0) @T @T @UNKNOWN 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 8 @F @F @F @F 
+
+@Var @RT(18)sv_MoveInjectCalib @RT(0) @T @T @DERIVED 0 @T @T @DT @RT(10)tsMoveData @RT(0) @T @T @UNKNOWN 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 8 @F @F @F @F 
+
+@Var @RT(15)sv_PlastProfVis @RT(0) @T @T @DERIVED 0 @T @T @DT @RT(21)KAPPL_VisProfilePlast @RT(0) @T @T @UNKNOWN 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 8 @F @F @F @F 
+
+@Var @RT(25)sv_DecompAftPlastSettings @RT(0) @T @T @DERIVED 0 @T @T @DT @RT(13)tsDecompParam @RT(0) @T @T @UNKNOWN 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 8 @F @F @F @F 
+
+@Var @RT(16)sv_PurgeSettings @RT(0) @T @T @DERIVED 0 @T @T @DT @RT(15)tsPurgeSettings @RT(0) @T @T @UNKNOWN 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 8 @F @F @F @F 
+
+@Var @RT(17)sv_InjectTimesSet @RT(0) @T @T @DERIVED 0 @T @T @DT @RT(10)tsSetTimes @RT(0) @T @T @UNKNOWN 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 8 @F @F @F @F 
+
+@Var @RT(17)sv_InjectTimesAct @RT(0) @T @T @DERIVED 0 @T @T @DT @RT(10)tsActTimes @RT(0) @T @T @UNKNOWN 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 8 @F @F @F @F 
+
+@Var @RT(15)sv_rActPressure @RT(0) @T @F @DT @RT(4)REAL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(15)actual pressure @RT(0) 
+@END_Attrib 
+1 8 @F @F @F @F 
+
+@Var @RT(20)sv_bDoInjectionCalib @RT(0) @T @F @DT @RT(4)BOOL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 8 @F @F @F @F 
+
+@Var @RT(22)sv_ConstInjectionCalib @RT(0) @T @T @DERIVED 0 @T @T @DT @RT(8)tsVelPre @RT(0) @T @T @UNKNOWN 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 8 @F @F @F @F 
+
+@Var @RT(13)sv_bInitStart @RT(0) @T @F @DT @RT(4)BOOL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 8 @F @F @F @F 
+
+@Var @RT(23)sv_bDoBackPressureCalib @RT(0) @T @F @DT @RT(4)BOOL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 8 @F @F @F @F 
+
+@Var @RT(25)sv_ConstBackPressureCalib @RT(0) @T @T @DERIVED 0 @T @T @DT @RT(8)tsVelPre @RT(0) @T @T @UNKNOWN 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 8 @F @F @F @F 
+
+@Var @RT(18)sv_bCutOffDetected @RT(0) @T @F @DT @RT(4)BOOL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 8 @F @F @F @F 
+
+@Var @RT(16)sv_LintabOutFwdP @RT(0) @T @T @DERIVED 0 @T @T @DT @RT(16)KAPPL_LintabData @RT(0) @T @T @UNKNOWN 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 8 @F @F @F @F 
+
+@Var @RT(16)sv_LintabOutFwdV @RT(0) @T @T @DERIVED 0 @T @T @DT @RT(16)KAPPL_LintabData @RT(0) @T @T @UNKNOWN 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 8 @F @F @F @F 
+
+@Var @RT(15)sv_rPressureAbs @RT(0) @T @F @DT @RT(4)REAL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 8 @F @F @F @F 
+
+@Var @RT(18)sv_rSetPressureAbs @RT(0) @T @F @DT @RT(4)REAL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 8 @F @F @F @F 
+
+@Var @RT(15)sv_rVelocityAbs @RT(0) @T @F @DT @RT(4)REAL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 8 @F @F @F @F 
+
+@Var @RT(18)sv_rSetVelocityAbs @RT(0) @T @F @DT @RT(4)REAL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 8 @F @F @F @F 
+
+@Var @RT(15)sv_rScrewVolume @RT(0) @T @F @DT @RT(4)REAL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 8 @F @F @F @F 
+
+@Var @RT(12)sv_bInitDone @RT(0) @T @F @DT @RT(4)BOOL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 8 @F @F @F @F 
+
+@Var @RT(18)sv_rMaxPressureFwd @RT(0) @T @F @DT @RT(4)REAL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 8 @F @F @F @F 
+
+@Var @RT(19)sv_rMaxSpeedFwdSpec @RT(0) @T @F @DT @RT(4)REAL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 8 @F @F @F @F 
+
+@Var @RT(17)sv_rScrewDiameter @RT(0) @T @F @DT @RT(4)REAL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 8 @F @F @F @F 
+
+@Var @RT(23)sv_InjectDeadTimeParams @RT(0) @T @T @DERIVED 0 @T @T @DT @RT(20)tsDeadTimeParameters @RT(0) @T @T @UNKNOWN 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(35)dead time parameters for inject PID @RT(0) 
+@END_Attrib 
+1 8 @F @F @F @F 
+
+@Var @RT(24)sv_HoldingDeadTimeParams @RT(0) @T @T @DERIVED 0 @T @T @DT @RT(20)tsDeadTimeParameters @RT(0) @T @T @UNKNOWN 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(36)dead time parameters for holding PID @RT(0) 
+@END_Attrib 
+1 8 @F @F @F @F 
+
+@Var @RT(19)sv_rActPressureHydr @RT(0) @T @F @DT @RT(4)REAL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 8 @F @F @F @F 
+
+@Var @RT(20)sv_rScrewPositionAbs @RT(0) @T @F @DT @RT(4)REAL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 8 @F @F @F @F 
+
+@Var @RT(11)sv_IMM_Type @RT(0) @T @T @DERIVED 0 @T @T @DT @RT(14)KAPPL_IMM_Type @RT(0) @T @T @UNKNOWN 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(20)type of mold machine @RT(0) 
+@END_Attrib 
+1 8 @F @F @F @F 
+
+@Var @RT(16)sv_rHoldPosition @RT(0) @T @F @DT @RT(4)REAL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(29)position after end of holding @RT(0) 
+@END_Attrib 
+1 8 @F @F @F @F 
+
+@Var @RT(19)sv_rCavityPressure1 @RT(0) @T @F @DT @RT(4)REAL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 8 @F @F @F @F 
+
+@Var @RT(19)sv_rCavityPressure2 @RT(0) @T @F @DT @RT(4)REAL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 8 @F @F @F @F 
+
+@Var @RT(19)sv_rCavityPressure3 @RT(0) @T @F @DT @RT(4)REAL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 8 @F @F @F @F 
+
+@Var @RT(19)sv_rCavityPressure4 @RT(0) @T @F @DT @RT(4)REAL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 8 @F @F @F @F 
+
+@Var @RT(19)sv_rCavityPressure5 @RT(0) @T @F @DT @RT(4)REAL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 8 @F @F @F @F 
+
+@Var @RT(19)sv_rCavityPressure6 @RT(0) @T @F @DT @RT(4)REAL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 8 @F @F @F @F 
+
+@Var @RT(19)sv_rCavityPressure7 @RT(0) @T @F @DT @RT(4)REAL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 8 @F @F @F @F 
+
+@Var @RT(19)sv_rCavityPressure8 @RT(0) @T @F @DT @RT(4)REAL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 8 @F @F @F @F 
+
+@Var @RT(18)sv_rCavityPressure @RT(0) @T @F @DT @RT(4)REAL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 8 @F @F @F @F 
+
+@Var @RT(27)sv_iSelCavityPressureSensor @RT(0) @T @F @DT @RT(4)DINT @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(53)which cavity pressure sensor will be used for cut off @RT(0) 
+@END_Attrib 
+1 8 @F @F @F @F 
+
+@Var @RT(16)sv_bInjectActive @RT(0) @T @F @DT @RT(4)BOOL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(19)Injection is active @RT(0) 
+@END_Attrib 
+1 8 @F @F @F @F 
+
+@Var @RT(15)sv_rMaxSpeedFwd @RT(0) @T @F @DT @RT(4)REAL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 8 @F @F @F @F 
+
+@Var @RT(15)sv_rServoOutput @RT(0) @T @F @DT @RT(4)REAL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 8 @F @F @F @F 
+
+@Var @RT(27)sv_ServoValveControllerMode @RT(0) @T @T @DERIVED 0 @T @T @DT @RT(30)KAPPL_ServoValveControllerMode @RT(0) @T @T @UNKNOWN 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 8 @F @F @F @F 
+
+@Var @RT(15)sv_MoveColdDrop @RT(0) @T @T @DERIVED 0 @T @T @DT @RT(10)tsMoveData @RT(0) @T @T @UNKNOWN 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 8 @F @F @F @F 
+
+@Var @RT(19)sv_ColdDropSettings @RT(0) @T @T @DERIVED 0 @T @T @DT @RT(16)tsColdDropParams @RT(0) @T @T @UNKNOWN 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 8 @F @F @F @F 
+
+@Var @RT(13)sv_CalibState @RT(0) @T @T @DERIVED 0 @T @T @DT @RT(15)tsCalibMovement @RT(0) @T @T @UNKNOWN 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 8 @F @F @F @F 
+
+@Var @RT(18)sv_rCutOffPressure @RT(0) @T @F @DT @RT(4)REAL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(30)spec Injectpressure at cut off @RT(0) 
+@END_Attrib 
+1 8 @F @F @F @F 
+
+@Var @RT(25)sv_CalibStateBackPressure @RT(0) @T @T @DERIVED 0 @T @T @DT @RT(15)tsCalibMovement @RT(0) @T @T @UNKNOWN 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 8 @F @F @F @F 
+
+@Var @RT(22)sv_CalibStateInjection @RT(0) @T @T @DERIVED 0 @T @T @DT @RT(15)tsCalibMovement @RT(0) @T @T @UNKNOWN 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 8 @F @F @F @F 
+
+@Var @RT(21)sv_LintabOutFwdVServo @RT(0) @T @T @DERIVED 0 @T @T @DT @RT(16)KAPPL_LintabData @RT(0) @T @T @UNKNOWN 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 8 @F @F @F @F 
+
+@Var @RT(18)sv_NumberOfDevices @RT(0) @T @T @DERIVED 0 @T @T @DT @RT(17)tyNumberOfDevices @RT(0) @T @T @UNKNOWN 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 8 @F @F @F @F 
+
+@Var @RT(29)sv_PressureLimitControlParams @RT(0) @T @T @DERIVED 0 @T @T @DT @RT(19)tsControlParameters @RT(0) @T @T @UNKNOWN 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(55)parameter for pressure limit controler during precutoff @RT(0) 
+@END_Attrib 
+1 8 @F @F @F @F 
+
+@Var @RT(30)sv_PressureLimitVelocityParams @RT(0) @T @T @DERIVED 0 @T @T @DT @RT(19)tsControlParameters @RT(0) @T @T @UNKNOWN 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 8 @F @F @F @F 
+
+@Var @RT(20)sv_rMaxHoldPresAllow @RT(0) @T @F @DT @RT(4)REAL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(39)maximum specific pressure for injection @RT(0) 
+@END_Attrib 
+1 8 @F @F @F @F 
+
+@Var @RT(19)sv_rMaxInjPresAllow @RT(0) @T @F @DT @RT(4)REAL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(39)maximum specific pressure for injection @RT(0) 
+@END_Attrib 
+1 8 @F @F @F @F 
+
+@Var @RT(13)sv_TraceLevel @RT(0) @T @T @DERIVED 0 @T @T @DT @RT(12)tsTraceLevel @RT(0) @T @T @UNKNOWN 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 8 @F @F @F @F 
+
+@Var @RT(28)sv_dCalculatedDurationInject @RT(0) @T @F @DT @RT(4)TIME @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(37)Calculated duration for inject + hold @RT(0) 
+@END_Attrib 
+1 8 @F @F @F @F 
+
+@Var @RT(30)sv_rInjectCalcDurationStartPos @RT(0) @T @F @DT @RT(4)REAL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(49)Start position for calculation of inject duration @RT(0) 
+@END_Attrib 
+1 8 @F @F @F @F 
+
+@Var @RT(27)sv_rInjectInterruptPosition @RT(0) @T @F @DT @RT(4)REAL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(53)interrupt position (for instanceable inject movement) @RT(0) 
+@END_Attrib 
+1 8 @F @F @F @F 
+
+@Var @RT(22)sv_rInjectInterruptAcc @RT(0) @T @F @DT @RT(4)REAL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(57)Acceleration to continune after inject interrupt position @RT(0) 
+@END_Attrib 
+1 8 @F @F @F @F 
+
+@Var @RT(22)sv_rInjectInterruptDec @RT(0) @T @F @DT @RT(4)REAL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(47)Deceleration to reach inject interrupt position @RT(0) 
+@END_Attrib 
+1 8 @F @F @F @F 
+
+@Var @RT(29)sv_InstanceDataInjectInterPos @RT(0) @T @T @DERIVED 0 @T @T @DT @RT(19)tyInstanceListArray @RT(0) @T @T @UNKNOWN 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(56)array with target positions of inject interpos movements @RT(0) 
+@END_Attrib 
+1 8 @F @F @F @F 
+
+@Var @RT(11)sv_DeviceId @RT(0) @T @T @DERIVED 0 @T @T @DT @RT(10)tsDeviceId @RT(0) @T @T @UNKNOWN 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 8 @F @F @F @F 
+
+@Var @RT(26)sv_dCalculatedDurationHold @RT(0) @T @F @DT @RT(4)TIME @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(24)Calculated hold duration @RT(0) 
+@END_Attrib 
+1 8 @F @F @F @F 
+
+@Var @RT(25)sv_dDurationInjectAndHold @RT(0) @T @F @DT @RT(4)TIME @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(25)Duration of inject + hold @RT(0) 
+@END_Attrib 
+1 8 @F @F @F @F 
+
+@Var @RT(14)sv_bHoldActive @RT(0) @T @F @DT @RT(4)BOOL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(79)TRUE: holding is active; attention: SV is resetted after end of inject movement @RT(0) 
+@END_Attrib 
+1 8 @F @F @F @F 
+
+@Var @RT(14)sv_ScrewLintab @RT(0) @T @T @DERIVED 0 @T @T @DT @RT(19)KAPPL_LintabData_2P @RT(0) @T @T @UNKNOWN 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 8 @F @F @F @F 
+
+@Var @RT(17)sv_PressureLintab @RT(0) @T @T @DERIVED 0 @T @T @DT @RT(19)KAPPL_LintabData_2P @RT(0) @T @T @UNKNOWN 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 8 @F @F @F @F 
+
+@Var @RT(21)sv_CavityPressLintab1 @RT(0) @T @T @DERIVED 0 @T @T @DT @RT(19)KAPPL_LintabData_2P @RT(0) @T @T @UNKNOWN 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 8 @F @F @F @F 
+
+@Var @RT(21)sv_CavityPressLintab2 @RT(0) @T @T @DERIVED 0 @T @T @DT @RT(19)KAPPL_LintabData_2P @RT(0) @T @T @UNKNOWN 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 8 @F @F @F @F 
+
+@Var @RT(21)sv_CavityPressLintab3 @RT(0) @T @T @DERIVED 0 @T @T @DT @RT(19)KAPPL_LintabData_2P @RT(0) @T @T @UNKNOWN 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 8 @F @F @F @F 
+
+@Var @RT(21)sv_CavityPressLintab4 @RT(0) @T @T @DERIVED 0 @T @T @DT @RT(19)KAPPL_LintabData_2P @RT(0) @T @T @UNKNOWN 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 8 @F @F @F @F 
+
+@Var @RT(21)sv_CavityPressLintab5 @RT(0) @T @T @DERIVED 0 @T @T @DT @RT(19)KAPPL_LintabData_2P @RT(0) @T @T @UNKNOWN 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 8 @F @F @F @F 
+
+@Var @RT(21)sv_CavityPressLintab6 @RT(0) @T @T @DERIVED 0 @T @T @DT @RT(19)KAPPL_LintabData_2P @RT(0) @T @T @UNKNOWN 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 8 @F @F @F @F 
+
+@Var @RT(21)sv_CavityPressLintab7 @RT(0) @T @T @DERIVED 0 @T @T @DT @RT(19)KAPPL_LintabData_2P @RT(0) @T @T @UNKNOWN 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 8 @F @F @F @F 
+
+@Var @RT(21)sv_CavityPressLintab8 @RT(0) @T @T @DERIVED 0 @T @T @DT @RT(19)KAPPL_LintabData_2P @RT(0) @T @T @UNKNOWN 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 8 @F @F @F @F 
+
+@Var @RT(24)sv_rCutOffCavityPressure @RT(0) @T @F @DT @RT(4)REAL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 8 @F @F @F @F 
+
+@Var @RT(19)sv_ColdDropTimesAct @RT(0) @T @T @DERIVED 0 @T @T @DT @RT(10)tsActTimes @RT(0) @T @T @UNKNOWN 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 8 @F @F @F @F 
+
+@Var @RT(19)sv_ColdDropTimesSet @RT(0) @T @T @DERIVED 0 @T @T @DT @RT(10)tsSetTimes @RT(0) @T @T @UNKNOWN 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 8 @F @F @F @F 
+
+@Var @RT(19)sv_rMaxSpeedFwdAccu @RT(0) @T @F @DT @RT(4)REAL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 8 @F @F @F @F 
+
+@Var @RT(11)sv_rCushion @RT(0) @T @F @DT @RT(4)REAL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(41)smallest screw position during hold phase @RT(0) 
+@END_Attrib 
+1 8 @F @F @F @F 
+
+@Var @RT(15)sv_iActiveStage @RT(0) @T @F @DT @RT(4)DINT @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 8 @F @F @F @F 
+
+@Var @RT(28)sv_rMaxPlausFirstInjectStage @RT(0) @T @F @DT @RT(4)REAL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 8 @F @F @F @F 
+
+@Var @RT(19)sv_bInjectionActive @RT(0) @T @F @DT @RT(4)BOOL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(99)any inject (screw fwd) movement is active   Attention: this variable is set in every operation mode @RT(0) 
+@END_Attrib 
+1 8 @F @F @F @F 
+
+@Var @RT(13)sv_bMoveIdent @RT(0) @T @F @DT @RT(4)BOOL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 8 @F @F @F @F 
+
+@Var @RT(17)sv_rIdentPosition @RT(0) @T @F @DT @RT(4)REAL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 8 @F @F @F @F 
+
+@Var @RT(17)sv_rIdentStopRamp @RT(0) @T @F @DT @RT(4)REAL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 8 @F @F @F @F 
+
+@Var @RT(22)sv_dSetDelayTimeOffFwd @RT(0) @T @F @DT @RT(4)TIME @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 8 @F @F @F @F 
+
+@Var @RT(15)sv_rScrewStroke @RT(0) @T @F @DT @RT(4)REAL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 8 @F @F @F @F 
+
+@Var @RT(28)sv_bMoveToServoCalibStartPos @RT(0) @T @F @DT @RT(4)BOOL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 8 @F @F @F @F 
+
+@Var @RT(20)sv_rScrewSetPosition @RT(0) @T @F @DT @RT(4)REAL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 8 @F @F @F @F 
+
+@Var @RT(21)sv_rScrewZeroPosition @RT(0) @T @F @DT @RT(4)REAL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 8 @F @F @F @F 
+
+@Var @RT(25)sv_rCoiningSetInjectPress @RT(0) @T @F @DT @RT(4)REAL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(43)set inject pressure to activate the coining @RT(0) 
+@END_Attrib 
+1 8 @F @F @F @F 
+
+@Var @RT(27)sv_rCoiningSetScrewPosition @RT(0) @T @F @DT @RT(4)REAL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(42)set screw position to activate the coining @RT(0) 
+@END_Attrib 
+1 8 @F @F @F @F 
+
+@Var @RT(23)sv_dCoiningSetDelayTime @RT(0) @T @F @DT @RT(4)TIME @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(38)set delay time to activate the coining @RT(0) 
+@END_Attrib 
+1 8 @F @F @F @F 
+
+@Var @RT(25)sv_rCoiningActInjectPress @RT(0) @T @F @DT @RT(4)REAL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(46)actual inject pressure to activate the coining @RT(0) 
+@END_Attrib 
+1 8 @F @F @F @F 
+
+@Var @RT(27)sv_rCoiningActScrewPosition @RT(0) @T @F @DT @RT(4)REAL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(45)actual screw position to activate the coining @RT(0) 
+@END_Attrib 
+1 8 @F @F @F @F 
+
+@Var @RT(23)sv_dCoiningActDelayTime @RT(0) @T @F @DT @RT(4)TIME @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(41)actual delay time to activate the coining @RT(0) 
+@END_Attrib 
+1 8 @F @F @F @F 
+
+@Var @RT(25)sv_rVentingSetInjectPress @RT(0) @T @F @DT @RT(4)REAL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(43)set inject pressure to activate the venting @RT(0) 
+@END_Attrib 
+1 8 @F @F @F @F 
+
+@Var @RT(27)sv_rVentingSetScrewPosition @RT(0) @T @F @DT @RT(4)REAL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(42)set screw position to activate the venting @RT(0) 
+@END_Attrib 
+1 8 @F @F @F @F 
+
+@Var @RT(23)sv_dVentingSetDelayTime @RT(0) @T @F @DT @RT(4)TIME @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(38)set delay time to activate the venting @RT(0) 
+@END_Attrib 
+1 8 @F @F @F @F 
+
+@Var @RT(25)sv_rVentingActInjectPress @RT(0) @T @F @DT @RT(4)REAL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(46)actual inject pressure to activate the venting @RT(0) 
+@END_Attrib 
+1 8 @F @F @F @F 
+
+@Var @RT(27)sv_rVentingActScrewPosition @RT(0) @T @F @DT @RT(4)REAL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(45)actual screw position to activate the venting @RT(0) 
+@END_Attrib 
+1 8 @F @F @F @F 
+
+@Var @RT(23)sv_dVentingActDelayTime @RT(0) @T @F @DT @RT(4)TIME @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(41)actual delay time to activate the venting @RT(0) 
+@END_Attrib 
+1 8 @F @F @F @F 
+
+@Var @RT(20)sv_bInjectWaitForICM @RT(0) @T @F @DT @RT(4)BOOL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 8 @F @F @F @F 
+
+@Var @RT(21)sv_dActInjectHoldTime @RT(0) @T @F @DT @RT(4)TIME @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(38)actual time (contains inject and hold) @RT(0) 
+@END_Attrib 
+1 8 @F @F @F @F 
+
+@Var @RT(28)sv_ActiveTimesInjectInterPos @RT(0) @T @T @DERIVED 0 @T @T @DT @RT(20)tyInterCondTimeArray @RT(0) @T @T @UNKNOWN 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 8 @F @F @F @F 
+
+@Var @RT(23)sv_bDoPumpPressureCalib @RT(0) @T @F @DT @RT(4)BOOL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 8 @F @F @F @F 
+
+@Var @RT(22)sv_HydrMaxValuesInject @RT(0) @T @T @DERIVED 0 @T @T @DT @RT(15)tsHydrMaxValues @RT(0) @T @T @UNKNOWN 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(31)hydraulic max values for inject @RT(0) 
+@END_Attrib 
+1 8 @F @F @F @F 
+
+@Var @RT(19)sv_rMaxSpeedFwdCalc @RT(0) @T @F @DT @RT(4)REAL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 8 @F @F @F @F 
+
+@Var @RT(19)sv_rScrewSizeFactor @RT(0) @T @F @DT @RT(4)REAL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 8 @F @F @F @F 
+
+@Var @RT(30)sv_bUseCalcedPressureStartRamp @RT(0) @T @F @DT @RT(4)BOOL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 8 @F @F @F @F 
+
+@Var @RT(28)sv_bIgnoreStopAtCutOffNoHold @RT(0) @T @F @DT @RT(4)BOOL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(49)ignore stop at cutoff position if hold time is 0s @RT(0) 
+@END_Attrib 
+1 8 @F @F @F @F 
+
+@Var @RT(12)di_ExtCutOff @RT(0) @T @F @DT @RT(4)BOOL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 9 @F @F @F @F 
+
+@Var @RT(8)TaskSlow @RT(0) @T @F @DT @RT(4)TASK @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 7 @F @F @F @F 
+
+@Var @RT(9)EV_Task_3 @RT(0) @T @F @DT @RT(4)TASK @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 7 @F @F @F @F 
+
+@Var @RT(7)evStart @RT(0) @T @T @DERIVED 0 @T @T @DT @RT(8)tevStart @RT(0) @T @T @UNKNOWN 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 7 @F @F @F @F 
+
+@Var @RT(9)PU_Task_7 @RT(0) @T @F @DT @RT(4)TASK @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 7 @F @F @F @F 
+
+@Var @RT(10)TaskInject @RT(0) @T @F @DT @RT(4)TASK @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 7 @F @F @F @F 
+
+@Var @RT(22)erAllowablePresTooHigh @RT(0) @T @F @DT @RT(5)ALARM @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 7 @F @F @F @F 
+
+@Var @RT(24)erPIDParamDetectionError @RT(0) @T @F @DT @RT(5)ALARM @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 7 @F @F @F @F 
+
+@Var @RT(9)PU_Task_3 @RT(0) @T @F @DT @RT(4)TASK @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 7 @F @F @F @F 
+
+@Var @RT(10)g_MoveCtrl @RT(0) @T @T @DERIVED 0 @T @T @DT @RT(10)tsMoveCtrl @RT(0) @T @T @UNKNOWN 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 6 @F @F @F @F 
+
+@Var @RT(9)bICMReady @RT(0) @T @F @DT @RT(4)BOOL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(9)ICM ready @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(8)abInject @RT(0) @T @T @DERIVED 0 @T @T @DT @RT(8)ABInject @RT(0) @T @T @UNKNOWN 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(13)abInjectSetup @RT(0) @T @T @DERIVED 0 @T @T @DT @RT(15)ABConstMovement @RT(0) @T @T @UNKNOWN 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(18)abInjectSetupServo @RT(0) @T @T @DERIVED 0 @T @T @DT @RT(15)ABConstMovement @RT(0) @T @T @UNKNOWN 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(13)abInjectPurge @RT(0) @T @T @DERIVED 0 @T @T @DT @RT(15)ABConstMovement @RT(0) @T @T @UNKNOWN 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(15)abScrewFwdCalib @RT(0) @T @T @DERIVED 0 @T @T @DT @RT(12)ABConstCalib @RT(0) @T @T @UNKNOWN 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(19)abInjectionFwdCalib @RT(0) @T @T @DERIVED 0 @T @T @DT @RT(16)ABInjectionCalib @RT(0) @T @T @UNKNOWN 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(19)abBackPressureCalib @RT(0) @T @T @DERIVED 0 @T @T @DT @RT(19)ABBackPressureCalib @RT(0) @T @T @UNKNOWN 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(16)abLintabApplyVel @RT(0) @T @T @DERIVED 0 @T @T @DT @RT(13)ABLintabApply @RT(0) @T @T @UNKNOWN 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(17)abLintabApplyPres @RT(0) @T @T @DERIVED 0 @T @T @DT @RT(13)ABLintabApply @RT(0) @T @T @UNKNOWN 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(21)abLintabApplyServoVel @RT(0) @T @T @DERIVED 0 @T @T @DT @RT(13)ABLintabApply @RT(0) @T @T @UNKNOWN 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(22)abLintabApplyServoPres @RT(0) @T @T @DERIVED 0 @T @T @DT @RT(13)ABLintabApply @RT(0) @T @T @UNKNOWN 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(17)mbExtCutOffLinked @RT(0) @T @F @DT @RT(4)BOOL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(15)abConstColdDrop @RT(0) @T @T @DERIVED 0 @T @T @DT @RT(15)ABConstMovement @RT(0) @T @T @UNKNOWN 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(16)pbUseAccumulator @RT(0) @T @T @REFTO 0 @T @DT @RT(4)BOOL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(21)bAccumulatorAvailable @RT(0) @T @F @DT @RT(4)BOOL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(14)ComparatorData @RT(0) @T @T @DERIVED 0 @T @T @DT @RT(15)tsCompDataArray @RT(0) @T @T @UNKNOWN 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(12)abInjectStep @RT(0) @T @T @DERIVED 0 @T @T @DT @RT(12)ABStepOutput @RT(0) @T @T @UNKNOWN 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(14)prVelOutputICM @RT(0) @T @T @REFTO 0 @T @DT @RT(4)REAL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(19)velocity output ICM @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(13)pbCoiningDone @RT(0) @T @T @REFTO 0 @T @DT @RT(4)BOOL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(23)fbTonVentingAfterInject @RT(0) @T @T @DERIVED 0 @T @T @DT @RT(3)TON @RT(0) @T @T @UNKNOWN 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(23)fbTonCoiningAfterInject @RT(0) @T @T @DERIVED 0 @T @T @DT @RT(3)TON @RT(0) @T @T @UNKNOWN 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(13)pbVentingDone @RT(0) @T @T @REFTO 0 @T @DT @RT(4)BOOL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(15)pbCoiningActive @RT(0) @T @T @REFTO 0 @T @DT @RT(4)BOOL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(15)pbVentingActive @RT(0) @T @T @REFTO 0 @T @DT @RT(4)BOOL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(21)mpCoiningActivateMode @RT(0) @T @T @REFTO 0 @F @DERIVED 0 @T @T @DT @RT(17)tnICMActivateMode @RT(0) @T @T @UNKNOWN 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(27)activating mode for coining @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(21)mpVentingActivateMode @RT(0) @T @T @REFTO 0 @F @DERIVED 0 @T @T @DT @RT(17)tnICMActivateMode @RT(0) @T @T @UNKNOWN 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(27)activating mode for venting @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(9)mpICMMode @RT(0) @T @T @REFTO 0 @F @DERIVED 0 @T @T @DT @RT(9)tnICMMode @RT(0) @T @T @UNKNOWN 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(22)sequential or parallel @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(28)mpbVentingStartPointDetected @RT(0) @T @T @REFTO 0 @T @DT @RT(4)BOOL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(38)start condition for venting is reached @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(11)mbICMLinked @RT(0) @T @F @DT @RT(4)BOOL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(28)mpbCoiningStartPointDetected @RT(0) @T @T @REFTO 0 @T @DT @RT(4)BOOL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(38)start condition for coining is reached @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(18)prMinOutputVenting @RT(0) @T @T @REFTO 0 @T @DT @RT(4)REAL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(29)pointer to min output venting @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(18)prMinOutputCoining @RT(0) @T @T @REFTO 0 @T @DT @RT(4)REAL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(29)pointer to min output coining @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@END_Dcl 
+
+@END_Export 
+
+@BEG_Body 
+
+16 
+
+@BEG_Export 
+
+@BEG_Algo 
+@ALGORITHM @RT(9)aRegister @STRUCTURED_TEXT 
+@RT(0) @RT(0) @RT(0) @F @F 
+@END_Algo 
+
+@BEG_Dcl 
+@RT(16)DclTreeContainer 
+6 
+@Var @RT(16)abInjectRegister @RT(0) @T @T @DERIVED 0 @T @T @DT @RT(18)ABMovementRegister @RT(0) @T @T @UNKNOWN 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(14)abHoldRegister @RT(0) @T @T @DERIVED 0 @T @T @DT @RT(18)ABMovementRegister @RT(0) @T @T @UNKNOWN 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(21)abInjectPurgeRegister @RT(0) @T @T @DERIVED 0 @T @T @DT @RT(18)ABMovementRegister @RT(0) @T @T @UNKNOWN 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(18)abColdDropRegister @RT(0) @T @T @DERIVED 0 @T @T @DT @RT(18)ABMovementRegister @RT(0) @T @T @UNKNOWN 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(21)abInjectCalibRegister @RT(0) @T @T @DERIVED 0 @T @T @DT @RT(18)ABMovementRegister @RT(0) @T @T @UNKNOWN 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(24)abInjectInterPosRegister @RT(0) @T @T @DERIVED 0 @T @T @DT @RT(18)ABMovementRegister @RT(0) @T @T @UNKNOWN 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@END_Dcl 
+
+@END_Export 
+
+@BEG_Export 
+
+@BEG_Algo 
+@ALGORITHM @RT(4)aRun @SEQUENTIAL_FLOW_CHART 
+@RT(0) @RT(0) @RT(0) @F @F 
+@END_Algo 
+
+@BEG_Dcl 
+@RT(16)DclTreeContainer 
+26 
+@Var @RT(5)bStop @RT(0) @T @F @DT @RT(4)BOOL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(38)flag if the movement should be stopped @RT(0) 
+@END_Attrib 
+1 1 @F @F @F @F 
+
+@Var @RT(6)bReady @RT(0) @T @F @DT @RT(4)BOOL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(32)information if movement is ready @RT(0) 
+@END_Attrib 
+1 3 @F @F @F @F 
+
+@Var @RT(15)rCavityPressure @RT(0) @T @F @DT @RT(4)REAL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 4 @F @F @F @F 
+
+@Var @RT(6)dTemp1 @RT(0) @T @F @DT @RT(4)TIME @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 4 @F @F @F @F 
+
+@Var @RT(6)rTemp1 @RT(0) @T @F @DT @RT(4)REAL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 4 @F @F @F @F 
+
+@Var @RT(6)rTemp2 @RT(0) @T @F @DT @RT(4)REAL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 4 @F @F @F @F 
+
+@Var @RT(1)b @RT(0) @T @F @DT @RT(4)BOOL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 4 @F @F @F @F 
+
+@Var @RT(18)fbSetMovementState @RT(0) @T @T @DERIVED 0 @T @T @DT @RT(18)FBSetMovementState @RT(0) @T @T @UNKNOWN 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(10)dummypoint @RT(0) @T @T @DERIVED 0 @T @T @DT @RT(18)KCTRL_Lintab_Point @RT(0) @T @T @UNKNOWN 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(12)rServoOutput @RT(0) @T @F @DT @RT(4)REAL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(6)bError @RT(0) @T @F @DT @RT(4)BOOL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(5)dummy @RT(0) @T @F @DT @RT(4)DINT @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(10)iErrorInfo @RT(0) @T @F @DT @RT(4)DINT @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(15)dSetDelayTimeOn @RT(0) @T @F @DT @RT(4)TIME @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(16)dSetDelayTimeOff @RT(0) @T @F @DT @RT(4)TIME @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(13)fbDebugTrace2 @RT(0) @T @T @DERIVED 0 @T @T @DT @RT(13)FBDebugTrace2 @RT(0) @T @T @UNKNOWN 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(12)rPressureAbs @RT(0) @T @F @DT @RT(4)REAL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(12)rVelocityAbs @RT(0) @T @F @DT @RT(4)REAL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(9)rPressure @RT(0) @T @F @DT @RT(4)REAL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(9)rVelocity @RT(0) @T @F @DT @RT(4)REAL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(17)bICMInterruptStop @RT(0) @T @F @DT @RT(4)BOOL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(15)bICMDeactivated @RT(0) @T @F @DT @RT(4)BOOL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(16)bFirstInjectDone @RT(0) @T @F @DT @RT(4)BOOL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(18)bICMPostCutOffDone @RT(0) @T @F @DT @RT(4)BOOL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(14)fbREdge_CutOff @RT(0) @T @T @DERIVED 0 @T @T @DT @RT(6)R_TRIG @RT(0) @T @T @UNKNOWN 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(5)dNull @RT(0) @T @F @DT @RT(4)TIME @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(4)t#0s @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@END_Dcl 
+
+@END_Export 
+
+@BEG_Export 
+
+@BEG_Algo 
+@ALGORITHM @RT(11)aInitOrigin @STRUCTURED_TEXT 
+@RT(0) @RT(0) @RT(0) @F @F 
+@END_Algo 
+
+@BEG_Dcl 
+@RT(16)DclTreeContainer 
+0 
+@END_Dcl 
+
+@END_Export 
+
+@BEG_Export 
+
+@BEG_Algo 
+@ALGORITHM @RT(5)aInit @STRUCTURED_TEXT 
+@RT(0) @RT(0) @RT(0) @F @F 
+@END_Algo 
+
+@BEG_Dcl 
+@RT(16)DclTreeContainer 
+1 
+@Var @RT(6)Status @RT(0) @T @T @DERIVED 0 @T @T @DT @RT(11)KSYS_Status @RT(0) @T @T @UNKNOWN 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@END_Dcl 
+
+@END_Export 
+
+@BEG_Export 
+
+@BEG_Algo 
+@POSTUPDATE_ALGORITHM @RT(17)pMinOutputChanged @STRUCTURED_TEXT 
+@RT(0) @RT(32)sv_MinOutputInject,sv_bInitStart @RT(9)PU_Task_7 @F @F 
+@END_Algo 
+
+@BEG_Dcl 
+@RT(16)DclTreeContainer 
+0 
+@END_Dcl 
+
+@END_Export 
+
+@BEG_Export 
+
+@BEG_Algo 
+@POSTUPDATE_ALGORITHM @RT(14)pStrokeChanged @STRUCTURED_TEXT 
+@RT(0) @RT(15)sv_rScrewVolume @RT(9)PU_Task_7 @F @F 
+@END_Algo 
+
+@BEG_Dcl 
+@RT(16)DclTreeContainer 
+0 
+@END_Dcl 
+
+@END_Export 
+
+@BEG_Export 
+
+@BEG_Algo 
+@POSTUPDATE_ALGORITHM @RT(20)pAllowableValChanged @STRUCTURED_TEXT 
+@RT(0) @RT(72)sv_rMaxInjPresAllow,sv_rMaxPressureFwd,sv_bInitDone,sv_rMaxHoldPresAllow @RT(8)TaskSlow @F @F 
+@END_Algo 
+
+@BEG_Dcl 
+@RT(16)DclTreeContainer 
+0 
+@END_Dcl 
+
+@END_Export 
+
+@BEG_Export 
+
+@BEG_Algo 
+@POSTUPDATE_ALGORITHM @RT(16)pMaxSpeedChanged @STRUCTURED_TEXT 
+@RT(0) @RT(104)sv_rScrewDiameter,sv_rMaxSpeedFwd,sv_rMaxSpeedFwdCalc,sv_rMaxSpeedFwdAccu,pbUseAccumulator^,sv_bInitDone @RT(9)PU_Task_7 @F @F 
+@END_Algo 
+
+@BEG_Dcl 
+@RT(16)DclTreeContainer 
+2 
+@Var @RT(10)rSizeScrew @RT(0) @T @F @DT @RT(4)REAL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(15)rMaxSpeedFwdOut @RT(0) @T @F @DT @RT(4)REAL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@END_Dcl 
+
+@END_Export 
+
+@BEG_Export 
+
+@BEG_Algo 
+@POSTUPDATE_ALGORITHM @RT(23)pReCalcInjStartPosition @STRUCTURED_TEXT 
+@RT(0) @RT(62)sv_PlastProfVis.Profile,sv_DecompAftPlastSettings,sv_bInitDone @RT(9)PU_Task_7 @F @F 
+@END_Algo 
+
+@BEG_Dcl 
+@RT(16)DclTreeContainer 
+0 
+@END_Dcl 
+
+@END_Export 
+
+@BEG_Export 
+
+@BEG_Algo 
+@EVENT_ALGORITHM @RT(8)evaStart @STRUCTURED_TEXT 
+@RT(0) @RT(7)evStart @RT(13)EV_Task_3(50) @F @F 
+@END_Algo 
+
+@BEG_Dcl 
+@RT(16)DclTreeContainer 
+2 
+@Var @RT(11)evStartData @RT(0) @T @T @DERIVED 0 @T @T @DT @RT(12)tevStartData @RT(0) @T @T @UNKNOWN 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 1 @F @F @F @F 
+
+@Var @RT(1)i @RT(0) @T @F @DT @RT(4)DINT @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 4 @F @F @F @F 
+
+@END_Dcl 
+
+@END_Export 
+
+@BEG_Export 
+
+@BEG_Algo 
+@POSTUPDATE_ALGORITHM @RT(9)pDuration @STRUCTURED_TEXT 
+@RT(0) @RT(55)sv_dCalculatedDurationHold,sv_dCalculatedDurationInject @RT(9)PU_Task_7 @F @F 
+@END_Algo 
+
+@BEG_Dcl 
+@RT(16)DclTreeContainer 
+0 
+@END_Dcl 
+
+@END_Export 
+
+@BEG_Export 
+
+@BEG_Algo 
+@POSTUPDATE_ALGORITHM @RT(26)pCpyAccelerationsPreCutOff @STRUCTURED_TEXT 
+@RT(0) @RT(43)sv_InjectProfVis.Profile.Points[2].rVelRamp @RT(9)PU_Task_7 @F @F 
+@END_Algo 
+
+@BEG_Dcl 
+@RT(16)DclTreeContainer 
+1 
+@Var @RT(1)i @RT(0) @T @F @DT @RT(5)UDINT @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 4 @F @F @F @F 
+
+@END_Dcl 
+
+@END_Export 
+
+@BEG_Export 
+
+@BEG_Algo 
+@POSTUPDATE_ALGORITHM @RT(27)pCpyAccelerationsPostCutOff @STRUCTURED_TEXT 
+@RT(0) @RT(43)sv_HoldProfVis.Profile.Points[2].rPressRamp @RT(9)PU_Task_7 @F @F 
+@END_Algo 
+
+@BEG_Dcl 
+@RT(16)DclTreeContainer 
+1 
+@Var @RT(1)i @RT(0) @T @F @DT @RT(5)UDINT @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 4 @F @F @F @F 
+
+@END_Dcl 
+
+@END_Export 
+
+@BEG_Export 
+
+@BEG_Algo 
+@POSTUPDATE_ALGORITHM @RT(29)pCheckPressureLimitController @STRUCTURED_TEXT 
+@RT(0) @RT(103)sv_bInitDone,sv_PressureLimitControlParams.bUsePIDControl,sv_PressureLimitVelocityParams.bUsePIDControl @RT(9)PU_Task_7 @F @F 
+@END_Algo 
+
+@BEG_Dcl 
+@RT(16)DclTreeContainer 
+3 
+@Var @RT(18)mInitPresLimitCtrl @RT(0) @T @F @DT @RT(4)BOOL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(5)FALSE @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(20)mUsePresLimitPIDCtrl @RT(0) @T @F @DT @RT(4)BOOL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(5)FALSE @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(25)mUsePresLimitVelocityCtrl @RT(0) @T @F @DT @RT(4)BOOL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(5)FALSE @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@END_Dcl 
+
+@END_Export 
+
+@BEG_Export 
+
+@BEG_Algo 
+@PROCESS_ALGORITHM @RT(6)paInit @STRUCTURED_TEXT 
+@RT(0) @RT(0) @RT(8)TaskSlow @T @F 
+@END_Algo 
+
+@BEG_Dcl 
+@RT(16)DclTreeContainer 
+2 
+@Var @RT(12)variableName @RT(0) @T @F @DT @RT(11)STRING(255) @RT(0) @T @T @STRING 0 @F @RT(3)255 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(8)swoState @RT(0) @T @T @DERIVED 0 @T @T @DT @RT(11)KSWO_Status @RT(0) @T @T @UNKNOWN 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@END_Dcl 
+
+@END_Export 
+
+@BEG_Export 
+
+@BEG_Algo 
+@POSTUPDATE_ALGORITHM @RT(22)pSendHoldMovementState @STRUCTURED_TEXT 
+@RT(0) @RT(35)sv_bInjectActive,sv_bCutOffDetected @RT(9)PU_Task_3 @F @F 
+@END_Algo 
+
+@BEG_Dcl 
+@RT(16)DclTreeContainer 
+1 
+@Var @RT(18)fbSetMovementState @RT(0) @T @T @DERIVED 0 @T @T @DT @RT(18)FBSetMovementState @RT(0) @T @T @UNKNOWN 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@END_Dcl 
+
+@END_Export 
+
+@BEG_Body 
+@TL(71)
+(**************************************** WARNING ********************************************
+ *** The KEBA Kemro K2 System including software is not intended for safety control tasks! ***
+ ***                       For further information see Comment tab!                        ***
+ *********************************************************************************************)
+
+//register inject movement
+sv_MoveInject.pdStartDelaySet := @sv_InjectTimesSet.dSetDelayTime;
+sv_MoveInject.pdStartDelayAct := @sv_InjectTimesAct.dActDelayTime;
+sv_MoveInject.pdActiveTimeAct := @sv_dActInjectHoldTime;
+sv_MoveInject.pdTimeLimit     := @sv_InjectTimesSet.dMaxMoveTime;
+
+sv_MoveInject.LockGroups[1] := cLockGroupHeatingNozzle;
+sv_MoveInject.LockGroups[2] := cLockGroupSafetyGateNozzle;
+sv_MoveInject.LockGroups[3] := cLockGroupSafetyGateMold;
+sv_MoveInject.LockGroups[4] := cLockGroupMotor;
+
+sv_MoveInject.sIconPath := CONCAT(GET_MY_FU_NAME(), '\hmi\images\movScrewFwd.gif');
+abInjectRegister.aRegister(@sv_MoveInject);
+
+
+//register instanceable inject movement
+sv_MoveInjectInterPos.pdActiveTimeAct := @sv_InjectTimesAct.dActMoveTime;
+sv_MoveInjectInterPos.pdTimeLimit     := @sv_InjectTimesSet.dMaxMoveTime;
+sv_MoveInjectInterPos.LockGroups[1] := cLockGroupHeatingNozzle;
+sv_MoveInjectInterPos.LockGroups[2] := cLockGroupSafetyGateNozzle;
+sv_MoveInjectInterPos.LockGroups[3] := cLockGroupSafetyGateMold;
+sv_MoveInjectInterPos.LockGroups[4] := cLockGroupMotor;
+sv_MoveInjectInterPos.sIconPath := CONCAT(GET_MY_FU_NAME(), '\hmi\images\movScrewInterposFwd.gif');
+abInjectInterPosRegister.aRegister(@sv_MoveInjectInterPos);
+
+
+//register inject part of purge movement
+sv_MoveInjectPurge.LockGroups[1] := cLockGroupHeatingNozzle;
+sv_MoveInjectPurge.LockGroups[2] := cLockGroupSafetyGateNozzle;
+sv_MoveInjectPurge.LockGroups[3] := cLockGroupSafetyGateMold;
+sv_MoveInjectPurge.LockGroups[4] := cLockGroupMotor;
+sv_MoveInjectPurge.sIconPath := sv_MoveInject.sIconPath;
+abInjectPurgeRegister.aRegister(@sv_MoveInjectPurge);
+
+//register inject calib movement
+sv_MoveInjectCalib.LockGroups[1] := cLockGroupHeatingNozzle;
+sv_MoveInjectCalib.LockGroups[2] := cLockGroupSafetyGateNozzle;
+sv_MoveInjectCalib.LockGroups[3] := cLockGroupSafetyGateMold;
+sv_MoveInjectCalib.sIconPath := sv_MoveInject.sIconPath;
+abInjectCalibRegister.aRegister(@sv_MoveInjectCalib);
+
+
+//register hold (necessary for displaying hold icon after detection of CutOff)
+sv_MoveHold.LockGroups[1] := cLockGroupHeatingNozzle;
+sv_MoveHold.LockGroups[2] := cLockGroupSafetyGateNozzle;
+sv_MoveHold.LockGroups[3] := cLockGroupSafetyGateMold;
+sv_MoveHold.LockGroups[4] := cLockGroupMotor;
+sv_MoveHold.sIconPath := CONCAT(GET_MY_FU_NAME(), '\hmi\images\movScrewHold.gif');
+sv_MoveHold.pdActiveTimeAct := @sv_dActHoldTime;
+sv_MoveHold.pdTimeLimit     := @sv_InjectTimesSet.dMaxMoveTime;
+abHoldRegister.aRegister(@sv_MoveHold);
+
+
+//register cold drop movement
+sv_MoveColdDrop.LockGroups[1] := cLockGroupHeatingNozzle;
+sv_MoveColdDrop.LockGroups[2] := cLockGroupSafetyGateNozzle;
+sv_MoveColdDrop.LockGroups[3] := cLockGroupSafetyGateMold;
+sv_MoveColdDrop.LockGroups[4] := cLockGroupMotor;
+sv_MoveColdDrop.sIconPath := CONCAT(GET_MY_FU_NAME(), '\hmi\images\movColdDrop.gif');
+sv_MoveColdDrop.pdStartDelaySet := @sv_ColdDropTimesSet.dSetDelayTime;
+sv_MoveColdDrop.pdStartDelayAct := @sv_ColdDropTimesAct.dActDelayTime;
+sv_MoveColdDrop.pdActiveTimeAct := @sv_ColdDropTimesAct.dActMoveTime;
+sv_MoveColdDrop.pdTimeLimit     := @sv_ColdDropTimesSet.dMaxMoveTime;
+sv_ColdDropTimesSet.dMaxMoveTime := sv_InjectTimesSet.dMaxMoveTime;
+abColdDropRegister.aRegister(@sv_MoveColdDrop);
+
+@END_Body 
+
+@@@BEG_Comment@@@ 
+@TL(2)
+This algorithm is necessary for registering the available movements
+and the according parameters (Lockgroups, icon path, delay time, ....)
+@@@END_Comment@@@ 
+
+@BEG_SfcBody 
+43 21 27 
+
+@BEG_SfcData 2 
+@StepSeq @RT(4)sseq @F 1 
+@Loop @RT(4)loop @F 2 
+@StepSeq @RT(4)sseq @F 7 
+@Step @RT(5)START @F @T @F @F @RT(0) @F 
+@AcbCont @RT(7)unnamed @F 1 
+@Acb @RT(6)AStart @F @T @RT(1)P @RT(0) @F @F @T @TL(7)
+bReady := FALSE;
+fbSetMovementState(MoveId   := g_MoveCtrl.pData^.MoveId,
+                   MoveDir  := g_MoveCtrl.pData^.MoveDir,
+                   State    := nActive);
+sv_bInjectionActive := TRUE;
+fbDebugTrace2(nDeviceState, 'Inject started');
+
+@F 
+
+@AltBranch @RT(3)alt @F 2 
+@TransSeq @RT(4)tseq @F 1 
+@Trans @RT(9)TNotPurge @F @T @F @F @T @F @TL(3)
+g_MoveCtrl.pData^.MoveId <> cMoveInjectPurge
+
+
+@RT(9)TNotPurge @F 
+
+@TransSeq @RT(4)tseq @F 4 
+@Trans @RT(6)TPurge @F @T @F @F @T @F @TL(2)
+g_MoveCtrl.pData^.MoveId = cMoveInjectPurge
+
+@RT(6)TPurge @F 
+@Step @RT(7)S_Purge @F @F @F @F @RT(0) @F 
+@AcbCont @RT(7)unnamed @F 5 
+@Acb @RT(17)AResetInjectPurge @F @F @RT(1)P @RT(0) @F @F @F @F 
+@Acb @RT(12)AInjectPurge @F @F @RT(1)N @RT(0) @F @F @F @F 
+@Acb @RT(22)AResetInjectPurgeServo @F @F @RT(1)P @RT(0) @F @F @F @F 
+@Acb @RT(16)AConstSetupServo @F @F @RT(1)N @RT(0) @F @F @F @F 
+@Acb @RT(21)ACopySetPositionPurge @F @T @RT(2)P0 @RT(0) @F @F @T @TL(2)
+b := WRITE_SVREAL_DIRECT(sv_rScrewSetPosition, sv_rScrewPositionAbs);
+
+@F 
+
+@Trans @RT(17)TInjectPurgeReady @F @T @F @F @T @T @TL(2)
+NOT abInjectPurge.aRun.bActive
+
+@RT(17)TInjectPurgeReady @F 
+@Goto @RT(7)S_Ready @F @F 
+
+
+@Step @RT(6)Step13 @F @F @F @F @RT(0) @F 
+@AcbCont @RT(7)unnamed @F 0 
+
+@AltBranch @RT(3)alt @F 2 
+@TransSeq @RT(4)tseq @F 1 
+@Trans @RT(12)TNotColdDrop @F @T @F @F @T @F @TL(2)
+g_MoveCtrl.pData^.MoveId <> cMoveColdDrop
+
+@RT(12)TNotColdDrop @F 
+
+@TransSeq @RT(4)tseq @F 4 
+@Trans @RT(9)TColdDrop @F @T @F @F @T @F @TL(2)
+g_MoveCtrl.pData^.MoveId = cMoveColdDrop
+
+@RT(9)TColdDrop @F 
+@Step @RT(10)S_ColdDrop @F @F @F @F @RT(0) @F 
+@AcbCont @RT(7)unnamed @F 3 
+@Acb @RT(13)AInitColdDrop @F @F @RT(1)P @RT(0) @F @F @F @F 
+@Acb @RT(9)AColdDrop @F @F @RT(1)N @RT(0) @F @F @F @F 
+@Acb @RT(16)AConstSetupServo @F @F @RT(1)N @RT(0) @F @F @F @F 
+
+@Trans @RT(14)TColdDropReady @F @T @F @F @T @F @TL(2)
+NOT abConstColdDrop.aRun.bActive
+
+@RT(14)TColdDropReady @F 
+@Goto @RT(7)S_Ready @F @F 
+
+
+@Step @RT(20)S_CheckOperationMode @F @F @F @F @RT(0) @F 
+@AcbCont @RT(7)unnamed @F 0 
+
+@AltBranch @RT(3)alt @F 2 
+@TransSeq @RT(4)tseq @F 5 
+@Trans @RT(9)TNotSetup @F @T @F @F @T @F @TL(2)
+(sv_OperationMode > nSetup)
+
+@RT(9)TNotSetup @F 
+@Step @RT(8)S_Inject @F @F @F @F @RT(0) @F 
+@AcbCont @RT(7)unnamed @F 9 
+@Acb @RT(5)AInit @F @F @RT(1)P @RT(0) @F @F @F @F 
+@Acb @RT(17)aICMInterruptStop @F @F @RT(1)N @RT(0) @F @F @F @F 
+@Acb @RT(7)aInject @F @F @RT(1)N @RT(0) @F @F @F @F 
+@Acb @RT(11)AInjectTime @F @F @RT(1)N @RT(0) @F @F @F @F 
+@Acb @RT(11)APumpOutput @F @F @RT(1)N @RT(0) @F @F @F @F 
+@Acb @RT(13)ASetServoMode @F @F @RT(1)N @RT(0) @F @F @F @F 
+@Acb @RT(23)aCheckStartConditionICM @F @F @RT(1)N @RT(0) @F @F @F @F 
+@Acb @RT(19)aCheckPostCutOffICM @F @F @RT(1)N @RT(0) @F @F @F @F 
+@Acb @RT(16)ACopySetPosition @F @T @RT(2)P0 @RT(0) @F @F @T @TL(2)
+b := WRITE_SVREAL_DIRECT(sv_rScrewSetPosition, sv_rScrewPositionAbs);
+
+@F 
+
+@AltBranch @RT(3)alt @F 3 
+@TransSeq @RT(4)tseq @F 1 
+@Trans @RT(21)TInjectReadyICMLinked @F @T @F @F @T @F @TL(8)
+(NOT abInject.aRun.bActive)
+AND mbICMLinked 
+AND (bICMDeactivated 
+     OR bStop OR bFirstInjectDone)
+
+//ICM is linked
+
+
+@RT(21)TInjectReadyICMLinked @F 
+
+@TransSeq @RT(4)tseq @F 4 
+@Trans @RT(14)PostCutOff_ICM @F @T @F @F @T @F @TL(2)
+bICMPostCutOffDone
+
+@RT(14)PostCutOff_ICM @F 
+@Step @RT(16)Reset_ICM_CutOff @F @F @F @F @RT(0) @F 
+@AcbCont @RT(7)unnamed @F 2 
+@Acb @RT(8)Action53 @F @T @RT(1)P @RT(0) @F @F @T @TL(4)
+//Reset
+sv_bInjectWaitForICM := FALSE;
+bICMPostCutOffDone := FALSE;
+
+@F 
+@Acb @RT(7)aInject @F @F @RT(1)N @RT(0) @F @F @F @F 
+
+@Trans @RT(7)Trans40 @F @T @F @F @T @F @TL(2)
+NOT abInject.aRun.bActive
+
+@RT(7)Trans40 @F 
+@Goto @RT(11)S_ICM_Ready @F @F 
+
+@TransSeq @RT(4)tseq @F 2 
+@Trans @RT(24)TInjectReadyICMNotLinked @F @T @F @F @T @F @TL(5)
+(NOT abInject.aRun.bActive)
+AND (NOT mbICMLinked)
+
+//ICM is unlinked
+
+@RT(24)TInjectReadyICMNotLinked @F 
+@Goto @RT(7)S_Ready @F @F 
+
+
+@Step @RT(11)S_ICM_Ready @F @F @T @F @RT(0) @F 
+@AcbCont @RT(7)unnamed @F 1 
+@Acb @RT(14)aCheckICMReady @F @F @RT(1)N @RT(0) @F @F @F @F 
+
+@Trans @RT(9)TICMReady @F @T @F @F @T @F @TL(2)
+bICMReady
+
+@RT(9)TICMReady @F 
+
+@TransSeq @RT(4)tseq @F 3 
+@Trans @RT(6)TSetup @F @T @F @F @T @F @TL(2)
+(sv_OperationMode = nSetup)
+
+@RT(6)TSetup @F 
+@Step @RT(14)S_CheckIfCalib @F @F @F @F @RT(0) @F 
+@AcbCont @RT(7)unnamed @F 0 
+
+@AltBranch @RT(3)alt @F 6 
+@TransSeq @RT(4)tseq @F 3 
+@Trans @RT(9)TNotCalib @F @T @F @F @T @F @TL(6)
+NOT sv_bDoTransducerCalib
+AND NOT sv_bDoInjectionCalib
+AND NOT sv_bDoBackPressureCalib
+AND NOT sv_bDoPumpPressureCalib
+AND NOT sv_bMoveIdent
+
+@RT(9)TNotCalib @F 
+@Step @RT(11)S_ConstMove @F @F @F @F @RT(0) @F 
+@AcbCont @RT(7)unnamed @F 3 
+@Acb @RT(16)AResetConstBlock @F @F @RT(1)P @RT(0) @F @F @F @F 
+@Acb @RT(16)AConstSetupServo @F @F @RT(1)N @RT(0) @F @F @F @F 
+@Acb @RT(11)AConstSetup @F @F @RT(1)N @RT(0) @F @F @F @F 
+
+@Trans @RT(17)TInjectSetupReady @F @T @F @F @T @T @TL(2)
+NOT abInjectSetup.aRun.bActive
+
+@RT(17)TInjectSetupReady @F 
+
+@TransSeq @RT(4)tseq @F 3 
+@Trans @RT(15)TCalibActivated @F @T @F @F @T @F @TL(2)
+sv_bDoTransducerCalib
+
+@RT(15)TCalibActivated @F 
+@Step @RT(7)S_Calib @F @F @F @F @RT(0) @F 
+@AcbCont @RT(7)unnamed @F 4 
+@Acb @RT(16)AResetCalibBlock @F @F @RT(1)P @RT(0) @F @F @F @F 
+@Acb @RT(16)AConstSetupServo @F @F @RT(1)N @RT(0) @F @F @F @F 
+@Acb @RT(16)ATransducerCalib @F @F @RT(1)N @RT(0) @F @F @F @F 
+@Acb @RT(16)ACheckCalibError @F @F @RT(1)N @RT(0) @F @F @F @F 
+
+@Trans @RT(11)TCalibReady @F @T @F @F @T @T @TL(2)
+NOT abScrewFwdCalib.aRun.bActive OR bError 
+
+@RT(11)TCalibReady @F 
+
+@TransSeq @RT(4)tseq @F 3 
+@Trans @RT(13)TMoveUntilEnd @F @T @F @F @T @F @TL(2)
+sv_bDoPumpPressureCalib
+
+@RT(13)TMoveUntilEnd @F 
+@Step @RT(8)S_Calib2 @F @F @F @F @RT(0) @F 
+@AcbCont @RT(7)unnamed @F 3 
+@Acb @RT(17)AResetCalibBlock2 @F @F @RT(1)P @RT(0) @F @F @F @F 
+@Acb @RT(16)AConstSetupServo @F @F @RT(1)N @RT(0) @F @F @F @F 
+@Acb @RT(17)ATransducerCalib2 @F @F @RT(1)N @RT(0) @F @F @F @F 
+
+@Trans @RT(12)TCalibReady2 @F @T @F @F @T @T @TL(2)
+NOT abScrewFwdCalib.aRun.bActive 
+
+@RT(12)TCalibReady2 @F 
+
+@TransSeq @RT(4)tseq @F 3 
+@Trans @RT(15)TInjectionCalib @F @T @F @F @T @F @TL(2)
+sv_bDoInjectionCalib
+
+@RT(15)TInjectionCalib @F 
+@Step @RT(10)S_CalibInj @F @F @F @F @RT(0) @F 
+@AcbCont @RT(7)unnamed @F 3 
+@Acb @RT(20)AResetInjectionCalib @F @F @RT(1)P @RT(0) @F @F @F @F 
+@Acb @RT(15)AInjectionCalib @F @F @RT(1)N @RT(0) @F @F @F @F 
+@Acb @RT(25)ACheckInjectionCalibError @F @F @RT(1)N @RT(0) @F @F @F @F 
+
+@Trans @RT(20)TInjectionCalibReady @F @T @F @F @T @T @TL(2)
+NOT abInjectionFwdCalib.aRun.bActive OR bError
+
+@RT(20)TInjectionCalibReady @F 
+
+@TransSeq @RT(4)tseq @F 3 
+@Trans @RT(7)Trans24 @F @T @F @F @T @F @TL(2)
+sv_bDoBackPressureCalib
+
+@RT(7)Trans24 @F 
+@Step @RT(12)S_CalibBackP @F @F @F @F @RT(0) @F 
+@AcbCont @RT(7)unnamed @F 3 
+@Acb @RT(23)AResetCalibBackPressure @F @F @RT(1)P @RT(0) @F @F @F @F 
+@Acb @RT(18)ABackPressureCalib @F @F @RT(1)N @RT(0) @F @F @F @F 
+@Acb @RT(28)ACheckBackPressureCalibError @F @F @RT(1)N @RT(0) @F @F @F @F 
+
+@Trans @RT(7)Trans25 @F @T @F @F @T @T @TL(2)
+ NOT abBackPressureCalib.aRun.bActive OR bError
+
+@RT(7)Trans25 @F 
+
+@TransSeq @RT(4)tseq @F 3 
+@Trans @RT(19)TMoveIdentActivated @F @T @F @F @T @F @TL(2)
+sv_bMoveIdent
+
+@RT(19)TMoveIdentActivated @F 
+@Step @RT(11)S_MoveIdent @F @F @F @F @RT(0) @F 
+@AcbCont @RT(7)unnamed @F 4 
+@Acb @RT(16)AResetIdentBlock @F @F @RT(1)P @RT(0) @F @F @F @F 
+@Acb @RT(11)AStepOutput @F @F @RT(1)N @RT(0) @F @F @F @F 
+@Acb @RT(16)AConstSetupServo @F @F @RT(1)N @RT(0) @F @F @F @F 
+@Acb @RT(10)AStopServo @F @T @RT(2)P0 @RT(0) @F @F @T @TL(4)
+IF sv_IMM_Type = nKAPPL_IMM_ServoValve THEN
+    sv_rServoOutput := 0.0;
+END_IF;
+
+@F 
+
+@Trans @RT(15)TMoveIdentReady @F @T @F @F @T @T @TL(2)
+NOT abInjectStep.aRun.bActive
+
+@RT(15)TMoveIdentReady @F 
+
+
+
+
+@Step @RT(7)S_Ready @F @F @T @F @RT(0) @F 
+@AcbCont @RT(7)unnamed @F 1 
+@Acb @RT(6)AReady @F @T @RT(1)P @RT(0) @F @F @T @TL(7)
+bReady := TRUE;
+fbSetMovementState(MoveId   := g_MoveCtrl.pData^.MoveId,
+                   MoveDir  := g_MoveCtrl.pData^.MoveDir,
+                   State    := nInactive);
+sv_bInjectionActive := FALSE;
+fbDebugTrace2(nDeviceState, 'Inject ready');
+
+@F 
+
+
+@Trans @RT(6)TReady @F @T @F @T @T @T @TL(2)
+TRUE
+
+@RT(6)TReady @F 
+
+@END_SfcData 
+@SaActions 30 
+@SaText @RT(16)AResetCalibBlock 1 @TL(15)
+(**************************************** WARNING ********************************************
+ *** The KEBA Kemro K2 System including software is not intended for safety control tasks! ***
+ ***                       For further information see Comment tab!                        ***
+ *********************************************************************************************)
+
+bError := FALSE;
+abScrewFwdCalib.aRun(bStart := FALSE,
+                     LintabPoint := sv_TmpLintabPoint);
+abInjectSetupServo.aRun(bStart := FALSE);
+IF abScrewFwdCalib.aRun.bError OR abInjectSetupServo.aRun.bError THEN
+   sv_CalibState.Status := tnCalibState_Error;
+   bError := TRUE; 
+   dummy := Print("Calib Error: Reset calib block failed"); 
+END_IF;
+
+
+@SaText @RT(16)AResetConstBlock 1 @TL(8)
+(**************************************** WARNING ********************************************
+ *** The KEBA Kemro K2 System including software is not intended for safety control tasks! ***
+ ***                       For further information see Comment tab!                        ***
+ *********************************************************************************************)
+ 
+abInjectSetup.aRun(bStart := FALSE);
+abInjectSetupServo.aRun(bStart := FALSE);
+
+
+@SaText @RT(17)AResetInjectPurge 1 @TL(7)
+(**************************************** WARNING ********************************************
+ *** The KEBA Kemro K2 System including software is not intended for safety control tasks! ***
+ ***                       For further information see Comment tab!                        ***
+ *********************************************************************************************)
+
+abInjectPurge.aRun(bStart := FALSE);
+
+
+@SaText @RT(20)AResetInjectionCalib 1 @TL(21)
+(**************************************** WARNING ********************************************
+ *** The KEBA Kemro K2 System including software is not intended for safety control tasks! ***
+ ***                       For further information see Comment tab!                        ***
+ *********************************************************************************************)
+
+//this must be started, when screw is already in backward position
+//absolute position (mm) is used because it shows up in recorded data later
+//rActPosition is needed for detecting stroke
+bError := FALSE;
+abInjectionFwdCalib.aRun(bStart := FALSE, rActPosition := sv_rScrewPositionAbs);
+
+//set servovalve controller mode
+sv_ServoValveControllerMode := nKAPPL_VelocityControl;
+
+abInjectSetupServo.aRun(bStart := FALSE);
+IF abInjectionFwdCalib.aRun.bError OR abInjectSetupServo.aRun.bError THEN
+   sv_CalibStateInjection.Status := tnCalibState_Error;
+   bError := TRUE; 
+   dummy := Print("Calib Error: Reset calib block failed"); 
+END_IF;
+
+
+@SaText @RT(23)AResetCalibBackPressure 1 @TL(11)
+(**************************************** WARNING ********************************************
+ *** The KEBA Kemro K2 System including software is not intended for safety control tasks! ***
+ ***                       For further information see Comment tab!                        ***
+ *********************************************************************************************)
+
+bError := FALSE;
+abBackPressureCalib.aRun(bStart := FALSE);
+
+//set servo valve controller mode
+sv_ServoValveControllerMode := nKAPPL_PressureControl;
+
+
+@SaText @RT(17)AResetCalibBlock2 1 @TL(9)
+(**************************************** WARNING ********************************************
+ *** The KEBA Kemro K2 System including software is not intended for safety control tasks! ***
+ ***                       For further information see Comment tab!                        ***
+ *********************************************************************************************)
+
+//the point is set to dummy, as this block is only used for moving screw back
+abScrewFwdCalib.aRun(bStart := FALSE,
+                     LintabPoint := dummypoint);
+
+
+@SaText @RT(16)AConstSetupServo 1 @TL(15)
+IF sv_IMM_Type = nKAPPL_IMM_ServoValve THEN
+   abInjectSetupServo.aRun(bStart := TRUE,
+                           bStop := bStop,
+                           bDirection := FALSE,
+                           rActPos := sv_rScrewPositionAbs,
+                           bUsePosDetect := sv_bMoveToServoCalibStartPos,
+                           rTargetPos := (0.01*sv_rScrewStroke),
+                           rStartOutputPre := 0.0,
+                           rStartOutputVel := 0.0,
+                           dDelayTimeOn := sv_InjectTimesSet.dSetDelayTimePump,
+                           dDelayTimeOff := sv_InjectTimesSet.dSetDelayTimeValve);    
+    b := WRITE_SVREAL_DIRECT(sv_rServoOutput, abInjectSetupServo.aRun.rOutputVel); 
+    bError := bError OR abInjectSetupServo.aRun.bError;
+END_IF;
+
+
+@SaText @RT(13)ASetServoMode 1 @TL(8)
+IF sv_IMM_Type = nKAPPL_IMM_ServoValve THEN 
+   IF sv_bInjectActive AND NOT sv_bCutOffDetected THEN
+      sv_ServoValveControllerMode := nKAPPL_VelocityControl;
+   ELSIF sv_bInjectActive AND sv_bCutOffDetected THEN
+      sv_ServoValveControllerMode := nKAPPL_PressureControl;
+   END_IF;
+END_IF;
+
+
+@SaText @RT(16)ACheckCalibError 1 @TL(5)
+IF bError THEN
+   sv_CalibState.Status := tnCalibState_Error;
+   dummy := Print("Calib Error: %i", iErrorInfo);
+END_IF;
+
+
+@SaText @RT(28)ACheckBackPressureCalibError 1 @TL(12)
+(**************************************** WARNING ********************************************
+ *** The KEBA Kemro K2 System including software is not intended for safety control tasks! ***
+ ***                       For further information see Comment tab!                        ***
+ *********************************************************************************************)
+
+IF bError THEN
+   sv_CalibStateBackPressure.Status := tnCalibState_Error;
+   SET_ALARM(erPIDParamDetectionError);
+   dummy := Print("Hold PID parameter detection error: %i", iErrorInfo);
+END_IF;
+
+
+
+@SaText @RT(25)ACheckInjectionCalibError 1 @TL(11)
+(**************************************** WARNING ********************************************
+ *** The KEBA Kemro K2 System including software is not intended for safety control tasks! ***
+ ***                       For further information see Comment tab!                        ***
+ *********************************************************************************************)
+
+IF bError THEN
+   sv_CalibStateInjection.Status := tnCalibState_Error;
+   SET_ALARM(erPIDParamDetectionError);
+   dummy := Print("Inject PID parameter detection error: %i", iErrorInfo);
+END_IF;
+
+
+@SaText @RT(5)AInit 1 @TL(47)
+(**************************************** WARNING ********************************************
+ *** The KEBA Kemro K2 System including software is not intended for safety control tasks! ***
+ ***                       For further information see Comment tab!                        ***
+ *********************************************************************************************)
+
+abInject.aRun(bStart:=FALSE,
+              dMaxMoveTime:=sv_InjectTimesSet.dMaxMoveTime);
+
+b := WRITE_SVREAL_DIRECT(sv_rScrewZeroPosition, sv_rScrewPosition);
+                          
+//Injection Compression Molding
+IF mbICMLinked THEN
+    //Instance timer for mode after cut off detected
+    fbTonVentingAfterInject(IN:= FALSE,
+                        PT:= sv_dVentingSetDelayTime);
+    
+    fbTonCoiningAfterInject(IN:= FALSE,
+                            PT:= sv_dCoiningSetDelayTime);
+
+    //Reset flag
+    bICMReady := FALSE;            
+    bICMInterruptStop := FALSE; 
+    bICMDeactivated := FALSE;         
+    bICMPostCutOffDone := FALSE;
+    bFirstInjectDone := FALSE; 
+
+    //Reset the actual value for ICM 
+    IF NOT pbVentingDone^THEN
+        sv_rVentingActInjectPress := 0.0;
+        sv_rVentingActScrewPosition := 0.0;
+        sv_dVentingActDelayTime := T#0s;            
+    END_IF;
+    
+    IF NOT pbCoiningDone^ THEN
+        sv_rCoiningActInjectPress := 0.0;
+        sv_rCoiningActScrewPosition := 0.0;
+        sv_dCoiningActDelayTime := T#0s;         
+    END_IF;    
+
+END_IF;
+
+//save last inject time
+b := WRITE_SV_DIRECT(sv_InjectTimesAct.dLastMoveTime, sv_InjectTimesAct.dActMoveTime);
+
+// reset act hold time
+b := WRITE_SV_DIRECT(sv_dActHoldTime, dNull);
+
+
+@SaText @RT(22)AResetInjectPurgeServo 1 @TL(4)
+IF sv_IMM_Type = nKAPPL_IMM_ServoValve THEN
+   abInjectSetupServo.aRun(bStart := FALSE,bStop:=TRUE);
+END_IF;
+
+
+@SaText @RT(13)AInitColdDrop 1 @TL(10)
+(**************************************** WARNING ********************************************
+ *** The KEBA Kemro K2 System including software is not intended for safety control tasks! ***
+ ***                       For further information see Comment tab!                        ***
+ *********************************************************************************************)
+
+abConstColdDrop.aRun(bStart := FALSE);
+
+//set move time
+abConstColdDrop.aSetMoveTime(dSetMoveTime := sv_ColdDropSettings.dColdDropTime);
+
+
+@SaText @RT(16)AResetIdentBlock 1 @TL(6)
+abInjectStep.aRun(bStart := FALSE);
+IF sv_IMM_Type = nKAPPL_IMM_ServoValve THEN
+   abInjectSetupServo.aRun(bStart := FALSE);    
+END_IF;
+
+
+
+@SaText @RT(23)aCheckStartConditionICM 1 @TL(64)
+IF mbICMLinked THEN
+    IF ((mpCoiningActivateMode^ <> nDeactivate) 
+        OR (mpVentingActivateMode^ <> nDeactivate)) THEN   
+        
+        //check the start condition for venting
+        //avoid double checking during coining movement
+        IF  (NOT mpbVentingStartPointDetected^) AND (NOT pbVentingDone^) AND (mpVentingActivateMode^ <> nDeactivate) THEN
+            
+            //venting activation mode: inject position  
+            IF (mpVentingActivateMode^ = nInjectPosition) AND (sv_rScrewPosition < sv_rVentingSetScrewPosition) THEN
+                sv_rVentingActScrewPosition := sv_rScrewPosition; //copy the actual screw pos
+                mpbVentingStartPointDetected^ := TRUE; 
+            END_IF;
+            
+            //venting activation mode: inject pressure  
+            IF (mpVentingActivateMode^ = nInjectPressure) AND (sv_rActPressure > sv_rVentingSetInjectPress) THEN
+                sv_rVentingActInjectPress := sv_rActPressure; //copy the actual inject pressure   
+                mpbVentingStartPointDetected^ := TRUE; 
+            END_IF;
+            
+            //venting activation mode: after inject with delay time             
+            IF (mpVentingActivateMode^ = nAfterInject) AND sv_bCutOffDetected THEN
+                fbTonVentingAfterInject(IN:= TRUE);     
+                
+                IF fbTonVentingAfterInject.Q THEN    
+                    sv_dVentingActDelayTime := fbTonVentingAfterInject.ET;
+                    mpbVentingStartPointDetected^ := TRUE;
+                END_IF;
+            END_IF;
+        END_IF;
+        
+        //check the start condition of coining 
+        IF (NOT mpbCoiningStartPointDetected^) AND (NOT pbCoiningDone^) AND (mpCoiningActivateMode^ <> nDeactivate) THEN
+            
+            //coining activation mode: inject position  
+            IF (mpCoiningActivateMode^ = nInjectPosition) AND (sv_rScrewPosition < sv_rCoiningSetScrewPosition) THEN
+                sv_rCoiningActScrewPosition := sv_rScrewPosition; //copy the actual screw pos  
+                mpbCoiningStartPointDetected^ := TRUE;
+            END_IF;
+            
+            //coining activation mode: inject pressure  
+            IF (mpCoiningActivateMode^ = nInjectPressure) AND (sv_rActPressure > sv_rCoiningSetInjectPress) THEN
+                sv_rCoiningActInjectPress := sv_rActPressure;  //copy the actual inject pressure  
+                mpbCoiningStartPointDetected^ := TRUE;
+            END_IF;    
+        
+            //coining activation mode: after inject with delay time
+            IF (mpCoiningActivateMode^ = nAfterInject) AND sv_bCutOffDetected THEN
+            
+                fbTonCoiningAfterInject(IN:= TRUE);                           
+                
+                IF fbTonCoiningAfterInject.Q THEN
+                    sv_dCoiningActDelayTime := fbTonCoiningAfterInject.ET;
+                    mpbCoiningStartPointDetected^ := TRUE;
+                END_IF;
+            END_IF;
+        END_IF;
+    ELSE 
+        bICMDeactivated := TRUE;
+    END_IF;
+    
+END_IF;
+
+
+
+@SaText @RT(11)APumpOutput 1 @TL(36)
+IF NOT mbICMLinked THEN
+    //ICM is not linked (APPCO)
+    b := WRITE_SVREAL_DIRECT(sv_rPressure, rPressure);
+    b := WRITE_SVREAL_DIRECT(sv_rVelocity, rVelocity);   
+
+ELSE  //ICM is linked (APPCO)
+    
+    //ICM is deactivated 
+    IF (mpVentingActivateMode^ = nDeactivate) AND (mpCoiningActivateMode^ = nDeactivate) THEN
+       b := WRITE_SVREAL_DIRECT(sv_rPressure, rPressure);
+       b := WRITE_SVREAL_DIRECT(sv_rVelocity, rVelocity);   
+    ELSE 
+        //ICM is activated and the machine is in movement injection 
+        IF (NOT pbVentingActive^) AND (NOT pbCoiningActive^) THEN
+            //add a mimimal output in case of ICM 
+            rTemp1 := MAX(rPressure, sv_MinOutputInject.rPressure);
+            rTemp2 := MAX(rVelocity, sv_MinOutputInject.rVelocity);
+            b := WRITE_SVREAL_DIRECT(sv_rPressure, rTemp1);
+            b := WRITE_SVREAL_DIRECT(sv_rVelocity, rTemp2);           
+        ELSE 
+            //in movement of coining or venting               
+            b := WRITE_SVREAL_DIRECT(sv_rPressure, sv_HydrMaxValuesInject.rMaxPressure);
+           
+            IF pbVentingActive^ THEN
+                rTemp1 := MAX((prVelOutputICM^ + rVelocity), prMinOutputVenting^);
+            ELSE 
+                rTemp1 := MAX((prVelOutputICM^ + rVelocity), prMinOutputCoining^);    
+            END_IF; 
+            b := WRITE_SVREAL_DIRECT(sv_rVelocity, rTemp1);
+           
+        END_IF;
+    END_IF;
+END_IF;
+
+
+
+
+@SaText @RT(14)aCheckICMReady 1 @TL(32)
+//check if ICM is ready 
+IF (mpCoiningActivateMode^ = nDeactivate) 
+    AND (mpVentingActivateMode^ = nDeactivate) THEN 
+    //no ICM -> Mode 0
+    
+    bICMReady := TRUE; 
+ELSIF (mpICMMode^ = nParallelICM AND 
+       ((pbCoiningDone^ AND (mpCoiningActivateMode^ <> nDeactivate)) 
+        OR (pbVentingDone^ AND (mpCoiningActivateMode^ = nDeactivate)))) THEN     
+    //parallel: inject active till coining is done  -> Mode 1, 2, 5
+    
+    bICMReady := TRUE; 
+ELSIF (mpICMMode^ = nSequentialICM AND mpbVentingStartPointDetected^) AND (NOT pbVentingDone^)  THEN    
+    //sequential: inject is stopped and start point for venting is detected before starting venting -> Mode 3  
+    
+    bICMReady := TRUE; 
+ELSIF (mpICMMode^ = nSequentialICM) AND pbCoiningDone^ 
+        AND (mpCoiningActivateMode^ <> nDeactivate) THEN   
+    //sequential and use venting: inject active till coining done -> Mode 3  
+    
+    bICMReady := TRUE;
+ELSIF (mpICMMode^ = nSequentialICM) AND pbVentingDone^ 
+        AND (mpCoiningActivateMode^ = nDeactivate) THEN     
+    //sequential without coining: inject active till venting done -> Mode 6  
+    
+    bICMReady := TRUE;
+    
+ELSIF bStop THEN 
+    //stopped by release of button
+    bICMReady := TRUE;
+END_IF;                 
+
+
+@SaText @RT(17)aICMInterruptStop 1 @TL(31)
+IF mbICMLinked THEN
+   //Rising eage of cut off detection
+   fbREdge_CutOff(CLK:= sv_bCutOffDetected);
+   
+   //cut off detectd and injection waiting for finishing the  ICM   
+   IF (NOT sv_bInjectWaitForICM) THEN    
+        IF (mpCoiningActivateMode^ <> nDeactivate) OR (mpVentingActivateMode^ <> nDeactivate) THEN
+            sv_bInjectWaitForICM := fbREdge_CutOff.Q;
+        END_IF;          
+    END_IF;
+    
+   //Interrupt stop of 1st inject if use sequential mode,
+   //when the start condition is detected and venting is not done
+   IF mpbVentingStartPointDetected^ AND (NOT pbVentingDone^) AND (mpICMMode^ = nSequentialICM) THEN
+        bICMInterruptStop := TRUE; 
+        bFirstInjectDone := TRUE;
+   END_IF; 
+   
+   //Cutoff detected before the 2nd inject in sequential mode -> interrupt stop for injection  
+   IF pbVentingDone^ AND (mpICMMode^ = nSequentialICM) THEN
+        bICMInterruptStop := sv_bCutOffDetected;
+   END_IF;
+   
+   //in parallel movement: cutoff is detected, injection is still waiting for ICM till it's done 
+   IF ((mpVentingActivateMode^ <> nDeactivate) OR (mpCoiningActivateMode^ <> nDeactivate)) 
+       AND fbREdge_CutOff.Q AND sv_bInjectWaitForICM THEN
+
+       bICMInterruptStop := TRUE; 
+   END_IF;  
+END_IF;
+
+
+@SaText @RT(19)aCheckPostCutOffICM 1 @TL(11)
+IF mbICMLinked THEN
+   IF  (sv_bInjectWaitForICM)AND (NOT pbVentingActive^)
+            AND (NOT pbCoiningActive^) 
+                AND ((pbVentingDone^) OR (mpVentingActivateMode^ = nDeactivate))
+                    AND ((pbCoiningDone^) OR (mpCoiningActivateMode^ = nDeactivate)) THEN
+       
+       
+       bICMPostCutOffDone := TRUE;
+   END_IF;
+END_IF;
+
+
+@SaText @RT(11)AInjectTime 1 @TL(12)
+(**************************************** WARNING ********************************************
+ *** The KEBA Kemro K2 System including software is not intended for safety control tasks! ***
+ ***                       For further information see Comment tab!                        ***
+ *********************************************************************************************)
+
+IF g_MoveCtrl.pData^.MoveId <> cMoveFwdInterPos THEN
+   dTemp1 := sv_InjectTimesAct.dActMoveTime + sv_dActHoldTime;
+   b := WRITE_SV_DIRECT(sv_dActInjectHoldTime, dTemp1);
+ELSE
+   b := WRITE_SV_DIRECT(sv_ActiveTimesInjectInterPos[g_MoveCtrl.iCount], sv_InjectTimesAct.dActMoveTime);
+END_IF;
+
+
+@SaText @RT(17)ATransducerCalib2 1 @TL(24)
+(**************************************** WARNING ********************************************
+ *** The KEBA Kemro K2 System including software is not intended for safety control tasks! ***
+ ***                       For further information see Comment tab!                        ***
+ *********************************************************************************************)
+
+abScrewFwdCalib.aRun(bStop := bStop OR sv_bTransducerError,
+                     bStart := TRUE,
+                     rActVoltage := ai_Position,
+                     rMaxVoltageDiff := sv_rMaxVoltageDiff,
+                     dStandStillDetectTime := sv_dStandStillDetectTime,
+                     LintabPoint := dummypoint,
+                     rSetValue := 0.0,
+                     bActive => sv_bOutputActive,
+                     rOutputPre => sv_rPressureAbs,
+                     rOutputVel => sv_rVelocityAbs,
+                     bPreOutputReached => sv_bPreOutputReady);
+sv_bDoTransducerCalib := NOT (abScrewFwdCalib.aRun.bPointDetected);
+
+abLintabApplyPres.aCalc(rX := sv_rPressureAbs,
+                        rY => sv_rPressure);
+
+abLintabApplyVel.aCalc(rX := sv_rVelocityAbs,
+                       rY => sv_rVelocity);
+
+
+@SaText @RT(16)ATransducerCalib 1 @TL(28)
+(**************************************** WARNING ********************************************
+ *** The KEBA Kemro K2 System including software is not intended for safety control tasks! ***
+ ***                       For further information see Comment tab!                        ***
+ *********************************************************************************************)
+
+abScrewFwdCalib.aRun(bStop := bStop OR sv_bTransducerError,
+                     bStart := TRUE,
+                     rActVoltage := ai_Position,
+                     rMaxVoltageDiff := sv_rMaxVoltageDiff,
+                     dStandStillDetectTime := sv_dStandStillDetectTime,
+                     LintabPoint := sv_TmpLintabPoint,
+                     rSetValue := 0.0,
+                     dDelayTimeOn := sv_InjectTimesSet.dSetDelayTimePump,
+                     dDelayTimeOff := sv_InjectTimesSet.dSetDelayTimeValve,
+                     bActive => sv_bOutputActive,
+                     rOutputPre => sv_rPressureAbs,
+                     rOutputVel => sv_rVelocityAbs,
+                     bPreOutputReached => sv_bPreOutputReady,
+                     iErrorInfo => iErrorInfo);
+sv_bDoTransducerCalib := NOT (abScrewFwdCalib.aRun.bPointDetected);
+bError := abScrewFwdCalib.aRun.bError OR bError;
+
+abLintabApplyPres.aCalc(rX := sv_rPressureAbs,
+                        rY => sv_rPressure);
+
+abLintabApplyVel.aCalc(rX := sv_rVelocityAbs,
+                       rY => sv_rVelocity);
+
+
+@SaText @RT(11)AStepOutput 1 @TL(31)
+(**************************************** WARNING ********************************************
+ *** The KEBA Kemro K2 System including software is not intended for safety control tasks! ***
+ ***                       For further information see Comment tab!                        ***
+ *********************************************************************************************)
+
+abInjectStep.aRun(bUsePosDetect := sv_rIdentPosition <> 0.0,
+                  rPositionDown := (sv_rScrewPositionAbs + sv_rIdentPosition) * 0.5,
+                  rLowOutput := sv_rMaxSpeedFwd * 0.1,
+                  bStart := TRUE,
+                  bStop := bStop,
+                  bDirection := FALSE,
+                  rActPos := sv_rScrewPositionAbs,
+                  rTargetPos := sv_rIdentPosition,
+                  dDelayTimeOn := sv_InjectTimesSet.dSetDelayTimePump,
+                  dDelayTimeOff := sv_dSetDelayTimeOffFwd,
+                  rPositionUp := sv_rScrewPositionAbs,
+                  rHighOutput := sv_ConstInjectSetup.Velocity.Output.rOutputValue,
+                  dMaxMoveTime := sv_InjectTimesSet.dMaxMoveTime,
+                  rStopRamp := sv_rIdentStopRamp,
+                  bActive => sv_bOutputActive,
+                  rOutputPre => sv_rPressureAbs,
+                  rOutputVel => sv_rVelocityAbs,
+                  bPreOutputReached => sv_bPreOutputReady);
+
+
+abLintabApplyPres.aCalc(rX := sv_rPressureAbs,
+                        rY => sv_rPressure);
+
+abLintabApplyVel.aCalc(rX := sv_rVelocityAbs,
+                       rY => sv_rVelocity);
+
+
+@SaText @RT(12)AInjectPurge 1 @TL(25)
+(**************************************** WARNING ********************************************
+ *** The KEBA Kemro K2 System including software is not intended for safety control tasks! ***
+ ***                       For further information see Comment tab!                        ***
+ *********************************************************************************************)
+
+abInjectPurge.aRun(bStart := TRUE,
+                   bStop := bStop,
+                   bDirection := FALSE,
+                   rActPos := sv_rScrewPosition,
+                   rTargetPos := sv_PurgeSettings.InjectParams.rEndPos,
+                   bUsePosDetect := TRUE,
+                   dDelayTimeOn := sv_InjectTimesSet.dSetDelayTimePump,
+                   dDelayTimeOff := sv_InjectTimesSet.dSetDelayTimeValve,
+                   bActive => sv_bOutputActive,
+                   bPreOutputReached => sv_bPreOutputReady);
+
+b := WRITE_SVREAL_DIRECT(sv_rPressureAbs, abInjectPurge.aRun.rOutputPre);
+b := WRITE_SVREAL_DIRECT(sv_rVelocityAbs, abInjectPurge.aRun.rOutputVel);
+
+abLintabApplyPres.aCalc(rX := sv_rPressureAbs);
+b := WRITE_SVREAL_DIRECT(sv_rPressure, abLintabApplyPres.aCalc.rY);
+
+abLintabApplyVel.aCalc(rX := sv_rVelocityAbs);
+b := WRITE_SVREAL_DIRECT(sv_rVelocity, abLintabApplyVel.aCalc.rY);
+
+
+@SaText @RT(15)AInjectionCalib 1 @TL(19)
+(**************************************** WARNING ********************************************
+ *** The KEBA Kemro K2 System including software is not intended for safety control tasks! ***
+ ***                       For further information see Comment tab!                        ***
+ *********************************************************************************************)
+
+abInjectionFwdCalib.aRun(bStop := bStop OR sv_bTransducerError,
+                         bStart := TRUE,
+                         rActPosition := sv_rScrewPositionAbs,
+                         rVelocity := sv_rVelocity,
+                         dDelayTimeOn := sv_InjectTimesSet.dSetDelayTimePump,
+                         dDelayTimeOff := sv_InjectTimesSet.dSetDelayTimeValve,
+                         bActive => sv_bOutputActive,
+                         rOutputPre => sv_rPressure,
+                         rOutputVel => sv_rVelocity,
+                         rOutputServo => sv_rServoOutput,
+                         bPreOutputReached => sv_bPreOutputReady,
+                         iErrorInfo => iErrorInfo);
+bError := abInjectionFwdCalib.aRun.bError OR bError;
+
+
+@SaText @RT(7)aInject 1 @TL(90)
+(**************************************** WARNING ********************************************
+ *** The KEBA Kemro K2 System including software is not intended for safety control tasks! ***
+ ***                       For further information see Comment tab!                        ***
+ *********************************************************************************************)
+
+rCavityPressure := MUX(sv_iSelCavityPressureSensor - 1, 
+                       sv_rCavityPressure1, 
+                       sv_rCavityPressure2,
+                       sv_rCavityPressure3,
+                       sv_rCavityPressure4,
+                       sv_rCavityPressure5,
+                       sv_rCavityPressure6,
+                       sv_rCavityPressure7,                       
+                       sv_rCavityPressure8);
+b := WRITE_SVREAL_DIRECT(sv_rCavityPressure, rCavityPressure);
+
+IF (sv_IMM_Type = nKAPPL_IMM_ServoValve) THEN
+   dSetDelayTimeOn := sv_InjectTimesSet.dSetDelayTimeValve;
+   dSetDelayTimeOff := T#0s;
+ELSE     
+   dSetDelayTimeOn := sv_InjectTimesSet.dSetDelayTimePump;
+   dSetDelayTimeOff := sv_InjectTimesSet.dSetDelayTimeValve;
+END_IF;
+
+abInject.aRun(di_ExtCutOff := mbExtCutOffLinked AND di_ExtCutOff,
+              bUseInterruptPos := g_MoveCtrl.pData^.MoveId = cMoveFwdInterPos,
+              bStop := (bStop OR sv_bTransducerError)OR bICMInterruptStop,
+              bStart := TRUE,
+              rActScrewPosition := sv_rScrewPosition,
+              rMaxInjectSpeed := sv_rMaxSpeedFwdSpec,
+              rMaxPossiblePressure := sv_rMaxPressureFwd,
+              InjectControlParams := sv_InjectControlParams,
+              InjectDeadTimeParams := sv_InjectDeadTimeParams,
+              HoldingControlParams := sv_HoldingControlParams,
+              HoldingDeadTimeParams := sv_HoldingDeadTimeParams,
+              dMaxMoveTime := sv_InjectTimesSet.dMaxMoveTime,
+              CutOffParams := sv_CutOffParams,
+              rActMoldPressure := sv_rCavityPressure,
+              rActInjectPressure := sv_rActPressure,
+              PressureLimitControlParams := sv_PressureLimitControlParams,
+              PressureLimitControlVelocityPar := sv_PressureLimitVelocityParams,
+              IMM_Type := sv_IMM_Type,
+              dDelayTimeOn := dSetDelayTimeOn,
+              dDelayTimeOff := dSetDelayTimeOff,
+              rInterruptPos := sv_rInjectInterruptPosition,
+              rInterruptDec := sv_rInjectInterruptDec,
+              rInterruptAcc := sv_rInjectInterruptAcc,
+              bUseCalcedPressureStartRamp := sv_bUseCalcedPressureStartRamp,
+              bIgnoreStopAtCutOffNoHold := sv_bIgnoreStopAtCutOffNoHold,
+              rPressureOutput => rPressureAbs,
+              rVelocityOutput => rVelocityAbs,
+              bActive => sv_bOutputActive,
+              bCutOffDetected => sv_bCutOffDetected,
+              iActiveInjectStage => sv_iActiveStage,
+              bPreOutputReached => sv_bPreOutputReady,
+              rServoOutput => rServoOutput);
+
+sv_bInjectActive := sv_bOutputActive;
+sv_bHoldActive := sv_bCutOffDetected;
+
+// Do not use WRITE_SVREAL_DIRECT() here: these SV's are changed once per cycle and could be the signalled
+sv_rHoldPosition := abInject.aRun.rHoldDonePosition; 
+sv_rCushion := abInject.aRun.rCushion;
+sv_rCutOffPosition := abInject.aRun.rCutOffPosition;
+sv_rCutOffPressure := abInject.aRun.rCutOffPressure;
+sv_rCutOffCavityPressure := abInject.aRun.rCutOffCavityPressure;
+                                                                
+b := WRITE_SVREAL_DIRECT(sv_rSetPressureAbs, abInject.aRun.rPressureSet);
+b := WRITE_SVREAL_DIRECT(sv_rSetVelocityAbs, abInject.aRun.rVelocitySet);
+b := WRITE_SV_DIRECT(sv_InjectTimesAct.dActMoveTime, abInject.aRun.dActMoveTime);
+b := WRITE_SV_DIRECT(sv_dActHoldTime, abInject.aRun.dActHoldingTime);       
+
+
+abLintabApplyPres.aCalc(rX := rPressureAbs, rY => rPressure);
+abLintabApplyVel.aCalc(rX := rVelocityAbs, rY => rVelocity);
+
+abLintabApplyServoVel.aCalc(rX := sv_rSetVelocityAbs);
+b := WRITE_SVREAL_DIRECT(sv_rVelocitySet, abLintabApplyServoVel.aCalc.rY);
+
+
+IF (sv_bInjectActive AND (NOT sv_bCutOffDetected)) THEN
+   abLintabApplyServoVel.aCalc(rX := rServoOutput);
+   b := WRITE_SVREAL_DIRECT(sv_rServoOutput, abLintabApplyServoVel.aCalc.rY);
+ELSE
+   abLintabApplyServoPres.aCalc(rX := rServoOutput);
+   b := WRITE_SVREAL_DIRECT(sv_rServoOutput, abLintabApplyServoPres.aCalc.rY);
+END_IF;
+
+
+
+
+@SaText @RT(11)AConstSetup 1 @TL(24)
+(**************************************** WARNING ********************************************
+ *** The KEBA Kemro K2 System including software is not intended for safety control tasks! ***
+ ***                       For further information see Comment tab!                        ***
+ *********************************************************************************************)
+
+abInjectSetup.aRun(rTargetPos := 0.01 * sv_rScrewStroke,
+                   bStart := TRUE,
+                   bStop := bStop,
+                   bDirection := FALSE,
+                   rActPos := sv_rScrewPositionAbs,
+                   bUsePosDetect := sv_bMoveToServoCalibStartPos,
+                   dDelayTimeOn := sv_InjectTimesSet.dSetDelayTimePump,
+                   dDelayTimeOff := sv_InjectTimesSet.dSetDelayTimeValve,
+                   rOutputPre => sv_rPressureAbs,
+                   rOutputVel => sv_rVelocityAbs,
+                   bActive => sv_bOutputActive,
+                   bPreOutputReached => sv_bPreOutputReady);
+
+abLintabApplyPres.aCalc(rX := sv_rPressureAbs,
+                        rY => sv_rPressure);
+
+abLintabApplyVel.aCalc(rX := sv_rVelocityAbs,
+                       rY => sv_rVelocity);
+
+
+@SaText @RT(9)AColdDrop 1 @TL(29)
+(**************************************** WARNING ********************************************
+ *** The KEBA Kemro K2 System including software is not intended for safety control tasks! ***
+ ***                       For further information see Comment tab!                        ***
+ *********************************************************************************************)
+
+abConstColdDrop.aRun(bStart := TRUE,
+                     bStop := bStop,
+                     bDirection := FALSE,
+                     rActPos := sv_rScrewPosition,
+                     rTargetPos := 0.0,
+                     bUsePosDetect := TRUE,
+                     dMaxTime := sv_ColdDropTimesSet.dMaxMoveTime,
+                     dDelayTimeOn := sv_InjectTimesSet.dSetDelayTimePump,
+                     dDelayTimeOff := sv_InjectTimesSet.dSetDelayTimeValve,
+                     bActive => sv_bOutputActive,
+                     bPreOutputReached => sv_bPreOutputReady);
+
+b := WRITE_SVREAL_DIRECT(sv_rPressureAbs, abConstColdDrop.aRun.rOutputPre);
+b := WRITE_SVREAL_DIRECT(sv_rVelocityAbs, abConstColdDrop.aRun.rOutputVel);
+b := WRITE_SV_DIRECT(sv_ColdDropTimesAct.dActMoveTime, abConstColdDrop.aRun.dActTime);
+
+
+abLintabApplyPres.aCalc(rX := sv_rPressureAbs);
+b := WRITE_SVREAL_DIRECT(sv_rPressure, abLintabApplyPres.aCalc.rY);
+
+
+abLintabApplyVel.aCalc(rX := sv_rVelocityAbs);
+b := WRITE_SVREAL_DIRECT(sv_rVelocity, abLintabApplyVel.aCalc.rY);
+
+
+@SaText @RT(18)ABackPressureCalib 1 @TL(19)
+(**************************************** WARNING ********************************************
+ *** The KEBA Kemro K2 System including software is not intended for safety control tasks! ***
+ ***                       For further information see Comment tab!                        ***
+ *********************************************************************************************)
+
+abBackPressureCalib.aRun(bStop := bStop OR sv_bTransducerError,
+                         bStart := TRUE,
+                         rPressure := sv_rActPressureHydr,
+                         dDelayTimeOn := sv_InjectTimesSet.dSetDelayTimePump,
+                         dDelayTimeOff := sv_InjectTimesSet.dSetDelayTimeValve,
+                         bActive => sv_bOutputActive,
+                         rOutputPre => sv_rPressure,
+                         rOutputVel => sv_rVelocity,
+                         bPreOutputReached => sv_bPreOutputReady,
+                         iErrorInfo => iErrorInfo);
+
+sv_rVelocitySet := sv_rVelocity;
+bError := abBackPressureCalib.aRun.bError OR bError;
+
+
+@SaTrans 0 
+@SaExits 0 
+@END_SfcBody 
+
+@@@BEG_Comment@@@ 
+@TL(4)
+This algorithm is responsible for executing the movement.
+Depending on MoveId, OperationMode and activated transducer calibration the according
+movement is executed.
+The different actions contain the movement blocks and the according parameters.
+@@@END_Comment@@@ 
+
+@BEG_Body 
+@TL(55)
+(**************************************** WARNING ********************************************
+ *** The KEBA Kemro K2 System including software is not intended for safety control tasks! ***
+ ***                       For further information see Comment tab!                        ***
+ *********************************************************************************************)
+
+abInject.aInit(pInjectProfile := @sv_InjectProfVis,
+               pHoldProfile := @sv_HoldProfVis,
+               MoveIdInject := sv_MoveInject.MoveId,
+               MoveIdHold := cMoveHold,
+               pScrewDiameter := @sv_rScrewDiameter,
+               ComparatorData := ComparatorData,
+               pdCalcedInjectDuration := @sv_dCalculatedDurationInject,
+               pdCalcedHoldDuration := @sv_dCalculatedDurationHold,
+               prCalcDurationStartPosition := @sv_rInjectCalcDurationStartPos,
+               pCutOffParams := @sv_CutOffParams,
+               pInstanceDataInterPos := @sv_InstanceDataInjectInterPos);
+
+abInjectSetup.aInit(pConst := @sv_ConstInjectSetup,
+                    MoveId := cMoveInject);
+
+abInjectSetupServo.aInit(pConst := @sv_ConstInjectSetupServo,
+                         MoveId := cMoveInject);
+
+abScrewFwdCalib.aInit(pConst := @sv_ConstInjectSetup,
+                      MoveId := cMoveInject);
+
+abInjectionFwdCalib.aInit(pConst := @sv_ConstInjectionCalib,
+                          MoveId := cMoveInject,
+                          prMaxPressure := @sv_HydrMaxValuesInject.rMaxPressure,
+                          MeasureTask := TaskInject,
+                          IMM_Type := sv_IMM_Type,
+                          pbDebugCalibration := @sv_TraceLevel.bDebugCalibration);
+
+abBackPressureCalib.aInit(pConst := @sv_ConstBackPressureCalib,
+                          MoveId := cMoveInject,
+                          prMaxPressure := @sv_HydrMaxValuesInject.rMaxPressure,
+                          MeasureTask := TaskInject,
+                          pbDebugCalibration := @sv_TraceLevel.bDebugCalibration);
+
+abInjectPurge.aInit(pConst := @sv_PurgeSettings.InjectParams.ConstOutput,
+                    MoveId := cMoveInjectPurge);
+
+abConstColdDrop.aInit(pConst := @sv_ColdDropSettings.ConstOutput,
+                      MoveId := cMoveColdDrop);
+
+abLintabApplyPres.aInit(pLintab := @sv_LintabOutFwdP);
+
+abLintabApplyVel.aInit(pLintab := @sv_LintabOutFwdV);
+
+abLintabApplyServoPres.aInit(pLintab := @sv_LintabOutFwdP,
+                             bLinearExtrapolation := TRUE);
+
+abLintabApplyServoVel.aInit(pLintab := @sv_LintabOutFwdVServo,
+                            bLinearExtrapolation := TRUE);
+
+@END_Body 
+
+@@@BEG_Comment@@@ 
+@TL(0)
+
+@@@END_Comment@@@ 
+
+@BEG_Body 
+@TL(89)
+// NOTE: this algo is a workaround for CR_0035590 & CR_0035591 the islinked should be done in aInitOrigin.
+// check for external cut off input linked
+mbExtCutOffLinked := IS_LINKED(di_ExtCutOff);
+
+IF sv_NumberOfDevices[cCompAccumulator] > 0 THEN      
+   pbUseAccumulator := GET_SYNC_REFTO('Accumulator1.sv_bUseAccumulator', T#0s, Status);
+   bAccumulatorAvailable := Status = KSYS_Status_OK;
+END_IF;
+
+sv_LintabOutFwdVServo.LintabPoints.uNoOfPoints := 2;
+sv_LintabOutFwdVServo.LintabPoints.Point[1].rX := 0.0;
+sv_LintabOutFwdVServo.LintabPoints.Point[1].rY := 0.0;
+sv_LintabOutFwdVServo.LintabPoints.Point[2].rX := sv_rMaxSpeedFwdSpec;
+sv_LintabOutFwdVServo.LintabPoints.Point[2].rY := 100.0;
+
+// References to Lintabs and Paramters for comparater-functionality
+ComparatorData[1].sEndpointName := CONCAT(GET_MY_FU_NAME(), '.ai_Position');
+ComparatorData[1].ScrewDiameter := @sv_rScrewDiameter;
+ComparatorData[1].pLintabPoints := @sv_ScrewLintab.LintabPoints.Point;
+ComparatorData[1].piUsedLintabPoints := @sv_ScrewLintab.LintabPoints.uNoOfPoints;
+
+ComparatorData[2].sEndpointName := CONCAT(GET_MY_FU_NAME(), '.ai_Pressure');
+ComparatorData[2].pLintabPoints := @sv_PressureLintab.LintabPoints.Point;
+ComparatorData[2].piUsedLintabPoints := @sv_PressureLintab.LintabPoints.uNoOfPoints;
+ComparatorData[2].pSpecificPressureLintabPoints := @sv_LintabOutFwdP.LintabPoints.Point;
+ComparatorData[2].piUsedSpecPressureLintabPoints := @sv_LintabOutFwdP.LintabPoints.uNoOfPoints;
+
+ComparatorData[3].sEndpointName := 'Mold1.ai_CavityPressure1';
+ComparatorData[3].pLintabPoints := @sv_CavityPressLintab1.LintabPoints.Point;
+ComparatorData[3].piUsedLintabPoints := @sv_CavityPressLintab1.LintabPoints.uNoOfPoints;
+
+ComparatorData[4].sEndpointName := 'Mold1.ai_CavityPressure2';
+ComparatorData[4].pLintabPoints := @sv_CavityPressLintab2.LintabPoints.Point;
+ComparatorData[4].piUsedLintabPoints := @sv_CavityPressLintab2.LintabPoints.uNoOfPoints;
+
+ComparatorData[5].sEndpointName := 'Mold1.ai_CavityPressure3';
+ComparatorData[5].pLintabPoints := @sv_CavityPressLintab3.LintabPoints.Point;
+ComparatorData[5].piUsedLintabPoints := @sv_CavityPressLintab3.LintabPoints.uNoOfPoints;
+
+ComparatorData[6].sEndpointName := 'Mold1.ai_CavityPressure4';
+ComparatorData[6].pLintabPoints := @sv_CavityPressLintab4.LintabPoints.Point;
+ComparatorData[6].piUsedLintabPoints := @sv_CavityPressLintab4.LintabPoints.uNoOfPoints;
+
+ComparatorData[7].sEndpointName := 'Mold1.ai_CavityPressure5';
+ComparatorData[7].pLintabPoints := @sv_CavityPressLintab5.LintabPoints.Point;
+ComparatorData[7].piUsedLintabPoints := @sv_CavityPressLintab5.LintabPoints.uNoOfPoints;
+
+ComparatorData[8].sEndpointName := 'Mold1.ai_CavityPressure6';
+ComparatorData[8].pLintabPoints := @sv_CavityPressLintab6.LintabPoints.Point;
+ComparatorData[8].piUsedLintabPoints := @sv_CavityPressLintab6.LintabPoints.uNoOfPoints;
+
+ComparatorData[9].sEndpointName := 'Mold1.ai_CavityPressure7';
+ComparatorData[9].pLintabPoints := @sv_CavityPressLintab7.LintabPoints.Point;
+ComparatorData[9].piUsedLintabPoints := @sv_CavityPressLintab7.LintabPoints.uNoOfPoints;
+
+ComparatorData[10].sEndpointName := 'Mold1.ai_CavityPressure8';
+ComparatorData[10].pLintabPoints := @sv_CavityPressLintab8.LintabPoints.Point;
+ComparatorData[10].piUsedLintabPoints := @sv_CavityPressLintab8.LintabPoints.uNoOfPoints;
+
+// call origin aInit argorithm
+aInitOrigin();
+
+// ident movement
+abInjectStep.aInit(pConst:=@sv_ConstInjectSetup,                       
+                   MoveId:=cMoveInject,
+                   prMaxSpeed:=@sv_rMaxSpeedFwdSpec);
+
+IF IS_LINKED(sv_bInjectWaitForICM) THEN
+    // pointer ICM 
+    mpCoiningActivateMode :=  GET_SYNC_REFTO('Mold1.sv_CoiningActivateMode', T#0s, Status);
+    mpVentingActivateMode :=  GET_SYNC_REFTO('Mold1.sv_VentingActivateMode', T#0s, Status);
+    mpICMMode :=  GET_SYNC_REFTO('Mold1.sv_ICMMode', T#0s, Status);
+    mpbVentingStartPointDetected :=  GET_SYNC_REFTO('Mold1.sv_bVentingStartPointDetected', T#0s, Status);
+    mpbCoiningStartPointDetected :=  GET_SYNC_REFTO('Mold1.sv_bCoiningStartPointDetected', T#0s, Status);
+       
+    prVelOutputICM := GET_SYNC_REFTO('Mold1.sv_rVelOutputICM', T#0s, Status);
+    pbCoiningDone := GET_SYNC_REFTO('Mold1.sv_bCoiningDone', T#0s, Status);
+    pbVentingDone := GET_SYNC_REFTO('Mold1.sv_bVentingDone', T#0s, Status);
+    
+    pbCoiningActive := GET_SYNC_REFTO('Mold1.sv_bCoiningActive', T#0s, Status);
+    pbVentingActive := GET_SYNC_REFTO('Mold1.sv_bVentingActive', T#0s, Status);
+
+    prMinOutputVenting := GET_SYNC_REFTO('Mold1.sv_rMinOutputVelVenting', T#0s, Status);
+    prMinOutputCoining := GET_SYNC_REFTO('Mold1.sv_rMinOutputVelCoining', T#0s, Status);
+    
+    mbICMLinked := TRUE; 
+END_IF;            
+
+
+@END_Body 
+
+@@@BEG_Comment@@@ 
+@TL(0)
+
+@@@END_Comment@@@ 
+
+@BEG_Body 
+@TL(13)
+(**************************************** WARNING ********************************************
+ *** The KEBA Kemro K2 System including software is not intended for safety control tasks! ***
+ ***                       For further information see Comment tab!                        ***
+ *********************************************************************************************)
+
+//copy minoutput to inject profile
+sv_InjectProfVis.rMinOutputVel := sv_MinOutputInject.rVelocity;
+sv_InjectProfVis.rMinOutputPress := sv_MinOutputInject.rPressure;
+
+//copy minoutput to const inject movement in setup mode
+sv_ConstInjectSetup.Velocity.rMinOutput := sv_MinOutputInject.rVelocity;
+sv_ConstInjectSetup.Pressure.rMinOutput := sv_MinOutputInject.rPressure;
+
+@END_Body 
+
+@@@BEG_Comment@@@ 
+@TL(0)
+
+@@@END_Comment@@@ 
+
+@BEG_Body 
+@TL(10)
+(**************************************** WARNING ********************************************
+ *** The KEBA Kemro K2 System including software is not intended for safety control tasks! ***
+ ***                       For further information see Comment tab!                        ***
+ *********************************************************************************************)
+
+//copy screw volume to first profile point (not visible on hmi)
+sv_InjectProfVis.Profile.Points[1].rStartPos := sv_rScrewVolume;
+
+
+
+@END_Body 
+
+@@@BEG_Comment@@@ 
+@TL(0)
+
+@@@END_Comment@@@ 
+
+@BEG_Body 
+@TL(15)
+(**************************************** WARNING ********************************************
+ *** The KEBA Kemro K2 System including software is not intended for safety control tasks! ***
+ ***                       For further information see Comment tab!                        ***
+ *********************************************************************************************)
+
+// on change of systempressure, max allowed inject or hold pressure, check for plausibility
+// (1 postkomma digit)
+
+IF ((REAL_TO_DINT(sv_rMaxInjPresAllow * 10.0) > REAL_TO_DINT(sv_rMaxPressureFwd * 10.0)) 
+    OR (REAL_TO_DINT(sv_rMaxHoldPresAllow * 10.0) > REAL_TO_DINT(sv_rMaxPressureFwd * 10.0))) THEN
+   SET_ALARM(erAllowablePresTooHigh);
+ELSE 
+   RESET_ALARM(erAllowablePresTooHigh);
+END_IF;
+
+@END_Body 
+
+@@@BEG_Comment@@@ 
+@TL(0)
+
+@@@END_Comment@@@ 
+
+@BEG_Body 
+@TL(26)
+(**************************************** WARNING ********************************************
+ *** The KEBA Kemro K2 System including software is not intended for safety control tasks! ***
+ ***                       For further information see Comment tab!                        ***
+ *********************************************************************************************)
+
+rSizeScrew := FCalcScrewSize(rDiameter := sv_rScrewDiameter);
+sv_rScrewSizeFactor := rSizeScrew * 1.0e-3;
+
+//convert speed mm/s * mm² / 1000 -> cm³/s
+IF bAccumulatorAvailable AND pbUseAccumulator^ THEN
+   sv_rMaxSpeedFwdSpec := sv_rMaxSpeedFwdAccu * rSizeScrew / 1000.0;
+   rMaxSpeedFwdOut := sv_rMaxSpeedFwdSpec;
+ELSE
+   sv_rMaxSpeedFwdSpec := sv_rMaxSpeedFwd * rSizeScrew / 1000.0;  
+   rMaxSpeedFwdOut := sv_rMaxSpeedFwdCalc * rSizeScrew / 1000.0;
+END_IF;
+
+//lintab between cm�/s and %
+sv_LintabOutFwdV.LintabPoints.uNoOfPoints := 2;
+sv_LintabOutFwdV.LintabPoints.Point[1].rX := 0.0;
+sv_LintabOutFwdV.LintabPoints.Point[1].rY := 0.0;
+sv_LintabOutFwdV.LintabPoints.Point[2].rX := rMaxSpeedFwdOut;
+sv_LintabOutFwdV.LintabPoints.Point[2].rY := 100.0;
+
+sv_LintabOutFwdVServo := sv_LintabOutFwdV;
+
+@END_Body 
+
+@@@BEG_Comment@@@ 
+@TL(0)
+
+@@@END_Comment@@@ 
+
+@BEG_Body 
+@TL(25)
+(**************************************** WARNING ********************************************
+ *** The KEBA Kemro K2 System including software is not intended for safety control tasks! ***
+ ***                       For further information see Comment tab!                        ***
+ *********************************************************************************************)
+
+CASE sv_DecompAftPlastSettings.Mode OF
+    
+    nNotUsed:
+        //Start position of inject = plast end position
+        sv_rInjectCalcDurationStartPos := sv_PlastProfVis.Profile.Points[sv_PlastProfVis.Profile.iNoOfPoints + 1].rStartPos;
+        sv_rMaxPlausFirstInjectStage := sv_PlastProfVis.Profile.Points[sv_PlastProfVis.Profile.iNoOfPoints + 1].rStartPos;
+   
+    nPosDependent:
+        //Start position of inject = plast end position + decomp position
+        sv_rInjectCalcDurationStartPos := sv_PlastProfVis.Profile.Points[sv_PlastProfVis.Profile.iNoOfPoints + 1].rStartPos + sv_DecompAftPlastSettings.rDecompPos;
+        sv_rMaxPlausFirstInjectStage := sv_PlastProfVis.Profile.Points[sv_PlastProfVis.Profile.iNoOfPoints + 1].rStartPos + sv_DecompAftPlastSettings.rDecompPos; 
+   
+    nTimeDependent:
+        //Start position of inject = plast end position + offset
+        //Todo: Use time, velocity and ramp setting to calculate target position,...
+        sv_rInjectCalcDurationStartPos := sv_PlastProfVis.Profile.Points[sv_PlastProfVis.Profile.iNoOfPoints + 1].rStartPos + 5.0;
+        sv_rMaxPlausFirstInjectStage := sv_rScrewVolume;    
+   
+END_CASE;
+
+@END_Body 
+
+@@@BEG_Comment@@@ 
+@TL(0)
+
+@@@END_Comment@@@ 
+
+@BEG_Body 
+@TL(23)
+(**************************************** WARNING ********************************************
+ *** The KEBA Kemro K2 System including software is not intended for safety control tasks! ***
+ ***                       For further information see Comment tab!                        ***
+ *********************************************************************************************)
+
+IF evStartData.DeviceId = sv_DeviceId AND evStartData.MoveId = cMoveFwdInterPos THEN
+   //inject movement to intermediate position started
+   //->get according instance data
+   
+   //avoid out of range errors
+   i := MAX(1,evStartData.IntermediateCond);
+   
+   sv_rInjectInterruptPosition := sv_InstanceDataInjectInterPos[i].rTargetValue;
+   sv_rInjectInterruptDec := sv_InstanceDataInjectInterPos[i].rDeceleration;
+   sv_rInjectInterruptAcc := sv_InstanceDataInjectInterPos[i].rAcceleration;
+   
+   //adapt reference to duration variable
+   sv_MoveInjectInterPos.pdCalculatedDuration := @sv_InstanceDataInjectInterPos[i].dCalculatedDuration;
+    
+   //adapt reference to delay time
+   sv_MoveInjectInterPos.pdStartDelaySet := @sv_InstanceDataInjectInterPos[i].dDelay; 
+END_IF;
+
+@END_Body 
+
+@@@BEG_Comment@@@ 
+@TL(5)
+get instance data if start event for inject to intermediate position
+is received
+
+attention:
+taskslot is asigned to make sure that execution is done before evaStart in ABControl.pu
+@@@END_Comment@@@ 
+
+@BEG_Body 
+@TL(7)
+(**************************************** WARNING ********************************************
+ *** The KEBA Kemro K2 System including software is not intended for safety control tasks! ***
+ ***                       For further information see Comment tab!                        ***
+ *********************************************************************************************)
+
+sv_dDurationInjectAndHold := sv_dCalculatedDurationInject + sv_dCalculatedDurationHold;
+
+@END_Body 
+
+@@@BEG_Comment@@@ 
+@TL(0)
+
+@@@END_Comment@@@ 
+
+@BEG_Body 
+@TL(5)
+FOR i:= 3 TO 20 DO
+    sv_InjectProfVis.Profile.Points[i].rVelRamp := sv_InjectProfVis.Profile.Points[2].rVelRamp;
+END_FOR;
+
+
+@END_Body 
+
+@@@BEG_Comment@@@ 
+@TL(0)
+
+@@@END_Comment@@@ 
+
+@BEG_Body 
+@TL(5)
+FOR i:= 3 TO 20 DO
+    sv_HoldProfVis.Profile.Points[i].rPressRamp := sv_HoldProfVis.Profile.Points[2].rPressRamp;
+END_FOR;
+
+
+@END_Body 
+
+@@@BEG_Comment@@@ 
+@TL(0)
+
+@@@END_Comment@@@ 
+
+@BEG_Body 
+@TL(21)
+(**************************************** WARNING ********************************************
+ *** The KEBA Kemro K2 System including software is not intended for safety control tasks! ***
+ ***                       For further information see Comment tab!                        ***
+ *********************************************************************************************)
+
+IF sv_bInitDone AND NOT mInitPresLimitCtrl THEN
+   mUsePresLimitPIDCtrl := sv_PressureLimitControlParams.bUsePIDControl;
+   mUsePresLimitVelocityCtrl := sv_PressureLimitVelocityParams.bUsePIDControl;
+   mInitPresLimitCtrl := TRUE;
+ELSE
+   IF (NOT mUsePresLimitPIDCtrl) AND sv_PressureLimitControlParams.bUsePIDControl THEN
+      sv_PressureLimitVelocityParams.bUsePIDControl := FALSE;
+      mUsePresLimitPIDCtrl := TRUE;
+      mUsePresLimitVelocityCtrl := FALSE;      
+   ELSIF (NOT mUsePresLimitVelocityCtrl) AND sv_PressureLimitVelocityParams.bUsePIDControl THEN
+      sv_PressureLimitControlParams.bUsePIDControl := FALSE;  
+      mUsePresLimitPIDCtrl := FALSE;
+      mUsePresLimitVelocityCtrl := TRUE;
+   END_IF;   
+END_IF;
+
+@END_Body 
+
+@@@BEG_Comment@@@ 
+@TL(0)
+
+@@@END_Comment@@@ 
+
+@BEG_Body 
+@TL(12)
+(**************************************** WARNING ********************************************
+ *** The KEBA Kemro K2 System including software is not intended for safety control tasks! ***
+ ***                       For further information see Comment tab!                        ***
+ *********************************************************************************************)
+
+variableName := CONCAT(GET_MY_FU_NAME(),'.Inject.ActInjectTime ');
+swoState := KSWO_AddVariable(Task := TaskInject,
+                             Name := variableName,
+                             Variable := sv_dActInjectHoldTime); // use sum of inject and hold instead of sv_InjectTimesAct.dActMoveTime;
+
+STOP_PROCESS_ALGORITHM();
+
+@END_Body 
+
+@@@BEG_Comment@@@ 
+@TL(0)
+
+@@@END_Comment@@@ 
+
+@BEG_Body 
+@TL(14)
+(**************************************** WARNING ********************************************
+ *** The KEBA Kemro K2 System including software is not intended for safety control tasks! ***
+ ***                       For further information see Comment tab!                        ***
+ *********************************************************************************************)
+
+IF sv_bInjectActive AND sv_bCutOffDetected THEN
+   //send movement state event for hold movement
+   fbSetMovementState(MoveId := cMoveHold,
+                      MoveDir := cMoveFwd,
+                      State := nActive);
+END_IF;
+
+
+
+@END_Body 
+
+@@@BEG_Comment@@@ 
+@TL(0)
+
+@@@END_Comment@@@ 
+@END_Body 
+
+@END_Contents 

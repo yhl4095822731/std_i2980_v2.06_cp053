@@ -1,0 +1,2125 @@
+(*
+@h    ! WARNING !
+@h    The Kemro K2 system (including software) only meets category B according to EN 954-1,
+@h    thus it is not intended for usage in safety-relevant control applications in the field 
+@h    of personal safety (e.g. emergency stop).
+@h    To implement potentially necessary safety-relevant control tasks, always use additional 
+@h    external safety devices that are intended for the particular purpose, and meet the necessary 
+@h    functional safety.
+@h    For further information see EN 954-1 (EN ISO 13849-1) and/or the K2-x00 user manual, chapter 
+@h    "CE conformity, directives and standards".
+
+This AB provides all functions to realize a constant movement.
+It includes the following funcionalities:
+- initialization of the constant output blocks 
+- automatic reparam of all necessary blocks after change in the constant output
+  Attention: reparam will be done after the movement is stopped and not during the movement is active
+- constant output for pressure and velocity
+- timeout detection (including automatic stop after timeout)
+
+
+@F S_KPIEC_ALAMOVE_03
+
+*)
+
+IMPORT_OVER_LISTFILE
+ FCalcIntersection
+, SET_ALARM
+, FCalcDuration
+, tsDeviceId
+, tsVelPre
+, KAPPL_Plastics_ConstOutput_Pos
+, KAPPL_ConstOutputData
+, tMoveIdent
+, KCTRL_YXGen_RampType
+, tsOutput
+, KCTRL_ProfPoint
+, tsErrorInfo
+, TON
+, R_TRIG
+, TOF
+, KCTRL_Prof_Light
+
+END_IMPORT
+
+ALGORITHM_BLOCK ABConstMovement #DUMMY_EDIT_BLOCK
+
+SYSTEM_VAR
+ sv_DeviceId : tsDeviceId;
+END_VAR
+
+SYSTEM_OBJECT
+ PU_Task_7 : TASK;
+ TaskSlow : TASK;
+ erMoveTimeout : ALARM;
+ erInvalidConstReference : ALARM;
+ erVelocityOutput : ALARM;
+ erPressureOutput : ALARM;
+END_OBJECT
+
+VAR
+ mpConst : REFTO tsVelPre;
+ fbConstOutputPre : KAPPL_Plastics_ConstOutput_Pos;
+ fbConstOutputVel : KAPPL_Plastics_ConstOutput_Pos;
+ ConstOutputVelocity : KAPPL_ConstOutputData;
+ ConstOutputPressure : KAPPL_ConstOutputData;
+ mbMovementActive : BOOL;
+ mbReParam : BOOL;
+ mMoveId : tMoveIdent;
+ mbReferenceValid : BOOL (* info if reference is valid *);
+ mpdCalcedDuration : REFTO TIME;
+ mprCalcDurationStartPosition : REFTO REAL;
+ mprCalcDurationEndPosition : REFTO REAL;
+ mbRefCalcDurationStartPosValid : BOOL (* reference to start position is valid *);
+ mbRefCalcDurationEndPosValid : BOOL (* reference to end position is valid *);
+ mbRefCalcedDurationValid : BOOL (* reference to calculated duration is valid *);
+ mpbStopOutputPresUsed : REFTO BOOL;
+ mpbStopOutputVelUsed : REFTO BOOL;
+ mbStopOutputPresUsed : BOOL;
+ mbStopOutputVelUsed : BOOL;
+ mdSetMoveTime : TIME (* set move time (after this time the movement must be ready) *);
+ mbUseSetMoveTime : BOOL (* movement set time enabled *);
+ mRampTypeVel : KCTRL_YXGen_RampType (* ramp type for velocity output *);
+END_VAR
+
+(*
+This algorithm calculates the active time ater that.
+the movement must be stopped to be ready after the set time.
+Depending on start output, preoutput, const output value and the according ramps
+this stop time is calculated.
+
+Attention:
+If the ramps are set very slowly it can happen that the movement does not
+reach the set value and start ramping down earlier.
+*)
+
+ALGORITHM aCalcTimeUntilStop
+
+
+VAR_INPUT
+ dSetMoveTime : TIME (* set move time *);
+ rStartOutput : REAL (* start output value *);
+ Output : tsOutput (* structure with output value, preOutput and the and the according ramps *);
+ dDelayTimeOn : TIME (* delay time from preoutput to const value *);
+END_VAR
+
+VAR_OUTPUT
+ dTimeUntilStop : TIME (* after this time the movement must be stopped to be ready after the set time *);
+END_VAR
+
+VAR
+ iRampDownTime : LINT;
+ iPreOutputTime : LINT;
+ iRampUpTime : LINT;
+ iSetMoveTime : LINT;
+ iDelayTimeOn : LINT;
+ tmpPoint : KCTRL_ProfPoint;
+ rRamp : REAL;
+ rMaxValueStart : REAL;
+ rMaxValuePre : REAL;
+ rMaxValueDelay : REAL;
+ iPreOutputStopTime : LINT;
+ iDelayStopTime : LINT;
+ iRampDownStopTime : LINT;
+END_VAR
+#BEGIN_EDIT_BLOCK
+(**************************************** WARNING ********************************************
+ *** The KEBA Kemro K2 System including software is not intended for safety control tasks! ***
+ ***                       For further information see Comment tab!                        ***
+ *********************************************************************************************)
+
+//calculation in 탎 !!
+iSetMoveTime := TIME_TO_LINT(dSetMoveTime);
+iRampDownTime := REAL_TO_LINT(((Output.Output.rOutputValue / Output.Output.rRamp)) * 1000000.0);
+iPreOutputTime := REAL_TO_LINT((ABS(rStartOutput - Output.PreOutput.rOutputValue) / Output.PreOutput.rRamp) * 1000000.0);
+iRampUpTime := REAL_TO_LINT((ABS(Output.Output.rOutputValue - Output.PreOutput.rOutputValue) / Output.Output.rRamp) * 1000000.0);
+iDelayTimeOn := TIME_TO_LINT(dDelayTimeOn);
+
+iPreOutputStopTime := iSetMoveTime - REAL_TO_LINT(Output.PreOutput.rOutputValue / Output.Output.rRamp * 1000000.0);
+iDelayStopTime := iPreOutputStopTime - iDelayTimeOn;
+iRampDownStopTime := MAX(iSetMoveTime - iRampDownTime,1);
+
+rMaxValueStart := LINT_TO_REAL(iSetMoveTime)*1.0e-6 * Output.Output.rRamp;
+IF (rMaxValueStart < rStartOutput) THEN
+   // if rStartOutput > 0.0 check values at calculated time step is reachable with stopramp
+   // else start stop ramp at time 0
+   // rStartOutput -> t=0
+   // PreOutput -> t=iPreOutputTime
+   // Output -> t=iPreOutputTime+iDelayTimeOn
+   rMaxValuePre   := LINT_TO_REAL(MAX(iSetMoveTime-iPreOutputTime, 0))*1.0e-6 * Output.Output.rRamp;
+   rMaxValueDelay := LINT_TO_REAL(MAX(iSetMoveTime-iPreOutputTime-iDelayTimeOn,0))*1.0e-6 * Output.Output.rRamp;
+   IF (rMaxValuePre < Output.PreOutput.rOutputValue) AND (rMaxValueDelay < Output.Output.rOutputValue) THEN
+      // movement duration increases compared to set time
+      dTimeUntilStop := T#1us; // ToDo: use minimum time, otherwise movement not started with rStartOutput, output set to 0!
+      RETURN;
+   END_IF;   
+END_IF;
+
+
+IF ((iPreOutputTime + iDelayTimeOn + iRampUpTime) <= iRampDownStopTime) THEN
+   //stop during output of set value is active ("standard" use case)
+   dTimeUntilStop := LINT_TO_TIME(iRampDownStopTime);
+ELSIF ((iPreOutputTime + iDelayTimeOn) <= iPreOutputStopTime) THEN
+   //stop during ramp to set value is active
+   IF (Output.PreOutput.rOutputValue > Output.Output.rOutputValue) THEN
+
+      dTimeUntilStop := LINT_TO_TIME(iRampDownStopTime);
+   ELSE
+      tmpPoint := FCalcIntersection(rX1 := LINT_TO_REAL(iPreOutputTime + iDelayTimeOn)*1.0e-6,
+                                    rY1 := Output.PreOutput.rOutputValue,
+                                    rA1 := Output.Output.rRamp,  // x/탎
+                                    rX2 := LINT_TO_REAL(iSetMoveTime)*1.0e-6, // 탎
+                                    rY2 := 0.0,
+                                    rA2 := Output.Output.rRamp,  // x/탎
+                                    bUseLinear := TRUE,
+                                    rMaxA := 999999.9);
+      dTimeUntilStop := LINT_TO_TIME(REAL_TO_LINT(tmpPoint.rX*1.0e6));
+   END_IF;
+ELSIF ((iPreOutputTime < iPreOutputStopTime) AND  ((iPreOutputTime + iDelayTimeOn) > iPreOutputStopTime)) THEN
+   // use stop ramp from preoutput
+   dTimeUntilStop := LINT_TO_TIME(iPreOutputStopTime);   
+ELSE   
+//ELSIF (iPreOutputTime > iPreOutputStopTime) THEN
+   IF (rStartOutput > Output.PreOutput.rOutputValue) THEN
+      rRamp := -Output.PreOutput.rRamp;
+   ELSE
+      rRamp :=  Output.PreOutput.rRamp;   
+   END_IF;
+   tmpPoint := FCalcIntersection(rX1 := 0.0,
+                                 rY1 := rStartOutput,
+                                 rA1 := rRamp,  // x/탎
+                                 rX2 := LINT_TO_REAL(iSetMoveTime)*1.0e-6, // 탎
+                                 rY2 := 0.0,
+                                 rA2 := Output.Output.rRamp,  // x/탎
+                                 bUseLinear := TRUE,
+                                 rMaxA := 999999.9);
+   dTimeUntilStop := LINT_TO_TIME(REAL_TO_LINT(tmpPoint.rX*1.0e6));
+END_IF;
+
+
+;#END_EDIT_BLOCK END_ALGORITHM
+
+(*
+This algorithm copies the input values to local variables and starts
+the process algorithm for initialization of constant output blocks.
+*)
+
+ALGORITHM aInit
+
+
+VAR_INPUT
+ pConst : REFTO tsVelPre (* pointer to systemvariable that contains the constant output *);
+ MoveId : tMoveIdent (* moveId of constant movement *);
+ pdCalcedDuration : REFTO TIME (* pointer to calculated duration *);
+ prCalcDurationStartPosition : REFTO REAL (* pointer to startposition to calculate duration *);
+ prCalcDurationEndPosition : REFTO REAL (* pointer to endposition to calculate duration *);
+ pbStopOutputPresUsed : REFTO BOOL;
+ pbStopOutputVelUsed : REFTO BOOL;
+END_VAR
+
+VAR
+ bInitDone : BOOL;
+END_VAR
+#BEGIN_EDIT_BLOCK
+(**************************************** WARNING ********************************************
+ *** The KEBA Kemro K2 System including software is not intended for safety control tasks! ***
+ ***                       For further information see Comment tab!                        ***
+ *********************************************************************************************)
+
+IF NOT bInitDone THEN
+    //copy reference of vis variable
+    mpConst := pConst;
+    mMoveId := MoveId;
+   
+    //copy references for calculation of duration
+    mpdCalcedDuration := pdCalcedDuration;
+    mprCalcDurationStartPosition := prCalcDurationStartPosition;
+    mprCalcDurationEndPosition := prCalcDurationEndPosition;
+    
+    IF CHECK_REF(mpdCalcedDuration^) THEN
+        mbRefCalcedDurationValid := TRUE;
+    END_IF;
+    
+    IF CHECK_REF(mprCalcDurationStartPosition^) THEN
+        mbRefCalcDurationStartPosValid := TRUE;
+    END_IF;
+    
+    IF CHECK_REF(mprCalcDurationEndPosition^) THEN
+        mbRefCalcDurationEndPosValid := TRUE;
+    END_IF;
+    
+    mpbStopOutputPresUsed := pbStopOutputPresUsed;
+    mpbStopOutputVelUsed := pbStopOutputVelUsed;
+   
+    IF CHECK_REF(mpConst^) THEN
+        mbReferenceValid := TRUE;
+        //start paInit only if reference is valid
+        START_PROCESS_ALGORITHM(paInit);
+    ELSE
+        SET_ALARM(Name := erInvalidConstReference,
+                SubID1 := sv_DeviceId.CompId,
+                SubID2 := sv_DeviceId.IndexId,
+                SubID3 := mMoveId);
+    END_IF;
+
+    bInitDone  := TRUE;
+END_IF;
+
+
+
+
+;#END_EDIT_BLOCK END_ALGORITHM
+
+(*
+Following functions are realized in this algorithm:
+
+1) reparam of the constant output - blocks
+2) constant output for pressure and velocity
+3) Timeout detection if dMaxMoveTime is bigger than 0.
+   dMaxMoveTime = 0 means no timeout detection active
+   If a timeout is detected an alarm will be set and the profileoutput will be stopped automatically
+*)
+
+ALGORITHM aRun
+
+
+VAR_INPUT
+ bStart : BOOL (* start constant output *);
+ bStop : BOOL (* stop constant output *);
+ bDirection : BOOL (* TRUE: position is getting bigger; FALSE: position is getting smaller *);
+ rActPos : REAL (* actual position *);
+ rTargetPos : REAL (* target position *);
+ bUsePosDetect : BOOL (* TRUE: movement should stop at target position *);
+ rStartOutputPre : REAL (* start output pressure *);
+ rStartOutputVel : REAL (* start ouotput velocity *);
+ dMaxTime : TIME (* maximum move time *);
+ dDelayTimeOn : TIME (* Delay Time between preoutput and  constoutput *);
+ dDelayTimeOff : TIME (* Delay Time between pump stop and bActive FALSE *);
+ dDeadTime : TIME (* dead time used for velocity output *);
+ bDeadTimeCompensation : BOOL (* use deadtime compensation *);
+ bIgnorePreOutputPressure : BOOL (* don't use preoutput, ramp from startoutput to const value *);
+ bIgnoreEndRampPressure : BOOL (* don't use ramp at end of const output *);
+END_VAR
+
+VAR_OUTPUT
+ rOutputPre : REAL (* calculated pressure output *);
+ rOutputVel : REAL (* calculated velocity ouput *);
+ bActive : BOOL (* constant movement is active *);
+ dActTime : TIME (* actual move time *);
+ bError : BOOL (* flag if error was detected *);
+ bPreOutputReached : BOOL (* preoutput ready *);
+ bTimeOut : BOOL (* timeout occured *);
+ iErrorInfo : tsErrorInfo (* additional error info *);
+END_VAR
+
+VAR
+ fbTimer : TON;
+ fbREdge_Start : R_TRIG;
+ fbREdge_Timeout : R_TRIG;
+ bAlarmSet : BOOL;
+ fbREdgeVelError : R_TRIG;
+ fbREdgePresError : R_TRIG;
+ bActiveInt : BOOL;
+ fbTOFActive : TOF;
+ dTimeForPressureMove : TIME;
+ dTimeForVelocityMove : TIME;
+ bStopPressureOutput : BOOL;
+ bStopVelocityOutput : BOOL;
+END_VAR
+#BEGIN_EDIT_BLOCK
+(**************************************** WARNING ********************************************
+ *** The KEBA Kemro K2 System including software is not intended for safety control tasks! ***
+ ***                       For further information see Comment tab!                        ***
+ *********************************************************************************************)
+ 
+//do not execute if reference to constant output is not valid
+IF NOT mbReferenceValid THEN
+    
+    //set alarm because algorithm can be called without calling aInit before
+    IF NOT bAlarmSet THEN
+        SET_ALARM(Name := erInvalidConstReference,
+                  SubID1 := sv_DeviceId.CompId,
+                  SubID2 := sv_DeviceId.IndexId,
+                  SubID3 := mMoveId);
+        bAlarmSet := TRUE;
+    END_IF;
+        
+    bError := TRUE;
+    RETURN;
+END_IF;
+
+IF mbReParam THEN
+    fbConstOutputVel(PreOutputRamp := mpConst^.Velocity.PreOutput.rRamp,
+                    PreOutputValue := mpConst^.Velocity.PreOutput.rOutputValue,
+                    ConstOutputData := ConstOutputVelocity,
+                    MinOutputValue := mpConst^.Velocity.rMinOutput, 
+                    DelayTime := dDelayTimeOn,
+                    bEnableDeadTimeComp := bDeadTimeCompensation,
+                    DeadTime := dDeadTime,
+                    RampType := mRampTypeVel,
+                    ErrorInfo => iErrorInfo.Velocity,
+                    ReParam := TRUE);
+   
+    fbConstOutputPre(PreOutputRamp := mpConst^.Pressure.PreOutput.rRamp,
+                    PreOutputValue := mpConst^.Pressure.PreOutput.rOutputValue,                    
+                    ConstOutputData := ConstOutputPressure,
+                    MinOutputValue := mpConst^.Pressure.rMinOutput,                   
+                    DelayTime := dDelayTimeOn,                     
+                    ErrorInfo => iErrorInfo.Pressure,
+                    ReParam := TRUE);
+    
+    IF fbConstOutputVel.Error THEN
+        SET_ALARM(Name := erVelocityOutput,
+              SubID1 := sv_DeviceId.CompId,
+              SubID2 := sv_DeviceId.IndexId,
+              SubID3 := mMoveId,
+              SubID4 := fbConstOutputVel.ErrorInfo);
+    END_IF;
+    
+    IF fbConstOutputPre.Error THEN
+        SET_ALARM(Name := erPressureOutput,
+              SubID1 := sv_DeviceId.CompId,
+              SubID2 := sv_DeviceId.IndexId,
+              SubID3 := mMoveId,
+              SubID4 := fbConstOutputPre.ErrorInfo);
+    END_IF;
+    
+    IF fbConstOutputVel.Error OR fbConstOutputPre.Error THEN
+        //don큧 do movement if one of the outputblocks has an error
+        bError := TRUE;
+        RETURN;
+    END_IF;
+        
+    mbReParam := FALSE;
+END_IF;
+ 
+fbREdge_Start(CLK := bStart);
+IF fbREdge_Start.Q THEN
+    //reset timer for timeout detection
+    fbTimer(IN := FALSE);
+    bTimeOut := FALSE;
+    dActTime := t#0s;
+    fbREdgeVelError(CLK := FALSE);
+    fbREdgePresError(CLK := FALSE);
+   
+    IF mbUseSetMoveTime THEN
+       aCalcTimeUntilStop(dSetMoveTime := mdSetMoveTime,
+             rStartOutput := rStartOutputPre,
+             Output := mpConst^.Pressure,
+             dDelayTimeOn := dDelayTimeOn,             
+             dTimeUntilStop => dTimeForPressureMove);
+
+       aCalcTimeUntilStop(dSetMoveTime := mdSetMoveTime,
+             rStartOutput := rStartOutputVel,
+             Output := mpConst^.Velocity,
+             dDelayTimeOn := dDelayTimeOn,             
+             dTimeUntilStop => dTimeForVelocityMove);
+                   
+    END_IF;
+    bStopPressureOutput := FALSE;
+    bStopVelocityOutput := FALSE;
+END_IF; 
+ 
+IF mbUseSetMoveTime THEN
+   IF dActTime >= dTimeForPressureMove THEN
+      bStopPressureOutput := TRUE;
+   END_IF;
+   IF dActTime >= dTimeForVelocityMove THEN
+      bStopVelocityOutput := TRUE;
+   END_IF;
+END_IF;
+
+fbConstOutputVel(Start :=  bStart,
+                 Stop := (bStop AND NOT mbStopOutputVelUsed) OR bTimeOut OR bStopVelocityOutput,
+                 StartOutputValue := rStartOutputVel,
+                 Direction := bDirection,
+                 Position := rActPos,
+                 TargetPosition := rTargetPos,
+                 ReduceReadyDiff := 0.0, 
+                 UsePositionDetection := bUsePosDetect,
+                 DelayTime := dDelayTimeOn,
+                 bEnableDeadTimeComp := bDeadTimeCompensation,
+                 DeadTime := dDeadTime,                 
+                 ReParam := FALSE,
+                 Output => rOutputVel,
+                 ErrorInfo => iErrorInfo.Velocity);    
+                                                       
+fbConstOutputPre(Start :=  bStart,
+                 Stop := (bStop AND NOT mbStopOutputPresUsed) OR bTimeOut OR bStopPressureOutput,
+                 StartOutputValue := rStartOutputPre,
+                 Direction := bDirection,
+                 Position := rActPos,
+                 TargetPosition := rTargetPos,
+                 ReduceReadyDiff := 0.0, 
+                 UsePositionDetection := bUsePosDetect,                 
+                 ReParam := FALSE,
+                 bIgnorePreOutput := bIgnorePreOutputPressure,
+                 bIgnoreStopRamp := bIgnoreEndRampPressure,
+                 DelayTime := dDelayTimeOn,                 
+                 Output => rOutputPre,
+                 ErrorInfo => iErrorInfo.Pressure);
+
+bPreOutputReached := fbConstOutputPre.PreOutputReady AND fbConstOutputVel.PreOutputReady;
+bError := fbConstOutputPre.Error OR fbConstOutputVel.Error;
+
+//set alarm if error during velocity output occurs
+fbREdgeVelError(CLK := fbConstOutputVel.Error);
+IF fbREdgeVelError.Q THEN
+    SET_ALARM(Name := erVelocityOutput,
+              SubID1 := sv_DeviceId.CompId,
+              SubID2 := sv_DeviceId.IndexId,
+              SubID3 := mMoveId,
+              SubID4 := iErrorInfo.Velocity);
+END_IF;
+
+//set alarm if error during pressure output occurs
+fbREdgePresError(CLK := fbConstOutputPre.Error);
+IF fbREdgePresError.Q THEN
+    SET_ALARM(Name := erPressureOutput,
+              SubID1 := sv_DeviceId.CompId,
+              SubID2 := sv_DeviceId.IndexId,
+              SubID3 := mMoveId,
+              SubID4 := iErrorInfo.Pressure);
+END_IF;
+
+//combine ready - flags
+IF ((fbConstOutputPre.Ready OR (bStop AND mbStopOutputPresUsed)) AND 
+         (fbConstOutputVel.Ready OR (bStop AND mbStopOutputVelUsed))) OR bError THEN
+    bActiveInt := FALSE;
+    mbMovementActive := FALSE;
+    mbUseSetMoveTime := FALSE;
+    //call library - blocks with Start = FALSE after movement is ready
+//    fbConstOutputVel(Start := FALSE);
+//    fbConstOutputPre(Start := FALSE);
+ELSE
+    bActiveInt := TRUE;
+    mbMovementActive := TRUE;
+END_IF;
+
+//Timeout detection
+IF bActiveInt THEN
+    IF dMaxTime > t#0.0s THEN
+       fbTimer(PT := dMaxTime);
+    ELSE
+       //dActTime should also be updated
+       //if dMaxTime is not used
+       fbTimer(PT := t#1d);
+    END_IF;
+   
+    fbTimer(IN := TRUE);       
+    dActTime := fbTimer.ET;    
+    //dMaxTime = 0 means timeout detection is deactivated!!
+    IF dMaxTime > t#0.0s THEN
+       bTimeOut := fbTimer.Q;
+    END_IF;
+END_IF;
+
+//set timeout alarm
+fbREdge_Timeout(CLK := bTimeOut);
+IF fbREdge_Timeout.Q THEN
+    SET_ALARM(Name := erMoveTimeout,
+              SubID1 := sv_DeviceId.CompId,
+              SubID2 := sv_DeviceId.IndexId,
+              SubID3 := mMoveId);    
+END_IF;
+
+// set output bActive
+fbTOFActive(bActiveInt, dDelayTimeOff);
+bActive := fbTOFActive.Q;
+
+
+
+;#END_EDIT_BLOCK END_ALGORITHM
+
+(*
+This algorithm reacts on changes of the constant output settings.
+If the settings changed the process algorithm for initialization will be started.
+*)
+
+POSTUPDATE_ALGORITHM PConstChanged ON PU_Task_7 WITH mpConst^,mpbStopOutputPresUsed^,mpbStopOutputVelUsed^
+
+#BEGIN_EDIT_BLOCK
+(**************************************** WARNING ********************************************
+ *** The KEBA Kemro K2 System including software is not intended for safety control tasks! ***
+ ***                       For further information see Comment tab!                        ***
+ *********************************************************************************************)
+
+ConstOutputVelocity.OutputValue := mpConst^.Velocity.Output.rOutputValue;
+ConstOutputVelocity.Acceleration := mpConst^.Velocity.Output.rRamp;
+
+START_PROCESS_ALGORITHM(paInit);
+    
+ConstOutputPressure.OutputValue := mpConst^.Pressure.Output.rOutputValue;
+ConstOutputPressure.Acceleration := mpConst^.Pressure.Output.rRamp;
+    
+mbReParam := TRUE;
+
+
+;#END_EDIT_BLOCK END_ALGORITHM
+
+(*
+This algorithm does the initialization for the constant movement blocks.
+*)
+
+PROCESS_ALGORITHM paInit ON TaskSlow
+
+#BEGIN_EDIT_BLOCK
+(**************************************** WARNING ********************************************
+ *** The KEBA Kemro K2 System including software is not intended for safety control tasks! ***
+ ***                       For further information see Comment tab!                        ***
+ *********************************************************************************************)
+
+
+IF NOT mbMovementActive THEN
+    IF CHECK_REF(mpbStopOutputPresUsed^) THEN
+       mbStopOutputPresUsed := mpbStopOutputPresUsed^;
+    ELSE
+       mbStopOutputPresUsed := FALSE;
+    END_IF;
+    IF CHECK_REF(mpbStopOutputVelUsed^) THEN
+       mbStopOutputVelUsed := mpbStopOutputVelUsed^;
+    ELSE
+       mbStopOutputVelUsed := FALSE;
+    END_IF; 
+   
+   
+    ConstOutputVelocity.OutputValue := mpConst^.Velocity.Output.rOutputValue;
+    ConstOutputVelocity.Acceleration := mpConst^.Velocity.Output.rRamp;
+    mRampTypeVel := mpConst^.Velocity.Output.RampType;
+   
+    //Calculate duration(s)
+    START_PROCESS_ALGORITHM(paCalcDurations);
+   
+    ConstOutputPressure.OutputValue := mpConst^.Pressure.Output.rOutputValue;
+    ConstOutputPressure.Acceleration := mpConst^.Pressure.Output.rRamp;
+    
+    mbReParam := TRUE;
+    STOP_PROCESS_ALGORITHM();
+END_IF;
+
+
+
+
+;#END_EDIT_BLOCK END_ALGORITHM
+
+(*
+startposition or endposition changed
+-> trigger calculation of duration
+*)
+
+POSTUPDATE_ALGORITHM pReCalcDurations ON PU_Task_7 WITH mprCalcDurationStartPosition^,mprCalcDurationEndPosition^
+
+#BEGIN_EDIT_BLOCK
+(**************************************** WARNING ********************************************
+ *** The KEBA Kemro K2 System including software is not intended for safety control tasks! ***
+ ***                       For further information see Comment tab!                        ***
+ *********************************************************************************************)
+
+//Recalculate duration(s)
+START_PROCESS_ALGORITHM(paCalcDurations);
+
+
+;#END_EDIT_BLOCK END_ALGORITHM
+
+(*
+calculate duration
+*)
+
+PROCESS_ALGORITHM paCalcDurations ON TaskSlow
+
+
+VAR
+ mDummyProfile : KCTRL_Prof_Light (* Dummy profile *);
+END_VAR
+#BEGIN_EDIT_BLOCK
+(**************************************** WARNING ********************************************
+ *** The KEBA Kemro K2 System including software is not intended for safety control tasks! ***
+ ***                       For further information see Comment tab!                        ***
+ *********************************************************************************************)
+ 
+//Calculate duration
+IF mbRefCalcedDurationValid AND mbRefCalcDurationStartPosValid AND mbRefCalcDurationEndPosValid THEN
+    
+    mpdCalcedDuration^ := FCalcDuration(StartPosition := mprCalcDurationStartPosition^,
+                                        StartVelocity := 0.0,   //not used
+                                        EndPosition := mprCalcDurationEndPosition^,
+                                        Profile := mDummyProfile,   //not used
+                                        StartRamp := ConstOutputVelocity.Acceleration,
+                                        StopRamp := ConstOutputVelocity.Acceleration,
+                                        ConstOutput := ConstOutputVelocity.OutputValue,
+                                        UseConstOutput := TRUE);
+    
+END_IF;
+
+STOP_PROCESS_ALGORITHM();
+
+
+;#END_EDIT_BLOCK END_ALGORITHM
+
+(*
+This algorithm can be used to set a defined move time. After this move time the movement
+is ready (pressure and velocity output have already ramped down).
+
+Attention:
+The set move time is only used for the next execution of the movement.
+This means that if a constant movemtn should stop after a set time this algorithm must
+be called before the call of aRun.
+If the constant movement should move to a target position, aSetMoveTime should not be called
+before, because this can lead to a stop before the target position is reached.
+*)
+
+ALGORITHM aSetMoveTime
+
+
+VAR_INPUT
+ dSetMoveTime : TIME (* after this time the movement must be ready (ramped down) *);
+END_VAR
+#BEGIN_EDIT_BLOCK
+(**************************************** WARNING ********************************************
+ *** The KEBA Kemro K2 System including software is not intended for safety control tasks! ***
+ ***                       For further information see Comment tab!                        ***
+ *********************************************************************************************)
+
+mdSetMoveTime := dSetMoveTime;
+mbUseSetMoveTime := TRUE;
+
+
+;#END_EDIT_BLOCK END_ALGORITHM
+
+
+
+END_ALGORITHM_BLOCK
+
+
+
+#END_OF_IEC_PART
+
+@Puma @IecEditor 6 150 @Pou 25 
+@@@BEG_Comment@@@
+@h    ! WARNING !
+@h    The Kemro K2 system (including software) only meets category B according to EN 954-1,
+@h    thus it is not intended for usage in safety-relevant control applications in the field 
+@h    of personal safety (e.g. emergency stop).
+@h    To implement potentially necessary safety-relevant control tasks, always use additional 
+@h    external safety devices that are intended for the particular purpose, and meet the necessary 
+@h    functional safety.
+@h    For further information see EN 954-1 (EN ISO 13849-1) and/or the K2-x00 user manual, chapter 
+@h    "CE conformity, directives and standards".
+
+This AB provides all functions to realize a constant movement.
+It includes the following funcionalities:
+- initialization of the constant output blocks 
+- automatic reparam of all necessary blocks after change in the constant output
+  Attention: reparam will be done after the movement is stopped and not during the movement is active
+- constant output for pressure and velocity
+- timeout detection (including automatic stop after timeout)
+
+
+@F S_KPIEC_ALAMOVE_03
+
+@@@END_Comment@@@
+
+@BEG_Contents 
+
+@BEG_Func 
+@RT(17)FuncTreeContainer 
+3 
+@Var @RT(17)FCalcIntersection @RT(0) @T @T @DERIVED 0 @F @RT(8)FUNCTION @F 
+@T 
+@BEG_Attrib 
+0 @RT(0) @RT(0) 
+@END_Attrib 
+1 1 @F @F @F @F 
+
+@Var @RT(9)SET_ALARM @RT(0) @T @T @DERIVED 0 @F @RT(23)KEBA_STANDARD_PROCEDURE @F 
+@T 
+@BEG_Attrib 
+0 @RT(0) @RT(0) 
+@END_Attrib 
+1 1 @F @F @F @F 
+
+@Var @RT(13)FCalcDuration @RT(0) @T @T @DERIVED 0 @F @RT(8)FUNCTION @F 
+@T 
+@BEG_Attrib 
+0 @RT(0) @RT(0) 
+@END_Attrib 
+1 1 @F @F @F @F 
+
+@END_Func 
+
+@BEG_Const 
+@RT(18)ConstTreeContainer 
+0 
+@END_Const 
+
+@BEG_Export 
+
+@BEG_Kind 
+@ALGORITHM_BLOCK @RT(15)ABConstMovement @STRUCTURED_TEXT 
+@RT(0) @RT(0) @RT(0) 
+@END_Kind 
+
+@BEG_Dcl 
+@RT(16)DclTreeContainer 
+29 
+@Var @RT(11)sv_DeviceId @RT(0) @T @T @DERIVED 0 @T @T @DT @RT(10)tsDeviceId @RT(0) @T @T @UNKNOWN 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 8 @F @F @F @F 
+
+@Var @RT(9)PU_Task_7 @RT(0) @T @F @DT @RT(4)TASK @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 7 @F @F @F @F 
+
+@Var @RT(8)TaskSlow @RT(0) @T @F @DT @RT(4)TASK @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 7 @F @F @F @F 
+
+@Var @RT(13)erMoveTimeout @RT(0) @T @F @DT @RT(5)ALARM @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 7 @F @F @F @F 
+
+@Var @RT(23)erInvalidConstReference @RT(0) @T @F @DT @RT(5)ALARM @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 7 @F @F @F @F 
+
+@Var @RT(16)erVelocityOutput @RT(0) @T @F @DT @RT(5)ALARM @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 7 @F @F @F @F 
+
+@Var @RT(16)erPressureOutput @RT(0) @T @F @DT @RT(5)ALARM @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 7 @F @F @F @F 
+
+@Var @RT(7)mpConst @RT(0) @T @T @REFTO 0 @F @DERIVED 0 @T @T @DT @RT(8)tsVelPre @RT(0) @T @T @UNKNOWN 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(16)fbConstOutputPre @RT(0) @T @T @DERIVED 0 @T @T @DT @RT(30)KAPPL_Plastics_ConstOutput_Pos @RT(0) @T @T @UNKNOWN 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(16)fbConstOutputVel @RT(0) @T @T @DERIVED 0 @T @T @DT @RT(30)KAPPL_Plastics_ConstOutput_Pos @RT(0) @T @T @UNKNOWN 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(19)ConstOutputVelocity @RT(0) @T @T @DERIVED 0 @T @T @DT @RT(21)KAPPL_ConstOutputData @RT(0) @T @T @UNKNOWN 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(19)ConstOutputPressure @RT(0) @T @T @DERIVED 0 @T @T @DT @RT(21)KAPPL_ConstOutputData @RT(0) @T @T @UNKNOWN 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(16)mbMovementActive @RT(0) @T @F @DT @RT(4)BOOL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(9)mbReParam @RT(0) @T @F @DT @RT(4)BOOL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(7)mMoveId @RT(0) @T @T @DERIVED 0 @T @T @DT @RT(10)tMoveIdent @RT(0) @T @T @UNKNOWN 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(16)mbReferenceValid @RT(0) @T @F @DT @RT(4)BOOL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(26)info if reference is valid @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(17)mpdCalcedDuration @RT(0) @T @T @REFTO 0 @T @DT @RT(4)TIME @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(28)mprCalcDurationStartPosition @RT(0) @T @T @REFTO 0 @T @DT @RT(4)REAL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(26)mprCalcDurationEndPosition @RT(0) @T @T @REFTO 0 @T @DT @RT(4)REAL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(30)mbRefCalcDurationStartPosValid @RT(0) @T @F @DT @RT(4)BOOL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(36)reference to start position is valid @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(28)mbRefCalcDurationEndPosValid @RT(0) @T @F @DT @RT(4)BOOL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(34)reference to end position is valid @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(24)mbRefCalcedDurationValid @RT(0) @T @F @DT @RT(4)BOOL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(41)reference to calculated duration is valid @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(21)mpbStopOutputPresUsed @RT(0) @T @T @REFTO 0 @T @DT @RT(4)BOOL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(20)mpbStopOutputVelUsed @RT(0) @T @T @REFTO 0 @T @DT @RT(4)BOOL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(20)mbStopOutputPresUsed @RT(0) @T @F @DT @RT(4)BOOL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(19)mbStopOutputVelUsed @RT(0) @T @F @DT @RT(4)BOOL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(13)mdSetMoveTime @RT(0) @T @F @DT @RT(4)TIME @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(58)set move time (after this time the movement must be ready) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(16)mbUseSetMoveTime @RT(0) @T @F @DT @RT(4)BOOL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(25)movement set time enabled @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(12)mRampTypeVel @RT(0) @T @T @DERIVED 0 @T @T @DT @RT(20)KCTRL_YXGen_RampType @RT(0) @T @T @UNKNOWN 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(29)ramp type for velocity output @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@END_Dcl 
+
+@END_Export 
+
+@BEG_Body 
+
+8 
+
+@BEG_Export 
+
+@BEG_Algo 
+@ALGORITHM @RT(18)aCalcTimeUntilStop @STRUCTURED_TEXT 
+@RT(0) @RT(0) @RT(0) @F @F 
+@END_Algo 
+
+@BEG_Dcl 
+@RT(16)DclTreeContainer 
+18 
+@Var @RT(12)dSetMoveTime @RT(0) @T @F @DT @RT(4)TIME @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(13)set move time @RT(0) 
+@END_Attrib 
+1 1 @F @F @F @F 
+
+@Var @RT(12)rStartOutput @RT(0) @T @F @DT @RT(4)REAL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(18)start output value @RT(0) 
+@END_Attrib 
+1 1 @F @F @F @F 
+
+@Var @RT(6)Output @RT(0) @T @T @DERIVED 0 @T @T @DT @RT(8)tsOutput @RT(0) @T @T @UNKNOWN 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(70)structure with output value, preOutput and the and the according ramps @RT(0) 
+@END_Attrib 
+1 1 @F @F @F @F 
+
+@Var @RT(12)dDelayTimeOn @RT(0) @T @F @DT @RT(4)TIME @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(40)delay time from preoutput to const value @RT(0) 
+@END_Attrib 
+1 1 @F @F @F @F 
+
+@Var @RT(14)dTimeUntilStop @RT(0) @T @F @DT @RT(4)TIME @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(75)after this time the movement must be stopped to be ready after the set time @RT(0) 
+@END_Attrib 
+1 3 @F @F @F @F 
+
+@Var @RT(13)iRampDownTime @RT(0) @T @F @DT @RT(4)LINT @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(14)iPreOutputTime @RT(0) @T @F @DT @RT(4)LINT @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(11)iRampUpTime @RT(0) @T @F @DT @RT(4)LINT @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(12)iSetMoveTime @RT(0) @T @F @DT @RT(4)LINT @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(12)iDelayTimeOn @RT(0) @T @F @DT @RT(4)LINT @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(8)tmpPoint @RT(0) @T @T @DERIVED 0 @T @T @DT @RT(15)KCTRL_ProfPoint @RT(0) @T @T @UNKNOWN 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(5)rRamp @RT(0) @T @F @DT @RT(4)REAL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(14)rMaxValueStart @RT(0) @T @F @DT @RT(4)REAL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(12)rMaxValuePre @RT(0) @T @F @DT @RT(4)REAL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(14)rMaxValueDelay @RT(0) @T @F @DT @RT(4)REAL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(18)iPreOutputStopTime @RT(0) @T @F @DT @RT(4)LINT @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(14)iDelayStopTime @RT(0) @T @F @DT @RT(4)LINT @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(17)iRampDownStopTime @RT(0) @T @F @DT @RT(4)LINT @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@END_Dcl 
+
+@END_Export 
+
+@BEG_Export 
+
+@BEG_Algo 
+@ALGORITHM @RT(5)aInit @STRUCTURED_TEXT 
+@RT(0) @RT(0) @RT(0) @F @F 
+@END_Algo 
+
+@BEG_Dcl 
+@RT(16)DclTreeContainer 
+8 
+@Var @RT(6)pConst @RT(0) @T @T @REFTO 0 @F @DERIVED 0 @T @T @DT @RT(8)tsVelPre @RT(0) @T @T @UNKNOWN 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(59)pointer to systemvariable that contains the constant output @RT(0) 
+@END_Attrib 
+1 1 @F @F @F @F 
+
+@Var @RT(6)MoveId @RT(0) @T @T @DERIVED 0 @T @T @DT @RT(10)tMoveIdent @RT(0) @T @T @UNKNOWN 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(27)moveId of constant movement @RT(0) 
+@END_Attrib 
+1 1 @F @F @F @F 
+
+@Var @RT(16)pdCalcedDuration @RT(0) @T @T @REFTO 0 @T @DT @RT(4)TIME @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(30)pointer to calculated duration @RT(0) 
+@END_Attrib 
+1 1 @F @F @F @F 
+
+@Var @RT(27)prCalcDurationStartPosition @RT(0) @T @T @REFTO 0 @T @DT @RT(4)REAL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(46)pointer to startposition to calculate duration @RT(0) 
+@END_Attrib 
+1 1 @F @F @F @F 
+
+@Var @RT(25)prCalcDurationEndPosition @RT(0) @T @T @REFTO 0 @T @DT @RT(4)REAL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(44)pointer to endposition to calculate duration @RT(0) 
+@END_Attrib 
+1 1 @F @F @F @F 
+
+@Var @RT(20)pbStopOutputPresUsed @RT(0) @T @T @REFTO 0 @T @DT @RT(4)BOOL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 1 @F @F @F @F 
+
+@Var @RT(19)pbStopOutputVelUsed @RT(0) @T @T @REFTO 0 @T @DT @RT(4)BOOL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 1 @F @F @F @F 
+
+@Var @RT(9)bInitDone @RT(0) @T @F @DT @RT(4)BOOL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@END_Dcl 
+
+@END_Export 
+
+@BEG_Export 
+
+@BEG_Algo 
+@ALGORITHM @RT(4)aRun @STRUCTURED_TEXT 
+@RT(0) @RT(0) @RT(0) @F @F 
+@END_Algo 
+
+@BEG_Dcl 
+@RT(16)DclTreeContainer 
+35 
+@Var @RT(6)bStart @RT(0) @T @F @DT @RT(4)BOOL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(21)start constant output @RT(0) 
+@END_Attrib 
+1 1 @F @F @F @F 
+
+@Var @RT(5)bStop @RT(0) @T @F @DT @RT(4)BOOL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(20)stop constant output @RT(0) 
+@END_Attrib 
+1 1 @F @F @F @F 
+
+@Var @RT(10)bDirection @RT(0) @T @F @DT @RT(4)BOOL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(68)TRUE: position is getting bigger; FALSE: position is getting smaller @RT(0) 
+@END_Attrib 
+1 1 @F @F @F @F 
+
+@Var @RT(7)rActPos @RT(0) @T @F @DT @RT(4)REAL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(15)actual position @RT(0) 
+@END_Attrib 
+1 1 @F @F @F @F 
+
+@Var @RT(10)rTargetPos @RT(0) @T @F @DT @RT(4)REAL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(15)target position @RT(0) 
+@END_Attrib 
+1 1 @F @F @F @F 
+
+@Var @RT(13)bUsePosDetect @RT(0) @T @F @DT @RT(4)BOOL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(45)TRUE: movement should stop at target position @RT(0) 
+@END_Attrib 
+1 1 @F @F @F @F 
+
+@Var @RT(15)rStartOutputPre @RT(0) @T @F @DT @RT(4)REAL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(21)start output pressure @RT(0) 
+@END_Attrib 
+1 1 @F @F @F @F 
+
+@Var @RT(15)rStartOutputVel @RT(0) @T @F @DT @RT(4)REAL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(22)start ouotput velocity @RT(0) 
+@END_Attrib 
+1 1 @F @F @F @F 
+
+@Var @RT(8)dMaxTime @RT(0) @T @F @DT @RT(4)TIME @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(17)maximum move time @RT(0) 
+@END_Attrib 
+1 1 @F @F @F @F 
+
+@Var @RT(12)dDelayTimeOn @RT(0) @T @F @DT @RT(4)TIME @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(45)Delay Time between preoutput and  constoutput @RT(0) 
+@END_Attrib 
+1 1 @F @F @F @F 
+
+@Var @RT(13)dDelayTimeOff @RT(0) @T @F @DT @RT(4)TIME @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(46)Delay Time between pump stop and bActive FALSE @RT(0) 
+@END_Attrib 
+1 1 @F @F @F @F 
+
+@Var @RT(9)dDeadTime @RT(0) @T @F @DT @RT(4)TIME @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(34)dead time used for velocity output @RT(0) 
+@END_Attrib 
+1 1 @F @F @F @F 
+
+@Var @RT(21)bDeadTimeCompensation @RT(0) @T @F @DT @RT(4)BOOL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(25)use deadtime compensation @RT(0) 
+@END_Attrib 
+1 1 @F @F @F @F 
+
+@Var @RT(24)bIgnorePreOutputPressure @RT(0) @T @F @DT @RT(4)BOOL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(57)don't use preoutput, ramp from startoutput to const value @RT(0) 
+@END_Attrib 
+1 1 @F @F @F @F 
+
+@Var @RT(22)bIgnoreEndRampPressure @RT(0) @T @F @DT @RT(4)BOOL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(37)don't use ramp at end of const output @RT(0) 
+@END_Attrib 
+1 1 @F @F @F @F 
+
+@Var @RT(10)rOutputPre @RT(0) @T @F @DT @RT(4)REAL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(26)calculated pressure output @RT(0) 
+@END_Attrib 
+1 3 @F @F @F @F 
+
+@Var @RT(10)rOutputVel @RT(0) @T @F @DT @RT(4)REAL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(25)calculated velocity ouput @RT(0) 
+@END_Attrib 
+1 3 @F @F @F @F 
+
+@Var @RT(7)bActive @RT(0) @T @F @DT @RT(4)BOOL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(27)constant movement is active @RT(0) 
+@END_Attrib 
+1 3 @F @F @F @F 
+
+@Var @RT(8)dActTime @RT(0) @T @F @DT @RT(4)TIME @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(16)actual move time @RT(0) 
+@END_Attrib 
+1 3 @F @F @F @F 
+
+@Var @RT(6)bError @RT(0) @T @F @DT @RT(4)BOOL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(26)flag if error was detected @RT(0) 
+@END_Attrib 
+1 3 @F @F @F @F 
+
+@Var @RT(17)bPreOutputReached @RT(0) @T @F @DT @RT(4)BOOL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(15)preoutput ready @RT(0) 
+@END_Attrib 
+1 3 @F @F @F @F 
+
+@Var @RT(8)bTimeOut @RT(0) @T @F @DT @RT(4)BOOL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(15)timeout occured @RT(0) 
+@END_Attrib 
+1 3 @F @F @F @F 
+
+@Var @RT(10)iErrorInfo @RT(0) @T @T @DERIVED 0 @T @T @DT @RT(11)tsErrorInfo @RT(0) @T @T @UNKNOWN 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(21)additional error info @RT(0) 
+@END_Attrib 
+1 3 @F @F @F @F 
+
+@Var @RT(7)fbTimer @RT(0) @T @T @DERIVED 0 @T @T @DT @RT(3)TON @RT(0) @T @T @UNKNOWN 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(13)fbREdge_Start @RT(0) @T @T @DERIVED 0 @T @T @DT @RT(6)R_TRIG @RT(0) @T @T @UNKNOWN 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(15)fbREdge_Timeout @RT(0) @T @T @DERIVED 0 @T @T @DT @RT(6)R_TRIG @RT(0) @T @T @UNKNOWN 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(9)bAlarmSet @RT(0) @T @F @DT @RT(4)BOOL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(15)fbREdgeVelError @RT(0) @T @T @DERIVED 0 @T @T @DT @RT(6)R_TRIG @RT(0) @T @T @UNKNOWN 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(16)fbREdgePresError @RT(0) @T @T @DERIVED 0 @T @T @DT @RT(6)R_TRIG @RT(0) @T @T @UNKNOWN 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(10)bActiveInt @RT(0) @T @F @DT @RT(4)BOOL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(11)fbTOFActive @RT(0) @T @T @DERIVED 0 @T @T @DT @RT(3)TOF @RT(0) @T @T @UNKNOWN 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(20)dTimeForPressureMove @RT(0) @T @F @DT @RT(4)TIME @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(20)dTimeForVelocityMove @RT(0) @T @F @DT @RT(4)TIME @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(19)bStopPressureOutput @RT(0) @T @F @DT @RT(4)BOOL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(19)bStopVelocityOutput @RT(0) @T @F @DT @RT(4)BOOL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@END_Dcl 
+
+@END_Export 
+
+@BEG_Export 
+
+@BEG_Algo 
+@POSTUPDATE_ALGORITHM @RT(13)PConstChanged @STRUCTURED_TEXT 
+@RT(0) @RT(53)mpConst^,mpbStopOutputPresUsed^,mpbStopOutputVelUsed^ @RT(9)PU_Task_7 @F @F 
+@END_Algo 
+
+@BEG_Dcl 
+@RT(16)DclTreeContainer 
+0 
+@END_Dcl 
+
+@END_Export 
+
+@BEG_Export 
+
+@BEG_Algo 
+@PROCESS_ALGORITHM @RT(6)paInit @STRUCTURED_TEXT 
+@RT(0) @RT(0) @RT(8)TaskSlow @F @F 
+@END_Algo 
+
+@BEG_Dcl 
+@RT(16)DclTreeContainer 
+0 
+@END_Dcl 
+
+@END_Export 
+
+@BEG_Export 
+
+@BEG_Algo 
+@POSTUPDATE_ALGORITHM @RT(16)pReCalcDurations @STRUCTURED_TEXT 
+@RT(0) @RT(57)mprCalcDurationStartPosition^,mprCalcDurationEndPosition^ @RT(9)PU_Task_7 @F @F 
+@END_Algo 
+
+@BEG_Dcl 
+@RT(16)DclTreeContainer 
+0 
+@END_Dcl 
+
+@END_Export 
+
+@BEG_Export 
+
+@BEG_Algo 
+@PROCESS_ALGORITHM @RT(15)paCalcDurations @STRUCTURED_TEXT 
+@RT(0) @RT(0) @RT(8)TaskSlow @F @F 
+@END_Algo 
+
+@BEG_Dcl 
+@RT(16)DclTreeContainer 
+1 
+@Var @RT(13)mDummyProfile @RT(0) @T @T @DERIVED 0 @T @T @DT @RT(16)KCTRL_Prof_Light @RT(0) @T @T @UNKNOWN 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(13)Dummy profile @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@END_Dcl 
+
+@END_Export 
+
+@BEG_Export 
+
+@BEG_Algo 
+@ALGORITHM @RT(12)aSetMoveTime @STRUCTURED_TEXT 
+@RT(0) @RT(0) @RT(0) @F @F 
+@END_Algo 
+
+@BEG_Dcl 
+@RT(16)DclTreeContainer 
+1 
+@Var @RT(12)dSetMoveTime @RT(0) @T @F @DT @RT(4)TIME @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(56)after this time the movement must be ready (ramped down) @RT(0) 
+@END_Attrib 
+1 1 @F @F @F @F 
+
+@END_Dcl 
+
+@END_Export 
+
+@BEG_Body 
+@TL(73)
+(**************************************** WARNING ********************************************
+ *** The KEBA Kemro K2 System including software is not intended for safety control tasks! ***
+ ***                       For further information see Comment tab!                        ***
+ *********************************************************************************************)
+
+//calculation in 탎 !!
+iSetMoveTime := TIME_TO_LINT(dSetMoveTime);
+iRampDownTime := REAL_TO_LINT(((Output.Output.rOutputValue / Output.Output.rRamp)) * 1000000.0);
+iPreOutputTime := REAL_TO_LINT((ABS(rStartOutput - Output.PreOutput.rOutputValue) / Output.PreOutput.rRamp) * 1000000.0);
+iRampUpTime := REAL_TO_LINT((ABS(Output.Output.rOutputValue - Output.PreOutput.rOutputValue) / Output.Output.rRamp) * 1000000.0);
+iDelayTimeOn := TIME_TO_LINT(dDelayTimeOn);
+
+iPreOutputStopTime := iSetMoveTime - REAL_TO_LINT(Output.PreOutput.rOutputValue / Output.Output.rRamp * 1000000.0);
+iDelayStopTime := iPreOutputStopTime - iDelayTimeOn;
+iRampDownStopTime := MAX(iSetMoveTime - iRampDownTime,1);
+
+rMaxValueStart := LINT_TO_REAL(iSetMoveTime)*1.0e-6 * Output.Output.rRamp;
+IF (rMaxValueStart < rStartOutput) THEN
+   // if rStartOutput > 0.0 check values at calculated time step is reachable with stopramp
+   // else start stop ramp at time 0
+   // rStartOutput -> t=0
+   // PreOutput -> t=iPreOutputTime
+   // Output -> t=iPreOutputTime+iDelayTimeOn
+   rMaxValuePre   := LINT_TO_REAL(MAX(iSetMoveTime-iPreOutputTime, 0))*1.0e-6 * Output.Output.rRamp;
+   rMaxValueDelay := LINT_TO_REAL(MAX(iSetMoveTime-iPreOutputTime-iDelayTimeOn,0))*1.0e-6 * Output.Output.rRamp;
+   IF (rMaxValuePre < Output.PreOutput.rOutputValue) AND (rMaxValueDelay < Output.Output.rOutputValue) THEN
+      // movement duration increases compared to set time
+      dTimeUntilStop := T#1us; // ToDo: use minimum time, otherwise movement not started with rStartOutput, output set to 0!
+      RETURN;
+   END_IF;   
+END_IF;
+
+
+IF ((iPreOutputTime + iDelayTimeOn + iRampUpTime) <= iRampDownStopTime) THEN
+   //stop during output of set value is active ("standard" use case)
+   dTimeUntilStop := LINT_TO_TIME(iRampDownStopTime);
+ELSIF ((iPreOutputTime + iDelayTimeOn) <= iPreOutputStopTime) THEN
+   //stop during ramp to set value is active
+   IF (Output.PreOutput.rOutputValue > Output.Output.rOutputValue) THEN
+
+      dTimeUntilStop := LINT_TO_TIME(iRampDownStopTime);
+   ELSE
+      tmpPoint := FCalcIntersection(rX1 := LINT_TO_REAL(iPreOutputTime + iDelayTimeOn)*1.0e-6,
+                                    rY1 := Output.PreOutput.rOutputValue,
+                                    rA1 := Output.Output.rRamp,  // x/탎
+                                    rX2 := LINT_TO_REAL(iSetMoveTime)*1.0e-6, // 탎
+                                    rY2 := 0.0,
+                                    rA2 := Output.Output.rRamp,  // x/탎
+                                    bUseLinear := TRUE,
+                                    rMaxA := 999999.9);
+      dTimeUntilStop := LINT_TO_TIME(REAL_TO_LINT(tmpPoint.rX*1.0e6));
+   END_IF;
+ELSIF ((iPreOutputTime < iPreOutputStopTime) AND  ((iPreOutputTime + iDelayTimeOn) > iPreOutputStopTime)) THEN
+   // use stop ramp from preoutput
+   dTimeUntilStop := LINT_TO_TIME(iPreOutputStopTime);   
+ELSE   
+//ELSIF (iPreOutputTime > iPreOutputStopTime) THEN
+   IF (rStartOutput > Output.PreOutput.rOutputValue) THEN
+      rRamp := -Output.PreOutput.rRamp;
+   ELSE
+      rRamp :=  Output.PreOutput.rRamp;   
+   END_IF;
+   tmpPoint := FCalcIntersection(rX1 := 0.0,
+                                 rY1 := rStartOutput,
+                                 rA1 := rRamp,  // x/탎
+                                 rX2 := LINT_TO_REAL(iSetMoveTime)*1.0e-6, // 탎
+                                 rY2 := 0.0,
+                                 rA2 := Output.Output.rRamp,  // x/탎
+                                 bUseLinear := TRUE,
+                                 rMaxA := 999999.9);
+   dTimeUntilStop := LINT_TO_TIME(REAL_TO_LINT(tmpPoint.rX*1.0e6));
+END_IF;
+
+@END_Body 
+
+@@@BEG_Comment@@@ 
+@TL(8)
+This algorithm calculates the active time ater that.
+the movement must be stopped to be ready after the set time.
+Depending on start output, preoutput, const output value and the according ramps
+this stop time is calculated.
+
+Attention:
+If the ramps are set very slowly it can happen that the movement does not
+reach the set value and start ramping down earlier.
+@@@END_Comment@@@ 
+
+@BEG_Body 
+@TL(46)
+(**************************************** WARNING ********************************************
+ *** The KEBA Kemro K2 System including software is not intended for safety control tasks! ***
+ ***                       For further information see Comment tab!                        ***
+ *********************************************************************************************)
+
+IF NOT bInitDone THEN
+    //copy reference of vis variable
+    mpConst := pConst;
+    mMoveId := MoveId;
+   
+    //copy references for calculation of duration
+    mpdCalcedDuration := pdCalcedDuration;
+    mprCalcDurationStartPosition := prCalcDurationStartPosition;
+    mprCalcDurationEndPosition := prCalcDurationEndPosition;
+    
+    IF CHECK_REF(mpdCalcedDuration^) THEN
+        mbRefCalcedDurationValid := TRUE;
+    END_IF;
+    
+    IF CHECK_REF(mprCalcDurationStartPosition^) THEN
+        mbRefCalcDurationStartPosValid := TRUE;
+    END_IF;
+    
+    IF CHECK_REF(mprCalcDurationEndPosition^) THEN
+        mbRefCalcDurationEndPosValid := TRUE;
+    END_IF;
+    
+    mpbStopOutputPresUsed := pbStopOutputPresUsed;
+    mpbStopOutputVelUsed := pbStopOutputVelUsed;
+   
+    IF CHECK_REF(mpConst^) THEN
+        mbReferenceValid := TRUE;
+        //start paInit only if reference is valid
+        START_PROCESS_ALGORITHM(paInit);
+    ELSE
+        SET_ALARM(Name := erInvalidConstReference,
+                SubID1 := sv_DeviceId.CompId,
+                SubID2 := sv_DeviceId.IndexId,
+                SubID3 := mMoveId);
+    END_IF;
+
+    bInitDone  := TRUE;
+END_IF;
+
+
+
+@END_Body 
+
+@@@BEG_Comment@@@ 
+@TL(2)
+This algorithm copies the input values to local variables and starts
+the process algorithm for initialization of constant output blocks.
+@@@END_Comment@@@ 
+
+@BEG_Body 
+@TL(201)
+(**************************************** WARNING ********************************************
+ *** The KEBA Kemro K2 System including software is not intended for safety control tasks! ***
+ ***                       For further information see Comment tab!                        ***
+ *********************************************************************************************)
+ 
+//do not execute if reference to constant output is not valid
+IF NOT mbReferenceValid THEN
+    
+    //set alarm because algorithm can be called without calling aInit before
+    IF NOT bAlarmSet THEN
+        SET_ALARM(Name := erInvalidConstReference,
+                  SubID1 := sv_DeviceId.CompId,
+                  SubID2 := sv_DeviceId.IndexId,
+                  SubID3 := mMoveId);
+        bAlarmSet := TRUE;
+    END_IF;
+        
+    bError := TRUE;
+    RETURN;
+END_IF;
+
+IF mbReParam THEN
+    fbConstOutputVel(PreOutputRamp := mpConst^.Velocity.PreOutput.rRamp,
+                    PreOutputValue := mpConst^.Velocity.PreOutput.rOutputValue,
+                    ConstOutputData := ConstOutputVelocity,
+                    MinOutputValue := mpConst^.Velocity.rMinOutput, 
+                    DelayTime := dDelayTimeOn,
+                    bEnableDeadTimeComp := bDeadTimeCompensation,
+                    DeadTime := dDeadTime,
+                    RampType := mRampTypeVel,
+                    ErrorInfo => iErrorInfo.Velocity,
+                    ReParam := TRUE);
+   
+    fbConstOutputPre(PreOutputRamp := mpConst^.Pressure.PreOutput.rRamp,
+                    PreOutputValue := mpConst^.Pressure.PreOutput.rOutputValue,                    
+                    ConstOutputData := ConstOutputPressure,
+                    MinOutputValue := mpConst^.Pressure.rMinOutput,                   
+                    DelayTime := dDelayTimeOn,                     
+                    ErrorInfo => iErrorInfo.Pressure,
+                    ReParam := TRUE);
+    
+    IF fbConstOutputVel.Error THEN
+        SET_ALARM(Name := erVelocityOutput,
+              SubID1 := sv_DeviceId.CompId,
+              SubID2 := sv_DeviceId.IndexId,
+              SubID3 := mMoveId,
+              SubID4 := fbConstOutputVel.ErrorInfo);
+    END_IF;
+    
+    IF fbConstOutputPre.Error THEN
+        SET_ALARM(Name := erPressureOutput,
+              SubID1 := sv_DeviceId.CompId,
+              SubID2 := sv_DeviceId.IndexId,
+              SubID3 := mMoveId,
+              SubID4 := fbConstOutputPre.ErrorInfo);
+    END_IF;
+    
+    IF fbConstOutputVel.Error OR fbConstOutputPre.Error THEN
+        //don큧 do movement if one of the outputblocks has an error
+        bError := TRUE;
+        RETURN;
+    END_IF;
+        
+    mbReParam := FALSE;
+END_IF;
+ 
+fbREdge_Start(CLK := bStart);
+IF fbREdge_Start.Q THEN
+    //reset timer for timeout detection
+    fbTimer(IN := FALSE);
+    bTimeOut := FALSE;
+    dActTime := t#0s;
+    fbREdgeVelError(CLK := FALSE);
+    fbREdgePresError(CLK := FALSE);
+   
+    IF mbUseSetMoveTime THEN
+       aCalcTimeUntilStop(dSetMoveTime := mdSetMoveTime,
+             rStartOutput := rStartOutputPre,
+             Output := mpConst^.Pressure,
+             dDelayTimeOn := dDelayTimeOn,             
+             dTimeUntilStop => dTimeForPressureMove);
+
+       aCalcTimeUntilStop(dSetMoveTime := mdSetMoveTime,
+             rStartOutput := rStartOutputVel,
+             Output := mpConst^.Velocity,
+             dDelayTimeOn := dDelayTimeOn,             
+             dTimeUntilStop => dTimeForVelocityMove);
+                   
+    END_IF;
+    bStopPressureOutput := FALSE;
+    bStopVelocityOutput := FALSE;
+END_IF; 
+ 
+IF mbUseSetMoveTime THEN
+   IF dActTime >= dTimeForPressureMove THEN
+      bStopPressureOutput := TRUE;
+   END_IF;
+   IF dActTime >= dTimeForVelocityMove THEN
+      bStopVelocityOutput := TRUE;
+   END_IF;
+END_IF;
+
+fbConstOutputVel(Start :=  bStart,
+                 Stop := (bStop AND NOT mbStopOutputVelUsed) OR bTimeOut OR bStopVelocityOutput,
+                 StartOutputValue := rStartOutputVel,
+                 Direction := bDirection,
+                 Position := rActPos,
+                 TargetPosition := rTargetPos,
+                 ReduceReadyDiff := 0.0, 
+                 UsePositionDetection := bUsePosDetect,
+                 DelayTime := dDelayTimeOn,
+                 bEnableDeadTimeComp := bDeadTimeCompensation,
+                 DeadTime := dDeadTime,                 
+                 ReParam := FALSE,
+                 Output => rOutputVel,
+                 ErrorInfo => iErrorInfo.Velocity);    
+                                                       
+fbConstOutputPre(Start :=  bStart,
+                 Stop := (bStop AND NOT mbStopOutputPresUsed) OR bTimeOut OR bStopPressureOutput,
+                 StartOutputValue := rStartOutputPre,
+                 Direction := bDirection,
+                 Position := rActPos,
+                 TargetPosition := rTargetPos,
+                 ReduceReadyDiff := 0.0, 
+                 UsePositionDetection := bUsePosDetect,                 
+                 ReParam := FALSE,
+                 bIgnorePreOutput := bIgnorePreOutputPressure,
+                 bIgnoreStopRamp := bIgnoreEndRampPressure,
+                 DelayTime := dDelayTimeOn,                 
+                 Output => rOutputPre,
+                 ErrorInfo => iErrorInfo.Pressure);
+
+bPreOutputReached := fbConstOutputPre.PreOutputReady AND fbConstOutputVel.PreOutputReady;
+bError := fbConstOutputPre.Error OR fbConstOutputVel.Error;
+
+//set alarm if error during velocity output occurs
+fbREdgeVelError(CLK := fbConstOutputVel.Error);
+IF fbREdgeVelError.Q THEN
+    SET_ALARM(Name := erVelocityOutput,
+              SubID1 := sv_DeviceId.CompId,
+              SubID2 := sv_DeviceId.IndexId,
+              SubID3 := mMoveId,
+              SubID4 := iErrorInfo.Velocity);
+END_IF;
+
+//set alarm if error during pressure output occurs
+fbREdgePresError(CLK := fbConstOutputPre.Error);
+IF fbREdgePresError.Q THEN
+    SET_ALARM(Name := erPressureOutput,
+              SubID1 := sv_DeviceId.CompId,
+              SubID2 := sv_DeviceId.IndexId,
+              SubID3 := mMoveId,
+              SubID4 := iErrorInfo.Pressure);
+END_IF;
+
+//combine ready - flags
+IF ((fbConstOutputPre.Ready OR (bStop AND mbStopOutputPresUsed)) AND 
+         (fbConstOutputVel.Ready OR (bStop AND mbStopOutputVelUsed))) OR bError THEN
+    bActiveInt := FALSE;
+    mbMovementActive := FALSE;
+    mbUseSetMoveTime := FALSE;
+    //call library - blocks with Start = FALSE after movement is ready
+//    fbConstOutputVel(Start := FALSE);
+//    fbConstOutputPre(Start := FALSE);
+ELSE
+    bActiveInt := TRUE;
+    mbMovementActive := TRUE;
+END_IF;
+
+//Timeout detection
+IF bActiveInt THEN
+    IF dMaxTime > t#0.0s THEN
+       fbTimer(PT := dMaxTime);
+    ELSE
+       //dActTime should also be updated
+       //if dMaxTime is not used
+       fbTimer(PT := t#1d);
+    END_IF;
+   
+    fbTimer(IN := TRUE);       
+    dActTime := fbTimer.ET;    
+    //dMaxTime = 0 means timeout detection is deactivated!!
+    IF dMaxTime > t#0.0s THEN
+       bTimeOut := fbTimer.Q;
+    END_IF;
+END_IF;
+
+//set timeout alarm
+fbREdge_Timeout(CLK := bTimeOut);
+IF fbREdge_Timeout.Q THEN
+    SET_ALARM(Name := erMoveTimeout,
+              SubID1 := sv_DeviceId.CompId,
+              SubID2 := sv_DeviceId.IndexId,
+              SubID3 := mMoveId);    
+END_IF;
+
+// set output bActive
+fbTOFActive(bActiveInt, dDelayTimeOff);
+bActive := fbTOFActive.Q;
+
+
+@END_Body 
+
+@@@BEG_Comment@@@ 
+@TL(7)
+Following functions are realized in this algorithm:
+
+1) reparam of the constant output - blocks
+2) constant output for pressure and velocity
+3) Timeout detection if dMaxMoveTime is bigger than 0.
+   dMaxMoveTime = 0 means no timeout detection active
+   If a timeout is detected an alarm will be set and the profileoutput will be stopped automatically
+@@@END_Comment@@@ 
+
+@BEG_Body 
+@TL(15)
+(**************************************** WARNING ********************************************
+ *** The KEBA Kemro K2 System including software is not intended for safety control tasks! ***
+ ***                       For further information see Comment tab!                        ***
+ *********************************************************************************************)
+
+ConstOutputVelocity.OutputValue := mpConst^.Velocity.Output.rOutputValue;
+ConstOutputVelocity.Acceleration := mpConst^.Velocity.Output.rRamp;
+
+START_PROCESS_ALGORITHM(paInit);
+    
+ConstOutputPressure.OutputValue := mpConst^.Pressure.Output.rOutputValue;
+ConstOutputPressure.Acceleration := mpConst^.Pressure.Output.rRamp;
+    
+mbReParam := TRUE;
+
+@END_Body 
+
+@@@BEG_Comment@@@ 
+@TL(2)
+This algorithm reacts on changes of the constant output settings.
+If the settings changed the process algorithm for initialization will be started.
+@@@END_Comment@@@ 
+
+@BEG_Body 
+@TL(35)
+(**************************************** WARNING ********************************************
+ *** The KEBA Kemro K2 System including software is not intended for safety control tasks! ***
+ ***                       For further information see Comment tab!                        ***
+ *********************************************************************************************)
+
+
+IF NOT mbMovementActive THEN
+    IF CHECK_REF(mpbStopOutputPresUsed^) THEN
+       mbStopOutputPresUsed := mpbStopOutputPresUsed^;
+    ELSE
+       mbStopOutputPresUsed := FALSE;
+    END_IF;
+    IF CHECK_REF(mpbStopOutputVelUsed^) THEN
+       mbStopOutputVelUsed := mpbStopOutputVelUsed^;
+    ELSE
+       mbStopOutputVelUsed := FALSE;
+    END_IF; 
+   
+   
+    ConstOutputVelocity.OutputValue := mpConst^.Velocity.Output.rOutputValue;
+    ConstOutputVelocity.Acceleration := mpConst^.Velocity.Output.rRamp;
+    mRampTypeVel := mpConst^.Velocity.Output.RampType;
+   
+    //Calculate duration(s)
+    START_PROCESS_ALGORITHM(paCalcDurations);
+   
+    ConstOutputPressure.OutputValue := mpConst^.Pressure.Output.rOutputValue;
+    ConstOutputPressure.Acceleration := mpConst^.Pressure.Output.rRamp;
+    
+    mbReParam := TRUE;
+    STOP_PROCESS_ALGORITHM();
+END_IF;
+
+
+
+@END_Body 
+
+@@@BEG_Comment@@@ 
+@TL(1)
+This algorithm does the initialization for the constant movement blocks.
+@@@END_Comment@@@ 
+
+@BEG_Body 
+@TL(8)
+(**************************************** WARNING ********************************************
+ *** The KEBA Kemro K2 System including software is not intended for safety control tasks! ***
+ ***                       For further information see Comment tab!                        ***
+ *********************************************************************************************)
+
+//Recalculate duration(s)
+START_PROCESS_ALGORITHM(paCalcDurations);
+
+@END_Body 
+
+@@@BEG_Comment@@@ 
+@TL(2)
+startposition or endposition changed
+-> trigger calculation of duration
+@@@END_Comment@@@ 
+
+@BEG_Body 
+@TL(21)
+(**************************************** WARNING ********************************************
+ *** The KEBA Kemro K2 System including software is not intended for safety control tasks! ***
+ ***                       For further information see Comment tab!                        ***
+ *********************************************************************************************)
+ 
+//Calculate duration
+IF mbRefCalcedDurationValid AND mbRefCalcDurationStartPosValid AND mbRefCalcDurationEndPosValid THEN
+    
+    mpdCalcedDuration^ := FCalcDuration(StartPosition := mprCalcDurationStartPosition^,
+                                        StartVelocity := 0.0,   //not used
+                                        EndPosition := mprCalcDurationEndPosition^,
+                                        Profile := mDummyProfile,   //not used
+                                        StartRamp := ConstOutputVelocity.Acceleration,
+                                        StopRamp := ConstOutputVelocity.Acceleration,
+                                        ConstOutput := ConstOutputVelocity.OutputValue,
+                                        UseConstOutput := TRUE);
+    
+END_IF;
+
+STOP_PROCESS_ALGORITHM();
+
+@END_Body 
+
+@@@BEG_Comment@@@ 
+@TL(1)
+calculate duration
+@@@END_Comment@@@ 
+
+@BEG_Body 
+@TL(8)
+(**************************************** WARNING ********************************************
+ *** The KEBA Kemro K2 System including software is not intended for safety control tasks! ***
+ ***                       For further information see Comment tab!                        ***
+ *********************************************************************************************)
+
+mdSetMoveTime := dSetMoveTime;
+mbUseSetMoveTime := TRUE;
+
+@END_Body 
+
+@@@BEG_Comment@@@ 
+@TL(9)
+This algorithm can be used to set a defined move time. After this move time the movement
+is ready (pressure and velocity output have already ramped down).
+
+Attention:
+The set move time is only used for the next execution of the movement.
+This means that if a constant movemtn should stop after a set time this algorithm must
+be called before the call of aRun.
+If the constant movement should move to a target position, aSetMoveTime should not be called
+before, because this can lead to a stop before the target position is reached.
+@@@END_Comment@@@ 
+@END_Body 
+
+@END_Contents 

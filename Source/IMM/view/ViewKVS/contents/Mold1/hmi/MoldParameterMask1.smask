@@ -1,0 +1,348 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<base:Mask xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xmlns:base="http://www.keba.at/viewedit.model.base" widgetId="kvs.mask" name="MoldParameterMask1">
+  <resolution width="714" height="476"/>
+  <position x="1" y="1"/>
+  <attributeValues key="Icon" value="Mold1/hmi/images/iconMoldParam.gif"/>
+  <attributeValues key="Title" value="Mold parameters"/>
+  <attributeValues key="Background" value="BG_Desktop:30,30,30"/>
+  <layout layoutID="kvs.layout.BorderLayout" name="BorderLayout">
+    <attributeValues key="Vgap" value="6"/>
+  </layout>
+  <widgetInstances xsi:type="base:ContainerWidgetInstance" widgetId="keplast.kvs.borderpanelsmall" name="panelParameter" layoutConstraint="NORTH">
+    <resolution width="714" height="476"/>
+    <position/>
+    <attributeValues key="Title" value="Mold parameter settings"/>
+    <attributeValues key="Background" value="BG_Panel:220,220,220"/>
+    <attributeValues key="PreferredSize" value="714, 476"/>
+    <layout layoutID="keplast.kvs.layout.horizontalsplitlayout" name="HorizontalSplitLayout"/>
+    <widgetInstances xsi:type="base:ContainerWidgetInstance" widgetId="kvs.panel" name="panelParamsLeft" layoutConstraint="LEFT">
+      <resolution width="347" height="435"/>
+      <position x="6" y="33"/>
+      <layout layoutID="kvs.layout.GridLayout" name="GridLayout">
+        <attributeValues key="Columns" value="1"/>
+        <attributeValues key="Rows" value="15"/>
+      </layout>
+      <widgetInstances widgetId="keplast.kvs.actsetnumfieldtext" name="numfieldMoldCloseMaxTime" layoutConstraint="null">
+        <resolution width="347" height="29"/>
+        <position/>
+        <attributeValues key="Variable" value="Mold1.sv_MoldCloseTimesSet.dMaxMoveTime"/>
+        <attributeValues key="VariableActual" value="Mold1.sv_MoldCloseTimesAct.dActMoveTime"/>
+      </widgetInstances>
+      <widgetInstances widgetId="keplast.kvs.actsetnumfieldtext" name="numfieldMoldOpenMaxTime" layoutConstraint="null">
+        <resolution width="347" height="29"/>
+        <position y="29"/>
+        <attributeValues key="Variable" value="Mold1.sv_MoldOpenTimesSet.dMaxMoveTime"/>
+        <attributeValues key="VariableActual" value="Mold1.sv_MoldOpenTimesAct.dActMoveTime"/>
+      </widgetInstances>
+      <widgetInstances widgetId="keplast.kvs.actsetnumfieldtext" name="numfieldMoldLockMaxTime" layoutConstraint="null">
+        <resolution width="347" height="29"/>
+        <position y="58"/>
+        <attributeValues key="Variable" value="Mold1.sv_MoldLockTimesSet.dMaxMoveTime"/>
+        <attributeValues key="VariableActual" value="Mold1.sv_MoldLockTimesAct.dActMoveTime"/>
+        <dynamicAttributes key="Create">
+          <value function="hasOption : UserFunctions" equal="false" unequal="true">
+            <parameter key="1" value="devicename;PlastFunctionUtils.createDeviceName(&quot;Mold1&quot;)"/>
+            <parameter key="2" value="machineoptionid;system.hmi.MachineEquipment.SUB_OPTION_MOLD_TWO_PLATEN"/>
+          </value>
+        </dynamicAttributes>
+      </widgetInstances>
+      <widgetInstances widgetId="keplast.kvs.actsetnumfieldtext" name="numfieldMoldDecompMaxTime" layoutConstraint="null">
+        <resolution width="347" height="29"/>
+        <position y="87"/>
+        <attributeValues key="Variable" value="Mold1.sv_MoldLockDecompTimesSet.dMaxMoveTime"/>
+        <attributeValues key="VariableActual" value="Mold1.sv_MoldLockDecompTimesAct.dActMoveTime"/>
+        <dynamicAttributes key="Create">
+          <value function="hasOption : UserFunctions" equal="true" unequal="false">
+            <parameter key="1" value="devicename; PlastFunctionUtils.createDeviceName(&quot;Mold1&quot;)"/>
+            <parameter key="2" value="machineoptionid; system.hmi.MachineEquipment.SUB_OPTION_MOLD_DIRECTLOCK"/>
+          </value>
+        </dynamicAttributes>
+      </widgetInstances>
+      <widgetInstances xsi:type="base:ContainerWidgetInstance" widgetId="kvs.panel" name="containerLeftGap1" layoutConstraint="null">
+        <resolution width="347" height="29"/>
+        <position y="116"/>
+        <layout layoutID="kvs.layout.PercentLayout" name="PercentLayout"/>
+      </widgetInstances>
+      <widgetInstances xsi:type="base:ContainerWidgetInstance" widgetId="kvs.panel" name="containerFastOpenClose" layoutConstraint="null">
+        <resolution width="347" height="29"/>
+        <position y="145"/>
+        <layout layoutID="kvs.layout.PercentLayout" name="PercentLayout"/>
+        <widgetInstances widgetId="keplast.kvs.checkboxtext" name="chkboxFastClose" layoutConstraint="0, 0, 100, 100">
+          <resolution width="347" height="29"/>
+          <position/>
+          <attributeValues key="Variable" value="Mold1.sv_bFastClose"/>
+          <dynamicAttributes key="Create">
+            <value function="doesVariableExist : UserFunctions" equal="true" unequal="false">
+              <parameter key="1" value="variableasstring; PlastFunctionUtils.createVariableString(&quot;Mold1.do_FastClose&quot;)"/>
+            </value>
+          </dynamicAttributes>
+        </widgetInstances>
+        <widgetInstances widgetId="keplast.kvs.checkboxtext" name="chkboxFastOpen" layoutConstraint="0, 0, 100, 100">
+          <resolution width="347" height="29"/>
+          <position/>
+          <attributeValues key="Variable" value="Mold1.sv_bFastOpen"/>
+          <dynamicAttributes key="Create">
+            <value function="doesVariableExist : UserFunctions" equal="true" unequal="false">
+              <parameter key="1" value="variableasstring;PlastFunctionUtils.createVariableString(&quot;Mold1.do_FastOpen&quot;)"/>
+            </value>
+          </dynamicAttributes>
+        </widgetInstances>
+      </widgetInstances>
+      <widgetInstances widgetId="keplast.kvs.checkboxtext" name="chkboxOpenDuringPlast" layoutConstraint="null">
+        <resolution width="347" height="29"/>
+        <position y="174"/>
+        <attributeValues key="Variable" value="CentralCoordination1.sv_bClampOpenDuringPlast"/>
+        <dynamicAttributes key="Create">
+          <value function="doesDeviceExist : UserFunctions" equal="true" unequal="false">
+            <parameter key="1" value="devicename;PlastFunctionUtils.createDeviceName(&quot;ShutOffNozzle1&quot;)"/>
+          </value>
+        </dynamicAttributes>
+      </widgetInstances>
+      <widgetInstances widgetId="keplast.kvs.checkboxtext" name="chkboxOpenAfterProtectError" layoutConstraint="null">
+        <resolution width="347" height="29"/>
+        <position y="203"/>
+        <attributeValues key="Variable" value="Mold1.sv_bOpenAfterProtect"/>
+      </widgetInstances>
+      <widgetInstances widgetId="keplast.kvs.numfieldtext" name="numfieldProtectRetry" layoutConstraint="null">
+        <resolution width="347" height="29"/>
+        <position y="232"/>
+        <attributeValues key="Variable" value="system.sv_iSetMoldProtectRetry"/>
+        <dynamicAttributes key="Enabled">
+          <value function="b1_EQ_true : ViewEditFunctions" equal="true" unequal="false">
+            <parameter key="1" value="kvariable;Mold1.sv_bOpenAfterProtect"/>
+          </value>
+        </dynamicAttributes>
+      </widgetInstances>
+      <widgetInstances widgetId="keplast.kvs.checkboxtext" name="chkboxOptimizeMoldPositioning" layoutConstraint="null">
+        <resolution width="347" height="29"/>
+        <position y="261"/>
+        <attributeValues key="Variable" value="Mold1.sv_MoldBwdProfVis.bUseOffsetOptimizing"/>
+        <dynamicAttributes key="Create">
+          <value function="hasOption_OR_hasOption : UserFunctions" equal="false" unequal="true">
+            <parameter key="1" value="devicename; PlastFunctionUtils.createDeviceName(&quot;Mold1&quot;)"/>
+            <parameter key="2" value="machineoptionid; system.hmi.MachineEquipment.ELECTRIC"/>
+            <parameter key="3" value="machineoptionid; system.hmi.MachineEquipment.SUB_OPTION_MOLD_DIRECTLOCK"/>
+          </value>
+        </dynamicAttributes>
+      </widgetInstances>
+      <widgetInstances widgetId="keplast.kvs.checkboxtext" name="chkboxEjectorSafetyDI" layoutConstraint="null">
+        <resolution width="347" height="29"/>
+        <position y="290"/>
+        <attributeValues key="Variable" value="Ejector1.sv_bCheckSafetyPlateDI"/>
+        <dynamicAttributes key="Create">
+          <value function="doesVariableExist : UserFunctions" equal="true" unequal="false">
+            <parameter key="1" value="variableasstring; PlastFunctionUtils.createVariableString(&quot;Ejector1.di_SafetyPlate&quot;)"/>
+          </value>
+        </dynamicAttributes>
+      </widgetInstances>
+      <widgetInstances widgetId="keplast.kvs.checkboxtext" name="chkboxSpringMold" layoutConstraint="null">
+        <resolution width="347" height="29"/>
+        <position y="319"/>
+        <attributeValues key="Variable" value="SpringMold1.sv_bUseSpringMold"/>
+        <dynamicAttributes key="Create">
+          <value function="hasOption : UserFunctions" equal="true" unequal="false">
+            <parameter key="1" value="devicename;PlastFunctionUtils.createDeviceName(&quot;Mold1&quot;)"/>
+            <parameter key="2" value="machineoptionid;system.hmi.MachineEquipment.SUB_OPTION_MOLD_TWO_PLATEN"/>
+          </value>
+        </dynamicAttributes>
+      </widgetInstances>
+      <widgetInstances widgetId="keplast.kvs.numfieldtext" name="fHighPresKeepTime" layoutConstraint="null">
+        <resolution width="347" height="29"/>
+        <position y="348"/>
+        <attributeValues key="Variable" value="Mold1.sv_dHighPresKeepTime"/>
+        <dynamicAttributes key="Create">
+          <value function="hasOption_AND_NOT_hasOption : UserFunctions" equal="true" unequal="false">
+            <parameter key="1" value="devicename;PlastFunctionUtils.createDeviceName(&quot;Mold1&quot;)"/>
+            <parameter key="2" value="machineoptionid;system.hmi.MachineEquipment.HYDRAULIC"/>
+            <parameter key="3" value="machineoptionid;system.hmi.MachineEquipment.SUB_OPTION_MOLD_DIRECTLOCK"/>
+          </value>
+        </dynamicAttributes>
+      </widgetInstances>
+      <widgetInstances widgetId="keplast.kvs.numfieldtext" name="fMonPosTolerance" layoutConstraint="null">
+        <resolution width="347" height="29"/>
+        <position y="377"/>
+        <attributeValues key="Variable" value="Mold1.sv_rMonTolerance"/>
+        <dynamicAttributes key="Create">
+          <value function="hasOption_AND_NOT_hasOption : UserFunctions" equal="true" unequal="false">
+            <parameter key="1" value="devicename;PlastFunctionUtils.createDeviceName(&quot;Mold1&quot;)"/>
+            <parameter key="2" value="machineoptionid;system.hmi.MachineEquipment.HYDRAULIC"/>
+            <parameter key="3" value="machineoptionid;system.hmi.MachineEquipment.SUB_OPTION_MOLD_DIRECTLOCK"/>
+          </value>
+        </dynamicAttributes>
+      </widgetInstances>
+      <widgetInstances widgetId="keplast.kvs.numfieldtext" name="fPosReachedTolerance" layoutConstraint="null">
+        <resolution width="347" height="29"/>
+        <position y="406"/>
+        <attributeValues key="Variable" value="Mold1.sv_rTolerancePosReached"/>
+        <attributeValues key="RenderAsTextField" value="false"/>
+        <dynamicAttributes key="Create">
+          <value function="doesVariableExist : UserFunctions" equal="true" unequal="false">
+            <parameter key="1" value="variableasstring;PlastFunctionUtils.createVariableString(&quot;Mold1.sv_rTolerancePosReached&quot;)"/>
+          </value>
+        </dynamicAttributes>
+      </widgetInstances>
+    </widgetInstances>
+    <widgetInstances xsi:type="base:ContainerWidgetInstance" widgetId="kvs.panel" name="panelParamsRight" layoutConstraint="RIGHT">
+      <resolution width="347" height="355"/>
+      <position x="361" y="33"/>
+      <attributeValues key="PreferredSize" value="347, 355"/>
+      <layout layoutID="kvs.layout.BorderLayout" name="BorderLayout"/>
+      <widgetInstances xsi:type="base:ContainerWidgetInstance" widgetId="kvs.panel" name="container2" layoutConstraint="CENTER">
+        <resolution width="347" height="152"/>
+        <position y="87"/>
+        <attributeValues key="PreferredSize" value="347, 116"/>
+        <layout layoutID="kvs.layout.PercentLayout" name="PercentLayout"/>
+        <widgetInstances xsi:type="base:ContainerWidgetInstance" widgetId="kvs.panel" name="cRotaryTable" layoutConstraint="0, 0, 100, 79">
+          <resolution width="347" height="120"/>
+          <position/>
+          <dynamicAttributes key="Create">
+            <value function="doesDeviceExist : UserFunctions" equal="true" unequal="false">
+              <parameter key="1" value="devicename;PlastFunctionUtils.createDeviceName(&quot;RotaryTable1&quot;)"/>
+            </value>
+          </dynamicAttributes>
+          <layout layoutID="kvs.layout.GridLayout" name="GridLayout">
+            <attributeValues key="Rows" value="4"/>
+          </layout>
+          <widgetInstances widgetId="keplast.kvs.actsetnumfieldtext" name="fLockPinIn" layoutConstraint="null">
+            <resolution width="347" height="30"/>
+            <position/>
+            <attributeValues key="Variable" value="RotaryTable1.sv_PinInTimesSet.dMaxMoveTime"/>
+            <attributeValues key="VariableActual" value="RotaryTable1.sv_PinInTimesAct.dActMoveTime"/>
+            <dynamicAttributes key="Create">
+              <value function="doesDeviceExist : UserFunctions" equal="true" unequal="false">
+                <parameter key="1" value="devicename;PlastFunctionUtils.createDeviceName(&quot;RotaryTable1&quot;)"/>
+              </value>
+            </dynamicAttributes>
+          </widgetInstances>
+          <widgetInstances widgetId="keplast.kvs.actsetnumfieldtext" name="fLockPinOut" layoutConstraint="null">
+            <resolution width="347" height="30"/>
+            <position y="30"/>
+            <attributeValues key="VariableActual" value="RotaryTable1.sv_PinOutTimesAct.dActMoveTime"/>
+            <attributeValues key="Variable" value="RotaryTable1.sv_PinOutTimesSet.dMaxMoveTime"/>
+            <dynamicAttributes key="Create">
+              <value function="doesDeviceExist : UserFunctions" equal="true" unequal="false">
+                <parameter key="1" value="devicename;PlastFunctionUtils.createDeviceName(&quot;RotaryTable1&quot;)"/>
+              </value>
+            </dynamicAttributes>
+          </widgetInstances>
+          <widgetInstances widgetId="keplast.kvs.actsetnumfieldtext" name="fRotateCW" layoutConstraint="null">
+            <resolution width="347" height="30"/>
+            <position y="60"/>
+            <attributeValues key="VariableActual" value="RotaryTable1.sv_RotateCCWTimesAct.dActMoveTime"/>
+            <attributeValues key="Variable" value="RotaryTable1.sv_RotateCCWTimesSet.dMaxMoveTime"/>
+            <dynamicAttributes key="Create">
+              <value function="hasOption : UserFunctions" equal="true" unequal="false">
+                <parameter key="1" value="devicename;PlastFunctionUtils.createDeviceName(&quot;RotaryTable1&quot;)"/>
+                <parameter key="2" value="machineoptionid;system.hmi.MachineEquipment.SUB_OPTION_ROTARY_POSITION"/>
+              </value>
+            </dynamicAttributes>
+          </widgetInstances>
+          <widgetInstances widgetId="keplast.kvs.actsetnumfieldtext" name="fRotateCCW" layoutConstraint="null">
+            <resolution width="347" height="30"/>
+            <position y="90"/>
+            <attributeValues key="VariableActual" value="RotaryTable1.sv_RotateCWTimesAct.dActMoveTime"/>
+            <attributeValues key="Variable" value="RotaryTable1.sv_RotateCWTimesSet.dMaxMoveTime"/>
+            <dynamicAttributes key="Create">
+              <value function="doesDeviceExist : UserFunctions" equal="true" unequal="false">
+                <parameter key="1" value="devicename;PlastFunctionUtils.createDeviceName(&quot;RotaryTable1&quot;)"/>
+              </value>
+            </dynamicAttributes>
+          </widgetInstances>
+        </widgetInstances>
+        <widgetInstances xsi:type="base:ContainerWidgetInstance" widgetId="kvs.panel" name="cSlideTable" layoutConstraint="0, 0, 100, 79">
+          <resolution width="347" height="120"/>
+          <position/>
+          <dynamicAttributes key="Create">
+            <value function="doesDeviceExist : UserFunctions" equal="true" unequal="false">
+              <parameter key="1" value="devicename;PlastFunctionUtils.createDeviceName(&quot;SlideTable1&quot;)"/>
+            </value>
+          </dynamicAttributes>
+          <layout layoutID="kvs.layout.PercentLayout" name="PercentLayout"/>
+          <widgetInstances widgetId="keplast.kvs.actsetnumfieldtext" name="fLockPinIn2" layoutConstraint="0, 1, 100, 25">
+            <resolution width="347" height="30"/>
+            <position y="1"/>
+            <attributeValues key="VariableActual" value="SlideTable1.sv_PinInTimesAct.dActMoveTime"/>
+            <attributeValues key="Variable" value="SlideTable1.sv_PinInTimesSet.dMaxMoveTime"/>
+            <dynamicAttributes key="Create">
+              <value function="doesDeviceExist : UserFunctions" equal="true" unequal="false">
+                <parameter key="1" value="devicename;PlastFunctionUtils.createDeviceName(&quot;SlideTable1&quot;)"/>
+              </value>
+            </dynamicAttributes>
+          </widgetInstances>
+          <widgetInstances widgetId="keplast.kvs.actsetnumfieldtext" name="fLockPinOut2" layoutConstraint="0, 25, 100, 25">
+            <resolution width="347" height="30"/>
+            <position y="30"/>
+            <attributeValues key="VariableActual" value="SlideTable1.sv_PinOutTimesAct.dActMoveTime"/>
+            <attributeValues key="Variable" value="SlideTable1.sv_PinOutTimesSet.dMaxMoveTime"/>
+            <dynamicAttributes key="Create">
+              <value function="doesDeviceExist : UserFunctions" equal="true" unequal="false">
+                <parameter key="1" value="devicename;PlastFunctionUtils.createDeviceName(&quot;SlideTable1&quot;)"/>
+              </value>
+            </dynamicAttributes>
+          </widgetInstances>
+          <widgetInstances widgetId="keplast.kvs.actsetnumfieldtext" name="fSlideIn" layoutConstraint="0, 51, 100, 25">
+            <resolution width="347" height="30"/>
+            <position y="61"/>
+            <attributeValues key="VariableActual" value="SlideTable1.sv_FwdTimesAct.dActMoveTime"/>
+            <attributeValues key="Variable" value="SlideTable1.sv_FwdTimesSet.dMaxMoveTime"/>
+            <dynamicAttributes key="Create">
+              <value function="doesDeviceExist : UserFunctions" equal="true" unequal="false">
+                <parameter key="1" value="devicename;PlastFunctionUtils.createDeviceName(&quot;SlideTable1&quot;)"/>
+              </value>
+            </dynamicAttributes>
+          </widgetInstances>
+          <widgetInstances widgetId="keplast.kvs.actsetnumfieldtext" name="fSlideOut" layoutConstraint="0, 76, 100, 24">
+            <resolution width="347" height="28"/>
+            <position y="91"/>
+            <attributeValues key="VariableActual" value="SlideTable1.sv_BwdTimesAct.dActMoveTime"/>
+            <attributeValues key="Variable" value="SlideTable1.sv_BwdTimesSet.dMaxMoveTime"/>
+            <dynamicAttributes key="Create">
+              <value function="doesDeviceExist : UserFunctions" equal="true" unequal="false">
+                <parameter key="1" value="devicename;PlastFunctionUtils.createDeviceName(&quot;SlideTable1&quot;)"/>
+              </value>
+            </dynamicAttributes>
+          </widgetInstances>
+        </widgetInstances>
+      </widgetInstances>
+      <widgetInstances xsi:type="base:ContainerWidgetInstance" widgetId="kvs.panel" name="container1" layoutConstraint="NORTH">
+        <resolution width="347" height="87"/>
+        <position/>
+        <attributeValues key="PreferredSize" value="347, 87"/>
+        <layout layoutID="kvs.layout.GridLayout" name="GridLayout">
+          <attributeValues key="Rows" value="3"/>
+          <attributeValues key="Columns" value="1"/>
+        </layout>
+        <widgetInstances widgetId="keplast.kvs.numfieldtext" name="numfieldMoldProtTolerance" layoutConstraint="null">
+          <resolution width="347" height="29"/>
+          <position/>
+          <attributeValues key="Variable" value="MotionProtectMold1.sv_rMotionProtectTolYRel"/>
+          <dynamicAttributes key="Create">
+            <value function="doesDeviceExist : UserFunctions" equal="true" unequal="false">
+              <parameter key="1" value="devicename; PlastFunctionUtils.createDeviceName(&quot;MotionProtectMold1&quot;)"/>
+            </value>
+          </dynamicAttributes>
+        </widgetInstances>
+        <widgetInstances widgetId="keplast.kvs.checkboxtext" name="chkboxMoldProtCyclInit" layoutConstraint="null">
+          <resolution width="347" height="29"/>
+          <position y="29"/>
+          <attributeValues key="Variable" value="MotionProtectMold1.sv_MotionProtectData.bUseLastCycle"/>
+          <dynamicAttributes key="Create">
+            <value function="doesDeviceExist : UserFunctions" equal="true" unequal="false">
+              <parameter key="1" value="devicename; PlastFunctionUtils.createDeviceName(&quot;MotionProtectMold1&quot;)"/>
+            </value>
+          </dynamicAttributes>
+        </widgetInstances>
+      </widgetInstances>
+      <widgetInstances xsi:type="base:ContainerWidgetInstance" widgetId="kvs.panel" name="container3" layoutConstraint="SOUTH">
+        <resolution width="347" height="116"/>
+        <position y="239"/>
+        <attributeValues key="PreferredSize" value="347, 116"/>
+        <layout layoutID="kvs.layout.PercentLayout" name="PercentLayout"/>
+      </widgetInstances>
+    </widgetInstances>
+    <widgetInstances widgetId="keplast.kvs.separator" name="separator1" layoutConstraint="SEPARATOR">
+      <resolution width="2" height="439"/>
+      <position x="356" y="33"/>
+    </widgetInstances>
+  </widgetInstances>
+</base:Mask>

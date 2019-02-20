@@ -1,0 +1,456 @@
+(*
+@h    ! WARNING !
+@h    The Kemro K2 system (including software) only meets category B according to EN 954-1,
+@h    thus it is not intended for usage in safety-relevant control applications in the field 
+@h    of personal safety (e.g. emergency stop).
+@h    To implement potentially necessary safety-relevant control tasks, always use additional 
+@h    external safety devices that are intended for the particular purpose, and meet the necessary 
+@h    functional safety.
+@h    For further information see EN 954-1 (EN ISO 13849-1) and/or the K2-x00 user manual, chapter 
+@h    "CE conformity, directives and standards".
+*)
+
+IMPORT_OVER_LISTFILE
+ KAPPL_LintabData_2P
+, KAPPL_MeasureMonitoring
+, KSWO_Status
+, ABMeasureAI
+
+END_IMPORT
+
+ALGORITHM_BLOCK ABMeasure #DUMMY_EDIT_BLOCK
+
+SYSTEM_VAR
+ sv_rActPressureHydr : REAL (* actual pressure in bar (measured by pressure sensor) *);
+ ai_SysPressure : REAL;
+ sv_SysPressureLintab : KAPPL_LintabData_2P (* lintab for measurement of system pressure sensor *);
+ sv_SysPresMonitorMeas : KAPPL_MeasureMonitoring;
+ sv_bDeviceReady : BOOL;
+END_VAR
+
+SYSTEM_OBJECT
+ TaskInject : TASK;
+ TaskSlow : TASK;
+END_OBJECT
+
+PROCESS_ALGORITHM paInitDebugMeasurement ON TaskSlow AUTOSTART
+
+
+VAR
+ variableName : STRING(255);
+ swoState : KSWO_Status;
+END_VAR
+#BEGIN_EDIT_BLOCK
+(**************************************** WARNING ********************************************
+ *** The KEBA Kemro K2 System including software is not intended for safety control tasks! ***
+ ***                       For further information see Comment tab!                        ***
+ *********************************************************************************************)
+
+variableName := CONCAT(GET_MY_FU_NAME(),'.sv_rActPressureHydr');
+swoState := KSWO_AddVariable( Task := TaskInject,
+                              Name := variableName,
+                              Variable := sv_rActPressureHydr);
+
+STOP_PROCESS_ALGORITHM();
+
+
+;#END_EDIT_BLOCK END_ALGORITHM
+
+PROCESS_ALGORITHM paMeasurePressure ON TaskInject(1000) AUTOSTART
+
+
+VAR_TEMP
+ b : BOOL;
+END_VAR
+
+VAR
+ abPressureMeasure : ABMeasureAI;
+ bSensorLinked : BOOL;
+ sEndPoint : STRING(64);
+END_VAR
+
+(* IecGraph-Code *)
+
+(* init step *)
+INITIAL_STEP S_Start:
+ACheckSensor (P);
+END_STEP
+
+ACTION ACheckSensor: #BEGIN_EDIT_BLOCK
+bSensorLinked := IS_LINKED(ai_SysPressure);
+
+;#END_EDIT_BLOCK END_ACTION (*ACheckSensor*)
+
+(* steps *)
+STEP S_Stop:
+AStop (P);
+END_STEP
+
+ACTION AStop: #BEGIN_EDIT_BLOCK
+STOP_PROCESS_ALGORITHM();
+
+;#END_EDIT_BLOCK END_ACTION (*AStop*)
+STEP S_Init:
+AInitMeasure (P);
+END_STEP
+
+STEP S_Measure:
+AMeasure (N);
+END_STEP
+
+
+(* transitions *)
+TRANSITION TLinked (* TLinked *) FROM S_Start TO S_Init :=  #BEGIN_EDIT_BLOCK
+bSensorLinked
+;#END_EDIT_BLOCK
+END_TRANSITION
+
+TRANSITION TNotLinked (* TNotLinked *) FROM S_Start TO S_Stop :=  #BEGIN_EDIT_BLOCK
+NOT bSensorLinked
+;#END_EDIT_BLOCK
+END_TRANSITION
+
+TRANSITION TStop (* TStop *) FROM S_Stop TO S_Start :=  #BEGIN_EDIT_BLOCK
+TRUE
+;#END_EDIT_BLOCK
+END_TRANSITION
+
+TRANSITION TInitDone (* TInitDone *) FROM S_Init TO S_Measure :=  #BEGIN_EDIT_BLOCK
+TRUE
+;#END_EDIT_BLOCK
+END_TRANSITION
+
+(* end IecGraph-Code *)
+(* sfc-code *)
+
+(* stand alone actions *)
+ACTION AInitMeasure: #BEGIN_EDIT_BLOCK
+(**************************************** WARNING ********************************************
+ *** The KEBA Kemro K2 System including software is not intended for safety control tasks! ***
+ ***                       For further information see Comment tab!                        ***
+ *********************************************************************************************)
+
+sEndPoint := CONCAT(GET_MY_FU_NAME(),".ai_SysPressure");
+
+abPressureMeasure.aInit(sRawValue:= sEndPoint,
+                        pLintabPointArray := @sv_SysPressureLintab.LintabPoints.Point,
+                        piUsedLintabPoints := @sv_SysPressureLintab.LintabPoints.uNoOfPoints);
+
+abPressureMeasure.aInitMonitoring(bEnable := sv_SysPresMonitorMeas.EnableMonitoring,
+                                  rLowLimit := sv_SysPresMonitorMeas.LowerLimit,
+                                  bLimitation := sv_SysPresMonitorMeas.Limitation,
+                                  rFailureFactor := sv_SysPresMonitorMeas.FailureFactor); 
+
+
+;#END_EDIT_BLOCK END_ACTION (*AInitMeasure*)
+ACTION AMeasure: #BEGIN_EDIT_BLOCK
+(**************************************** WARNING ********************************************
+ *** The KEBA Kemro K2 System including software is not intended for safety control tasks! ***
+ ***                       For further information see Comment tab!                        ***
+ *********************************************************************************************)
+
+abPressureMeasure.aRunLight(bIdle := sv_bDeviceReady);
+
+b := WRITE_SVREAL_DIRECT(sv_rActPressureHydr, abPressureMeasure.aRunLight.rValue);
+
+;#END_EDIT_BLOCK END_ACTION (*AMeasure*)
+(* end sfc-code *)
+
+
+END_ALGORITHM
+
+
+
+END_ALGORITHM_BLOCK
+
+
+
+#END_OF_IEC_PART
+
+@Puma @IecEditor 6 149 @Pou 25 
+@@@BEG_Comment@@@
+@h    ! WARNING !
+@h    The Kemro K2 system (including software) only meets category B according to EN 954-1,
+@h    thus it is not intended for usage in safety-relevant control applications in the field 
+@h    of personal safety (e.g. emergency stop).
+@h    To implement potentially necessary safety-relevant control tasks, always use additional 
+@h    external safety devices that are intended for the particular purpose, and meet the necessary 
+@h    functional safety.
+@h    For further information see EN 954-1 (EN ISO 13849-1) and/or the K2-x00 user manual, chapter 
+@h    "CE conformity, directives and standards".
+@@@END_Comment@@@
+
+@BEG_Contents 
+
+@BEG_Func 
+@RT(17)FuncTreeContainer 
+0 
+@END_Func 
+
+@BEG_Const 
+@RT(18)ConstTreeContainer 
+0 
+@END_Const 
+
+@BEG_Export 
+
+@BEG_Kind 
+@ALGORITHM_BLOCK @RT(9)ABMeasure @STRUCTURED_TEXT 
+@RT(0) @RT(0) @RT(0) 
+@END_Kind 
+
+@BEG_Dcl 
+@RT(16)DclTreeContainer 
+7 
+@Var @RT(10)TaskInject @RT(0) @T @T @RENAMED 0 @T @T @DT @RT(4)TASK @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 7 @F @F @F @F 
+
+@Var @RT(8)TaskSlow @RT(0) @T @T @RENAMED 0 @T @T @DT @RT(4)TASK @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 7 @F @F @F @F 
+
+@Var @RT(19)sv_rActPressureHydr @RT(0) @T @F @DT @RT(4)REAL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(52)actual pressure in bar (measured by pressure sensor) @RT(0) 
+@END_Attrib 
+1 8 @F @F @F @F 
+
+@Var @RT(14)ai_SysPressure @RT(0) @T @F @DT @RT(4)REAL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 8 @F @F @F @F 
+
+@Var @RT(20)sv_SysPressureLintab @RT(0) @T @T @DERIVED 0 @F @RT(19)KAPPL_LintabData_2P @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(48)lintab for measurement of system pressure sensor @RT(0) 
+@END_Attrib 
+1 8 @F @F @F @F 
+
+@Var @RT(21)sv_SysPresMonitorMeas @RT(0) @T @T @DERIVED 0 @T @T @DT @RT(23)KAPPL_MeasureMonitoring @RT(0) @T @T @UNKNOWN 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 8 @F @F @F @F 
+
+@Var @RT(15)sv_bDeviceReady @RT(0) @T @F @DT @RT(4)BOOL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 8 @F @F @F @F 
+
+@END_Dcl 
+
+@END_Export 
+
+@BEG_Body 
+
+2 
+
+@BEG_Export 
+
+@BEG_Algo 
+@PROCESS_ALGORITHM @RT(22)paInitDebugMeasurement @STRUCTURED_TEXT 
+@RT(0) @RT(0) @RT(8)TaskSlow @T @F 
+@END_Algo 
+
+@BEG_Dcl 
+@RT(16)DclTreeContainer 
+2 
+@Var @RT(12)variableName @RT(0) @T @F @DT @RT(11)STRING(255) @RT(0) @T @T @STRING 0 @F @RT(3)255 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(8)swoState @RT(0) @T @T @DERIVED 0 @T @T @DT @RT(11)KSWO_Status @RT(0) @T @T @UNKNOWN 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@END_Dcl 
+
+@END_Export 
+
+@BEG_Export 
+
+@BEG_Algo 
+@PROCESS_ALGORITHM @RT(17)paMeasurePressure @SEQUENTIAL_FLOW_CHART 
+@RT(0) @RT(0) @RT(16)TaskInject(1000) @T @F 
+@END_Algo 
+
+@BEG_Dcl 
+@RT(16)DclTreeContainer 
+4 
+@Var @RT(17)abPressureMeasure @RT(0) @T @T @DERIVED 0 @F @RT(11)ABMeasureAI @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(13)bSensorLinked @RT(0) @T @F @DT @RT(4)BOOL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(9)sEndPoint @RT(0) @T @F @DT @RT(10)STRING(64) @RT(0) @T @T @STRING 0 @F @RT(2)64 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(1)b @RT(0) @T @F @DT @RT(4)BOOL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 4 @F @F @F @F 
+
+@END_Dcl 
+
+@END_Export 
+
+@BEG_Body 
+@TL(12)
+(**************************************** WARNING ********************************************
+ *** The KEBA Kemro K2 System including software is not intended for safety control tasks! ***
+ ***                       For further information see Comment tab!                        ***
+ *********************************************************************************************)
+
+variableName := CONCAT(GET_MY_FU_NAME(),'.sv_rActPressureHydr');
+swoState := KSWO_AddVariable( Task := TaskInject,
+                              Name := variableName,
+                              Variable := sv_rActPressureHydr);
+
+STOP_PROCESS_ALGORITHM();
+
+@END_Body 
+
+@@@BEG_Comment@@@ 
+@TL(0)
+
+@@@END_Comment@@@ 
+
+@BEG_SfcBody 
+8 6 5 
+
+@BEG_SfcData 2 
+@StepSeq @RT(4)sseq @F 5 
+@Step @RT(7)S_Start @F @T @T @F @RT(0) @F 
+@AcbCont @RT(7)unnamed @F 1 
+@Acb @RT(12)ACheckSensor @F @T @RT(1)P @RT(0) @F @F @T @TL(2)
+bSensorLinked := IS_LINKED(ai_SysPressure);
+
+@F 
+
+@AltBranch @RT(3)alt @F 2 
+@TransSeq @RT(4)tseq @F 1 
+@Trans @RT(7)TLinked @F @T @F @F @T @T @TL(2)
+bSensorLinked
+
+@RT(7)TLinked @F 
+
+@TransSeq @RT(4)tseq @F 4 
+@Trans @RT(10)TNotLinked @F @T @F @F @T @T @TL(2)
+NOT bSensorLinked
+
+@RT(10)TNotLinked @F 
+@Step @RT(6)S_Stop @F @F @F @F @RT(0) @F 
+@AcbCont @RT(7)unnamed @F 1 
+@Acb @RT(5)AStop @F @T @RT(1)P @RT(0) @F @F @T @TL(2)
+STOP_PROCESS_ALGORITHM();
+
+@F 
+
+@Trans @RT(5)TStop @F @T @F @F @T @T @TL(2)
+TRUE
+
+@RT(5)TStop @F 
+@Goto @RT(7)S_Start @F @F 
+
+
+@Step @RT(6)S_Init @F @F @F @F @RT(0) @F 
+@AcbCont @RT(7)unnamed @F 1 
+@Acb @RT(12)AInitMeasure @F @F @RT(1)P @RT(0) @F @F @F @F 
+
+@Trans @RT(9)TInitDone @F @T @F @F @T @T @TL(2)
+TRUE
+
+@RT(9)TInitDone @F 
+@Step @RT(9)S_Measure @F @F @F @F @RT(0) @F 
+@AcbCont @RT(7)unnamed @F 1 
+@Acb @RT(8)AMeasure @F @F @RT(1)N @RT(0) @F @F @F @F 
+
+@END_SfcData 
+@SaActions 2 
+@SaText @RT(12)AInitMeasure 1 @TL(17)
+(**************************************** WARNING ********************************************
+ *** The KEBA Kemro K2 System including software is not intended for safety control tasks! ***
+ ***                       For further information see Comment tab!                        ***
+ *********************************************************************************************)
+
+sEndPoint := CONCAT(GET_MY_FU_NAME(),".ai_SysPressure");
+
+abPressureMeasure.aInit(sRawValue:= sEndPoint,
+                        pLintabPointArray := @sv_SysPressureLintab.LintabPoints.Point,
+                        piUsedLintabPoints := @sv_SysPressureLintab.LintabPoints.uNoOfPoints);
+
+abPressureMeasure.aInitMonitoring(bEnable := sv_SysPresMonitorMeas.EnableMonitoring,
+                                  rLowLimit := sv_SysPresMonitorMeas.LowerLimit,
+                                  bLimitation := sv_SysPresMonitorMeas.Limitation,
+                                  rFailureFactor := sv_SysPresMonitorMeas.FailureFactor); 
+
+
+
+@SaText @RT(8)AMeasure 1 @TL(9)
+(**************************************** WARNING ********************************************
+ *** The KEBA Kemro K2 System including software is not intended for safety control tasks! ***
+ ***                       For further information see Comment tab!                        ***
+ *********************************************************************************************)
+
+abPressureMeasure.aRunLight(bIdle := sv_bDeviceReady);
+
+b := WRITE_SVREAL_DIRECT(sv_rActPressureHydr, abPressureMeasure.aRunLight.rValue);
+
+
+@SaTrans 0 
+@SaExits 0 
+@END_SfcBody 
+
+@@@BEG_Comment@@@ 
+@TL(0)
+
+@@@END_Comment@@@ 
+@END_Body 
+
+@END_Contents 

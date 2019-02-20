@@ -1,0 +1,2204 @@
+IMPORT_OVER_LISTFILE
+ FGetErrorParam
+, SET_ALARM
+, GET_ALARM_NAME
+, RESET_ALARM
+, tsTraceLevel
+, FBODCErrorHandler
+, tySubID
+, tyAlarmParams
+, KSYS_Status
+, tnOperationMode
+
+END_IMPORT
+
+FUNCTION_BLOCK FBErrorHandler #DUMMY_EDIT_BLOCK
+
+VAR_OUTPUT
+ bOpenWatchdog : BOOL;
+END_VAR
+
+VAR_INPUT
+ iComponentNr : DINT;
+ iErrorNr : DINT;
+ iErrorKind : INT;
+ AlarmParameters : tyAlarmParams;
+END_VAR
+
+SYSTEM_VAR
+ sv_TraceLevel : tsTraceLevel;
+ sv_OperationMode : tnOperationMode;
+ sv_bCFRemoved : BOOL (* TRUE: CF was removed *);
+END_VAR
+
+SYSTEM_OBJECT
+ erBatteryLowVoltage : ALARM;
+ erBatteryNoVoltage : ALARM;
+ erCpuFanDefect : ALARM;
+ erCpuFanLowVelocity : ALARM;
+ erRetaindataLost : ALARM;
+ erGeneralException : ALARM;
+ erCustomError : ALARM;
+ erShortCircuit : ALARM;
+ erLineFrequency : ALARM;
+ erZeroCrossing : ALARM;
+ erCPUTempWarn : ALARM;
+ erCPUTempHigh : ALARM;
+ erCompactFlashFull : ALARM;
+ erDuplicateIPAdr : ALARM;
+ erInvalidCalibData : ALARM;
+ erHWNotFound : ALARM;
+ erPCIDeviceNotFound : ALARM;
+ erInfolog : ALARM;
+ erHardwareConflict : ALARM;
+ erDeviceDefect : ALARM;
+ erSJA1000Defect : ALARM;
+ erUI450Defect : ALARM;
+ erKNETDefect : ALARM;
+ erFX400Defect : ALARM;
+ erStaRep : ALARM;
+ erEndpointAlreadyExists : ALARM;
+ erInjGraphLogNotCreated : ALARM;
+ erInjGraphLostTrigger : ALARM;
+ erInjGraphMeasureNotFinished : ALARM;
+ erNoSocketLeft : ALARM;
+ erDeviceDisconnected : ALARM;
+ erInputDatatypeWrong : ALARM;
+ erShortCircuitAO : ALARM;
+ erPdpExportNotCreated : ALARM;
+ erECATFrameLost : ALARM;
+ erECATStateChanged : ALARM;
+ erECATInitCmdFailed : ALARM;
+ erECATSlaveNotFound : ALARM;
+ erNoFinalVersion : ALARM;
+ erCFCardRemoved : ALARM;
+ erCFLifetimeWarning : ALARM;
+ erDiskUsageWarning : ALARM;
+ erRAMUsageWarning : ALARM;
+ erFileHandleUsageWarning : ALARM;
+ erFastRetain : ALARM;
+END_OBJECT
+
+VAR
+ fbODCErrorHandler : FBODCErrorHandler;
+ bSetAlarm : BOOL;
+ bResetAlarm : BOOL;
+ AlarmID : ALARM;
+ sParam1 : STRING(255) (* param 1 for SET_ALARM *);
+ sParam2 : STRING(255) (* param 2 for SET_ALARM *);
+ iEventCount : DINT;
+ SubID : tySubID;
+ dummy : DINT;
+ iHWNotFoundCounter : DINT;
+ s : STRING(255);
+ iTmp : INT;
+ rTmp : REAL;
+ state : KSYS_Status;
+END_VAR
+#BEGIN_EDIT_BLOCK
+(**************************************** WARNING ********************************************
+ *** The KEBA Kemro K2 System including software is not intended for safety control tasks! ***
+ ***                       For further information see Comment tab!                        ***
+ *********************************************************************************************)
+
+(* Error Filtering: every error that is not filtered in the CASE construct below will cause
+   a GeneralException and the Watchdog will be opened.
+   If you want to ignore an error set the bSetAlarm/bOpenWatchdog flags FALSE for the specified errorcomponent/number.
+   Warnings and Infos will not cause an error/watchdog *)
+
+
+// init errorparams
+bOpenWatchdog := TRUE;
+bSetAlarm := TRUE;
+bResetAlarm := FALSE;
+
+AlarmID := erGeneralException;
+SubID[1] := iComponentNr;
+SubID[2] := iErrorNr;
+SubID[3] := 0;
+SubID[4] := 0;
+
+sParam1 := AlarmParameters[1];
+sParam2 := AlarmParameters[2];
+
+iEventCount := iEventCount + 1;
+
+IF sv_TraceLevel.bExceptionInterpretation  THEN
+   dummy := Print("#-KERROR-EVENT-----------------------------");
+   dummy := Print("#              Count: %d", iEventCount);
+   IF iErrorKind = cErrorKind_Error THEN
+      dummy := Print("#              Kind: Error");
+   ELSIF iErrorKind = cErrorKind_Warning THEN
+      dummy := Print("#              Kind: Warning");
+   ELSIF iErrorKind = cErrorKind_Info THEN
+      dummy := Print("#              Kind: Info");
+   ELSE
+      dummy := Print("#              Kind: ???");
+   END_IF;
+   dummy := Print("#              ComponentNr: %d", iComponentNr);
+   dummy := Print("#              Number: %d", iErrorNr);
+   dummy := Print("#              param1: %s", AlarmParameters[1]);
+   dummy := Print("#              param2: %s", AlarmParameters[2]);
+   dummy := Print("#              param3: %s", AlarmParameters[3]);
+   dummy := Print("#              param4: %s", AlarmParameters[4]);
+END_IF;
+
+(* ERROR ******************************************************************** *)
+IF (iErrorKind = cErrorKind_Error) THEN
+   CASE iComponentNr OF
+   //OF45x //CP23x //CP03x      
+      2110: ; //HwInt
+      2115: ; //PciBus
+         CASE iErrorNr OF
+            105: // device not found
+               AlarmID := erPCIDeviceNotFound;
+               sParam1 := CONCAT(AlarmParameters[1], '.', AlarmParameters[2]);
+               sParam2 := AlarmParameters[3]; //FGetErrorParam(Error,Error.GetNextParamType()); //FIXME: test
+               bOpenWatchdog := FALSE;
+            114, 115, 119..122, 125..128, 130, 200, 202, 300..303:
+               // device defect
+               AlarmID := erDeviceDefect;
+         END_CASE;
+
+      2120: ; //I2c
+      2122: ; //UsbVxw
+      2123: ; //ParAdmin
+      2200: ; //AM
+      2201: ; //ILOG
+         AlarmID := erInfolog;
+         bOpenWatchdog := FALSE;
+
+      2208: ; //Hsk
+      2211: ; //STA
+         AlarmID := erStaRep;
+         bOpenWatchdog := FALSE;
+
+      2212: ; //Pcb
+      2215: ; //Cfm
+      2216: ; //FWU
+      2218: ; //CatRet
+      2220: ; //IoSystem
+         CASE iErrorNr OF
+            150: // Hardware not found
+               AlarmID := erHWNotFound;
+               iHWNotFoundCounter := iHWNotFoundCounter + 1;
+               SubID[4] := iHWNotFoundCounter;
+            152: // Hardware conflict
+               AlarmID := erHardwareConflict;
+            200: // Short Circuit
+               AlarmID := erShortCircuit;
+            201: // Sensor failure
+               bSetAlarm := FALSE;
+               bOpenWatchdog := FALSE;
+            202: // Invalid calibration data
+               AlarmID := erInvalidCalibData;
+               bOpenWatchdog := FALSE;
+            203: // Output Voltage missing
+               // pflk: error should only be ignored during system boot.
+               //       will be implemented in KePlast Redesign - no "sv_bInitReady" available at the moment
+               bSetAlarm := FALSE;
+               bOpenWatchdog := FALSE;
+            301: // device disconnected e.g. drive cable               
+               IF (AlarmParameters[1] <> 'system.Panel') THEN
+                  bOpenWatchdog := FALSE;
+               END_IF;                   
+               AlarmID := erDeviceDisconnected;                       
+            1015: // endpoint already exists
+               AlarmID := erEndpointAlreadyExists;
+            12043: // cable break
+               bSetAlarm := FALSE;
+               bOpenWatchdog := FALSE;
+         END_CASE;
+
+      2230: ; //IoHtLd
+      2232: ; //IoMx440
+      2233: ; //IoAx440
+      2234: ; //IoE93Da
+      2235: ; //IoSmds
+      6353:  
+         CASE iErrorNr OF                       
+             2:   //EtherCAT frame lost
+                  AlarmID := erECATFrameLost;
+                  bOpenWatchdog := FALSE;
+                  bSetAlarm := TRUE;                         
+            
+             21, 65535..131071:
+                  //EtherCAT command can't be sent to drive
+                  AlarmID := erECATInitCmdFailed;
+                  bOpenWatchdog := FALSE;
+                  bSetAlarm := TRUE;
+            
+             22, 131072..196607:  
+                  //EtherCAT unexpected state transition        
+                  AlarmID := erECATStateChanged;
+                  bOpenWatchdog := FALSE;
+            
+             38, 66:  //EtherCAT slave not found
+                  AlarmID := erECATSlaveNotFound;
+                  bOpenWatchdog := FALSE;
+                  bSetAlarm := TRUE;            
+                       
+             50: //EtherCAT segment disconnected          
+                  AlarmID := erDeviceDisconnected;
+                  bOpenWatchdog := FALSE;
+                  bSetAlarm := TRUE;            
+         END_CASE; 
+       
+      2237: ; //IoPci
+      2239: ; //IoFx460
+      2240: ; //IoCts
+      2241: ; //IoHtKvc
+      2242: ; //IoCan
+         CASE iErrorNr OF
+            8000, 8001, 8210, 8223, 8240, 8250, 8251, 8261, 8262, 8280..8284, 8290, 8293:
+               AlarmID := erDeviceDefect;
+            350..368, 4015, 4151, 6100, 6101, 6102, 6103, 6120, 6140, 6160, 8233, 8291, 8296, 9044, 9049, 9054, 9059, 10000..10033:
+               // ignore these errors
+               bSetAlarm := FALSE;
+               bOpenWatchdog := FALSE;
+               IF iErrorNr = 6140 AND AlarmParameters[1] = 'IU450' THEN
+                  bSetAlarm := TRUE;
+                  bOpenWatchdog := TRUE;
+                  AlarmID := erDeviceDefect;
+               END_IF;
+               
+               //IoCan: buffer size too small
+               IF iErrorNr = 6102 THEN
+                  bSetAlarm := TRUE;
+                  AlarmID := erInputDatatypeWrong;    
+               END_IF;                   
+         END_CASE;
+
+      2243: ; //IoCanLd
+      2244: ; //IoT30
+      2245: ; //IoBk
+      2247: ; //IoIu450
+         CASE iErrorNr OF
+            8291..8293, 8295, 8297..8299:
+               AlarmID := erUI450Defect;
+            8294, // Sensor break on AI
+            8296: // Sensor break on TI
+               bSetAlarm := FALSE;
+               bOpenWatchdog := FALSE;
+         END_CASE;
+
+      2248: ; //IoKNet //CP23X
+         CASE iErrorNr OF
+            2004, 2302:
+               AlarmID := erDeviceDefect;
+         END_CASE;
+
+      2500: ; // Sys, since 05.90 packages replaced with SysK2 (see component 6338)
+         CASE iErrorNr OF
+            1: // CPU Temp too High: >= 100°C
+               AlarmID := erCPUTempHigh;
+               bOpenWatchdog := FALSE;
+            2: // Duplicate IP Adresse
+               AlarmID := erDuplicateIPAdr;
+               bOpenWatchdog := FALSE;
+            5: // Flash Disk full
+               AlarmID := erCompactFlashFull;
+               bOpenWatchdog := FALSE;
+         END_CASE;
+
+      3000: ; //TcpMan
+         CASE iErrorNr OF
+            115:// may happen when stopping debugsession, ignore
+               bOpenWatchdog := FALSE;
+               bSetAlarm := FALSE;
+         END_CASE;
+
+      3001: ; //RcpMan //CP23X
+         CASE iErrorNr OF
+            11: // no socket left 
+               AlarmID := erNoSocketLeft;
+               bOpenWatchdog := FALSE;
+         END_CASE;   
+      
+      3011: ; //MmTrans
+      3051: ; //IpTools
+      3100: ; //KNetM
+         CASE iErrorNr OF
+            100..102, 106:
+            AlarmID := erKNETDefect;
+         END_CASE;
+
+      3105: ; //SerSc440
+      3110: ; //DrvFx400
+         AlarmID := erFX400Defect;
+      3111: ; //DrvSja
+         AlarmID := erSJA1000Defect;
+      3142: ; //DrvFx460
+      3500: ; //IRT
+         CASE iErrorNr OF
+            11020:
+               AlarmID := erFastRetain;
+               bOpenWatchdog := FALSE;
+               bSetAlarm := TRUE;
+         END_CASE;
+      3501: ; //IecRtLE
+      3600: ; //SOM
+         CASE iErrorNr OF
+            122,
+            149: // Subtype %1 for Type %2 not found
+               bOpenWatchdog := FALSE;
+               bSetAlarm := FALSE;
+            151, // invalid Attribute
+            167: // invalid Fast-Retain Attribute %1 of System-Variable %2 ignored
+               bOpenWatchdog := FALSE;
+               bSetAlarm := FALSE;
+         END_CASE;
+      3700: ; //TC
+      3800: ; //KvbGraph
+      3801: ; //KvbFnd
+         CASE iErrorNr OF
+            2, 101..113: // ignore these erros
+               bOpenWatchdog := FALSE;
+               bSetAlarm := FALSE;
+         END_CASE;
+      3802: ; //KvbWidg
+      4000: ; //MC
+      4001: ; //Mfb
+      4700: ; //Cfg
+         CASE iErrorNr OF
+            20: // ignore the error: cannot find SW Oszi Cfg file
+               bOpenWatchdog := FALSE;
+               bSetAlarm := FALSE;
+         END_CASE;
+      5016: ; //OFENG450 //CP23X
+      5500: ; //CTRL
+      5502: ; //PS
+      5503: ; //MS
+         CASE iErrorNr OF
+            5:
+               // ignore the erroe: cannot write *.bin for new SW Oszi Var (because of 4700.20)
+               bOpenWatchdog := FALSE;
+               bSetAlarm := FALSE;
+         END_CASE;
+      5506: ; //Jni
+      6019: ; //IoPanel
+      6031: ; //KBus //CP23X
+         CASE iErrorNr OF
+            108: // KBus Device not found,
+               bOpenWatchdog := FALSE;
+               bSetAlarm := FALSE;
+         END_CASE;
+      6042: ; //IoMovAxi
+      6050: ; //ShRtc
+         // ignore all errors of this component
+         bOpenWatchdog := FALSE;
+         bSetAlarm := FALSE;
+
+      6065: ; //IoPbDpS
+      6070: ; //CanMan
+      6071: ; //StdSvc
+      6098: ; //Sys230 //CP23X
+         CASE iErrorNr OF
+            100: // CPU Temp too High
+               AlarmID := erCPUTempHigh;
+               bOpenWatchdog := FALSE;
+            102: // Duplicate IP Adresse
+               AlarmID := erDuplicateIPAdr;
+               bOpenWatchdog := FALSE;
+            105: // Flash Disk full
+               AlarmID := erCompactFlashFull;
+               bOpenWatchdog := FALSE;
+         END_CASE;
+
+      6116: ; //IoSio
+         // ignore all errors of this component
+         bOpenWatchdog := FALSE;
+         bSetAlarm := FALSE;
+
+      6117: ; //McIec
+      6127: ; //IoCp230 //CP23X
+         CASE iErrorNr OF
+            201:(*
+               // For Systems which disconnect the supply voltage from the DOs of CP23x by pressing the
+               // Emergency stop button this code cannot work because it would recognize this loss of
+               // voltage as short circiut. So the two lines beneath this commented code are needed
+               // Now no short circuit detection available!
+
+               //Short Circuit
+               IF bWatchdogState THEN
+                  // only if watchdog is closed.
+                  AlarmID := erShortCircuit;
+               ELSE
+                  bSetAlarm := FALSE;
+                  bOpenWatchdog := FALSE;
+               END_IF;
+               *)
+               bSetAlarm := FALSE;
+               bOpenWatchdog := FALSE;
+            203:
+               (* IO.Onboard.NotReady: For some reason this alarm appeared after the power supply of the
+               DO Groups was disconnected. *)
+               bSetAlarm := FALSE;
+               bOpenWatchdog := FALSE;
+            206: // Sensor fault AI
+               bSetAlarm := FALSE;
+               bOpenWatchdog := FALSE;
+            208: // Sensor fault TI
+               bSetAlarm := FALSE;
+               bOpenWatchdog := FALSE;
+         END_CASE;
+      6135: ; //IoKBus //CP23X
+      6140: ; //SMemAd //CP23X
+      6163: ; //ILogLE
+      6177: ; //Fdx
+      6182: ; //Mvl
+      6183: ; //MvlCan
+      6195: ; //SerOnb
+      6218: ; //MvlKNet
+      6226: ; //SysMst, since 05.90 packages replaced with SysK2 (see component 6338)
+         // pflk070406: retaindatalost im kvb bereits behandelt!
+         // soll nach testphase aus kvb entfernt werden und nur mehr vom exceptionhandler gewartet werden
+         AlarmID := erRetaindataLost;
+         bOpenWatchdog := FALSE;
+
+      6227: ; //KVBExt //CP23X
+      6245: ; //SysSm //CP23x
+      6252: ; //IoKBusBa
+      6270: ; //SmbS //CP23X
+      6280: ; //IoBl210
+      6282: ; //KvbFonts
+      6286: ; //MvlSim
+      6290: ; //DrvFM299 //CP23X
+      6291: ; //IoSdcQse //CP23X
+      6294: ; //IoSlot //CP23X
+      6312: ; //Sercon //CP23X
+
+      6338: ; //SysK2/SystemK2
+         CASE iErrorNr OF
+            8: // error initializing fast retain CMOS
+               AlarmID := erRetaindataLost;
+               bOpenWatchdog := FALSE;
+            108: // CPU Temp above warning level
+               AlarmID := erCPUTempWarn;
+               bOpenWatchdog := FALSE;
+            135: // CPU Temp above error level
+               AlarmID := erCPUTempHigh;
+               bOpenWatchdog := FALSE;
+            159: //CF card removed
+               sv_bCFRemoved := TRUE;
+               IF (sv_OperationMode = nSetup) OR (sv_OperationMode = nManual) THEN
+                  //trigger a reboot
+                  state := RESTART_SYSTEM(); 
+               ELSE
+                  //set alarm and finish actual cycle
+                  AlarmID := erCFCardRemoved;
+                  bOpenWatchdog := FALSE;    
+               END_IF;
+            
+         END_CASE;
+      6586: ; //IoCP030
+         CASE iErrorNr OF
+            8: (* Same reaction as on CP23x - Systems, see reaction on 6127/203:
+                  IO.Onboard.NotReady: For some reason this alarm appeared after the power supply
+                  of the DO Groups was disconnected *)
+               bSetAlarm := FALSE;
+               bOpenWatchdog := FALSE;
+            17: // short circuit on analog current outputs
+               AlarmID := erShortCircuitAO;
+               bOpenWatchdog := FALSE;
+         END_CASE;
+      6750: ; //ODC
+         fbODCErrorHandler(iComponentNr := iComponentNr,
+                           iErrorNr := iErrorNr,
+                           iErrorKind := iErrorKind,
+                           AlarmParameters := AlarmParameters,
+                           SubID := SubID,
+                           bOpenWatchdog => bOpenWatchdog,
+                           bSetAlarm => bSetAlarm ,
+                           AlarmID => AlarmID,
+                           sParam1 => sParam1,
+                           sParam2 => sParam2);
+   END_CASE;
+
+(* WARNING ****************************************************************** *)
+ELSIF (iErrorKind = cErrorKind_Warning) THEN
+   bOpenWatchdog := FALSE;
+   bSetAlarm := FALSE;
+
+   CASE iComponentNr OF
+      3600: ; //SOM
+         CASE iErrorNr OF
+            134, // Cant create Retain File %1 (probably invalid Path)
+            163, // Type of SV %1 with Retain Data incompatible
+            169, // No Fast Retain Value for %1 found
+            194: // Error %1 creating retain-segment segment %2 not retain
+               AlarmID := erRetaindataLost;
+               bSetAlarm := TRUE;
+         END_CASE;
+
+     6227: // KVBExt //CP03X
+       CASE (iErrorNr) OF
+             305: // eKvbExtWarningInjGraphLogNotCreated
+               AlarmID := erInjGraphLogNotCreated;
+               SubID[1]:= STRING_TO_DINT(AlarmParameters[1]); // file name
+               bSetAlarm := TRUE;
+           
+             306: // eKvbExtWarningInjGraphLostTrigger
+               AlarmID := erInjGraphLostTrigger;
+               bSetAlarm := TRUE;
+                       
+             307: // eKvbExtWarningInjGraphMeasureNotFinished
+               AlarmID := erInjGraphMeasureNotFinished;
+               bSetAlarm := TRUE;
+           
+             408: // eKvbExtWarningPdpSnapshotFileNotOpened
+               AlarmID := erPdpExportNotCreated;
+               SubID[1]:= STRING_TO_DINT(AlarmParameters[1]); // file name
+               bSetAlarm := TRUE;
+
+           
+       END_CASE;
+       
+
+      6338: ; //SysK2/SystemK2
+         CASE iErrorNr OF
+            1: // Flash Disk full
+               AlarmID := erCompactFlashFull;
+               bSetAlarm := TRUE;
+            2: // Duplicate IP Adress
+               AlarmID := erDuplicateIPAdr;
+               bSetAlarm := TRUE;
+            110: // CMOS battery voltage is low - replace battery
+               AlarmID := erBatteryLowVoltage;
+               bSetAlarm := TRUE;
+            111: // No CMOS battery voltage - replace battery
+               AlarmID := erBatteryNoVoltage;
+               bSetAlarm := TRUE;
+            112: // CPU fan is not working - replace fan
+               AlarmID := erCpuFanDefect;
+               bSetAlarm := TRUE;
+            113: // CPU fan speed low - replace fan
+               AlarmID := erCpuFanLowVelocity;
+               bSetAlarm := TRUE;
+            148: // remaining CF lifetime is low
+               AlarmID := erCFLifetimeWarning;
+               rTmp := STRING_TO_REAL(AlarmParameters[1]);
+               iTmp := REAL_TO_INT(rTmp);       
+               sParam1 := INT_TO_STRING(iTmp);
+               bSetAlarm := TRUE;
+         END_CASE;
+      
+      6750: ; //ODC
+         fbODCErrorHandler(iComponentNr := iComponentNr,
+                           iErrorNr := iErrorNr,
+                           iErrorKind := iErrorKind,
+                           AlarmParameters := AlarmParameters,
+                           SubID := SubID,
+                           bOpenWatchdog => bOpenWatchdog,
+                           bSetAlarm => bSetAlarm ,
+                           AlarmID => AlarmID,
+                           sParam1 => sParam1,
+                           sParam2 => sParam2);
+      7259: ; // IMx30
+         CASE iErrorNr OF
+            20: // Line Frequency Error
+               AlarmID := erLineFrequency;
+               bSetAlarm := TRUE;
+            22: // Voltage Zero Crossing Error
+               AlarmID := erZeroCrossing;
+               bSetAlarm := TRUE;               
+         END_CASE;
+      
+      7381:  //SysDiagReprt
+         CASE iErrorNr OF                    
+             8: // CPU Temp above error level
+               AlarmID := erCPUTempHigh;            
+               rTmp := STRING_TO_REAL(AlarmParameters[2]); //act. temperature (provided in second parameter) should be converted  
+               iTmp := REAL_TO_INT(rTmp);                  //to display for example 96°C instead of 9.600000e+1°C            
+               sParam1 := INT_TO_STRING(iTmp);
+               bSetAlarm := TRUE;
+            14: // remaining CF lifetime is low
+               AlarmID := erCFLifetimeWarning;
+               rTmp := STRING_TO_REAL(AlarmParameters[1]);
+               iTmp := REAL_TO_INT(rTmp);                  //display a correct formatted % value            
+               sParam1 := INT_TO_STRING(iTmp);
+               bSetAlarm := TRUE;
+            18: // disk usage over 95%
+               AlarmID := erDiskUsageWarning;
+               SubID[3] := 95;  
+               bSetAlarm := TRUE;
+          
+               //reset "disk usage over 90%" alarm to avoid that
+               //both alarms are displayed
+               RESET_ALARM(Name := erDiskUsageWarning,
+                              SubID1 := 7381,
+                              SubID2 := 17,
+                              SubID3 := 90,
+                              SubID4 := 0);
+         END_CASE;
+      
+      7501: //Techn. utils
+         CASE iErrorNr OF
+            1010: // no final firmware version
+               AlarmID := erNoFinalVersion;
+               bSetAlarm := TRUE;
+         END_CASE;
+      
+   END_CASE;
+
+(* INFORMATION ************************************************************** *)
+ELSIF (iErrorKind = cErrorKind_Info) THEN
+   bOpenWatchdog := FALSE;
+   bSetAlarm := FALSE;
+
+   CASE iComponentNr OF
+      2220:  //Reset CAN bus device finished
+         CASE iErrorNr OF
+            300: 
+               AlarmID := erDeviceDisconnected;    //Reset alarm which was caused by disconnection
+               SubID[2]:= 301;        
+               bResetAlarm := TRUE;
+         END_CASE;
+      3600: ; //SOM
+         CASE iErrorNr OF
+            207, // SV retain data deleted (cold startup)
+            402: // Retain segment changed: text: %1, FU info: %2, segment code: %3, operation code: %4
+               // %4 Operation code (1: segment deleted, 2: Segment reorganized, 3: fast retain changed to retain)
+               IF AlarmParameters[4] <> '3' THEN
+                  AlarmID := erRetaindataLost;
+                  bSetAlarm := TRUE;
+               END_IF;
+         END_CASE;
+      6127: ; //IoCp230
+         CASE iErrorNr OF
+            207: ; // AI is ready: reset error               
+            209: ; // TI is ready: reset error
+         END_CASE;
+
+      6338: ; //SysK2
+         CASE iErrorNr OF
+            129: // SRamAd Memory initialized by <%1>
+               AlarmID := erRetaindataLost;
+               bSetAlarm := TRUE;
+            137: // CPU temperature below warning level
+               bResetAlarm := TRUE;
+               AlarmID := erCPUTempWarn;
+               SubID[2] := 108;
+            138: // CPU temperature below error level
+               bResetAlarm := TRUE;
+               AlarmID := erCPUTempHigh;
+               SubID[2] := 135;
+         END_CASE;
+      
+      6353: 
+         CASE iErrorNr OF
+            33: 
+               bResetAlarm := TRUE; 
+               AlarmID := erECATFrameLost; 
+               SubID[2]:= 2;
+                          
+            51: 
+               bResetAlarm := TRUE; 
+               AlarmID := erDeviceDisconnected; 
+               SubID[2]:= 50;
+         END_CASE;
+      
+      6586:
+         CASE iErrorNr OF
+            18: //short circuit on analog current output cleared
+               bResetAlarm := TRUE;
+               AlarmID := erShortCircuitAO;
+               SubID[2] := 17;
+         END_CASE;
+      
+      7246:  //StartupLinux
+         CASE iErrorNr OF
+            14: // SRamAd Memory initialized by <%1>
+               AlarmID := erRetaindataLost;
+               bSetAlarm := TRUE;         
+         END_CASE;
+               
+      7259: ; // IMx30
+         CASE iErrorNr OF
+            21: // Line Frequency Error cleared
+               AlarmID := erLineFrequency;
+               SubID[2] := 20;                        
+               bResetAlarm := TRUE;
+            23: // Voltage Zero Crossing Error cleared
+               AlarmID := erZeroCrossing;
+               SubID[2] := 22;                        
+               bResetAlarm := TRUE;               
+         END_CASE;
+      
+      7381:  //SysDiagReprt
+         CASE iErrorNr OF
+             2: // CPU fan is not working - replace fan
+               AlarmID := erCpuFanDefect;
+               bSetAlarm := TRUE;
+            
+             6: // CPU temperature below error level
+               AlarmID := erCPUTempHigh;
+               SubID[2] := 8;
+               bResetAlarm := TRUE;
+            
+             7: // CPU Temp above warning level
+               AlarmID := erCPUTempWarn;
+               rTmp := STRING_TO_REAL(AlarmParameters[2]); //act. temperature (provided in second parameter) shoud be converted  
+               iTmp := REAL_TO_INT(rTmp);                  //to display for example 96°C instead of 9.600000e+1°C            
+               sParam1 := INT_TO_STRING(iTmp);   
+               bSetAlarm := TRUE;
+            
+             9: // CPU temperature below warning level               
+               AlarmID := erCPUTempWarn;
+               SubID[2] := 7;
+               bResetAlarm := TRUE;
+            
+            11: // CMOS battery voltage is low - replace battery
+               AlarmID := erBatteryLowVoltage;
+               bSetAlarm := TRUE;
+            
+            17: // disk usage over 90%
+               AlarmID := erDiskUsageWarning;
+               SubID[3] := 90;
+               bSetAlarm := TRUE;
+            
+               //reset the alarm for disk usage over 95% to avoid that both alarm are displayed at the same time
+               //This can happen if the CF was nearly full (usage > 95%) and then some files are deleted
+               //and the "disk usage over 90%" message is set              
+               RESET_ALARM(Name := erDiskUsageWarning,
+                           SubID1 := 7381,
+                           SubID2 := 18,
+                           SubID3 := 95,
+                           SubID4 := 0);
+         
+            19: // disk usage below 90%
+               AlarmID := erDiskUsageWarning;
+               SubID[2] := 17;
+               SubID[3] := 90;
+               bResetAlarm := TRUE;
+            
+               //also reset 95% - warning
+               RESET_ALARM(Name := erDiskUsageWarning,
+                           SubID1 := 7381,
+                           SubID2 := 18,
+                           SubID3 := 95,
+                           SubID4 := 0);
+            
+            21: // RAM usage over 90%
+               AlarmID := erRAMUsageWarning;
+               bSetAlarm := TRUE;
+            
+            23: // RAM usage below 90%
+               AlarmID := erRAMUsageWarning;
+               SubID[2] := 21;
+               bResetAlarm := TRUE;
+            
+            25: // file handle usage over 90%
+               AlarmID := erFileHandleUsageWarning;
+               bSetAlarm := TRUE;
+            
+            27: // file handle usage below 90%
+               AlarmID := erFileHandleUsageWarning;
+               SubID[2] := 25;
+               bResetAlarm := TRUE;
+                       
+         END_CASE;
+      
+     END_CASE;
+
+ELSE
+   // Errordata corrupted
+   AlarmID := erCustomError;
+   sParam1 := 'Errordata corrupted!';
+   bOpenWatchdog := TRUE;
+   bSetAlarm := TRUE;
+END_IF;
+
+IF bOpenWatchdog THEN
+   //trace component number and error number
+   dummy := Print('!!!!! FBErrorHandler: set bOpenWatchdog because of error %i/%i !!!!!', iComponentNr, iErrorNr);
+END_IF;
+
+IF bSetAlarm THEN
+   SET_ALARM(Name := AlarmID,
+             SubID1 := SubID[1],
+             SubID2 := SubID[2],
+             SubID3 := SubID[3],
+             SubID4 := SubID[4],
+             Param1 := sParam1,
+             Param2 := sParam2);
+
+   IF sv_TraceLevel.bExceptionInterpretation THEN
+      s := GET_ALARM_NAME(AlarmID);
+      dummy := Print('FBErrorHandler: set alarm %s with following parameters:', s);
+      s := CONCAT(DINT_TO_STRING(SubID[1]),'/',DINT_TO_STRING(SubID[2]),'/',DINT_TO_STRING(SubID[3]),'/',DINT_TO_STRING(SubID[4]));
+      dummy := Print('SubIDs: %s  Param1: %s  Param2: %s', s, sParam1, sParam2);
+   END_IF;  
+   
+ELSIF bResetAlarm THEN
+   RESET_ALARM(Name := AlarmID,
+               SubID1 := SubID[1],
+               SubID2 := SubID[2],
+               SubID3 := SubID[3],
+               SubID4 := SubID[4]);
+   
+   IF sv_TraceLevel.bExceptionInterpretation THEN
+      s := GET_ALARM_NAME(AlarmID);
+      dummy := Print('FBErrorHandler: reset alarm %s with', s);
+      s := CONCAT(DINT_TO_STRING(SubID[1]),'/',DINT_TO_STRING(SubID[2]),'/',DINT_TO_STRING(SubID[3]),'/',DINT_TO_STRING(SubID[4]));
+      dummy := Print('SubIDs: %s ', s);
+   END_IF;
+   
+END_IF;
+
+
+;#END_EDIT_BLOCK END_FUNCTION_BLOCK
+
+
+
+#END_OF_IEC_PART
+
+@Puma @IecEditor 6 150 @Pou 25 
+@@@BEG_Comment@@@
+
+@@@END_Comment@@@
+
+@BEG_Contents 
+
+@BEG_Func 
+@RT(17)FuncTreeContainer 
+4 
+@Var @RT(14)FGetErrorParam @RT(0) @T @T @DERIVED 0 @F @RT(8)FUNCTION @F 
+@T 
+@BEG_Attrib 
+0 @RT(0) @RT(0) 
+@END_Attrib 
+1 1 @F @F @F @F 
+
+@Var @RT(9)SET_ALARM @RT(0) @T @T @DERIVED 0 @F @RT(23)KEBA_STANDARD_PROCEDURE @F 
+@T 
+@BEG_Attrib 
+0 @RT(0) @RT(0) 
+@END_Attrib 
+1 1 @F @F @F @F 
+
+@Var @RT(14)GET_ALARM_NAME @RT(0) @T @T @DERIVED 0 @F @RT(22)KEBA_STANDARD_FUNCTION @F 
+@T 
+@BEG_Attrib 
+0 @RT(0) @RT(0) 
+@END_Attrib 
+1 1 @F @F @F @F 
+
+@Var @RT(11)RESET_ALARM @RT(0) @T @T @DERIVED 0 @F @RT(23)KEBA_STANDARD_PROCEDURE @F 
+@T 
+@BEG_Attrib 
+0 @RT(0) @RT(0) 
+@END_Attrib 
+1 1 @F @F @F @F 
+
+@END_Func 
+
+@BEG_Const 
+@RT(18)ConstTreeContainer 
+0 
+@END_Const 
+
+@BEG_Export 
+
+@BEG_Kind 
+@FUNCTION_BLOCK @RT(14)FBErrorHandler @STRUCTURED_TEXT 
+@RT(0) @RT(0) @RT(0) 
+@END_Kind 
+
+@BEG_Dcl 
+@RT(16)DclTreeContainer 
+67 
+@Var @RT(13)bOpenWatchdog @RT(0) @T @F @DT @RT(4)BOOL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 3 @F @F @F @F 
+
+@Var @RT(13)sv_TraceLevel @RT(0) @T @T @DERIVED 0 @T @T @DT @RT(12)tsTraceLevel @RT(0) @T @T @UNKNOWN 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 8 @F @F @F @F 
+
+@Var @RT(19)erBatteryLowVoltage @RT(0) @T @F @DT @RT(5)ALARM @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 7 @F @F @F @F 
+
+@Var @RT(18)erBatteryNoVoltage @RT(0) @T @F @DT @RT(5)ALARM @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 7 @F @F @F @F 
+
+@Var @RT(14)erCpuFanDefect @RT(0) @T @F @DT @RT(5)ALARM @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 7 @F @F @F @F 
+
+@Var @RT(19)erCpuFanLowVelocity @RT(0) @T @F @DT @RT(5)ALARM @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 7 @F @F @F @F 
+
+@Var @RT(16)erRetaindataLost @RT(0) @T @F @DT @RT(5)ALARM @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 7 @F @F @F @F 
+
+@Var @RT(18)erGeneralException @RT(0) @T @F @DT @RT(5)ALARM @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 7 @F @F @F @F 
+
+@Var @RT(13)erCustomError @RT(0) @T @F @DT @RT(5)ALARM @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 7 @F @F @F @F 
+
+@Var @RT(14)erShortCircuit @RT(0) @T @F @DT @RT(5)ALARM @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 7 @F @F @F @F 
+
+@Var @RT(15)erLineFrequency @RT(0) @T @F @DT @RT(5)ALARM @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 7 @F @F @F @F 
+
+@Var @RT(14)erZeroCrossing @RT(0) @T @F @DT @RT(5)ALARM @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 7 @F @F @F @F 
+
+@Var @RT(13)erCPUTempWarn @RT(0) @T @F @DT @RT(5)ALARM @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 7 @F @F @F @F 
+
+@Var @RT(13)erCPUTempHigh @RT(0) @T @F @DT @RT(5)ALARM @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 7 @F @F @F @F 
+
+@Var @RT(18)erCompactFlashFull @RT(0) @T @F @DT @RT(5)ALARM @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 7 @F @F @F @F 
+
+@Var @RT(16)erDuplicateIPAdr @RT(0) @T @F @DT @RT(5)ALARM @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 7 @F @F @F @F 
+
+@Var @RT(18)erInvalidCalibData @RT(0) @T @F @DT @RT(5)ALARM @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 7 @F @F @F @F 
+
+@Var @RT(12)erHWNotFound @RT(0) @T @F @DT @RT(5)ALARM @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 7 @F @F @F @F 
+
+@Var @RT(19)erPCIDeviceNotFound @RT(0) @T @F @DT @RT(5)ALARM @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 7 @F @F @F @F 
+
+@Var @RT(9)erInfolog @RT(0) @T @F @DT @RT(5)ALARM @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 7 @F @F @F @F 
+
+@Var @RT(18)erHardwareConflict @RT(0) @T @F @DT @RT(5)ALARM @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 7 @F @F @F @F 
+
+@Var @RT(14)erDeviceDefect @RT(0) @T @F @DT @RT(5)ALARM @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 7 @F @F @F @F 
+
+@Var @RT(15)erSJA1000Defect @RT(0) @T @F @DT @RT(5)ALARM @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 7 @F @F @F @F 
+
+@Var @RT(13)erUI450Defect @RT(0) @T @F @DT @RT(5)ALARM @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 7 @F @F @F @F 
+
+@Var @RT(12)erKNETDefect @RT(0) @T @F @DT @RT(5)ALARM @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 7 @F @F @F @F 
+
+@Var @RT(13)erFX400Defect @RT(0) @T @F @DT @RT(5)ALARM @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 7 @F @F @F @F 
+
+@Var @RT(8)erStaRep @RT(0) @T @F @DT @RT(5)ALARM @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 7 @F @F @F @F 
+
+@Var @RT(23)erEndpointAlreadyExists @RT(0) @T @F @DT @RT(5)ALARM @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 7 @F @F @F @F 
+
+@Var @RT(23)erInjGraphLogNotCreated @RT(0) @T @F @DT @RT(5)ALARM @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 7 @F @F @F @F 
+
+@Var @RT(21)erInjGraphLostTrigger @RT(0) @T @F @DT @RT(5)ALARM @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 7 @F @F @F @F 
+
+@Var @RT(28)erInjGraphMeasureNotFinished @RT(0) @T @F @DT @RT(5)ALARM @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 7 @F @F @F @F 
+
+@Var @RT(14)erNoSocketLeft @RT(0) @T @F @DT @RT(5)ALARM @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 7 @F @F @F @F 
+
+@Var @RT(20)erDeviceDisconnected @RT(0) @T @F @DT @RT(5)ALARM @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 7 @F @F @F @F 
+
+@Var @RT(20)erInputDatatypeWrong @RT(0) @T @F @DT @RT(5)ALARM @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 7 @F @F @F @F 
+
+@Var @RT(16)erShortCircuitAO @RT(0) @T @F @DT @RT(5)ALARM @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 7 @F @F @F @F 
+
+@Var @RT(21)erPdpExportNotCreated @RT(0) @T @F @DT @RT(5)ALARM @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 7 @F @F @F @F 
+
+@Var @RT(15)erECATFrameLost @RT(0) @T @F @DT @RT(5)ALARM @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 7 @F @F @F @F 
+
+@Var @RT(18)erECATStateChanged @RT(0) @T @F @DT @RT(5)ALARM @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 7 @F @F @F @F 
+
+@Var @RT(19)erECATInitCmdFailed @RT(0) @T @F @DT @RT(5)ALARM @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 7 @F @F @F @F 
+
+@Var @RT(19)erECATSlaveNotFound @RT(0) @T @F @DT @RT(5)ALARM @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 7 @F @F @F @F 
+
+@Var @RT(16)erNoFinalVersion @RT(0) @T @F @DT @RT(5)ALARM @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 7 @F @F @F @F 
+
+@Var @RT(15)erCFCardRemoved @RT(0) @T @F @DT @RT(5)ALARM @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 7 @F @F @F @F 
+
+@Var @RT(17)fbODCErrorHandler @RT(0) @T @T @DERIVED 0 @T @T @DT @RT(17)FBODCErrorHandler @RT(0) @T @T @UNKNOWN 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(9)bSetAlarm @RT(0) @T @F @DT @RT(4)BOOL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(11)bResetAlarm @RT(0) @T @F @DT @RT(4)BOOL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(7)AlarmID @RT(0) @T @F @DT @RT(5)ALARM @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(7)sParam1 @RT(0) @T @F @DT @RT(11)STRING(255) @RT(0) @T @T @STRING 0 @F @RT(3)255 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(21)param 1 for SET_ALARM @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(7)sParam2 @RT(0) @T @F @DT @RT(11)STRING(255) @RT(0) @T @T @STRING 0 @F @RT(3)255 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(21)param 2 for SET_ALARM @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(11)iEventCount @RT(0) @T @F @DT @RT(4)DINT @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(5)SubID @RT(0) @T @T @DERIVED 0 @F @RT(7)tySubID @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(5)dummy @RT(0) @T @F @DT @RT(4)DINT @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(18)iHWNotFoundCounter @RT(0) @T @F @DT @RT(4)DINT @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(1)s @RT(0) @T @F @DT @RT(11)STRING(255) @RT(0) @T @T @STRING 0 @F @RT(3)255 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(12)iComponentNr @RT(0) @T @F @DT @RT(4)DINT @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 1 @F @F @F @F 
+
+@Var @RT(8)iErrorNr @RT(0) @T @F @DT @RT(4)DINT @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 1 @F @F @F @F 
+
+@Var @RT(10)iErrorKind @RT(0) @T @F @DT @RT(3)INT @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 1 @F @F @F @F 
+
+@Var @RT(15)AlarmParameters @RT(0) @T @T @DERIVED 0 @T @T @DT @RT(13)tyAlarmParams @RT(0) @T @T @UNKNOWN 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 1 @F @F @F @F 
+
+@Var @RT(4)iTmp @RT(0) @T @F @DT @RT(3)INT @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(4)rTmp @RT(0) @T @F @DT @RT(4)REAL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(5)state @RT(0) @T @T @DERIVED 0 @T @T @DT @RT(11)KSYS_Status @RT(0) @T @T @UNKNOWN 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(16)sv_OperationMode @RT(0) @T @T @DERIVED 0 @T @T @DT @RT(15)tnOperationMode @RT(0) @T @T @UNKNOWN 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 8 @F @F @F @F 
+
+@Var @RT(13)sv_bCFRemoved @RT(0) @T @F @DT @RT(4)BOOL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(20)TRUE: CF was removed @RT(0) 
+@END_Attrib 
+1 8 @F @F @F @F 
+
+@Var @RT(19)erCFLifetimeWarning @RT(0) @T @F @DT @RT(5)ALARM @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 7 @F @F @F @F 
+
+@Var @RT(18)erDiskUsageWarning @RT(0) @T @F @DT @RT(5)ALARM @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 7 @F @F @F @F 
+
+@Var @RT(17)erRAMUsageWarning @RT(0) @T @F @DT @RT(5)ALARM @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 7 @F @F @F @F 
+
+@Var @RT(24)erFileHandleUsageWarning @RT(0) @T @F @DT @RT(5)ALARM @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 7 @F @F @F @F 
+
+@Var @RT(12)erFastRetain @RT(0) @T @F @DT @RT(5)ALARM @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 7 @F @F @F @F 
+
+@END_Dcl 
+
+@END_Export 
+
+@BEG_Body 
+@TL(750)
+(**************************************** WARNING ********************************************
+ *** The KEBA Kemro K2 System including software is not intended for safety control tasks! ***
+ ***                       For further information see Comment tab!                        ***
+ *********************************************************************************************)
+
+(* Error Filtering: every error that is not filtered in the CASE construct below will cause
+   a GeneralException and the Watchdog will be opened.
+   If you want to ignore an error set the bSetAlarm/bOpenWatchdog flags FALSE for the specified errorcomponent/number.
+   Warnings and Infos will not cause an error/watchdog *)
+
+
+// init errorparams
+bOpenWatchdog := TRUE;
+bSetAlarm := TRUE;
+bResetAlarm := FALSE;
+
+AlarmID := erGeneralException;
+SubID[1] := iComponentNr;
+SubID[2] := iErrorNr;
+SubID[3] := 0;
+SubID[4] := 0;
+
+sParam1 := AlarmParameters[1];
+sParam2 := AlarmParameters[2];
+
+iEventCount := iEventCount + 1;
+
+IF sv_TraceLevel.bExceptionInterpretation  THEN
+   dummy := Print("#-KERROR-EVENT-----------------------------");
+   dummy := Print("#              Count: %d", iEventCount);
+   IF iErrorKind = cErrorKind_Error THEN
+      dummy := Print("#              Kind: Error");
+   ELSIF iErrorKind = cErrorKind_Warning THEN
+      dummy := Print("#              Kind: Warning");
+   ELSIF iErrorKind = cErrorKind_Info THEN
+      dummy := Print("#              Kind: Info");
+   ELSE
+      dummy := Print("#              Kind: ???");
+   END_IF;
+   dummy := Print("#              ComponentNr: %d", iComponentNr);
+   dummy := Print("#              Number: %d", iErrorNr);
+   dummy := Print("#              param1: %s", AlarmParameters[1]);
+   dummy := Print("#              param2: %s", AlarmParameters[2]);
+   dummy := Print("#              param3: %s", AlarmParameters[3]);
+   dummy := Print("#              param4: %s", AlarmParameters[4]);
+END_IF;
+
+(* ERROR ******************************************************************** *)
+IF (iErrorKind = cErrorKind_Error) THEN
+   CASE iComponentNr OF
+   //OF45x //CP23x //CP03x      
+      2110: ; //HwInt
+      2115: ; //PciBus
+         CASE iErrorNr OF
+            105: // device not found
+               AlarmID := erPCIDeviceNotFound;
+               sParam1 := CONCAT(AlarmParameters[1], '.', AlarmParameters[2]);
+               sParam2 := AlarmParameters[3]; //FGetErrorParam(Error,Error.GetNextParamType()); //FIXME: test
+               bOpenWatchdog := FALSE;
+            114, 115, 119..122, 125..128, 130, 200, 202, 300..303:
+               // device defect
+               AlarmID := erDeviceDefect;
+         END_CASE;
+
+      2120: ; //I2c
+      2122: ; //UsbVxw
+      2123: ; //ParAdmin
+      2200: ; //AM
+      2201: ; //ILOG
+         AlarmID := erInfolog;
+         bOpenWatchdog := FALSE;
+
+      2208: ; //Hsk
+      2211: ; //STA
+         AlarmID := erStaRep;
+         bOpenWatchdog := FALSE;
+
+      2212: ; //Pcb
+      2215: ; //Cfm
+      2216: ; //FWU
+      2218: ; //CatRet
+      2220: ; //IoSystem
+         CASE iErrorNr OF
+            150: // Hardware not found
+               AlarmID := erHWNotFound;
+               iHWNotFoundCounter := iHWNotFoundCounter + 1;
+               SubID[4] := iHWNotFoundCounter;
+            152: // Hardware conflict
+               AlarmID := erHardwareConflict;
+            200: // Short Circuit
+               AlarmID := erShortCircuit;
+            201: // Sensor failure
+               bSetAlarm := FALSE;
+               bOpenWatchdog := FALSE;
+            202: // Invalid calibration data
+               AlarmID := erInvalidCalibData;
+               bOpenWatchdog := FALSE;
+            203: // Output Voltage missing
+               // pflk: error should only be ignored during system boot.
+               //       will be implemented in KePlast Redesign - no "sv_bInitReady" available at the moment
+               bSetAlarm := FALSE;
+               bOpenWatchdog := FALSE;
+            301: // device disconnected e.g. drive cable               
+               IF (AlarmParameters[1] <> 'system.Panel') THEN
+                  bOpenWatchdog := FALSE;
+               END_IF;                   
+               AlarmID := erDeviceDisconnected;                       
+            1015: // endpoint already exists
+               AlarmID := erEndpointAlreadyExists;
+            12043: // cable break
+               bSetAlarm := FALSE;
+               bOpenWatchdog := FALSE;
+         END_CASE;
+
+      2230: ; //IoHtLd
+      2232: ; //IoMx440
+      2233: ; //IoAx440
+      2234: ; //IoE93Da
+      2235: ; //IoSmds
+      6353:  
+         CASE iErrorNr OF                       
+             2:   //EtherCAT frame lost
+                  AlarmID := erECATFrameLost;
+                  bOpenWatchdog := FALSE;
+                  bSetAlarm := TRUE;                         
+            
+             21, 65535..131071:
+                  //EtherCAT command can't be sent to drive
+                  AlarmID := erECATInitCmdFailed;
+                  bOpenWatchdog := FALSE;
+                  bSetAlarm := TRUE;
+            
+             22, 131072..196607:  
+                  //EtherCAT unexpected state transition        
+                  AlarmID := erECATStateChanged;
+                  bOpenWatchdog := FALSE;
+            
+             38, 66:  //EtherCAT slave not found
+                  AlarmID := erECATSlaveNotFound;
+                  bOpenWatchdog := FALSE;
+                  bSetAlarm := TRUE;            
+                       
+             50: //EtherCAT segment disconnected          
+                  AlarmID := erDeviceDisconnected;
+                  bOpenWatchdog := FALSE;
+                  bSetAlarm := TRUE;            
+         END_CASE; 
+       
+      2237: ; //IoPci
+      2239: ; //IoFx460
+      2240: ; //IoCts
+      2241: ; //IoHtKvc
+      2242: ; //IoCan
+         CASE iErrorNr OF
+            8000, 8001, 8210, 8223, 8240, 8250, 8251, 8261, 8262, 8280..8284, 8290, 8293:
+               AlarmID := erDeviceDefect;
+            350..368, 4015, 4151, 6100, 6101, 6102, 6103, 6120, 6140, 6160, 8233, 8291, 8296, 9044, 9049, 9054, 9059, 10000..10033:
+               // ignore these errors
+               bSetAlarm := FALSE;
+               bOpenWatchdog := FALSE;
+               IF iErrorNr = 6140 AND AlarmParameters[1] = 'IU450' THEN
+                  bSetAlarm := TRUE;
+                  bOpenWatchdog := TRUE;
+                  AlarmID := erDeviceDefect;
+               END_IF;
+               
+               //IoCan: buffer size too small
+               IF iErrorNr = 6102 THEN
+                  bSetAlarm := TRUE;
+                  AlarmID := erInputDatatypeWrong;    
+               END_IF;                   
+         END_CASE;
+
+      2243: ; //IoCanLd
+      2244: ; //IoT30
+      2245: ; //IoBk
+      2247: ; //IoIu450
+         CASE iErrorNr OF
+            8291..8293, 8295, 8297..8299:
+               AlarmID := erUI450Defect;
+            8294, // Sensor break on AI
+            8296: // Sensor break on TI
+               bSetAlarm := FALSE;
+               bOpenWatchdog := FALSE;
+         END_CASE;
+
+      2248: ; //IoKNet //CP23X
+         CASE iErrorNr OF
+            2004, 2302:
+               AlarmID := erDeviceDefect;
+         END_CASE;
+
+      2500: ; // Sys, since 05.90 packages replaced with SysK2 (see component 6338)
+         CASE iErrorNr OF
+            1: // CPU Temp too High: >= 100°C
+               AlarmID := erCPUTempHigh;
+               bOpenWatchdog := FALSE;
+            2: // Duplicate IP Adresse
+               AlarmID := erDuplicateIPAdr;
+               bOpenWatchdog := FALSE;
+            5: // Flash Disk full
+               AlarmID := erCompactFlashFull;
+               bOpenWatchdog := FALSE;
+         END_CASE;
+
+      3000: ; //TcpMan
+         CASE iErrorNr OF
+            115:// may happen when stopping debugsession, ignore
+               bOpenWatchdog := FALSE;
+               bSetAlarm := FALSE;
+         END_CASE;
+
+      3001: ; //RcpMan //CP23X
+         CASE iErrorNr OF
+            11: // no socket left 
+               AlarmID := erNoSocketLeft;
+               bOpenWatchdog := FALSE;
+         END_CASE;   
+      
+      3011: ; //MmTrans
+      3051: ; //IpTools
+      3100: ; //KNetM
+         CASE iErrorNr OF
+            100..102, 106:
+            AlarmID := erKNETDefect;
+         END_CASE;
+
+      3105: ; //SerSc440
+      3110: ; //DrvFx400
+         AlarmID := erFX400Defect;
+      3111: ; //DrvSja
+         AlarmID := erSJA1000Defect;
+      3142: ; //DrvFx460
+      3500: ; //IRT
+         CASE iErrorNr OF
+            11020:
+               AlarmID := erFastRetain;
+               bOpenWatchdog := FALSE;
+               bSetAlarm := TRUE;
+         END_CASE;
+      3501: ; //IecRtLE
+      3600: ; //SOM
+         CASE iErrorNr OF
+            122,
+            149: // Subtype %1 for Type %2 not found
+               bOpenWatchdog := FALSE;
+               bSetAlarm := FALSE;
+            151, // invalid Attribute
+            167: // invalid Fast-Retain Attribute %1 of System-Variable %2 ignored
+               bOpenWatchdog := FALSE;
+               bSetAlarm := FALSE;
+         END_CASE;
+      3700: ; //TC
+      3800: ; //KvbGraph
+      3801: ; //KvbFnd
+         CASE iErrorNr OF
+            2, 101..113: // ignore these erros
+               bOpenWatchdog := FALSE;
+               bSetAlarm := FALSE;
+         END_CASE;
+      3802: ; //KvbWidg
+      4000: ; //MC
+      4001: ; //Mfb
+      4700: ; //Cfg
+         CASE iErrorNr OF
+            20: // ignore the error: cannot find SW Oszi Cfg file
+               bOpenWatchdog := FALSE;
+               bSetAlarm := FALSE;
+         END_CASE;
+      5016: ; //OFENG450 //CP23X
+      5500: ; //CTRL
+      5502: ; //PS
+      5503: ; //MS
+         CASE iErrorNr OF
+            5:
+               // ignore the erroe: cannot write *.bin for new SW Oszi Var (because of 4700.20)
+               bOpenWatchdog := FALSE;
+               bSetAlarm := FALSE;
+         END_CASE;
+      5506: ; //Jni
+      6019: ; //IoPanel
+      6031: ; //KBus //CP23X
+         CASE iErrorNr OF
+            108: // KBus Device not found,
+               bOpenWatchdog := FALSE;
+               bSetAlarm := FALSE;
+         END_CASE;
+      6042: ; //IoMovAxi
+      6050: ; //ShRtc
+         // ignore all errors of this component
+         bOpenWatchdog := FALSE;
+         bSetAlarm := FALSE;
+
+      6065: ; //IoPbDpS
+      6070: ; //CanMan
+      6071: ; //StdSvc
+      6098: ; //Sys230 //CP23X
+         CASE iErrorNr OF
+            100: // CPU Temp too High
+               AlarmID := erCPUTempHigh;
+               bOpenWatchdog := FALSE;
+            102: // Duplicate IP Adresse
+               AlarmID := erDuplicateIPAdr;
+               bOpenWatchdog := FALSE;
+            105: // Flash Disk full
+               AlarmID := erCompactFlashFull;
+               bOpenWatchdog := FALSE;
+         END_CASE;
+
+      6116: ; //IoSio
+         // ignore all errors of this component
+         bOpenWatchdog := FALSE;
+         bSetAlarm := FALSE;
+
+      6117: ; //McIec
+      6127: ; //IoCp230 //CP23X
+         CASE iErrorNr OF
+            201:(*
+               // For Systems which disconnect the supply voltage from the DOs of CP23x by pressing the
+               // Emergency stop button this code cannot work because it would recognize this loss of
+               // voltage as short circiut. So the two lines beneath this commented code are needed
+               // Now no short circuit detection available!
+
+               //Short Circuit
+               IF bWatchdogState THEN
+                  // only if watchdog is closed.
+                  AlarmID := erShortCircuit;
+               ELSE
+                  bSetAlarm := FALSE;
+                  bOpenWatchdog := FALSE;
+               END_IF;
+               *)
+               bSetAlarm := FALSE;
+               bOpenWatchdog := FALSE;
+            203:
+               (* IO.Onboard.NotReady: For some reason this alarm appeared after the power supply of the
+               DO Groups was disconnected. *)
+               bSetAlarm := FALSE;
+               bOpenWatchdog := FALSE;
+            206: // Sensor fault AI
+               bSetAlarm := FALSE;
+               bOpenWatchdog := FALSE;
+            208: // Sensor fault TI
+               bSetAlarm := FALSE;
+               bOpenWatchdog := FALSE;
+         END_CASE;
+      6135: ; //IoKBus //CP23X
+      6140: ; //SMemAd //CP23X
+      6163: ; //ILogLE
+      6177: ; //Fdx
+      6182: ; //Mvl
+      6183: ; //MvlCan
+      6195: ; //SerOnb
+      6218: ; //MvlKNet
+      6226: ; //SysMst, since 05.90 packages replaced with SysK2 (see component 6338)
+         // pflk070406: retaindatalost im kvb bereits behandelt!
+         // soll nach testphase aus kvb entfernt werden und nur mehr vom exceptionhandler gewartet werden
+         AlarmID := erRetaindataLost;
+         bOpenWatchdog := FALSE;
+
+      6227: ; //KVBExt //CP23X
+      6245: ; //SysSm //CP23x
+      6252: ; //IoKBusBa
+      6270: ; //SmbS //CP23X
+      6280: ; //IoBl210
+      6282: ; //KvbFonts
+      6286: ; //MvlSim
+      6290: ; //DrvFM299 //CP23X
+      6291: ; //IoSdcQse //CP23X
+      6294: ; //IoSlot //CP23X
+      6312: ; //Sercon //CP23X
+
+      6338: ; //SysK2/SystemK2
+         CASE iErrorNr OF
+            8: // error initializing fast retain CMOS
+               AlarmID := erRetaindataLost;
+               bOpenWatchdog := FALSE;
+            108: // CPU Temp above warning level
+               AlarmID := erCPUTempWarn;
+               bOpenWatchdog := FALSE;
+            135: // CPU Temp above error level
+               AlarmID := erCPUTempHigh;
+               bOpenWatchdog := FALSE;
+            159: //CF card removed
+               sv_bCFRemoved := TRUE;
+               IF (sv_OperationMode = nSetup) OR (sv_OperationMode = nManual) THEN
+                  //trigger a reboot
+                  state := RESTART_SYSTEM(); 
+               ELSE
+                  //set alarm and finish actual cycle
+                  AlarmID := erCFCardRemoved;
+                  bOpenWatchdog := FALSE;    
+               END_IF;
+            
+         END_CASE;
+      6586: ; //IoCP030
+         CASE iErrorNr OF
+            8: (* Same reaction as on CP23x - Systems, see reaction on 6127/203:
+                  IO.Onboard.NotReady: For some reason this alarm appeared after the power supply
+                  of the DO Groups was disconnected *)
+               bSetAlarm := FALSE;
+               bOpenWatchdog := FALSE;
+            17: // short circuit on analog current outputs
+               AlarmID := erShortCircuitAO;
+               bOpenWatchdog := FALSE;
+         END_CASE;
+      6750: ; //ODC
+         fbODCErrorHandler(iComponentNr := iComponentNr,
+                           iErrorNr := iErrorNr,
+                           iErrorKind := iErrorKind,
+                           AlarmParameters := AlarmParameters,
+                           SubID := SubID,
+                           bOpenWatchdog => bOpenWatchdog,
+                           bSetAlarm => bSetAlarm ,
+                           AlarmID => AlarmID,
+                           sParam1 => sParam1,
+                           sParam2 => sParam2);
+   END_CASE;
+
+(* WARNING ****************************************************************** *)
+ELSIF (iErrorKind = cErrorKind_Warning) THEN
+   bOpenWatchdog := FALSE;
+   bSetAlarm := FALSE;
+
+   CASE iComponentNr OF
+      3600: ; //SOM
+         CASE iErrorNr OF
+            134, // Cant create Retain File %1 (probably invalid Path)
+            163, // Type of SV %1 with Retain Data incompatible
+            169, // No Fast Retain Value for %1 found
+            194: // Error %1 creating retain-segment segment %2 not retain
+               AlarmID := erRetaindataLost;
+               bSetAlarm := TRUE;
+         END_CASE;
+
+     6227: // KVBExt //CP03X
+       CASE (iErrorNr) OF
+             305: // eKvbExtWarningInjGraphLogNotCreated
+               AlarmID := erInjGraphLogNotCreated;
+               SubID[1]:= STRING_TO_DINT(AlarmParameters[1]); // file name
+               bSetAlarm := TRUE;
+           
+             306: // eKvbExtWarningInjGraphLostTrigger
+               AlarmID := erInjGraphLostTrigger;
+               bSetAlarm := TRUE;
+                       
+             307: // eKvbExtWarningInjGraphMeasureNotFinished
+               AlarmID := erInjGraphMeasureNotFinished;
+               bSetAlarm := TRUE;
+           
+             408: // eKvbExtWarningPdpSnapshotFileNotOpened
+               AlarmID := erPdpExportNotCreated;
+               SubID[1]:= STRING_TO_DINT(AlarmParameters[1]); // file name
+               bSetAlarm := TRUE;
+
+           
+       END_CASE;
+       
+
+      6338: ; //SysK2/SystemK2
+         CASE iErrorNr OF
+            1: // Flash Disk full
+               AlarmID := erCompactFlashFull;
+               bSetAlarm := TRUE;
+            2: // Duplicate IP Adress
+               AlarmID := erDuplicateIPAdr;
+               bSetAlarm := TRUE;
+            110: // CMOS battery voltage is low - replace battery
+               AlarmID := erBatteryLowVoltage;
+               bSetAlarm := TRUE;
+            111: // No CMOS battery voltage - replace battery
+               AlarmID := erBatteryNoVoltage;
+               bSetAlarm := TRUE;
+            112: // CPU fan is not working - replace fan
+               AlarmID := erCpuFanDefect;
+               bSetAlarm := TRUE;
+            113: // CPU fan speed low - replace fan
+               AlarmID := erCpuFanLowVelocity;
+               bSetAlarm := TRUE;
+            148: // remaining CF lifetime is low
+               AlarmID := erCFLifetimeWarning;
+               rTmp := STRING_TO_REAL(AlarmParameters[1]);
+               iTmp := REAL_TO_INT(rTmp);       
+               sParam1 := INT_TO_STRING(iTmp);
+               bSetAlarm := TRUE;
+         END_CASE;
+      
+      6750: ; //ODC
+         fbODCErrorHandler(iComponentNr := iComponentNr,
+                           iErrorNr := iErrorNr,
+                           iErrorKind := iErrorKind,
+                           AlarmParameters := AlarmParameters,
+                           SubID := SubID,
+                           bOpenWatchdog => bOpenWatchdog,
+                           bSetAlarm => bSetAlarm ,
+                           AlarmID => AlarmID,
+                           sParam1 => sParam1,
+                           sParam2 => sParam2);
+      7259: ; // IMx30
+         CASE iErrorNr OF
+            20: // Line Frequency Error
+               AlarmID := erLineFrequency;
+               bSetAlarm := TRUE;
+            22: // Voltage Zero Crossing Error
+               AlarmID := erZeroCrossing;
+               bSetAlarm := TRUE;               
+         END_CASE;
+      
+      7381:  //SysDiagReprt
+         CASE iErrorNr OF                    
+             8: // CPU Temp above error level
+               AlarmID := erCPUTempHigh;            
+               rTmp := STRING_TO_REAL(AlarmParameters[2]); //act. temperature (provided in second parameter) should be converted  
+               iTmp := REAL_TO_INT(rTmp);                  //to display for example 96°C instead of 9.600000e+1°C            
+               sParam1 := INT_TO_STRING(iTmp);
+               bSetAlarm := TRUE;
+            14: // remaining CF lifetime is low
+               AlarmID := erCFLifetimeWarning;
+               rTmp := STRING_TO_REAL(AlarmParameters[1]);
+               iTmp := REAL_TO_INT(rTmp);                  //display a correct formatted % value            
+               sParam1 := INT_TO_STRING(iTmp);
+               bSetAlarm := TRUE;
+            18: // disk usage over 95%
+               AlarmID := erDiskUsageWarning;
+               SubID[3] := 95;  
+               bSetAlarm := TRUE;
+          
+               //reset "disk usage over 90%" alarm to avoid that
+               //both alarms are displayed
+               RESET_ALARM(Name := erDiskUsageWarning,
+                              SubID1 := 7381,
+                              SubID2 := 17,
+                              SubID3 := 90,
+                              SubID4 := 0);
+         END_CASE;
+      
+      7501: //Techn. utils
+         CASE iErrorNr OF
+            1010: // no final firmware version
+               AlarmID := erNoFinalVersion;
+               bSetAlarm := TRUE;
+         END_CASE;
+      
+   END_CASE;
+
+(* INFORMATION ************************************************************** *)
+ELSIF (iErrorKind = cErrorKind_Info) THEN
+   bOpenWatchdog := FALSE;
+   bSetAlarm := FALSE;
+
+   CASE iComponentNr OF
+      2220:  //Reset CAN bus device finished
+         CASE iErrorNr OF
+            300: 
+               AlarmID := erDeviceDisconnected;    //Reset alarm which was caused by disconnection
+               SubID[2]:= 301;        
+               bResetAlarm := TRUE;
+         END_CASE;
+      3600: ; //SOM
+         CASE iErrorNr OF
+            207, // SV retain data deleted (cold startup)
+            402: // Retain segment changed: text: %1, FU info: %2, segment code: %3, operation code: %4
+               // %4 Operation code (1: segment deleted, 2: Segment reorganized, 3: fast retain changed to retain)
+               IF AlarmParameters[4] <> '3' THEN
+                  AlarmID := erRetaindataLost;
+                  bSetAlarm := TRUE;
+               END_IF;
+         END_CASE;
+      6127: ; //IoCp230
+         CASE iErrorNr OF
+            207: ; // AI is ready: reset error               
+            209: ; // TI is ready: reset error
+         END_CASE;
+
+      6338: ; //SysK2
+         CASE iErrorNr OF
+            129: // SRamAd Memory initialized by <%1>
+               AlarmID := erRetaindataLost;
+               bSetAlarm := TRUE;
+            137: // CPU temperature below warning level
+               bResetAlarm := TRUE;
+               AlarmID := erCPUTempWarn;
+               SubID[2] := 108;
+            138: // CPU temperature below error level
+               bResetAlarm := TRUE;
+               AlarmID := erCPUTempHigh;
+               SubID[2] := 135;
+         END_CASE;
+      
+      6353: 
+         CASE iErrorNr OF
+            33: 
+               bResetAlarm := TRUE; 
+               AlarmID := erECATFrameLost; 
+               SubID[2]:= 2;
+                          
+            51: 
+               bResetAlarm := TRUE; 
+               AlarmID := erDeviceDisconnected; 
+               SubID[2]:= 50;
+         END_CASE;
+      
+      6586:
+         CASE iErrorNr OF
+            18: //short circuit on analog current output cleared
+               bResetAlarm := TRUE;
+               AlarmID := erShortCircuitAO;
+               SubID[2] := 17;
+         END_CASE;
+      
+      7246:  //StartupLinux
+         CASE iErrorNr OF
+            14: // SRamAd Memory initialized by <%1>
+               AlarmID := erRetaindataLost;
+               bSetAlarm := TRUE;         
+         END_CASE;
+               
+      7259: ; // IMx30
+         CASE iErrorNr OF
+            21: // Line Frequency Error cleared
+               AlarmID := erLineFrequency;
+               SubID[2] := 20;                        
+               bResetAlarm := TRUE;
+            23: // Voltage Zero Crossing Error cleared
+               AlarmID := erZeroCrossing;
+               SubID[2] := 22;                        
+               bResetAlarm := TRUE;               
+         END_CASE;
+      
+      7381:  //SysDiagReprt
+         CASE iErrorNr OF
+             2: // CPU fan is not working - replace fan
+               AlarmID := erCpuFanDefect;
+               bSetAlarm := TRUE;
+            
+             6: // CPU temperature below error level
+               AlarmID := erCPUTempHigh;
+               SubID[2] := 8;
+               bResetAlarm := TRUE;
+            
+             7: // CPU Temp above warning level
+               AlarmID := erCPUTempWarn;
+               rTmp := STRING_TO_REAL(AlarmParameters[2]); //act. temperature (provided in second parameter) shoud be converted  
+               iTmp := REAL_TO_INT(rTmp);                  //to display for example 96°C instead of 9.600000e+1°C            
+               sParam1 := INT_TO_STRING(iTmp);   
+               bSetAlarm := TRUE;
+            
+             9: // CPU temperature below warning level               
+               AlarmID := erCPUTempWarn;
+               SubID[2] := 7;
+               bResetAlarm := TRUE;
+            
+            11: // CMOS battery voltage is low - replace battery
+               AlarmID := erBatteryLowVoltage;
+               bSetAlarm := TRUE;
+            
+            17: // disk usage over 90%
+               AlarmID := erDiskUsageWarning;
+               SubID[3] := 90;
+               bSetAlarm := TRUE;
+            
+               //reset the alarm for disk usage over 95% to avoid that both alarm are displayed at the same time
+               //This can happen if the CF was nearly full (usage > 95%) and then some files are deleted
+               //and the "disk usage over 90%" message is set              
+               RESET_ALARM(Name := erDiskUsageWarning,
+                           SubID1 := 7381,
+                           SubID2 := 18,
+                           SubID3 := 95,
+                           SubID4 := 0);
+         
+            19: // disk usage below 90%
+               AlarmID := erDiskUsageWarning;
+               SubID[2] := 17;
+               SubID[3] := 90;
+               bResetAlarm := TRUE;
+            
+               //also reset 95% - warning
+               RESET_ALARM(Name := erDiskUsageWarning,
+                           SubID1 := 7381,
+                           SubID2 := 18,
+                           SubID3 := 95,
+                           SubID4 := 0);
+            
+            21: // RAM usage over 90%
+               AlarmID := erRAMUsageWarning;
+               bSetAlarm := TRUE;
+            
+            23: // RAM usage below 90%
+               AlarmID := erRAMUsageWarning;
+               SubID[2] := 21;
+               bResetAlarm := TRUE;
+            
+            25: // file handle usage over 90%
+               AlarmID := erFileHandleUsageWarning;
+               bSetAlarm := TRUE;
+            
+            27: // file handle usage below 90%
+               AlarmID := erFileHandleUsageWarning;
+               SubID[2] := 25;
+               bResetAlarm := TRUE;
+                       
+         END_CASE;
+      
+     END_CASE;
+
+ELSE
+   // Errordata corrupted
+   AlarmID := erCustomError;
+   sParam1 := 'Errordata corrupted!';
+   bOpenWatchdog := TRUE;
+   bSetAlarm := TRUE;
+END_IF;
+
+IF bOpenWatchdog THEN
+   //trace component number and error number
+   dummy := Print('!!!!! FBErrorHandler: set bOpenWatchdog because of error %i/%i !!!!!', iComponentNr, iErrorNr);
+END_IF;
+
+IF bSetAlarm THEN
+   SET_ALARM(Name := AlarmID,
+             SubID1 := SubID[1],
+             SubID2 := SubID[2],
+             SubID3 := SubID[3],
+             SubID4 := SubID[4],
+             Param1 := sParam1,
+             Param2 := sParam2);
+
+   IF sv_TraceLevel.bExceptionInterpretation THEN
+      s := GET_ALARM_NAME(AlarmID);
+      dummy := Print('FBErrorHandler: set alarm %s with following parameters:', s);
+      s := CONCAT(DINT_TO_STRING(SubID[1]),'/',DINT_TO_STRING(SubID[2]),'/',DINT_TO_STRING(SubID[3]),'/',DINT_TO_STRING(SubID[4]));
+      dummy := Print('SubIDs: %s  Param1: %s  Param2: %s', s, sParam1, sParam2);
+   END_IF;  
+   
+ELSIF bResetAlarm THEN
+   RESET_ALARM(Name := AlarmID,
+               SubID1 := SubID[1],
+               SubID2 := SubID[2],
+               SubID3 := SubID[3],
+               SubID4 := SubID[4]);
+   
+   IF sv_TraceLevel.bExceptionInterpretation THEN
+      s := GET_ALARM_NAME(AlarmID);
+      dummy := Print('FBErrorHandler: reset alarm %s with', s);
+      s := CONCAT(DINT_TO_STRING(SubID[1]),'/',DINT_TO_STRING(SubID[2]),'/',DINT_TO_STRING(SubID[3]),'/',DINT_TO_STRING(SubID[4]));
+      dummy := Print('SubIDs: %s ', s);
+   END_IF;
+   
+END_IF;
+
+@END_Body 
+
+@END_Contents 

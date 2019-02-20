@@ -1,0 +1,745 @@
+(*
+This AB collects the Movement-Registration-Events which are sent by every Movement-Block. 
+The registrationdata is listed in 2 arrays.
+
+@i  The movement-registration is split into 2 parts: 
+@i  1.The registration-event has to be sent with the 
+@i    registration-mode "enMoveRegModeArm".the rest of the event-data 
+@i    needn't be valid in this case.The event should be sent immediately after the Device-Registration 
+@i    is completed (sv_bInitStart -> TRUE).
+@i  2.After a delaytime the registration-event has to be sent with the mode "enMoveRegModeFire", 
+@i    now all the eventdata have to be valid.
+@i  This is necessary to make sure that no registration-events are lost, and to be able to detect the end
+@i  end of the registration.
+@i  When the end of the registration is detected the sv_bMoveRegisterDone flag is set TRUE.
+*)
+
+IMPORT_OVER_LISTFILE
+ SET_ALARM
+, ASSERT
+, cMaxMoveDevicesRegistered
+, cMaxMoveRegistered
+, tsTraceLevel
+, tyMovementRegisterList
+, tDeviceMovementList
+, tevMovementRegister
+, tevMovementRegisterData
+, ABRegisterDelay
+
+END_IMPORT
+
+ALGORITHM_BLOCK ABMovementRegistration #DUMMY_EDIT_BLOCK
+
+SYSTEM_VAR
+ sv_TraceLevel : tsTraceLevel;
+ sv_MovementsAvailable : tyMovementRegisterList;
+ sv_iMovementsAvailable : DINT;
+ sv_DeviceMovements : tDeviceMovementList;
+ sv_bInitDone : BOOL;
+ sv_bInitStart : BOOL;
+ sv_bMoveRegisterDone : BOOL;
+END_VAR
+
+SYSTEM_OBJECT
+ EV_Task_3 : TASK;
+ evMovementRegister : tevMovementRegister;
+ erMaxMovementsExeeded : ALARM;
+ erMovementRegistrationTimeout : ALARM;
+ erMaxMoveRegisteredExeeded : ALARM;
+ TaskMid : TASK;
+ erAssert : ALARM;
+ erMaxMoveDevicesExceeded : ALARM;
+END_OBJECT
+
+VAR
+ miMoveRegistered : DINT;
+ miMovementsToRegister : DINT;
+END_VAR
+
+EVENT_ALGORITHM evaMovementRegister ON EV_Task_3 WITH evMovementRegister
+
+
+VAR_INPUT
+ evMovementRegisterData : tevMovementRegisterData;
+END_VAR
+
+VAR_TEMP
+ i : DINT;
+END_VAR
+
+VAR
+ iRegisteredDevices : DINT;
+ abRegisterDelay : ABRegisterDelay;
+ dummy : DINT;
+ bError : BOOL;
+ b : BOOL;
+ bFire : BOOL := FALSE;
+END_VAR
+#BEGIN_EDIT_BLOCK
+(**************************************** WARNING ********************************************
+ *** The KEBA Kemro K2 System including software is not intended for safety control tasks! ***
+ ***                       For further information see Comment tab!                        ***
+ *********************************************************************************************)
+
+IF NOT sv_bInitDone AND NOT bError THEN
+        
+    IF evMovementRegisterData.Mode = nMoveRegModeArm THEN
+        
+        IF bFire THEN
+            // arm event sent after fire events started. must never happen.
+            dummy := Print('MovementRegEvent register failed, ARM %d/%d event recieved after fire event', evMovementRegisterData.DeviceId.CompId, evMovementRegisterData.DeviceId.IndexId);
+        END_IF;
+        b := ASSERT(NOT bFire, erAssert);
+
+        IF sv_TraceLevel.bRegistration THEN
+                dummy := Print("MovementRegEvent received: ARM %d/%d",evMovementRegisterData.DeviceId.CompId, evMovementRegisterData.DeviceId.IndexId);
+        END_IF;
+
+        //count how many movements are going to be registered 
+        //to be able to detect the end of the registration
+        miMovementsToRegister := miMovementsToRegister + 1;
+        
+    ELSIF evMovementRegisterData.Mode = nMoveRegModeFire THEN
+       bFire := TRUE;         
+       IF sv_TraceLevel.bRegistration THEN
+            dummy := Print("MovementRegEvent received: FIRE %d/%d: %d",evMovementRegisterData.DeviceId.CompId, evMovementRegisterData.DeviceId.IndexId,evMovementRegisterData.pMovementData^.MoveId);
+       END_IF; 
+        
+        IF miMoveRegistered < cMaxMoveRegistered THEN
+            
+            miMoveRegistered := miMoveRegistered + 1;
+            sv_iMovementsAvailable := sv_iMovementsAvailable +1;
+
+            sv_MovementsAvailable[miMoveRegistered].DeviceId :=         evMovementRegisterData.DeviceId;
+            sv_MovementsAvailable[miMoveRegistered].pbDeviceReady :=    evMovementRegisterData.pbDeviceReady;        
+            sv_MovementsAvailable[miMoveRegistered].pMovementData :=    evMovementRegisterData.pMovementData;       
+            
+            FOR i := 1 TO cMaxMoveDevicesRegistered DO
+                            
+                IF sv_DeviceMovements[i].DeviceId = evMovementRegisterData.DeviceId OR (i > iRegisteredDevices) THEN
+                    
+                    IF i > iRegisteredDevices THEN
+                         iRegisteredDevices := iRegisteredDevices + 1;                       
+                    END_IF;
+                                     
+                    //add DeviceInfos
+                    sv_DeviceMovements[i].DeviceId := evMovementRegisterData.DeviceId;
+                    sv_DeviceMovements[i].pbDeviceReady := evMovementRegisterData.pbDeviceReady;
+                    //add MovementData
+                    IF sv_DeviceMovements[i].iNumberOfMovements < cMaxDeviceMovements THEN
+                        sv_DeviceMovements[i].iNumberOfMovements := sv_DeviceMovements[i].iNumberOfMovements + 1;
+                        sv_DeviceMovements[i].Movements[sv_DeviceMovements[i].iNumberOfMovements] := evMovementRegisterData.pMovementData;
+                    ELSE
+                        bError := TRUE;
+                        // too much movements per device registered
+                        SET_ALARM(Name := erMaxMovementsExeeded,
+                                SubID1 := evMovementRegisterData.DeviceId.CompId,
+                                SubID2 := evMovementRegisterData.DeviceId.IndexId,  
+                                SubID3 := cMaxDeviceMovements);
+                    END_IF;
+                    EXIT;   
+                ELSIF (iRegisteredDevices = cMaxMoveDevicesRegistered) THEN
+                    //too much devices that contain movements
+                    bError := TRUE;                      
+                    SET_ALARM(Name := erMaxMoveDevicesExceeded,
+                              SubID1 := cMaxMoveDevicesRegistered);
+                    EXIT;
+                END_IF;
+                   
+            END_FOR;  
+                    
+            IF miMoveRegistered = miMovementsToRegister THEN
+                // registration finished
+                sv_bMoveRegisterDone := TRUE;
+                //reset delaytime generator
+                abRegisterDelay.aReset();
+            END_IF;
+        ELSE
+            // cMaxMoveRegistered exeeded 
+            bError := TRUE;
+            SET_ALARM(Name := erMaxMoveRegisteredExeeded,
+                    SubID1 := cMaxMoveRegistered);
+        END_IF;
+    END_IF;
+END_IF;
+
+
+;#END_EDIT_BLOCK END_ALGORITHM
+
+PROCESS_ALGORITHM paRegistrationTimeOut ON TaskMid AUTOSTART
+
+
+VAR
+ MoveRegisteredOld : DINT;
+ dummy : DINT;
+END_VAR
+
+(* IecGraph-Code *)
+
+(* init step *)
+INITIAL_STEP Step1:
+END_STEP
+
+
+(* steps *)
+STEP TIMEOUT:
+Action2 (P);
+END_STEP
+
+ACTION Action2: #BEGIN_EDIT_BLOCK
+MoveRegisteredOld := miMoveRegistered
+
+;#END_EDIT_BLOCK END_ACTION (*Action2*)
+STEP ERROR:
+Action6 (P);
+END_STEP
+
+ACTION Action6: #BEGIN_EDIT_BLOCK
+SET_ALARM(Name := erMovementRegistrationTimeout);
+dummy := Print("Timeout during movement registration: %i of %i movements registered",miMoveRegistered,miMovementsToRegister);
+
+
+;#END_EDIT_BLOCK END_ACTION (*Action6*)
+STEP END:
+Action3 (P);
+END_STEP
+
+ACTION Action3: #BEGIN_EDIT_BLOCK
+STOP_PROCESS_ALGORITHM();
+
+;#END_EDIT_BLOCK END_ACTION (*Action3*)
+
+(* transitions *)
+TRANSITION Trans1 (* Trans1 *) FROM Step1 TO TIMEOUT :=  #BEGIN_EDIT_BLOCK
+sv_bInitStart
+;#END_EDIT_BLOCK
+END_TRANSITION
+
+TRANSITION Trans2 (* Trans2 *) FROM TIMEOUT TO ERROR :=  #BEGIN_EDIT_BLOCK
+TIMEOUT.T > T#10s
+;#END_EDIT_BLOCK
+END_TRANSITION
+
+TRANSITION Trans3 (* Trans3 *) FROM TIMEOUT TO TIMEOUT :=  #BEGIN_EDIT_BLOCK
+miMoveRegistered 
+> MoveRegisteredOld
+;#END_EDIT_BLOCK
+END_TRANSITION
+
+TRANSITION Trans6 (* Trans6 *) FROM TIMEOUT TO END :=  #BEGIN_EDIT_BLOCK
+sv_bInitDone
+;#END_EDIT_BLOCK
+END_TRANSITION
+
+GO_ON_TRANSITION Trans7 (* Trans7 *) FROM ERROR TO END :=  #BEGIN_EDIT_BLOCK
+TRUE
+;#END_EDIT_BLOCK
+END_TRANSITION
+
+(* end IecGraph-Code *)
+(* sfc-code *)
+(* end sfc-code *)
+
+
+END_ALGORITHM
+
+
+
+END_ALGORITHM_BLOCK
+
+
+
+#END_OF_IEC_PART
+
+@Puma @IecEditor 6 96 @Pou 25 
+@@@BEG_Comment@@@
+This AB collects the Movement-Registration-Events which are sent by every Movement-Block. 
+The registrationdata is listed in 2 arrays.
+
+@i  The movement-registration is split into 2 parts: 
+@i  1.The registration-event has to be sent with the 
+@i    registration-mode "enMoveRegModeArm".the rest of the event-data 
+@i    needn't be valid in this case.The event should be sent immediately after the Device-Registration 
+@i    is completed (sv_bInitStart -> TRUE).
+@i  2.After a delaytime the registration-event has to be sent with the mode "enMoveRegModeFire", 
+@i    now all the eventdata have to be valid.
+@i  This is necessary to make sure that no registration-events are lost, and to be able to detect the end
+@i  end of the registration.
+@i  When the end of the registration is detected the sv_bMoveRegisterDone flag is set TRUE.
+@@@END_Comment@@@
+
+@BEG_Contents 
+
+@BEG_Func 
+@RT(17)FuncTreeContainer 
+2 
+@Var @RT(9)SET_ALARM @RT(0) @T @T @DERIVED 0 @F @RT(23)KEBA_STANDARD_PROCEDURE @F 
+@T 
+@BEG_Attrib 
+0 @RT(0) @RT(0) 
+@END_Attrib 
+1 1 @F @F @F @F 
+
+@Var @RT(6)ASSERT @RT(0) @T @T @DERIVED 0 @F @RT(8)FUNCTION @F 
+@T 
+@BEG_Attrib 
+0 @RT(0) @RT(0) 
+@END_Attrib 
+1 1 @F @F @F @F 
+
+@END_Func 
+
+@BEG_Const 
+@RT(18)ConstTreeContainer 
+2 
+@Var @RT(25)cMaxMoveDevicesRegistered @RT(0) @T @F @DT @RT(4)DINT @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+0 @RT(2)10 @RT(49)max number of devices which are serving movements 
+@END_Attrib 
+1 1 @F @F @F @F 
+
+@Var @RT(18)cMaxMoveRegistered @RT(0) @T @F @DT @RT(4)DINT @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+0 @RT(3)150 @RT(38)maximum number of registered movements 
+@END_Attrib 
+1 1 @F @F @F @F 
+
+@END_Const 
+
+@BEG_Export 
+
+@BEG_Kind 
+@ALGORITHM_BLOCK @RT(22)ABMovementRegistration @STRUCTURED_TEXT 
+@RT(0) @RT(0) @RT(0) 
+@END_Kind 
+
+@BEG_Dcl 
+@RT(16)DclTreeContainer 
+17 
+@Var @RT(9)EV_Task_3 @RT(0) @T @T @RENAMED 0 @T @T @DT @RT(4)TASK @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 7 @F @F @F @F 
+
+@Var @RT(13)sv_TraceLevel @RT(0) @T @T @DERIVED 0 @T @T @DT @RT(12)tsTraceLevel @RT(0) @T @T @UNKNOWN 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 8 @F @F @F @F 
+
+@Var @RT(21)sv_MovementsAvailable @RT(0) @T @T @DERIVED 0 @T @T @DT @RT(22)tyMovementRegisterList @RT(0) @T @T @UNKNOWN 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 8 @F @F @F @F 
+
+@Var @RT(22)sv_iMovementsAvailable @RT(0) @T @F @DT @RT(4)DINT @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 8 @F @F @F @F 
+
+@Var @RT(18)sv_DeviceMovements @RT(0) @T @T @DERIVED 0 @T @T @DT @RT(19)tDeviceMovementList @RT(0) @T @T @UNKNOWN 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 8 @F @F @F @F 
+
+@Var @RT(18)evMovementRegister @RT(0) @T @T @RENAMED 0 @T @T @DT @RT(19)tevMovementRegister @RT(0) @T @T @UNKNOWN 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 7 @F @F @F @F 
+
+@Var @RT(21)erMaxMovementsExeeded @RT(0) @T @F @DT @RT(5)ALARM @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 7 @F @F @F @F 
+
+@Var @RT(29)erMovementRegistrationTimeout @RT(0) @T @F @DT @RT(5)ALARM @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 7 @F @F @F @F 
+
+@Var @RT(26)erMaxMoveRegisteredExeeded @RT(0) @T @F @DT @RT(5)ALARM @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 7 @F @F @F @F 
+
+@Var @RT(12)sv_bInitDone @RT(0) @T @F @DT @RT(4)BOOL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 8 @F @F @F @F 
+
+@Var @RT(13)sv_bInitStart @RT(0) @T @F @DT @RT(4)BOOL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 8 @F @F @F @F 
+
+@Var @RT(16)miMoveRegistered @RT(0) @T @F @DT @RT(4)DINT @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(21)miMovementsToRegister @RT(0) @T @F @DT @RT(4)DINT @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(7)TaskMid @RT(0) @T @T @RENAMED 0 @T @T @DT @RT(4)TASK @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 7 @F @F @F @F 
+
+@Var @RT(20)sv_bMoveRegisterDone @RT(0) @T @F @DT @RT(4)BOOL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 8 @F @F @F @F 
+
+@Var @RT(8)erAssert @RT(0) @T @F @DT @RT(5)ALARM @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 7 @F @F @F @F 
+
+@Var @RT(24)erMaxMoveDevicesExceeded @RT(0) @T @F @DT @RT(5)ALARM @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 7 @F @F @F @F 
+
+@END_Dcl 
+
+@END_Export 
+
+@BEG_Body 
+
+2 
+
+@BEG_Export 
+
+@BEG_Algo 
+@EVENT_ALGORITHM @RT(19)evaMovementRegister @STRUCTURED_TEXT 
+@RT(0) @RT(18)evMovementRegister @RT(9)EV_Task_3 @F @F 
+@END_Algo 
+
+@BEG_Dcl 
+@RT(16)DclTreeContainer 
+8 
+@Var @RT(22)evMovementRegisterData @RT(0) @T @T @DERIVED 0 @T @T @DT @RT(23)tevMovementRegisterData @RT(0) @T @T @UNKNOWN 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 1 @F @F @F @F 
+
+@Var @RT(1)i @RT(0) @T @F @DT @RT(4)DINT @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 4 @F @F @F @F 
+
+@Var @RT(18)iRegisteredDevices @RT(0) @T @F @DT @RT(4)DINT @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(15)abRegisterDelay @RT(0) @T @T @DERIVED 0 @T @T @DT @RT(15)ABRegisterDelay @RT(0) @T @T @UNKNOWN 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(5)dummy @RT(0) @T @F @DT @RT(4)DINT @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(6)bError @RT(0) @T @F @DT @RT(4)BOOL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(1)b @RT(0) @T @F @DT @RT(4)BOOL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(5)bFire @RT(0) @T @F @DT @RT(4)BOOL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(5)FALSE @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@END_Dcl 
+
+@END_Export 
+
+@BEG_Export 
+
+@BEG_Algo 
+@PROCESS_ALGORITHM @RT(21)paRegistrationTimeOut @SEQUENTIAL_FLOW_CHART 
+@RT(0) @RT(0) @RT(7)TaskMid @T @F 
+@END_Algo 
+
+@BEG_Dcl 
+@RT(16)DclTreeContainer 
+2 
+@Var @RT(17)MoveRegisteredOld @RT(0) @T @F @DT @RT(4)DINT @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(5)dummy @RT(0) @T @F @DT @RT(4)DINT @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@END_Dcl 
+
+@END_Export 
+
+@BEG_Body 
+@TL(87)
+(**************************************** WARNING ********************************************
+ *** The KEBA Kemro K2 System including software is not intended for safety control tasks! ***
+ ***                       For further information see Comment tab!                        ***
+ *********************************************************************************************)
+
+IF NOT sv_bInitDone AND NOT bError THEN
+        
+    IF evMovementRegisterData.Mode = nMoveRegModeArm THEN
+        
+        IF bFire THEN
+            // arm event sent after fire events started. must never happen.
+            dummy := Print('MovementRegEvent register failed, ARM %d/%d event recieved after fire event', evMovementRegisterData.DeviceId.CompId, evMovementRegisterData.DeviceId.IndexId);
+        END_IF;
+        b := ASSERT(NOT bFire, erAssert);
+
+        IF sv_TraceLevel.bRegistration THEN
+                dummy := Print("MovementRegEvent received: ARM %d/%d",evMovementRegisterData.DeviceId.CompId, evMovementRegisterData.DeviceId.IndexId);
+        END_IF;
+
+        //count how many movements are going to be registered 
+        //to be able to detect the end of the registration
+        miMovementsToRegister := miMovementsToRegister + 1;
+        
+    ELSIF evMovementRegisterData.Mode = nMoveRegModeFire THEN
+       bFire := TRUE;         
+       IF sv_TraceLevel.bRegistration THEN
+            dummy := Print("MovementRegEvent received: FIRE %d/%d: %d",evMovementRegisterData.DeviceId.CompId, evMovementRegisterData.DeviceId.IndexId,evMovementRegisterData.pMovementData^.MoveId);
+       END_IF; 
+        
+        IF miMoveRegistered < cMaxMoveRegistered THEN
+            
+            miMoveRegistered := miMoveRegistered + 1;
+            sv_iMovementsAvailable := sv_iMovementsAvailable +1;
+
+            sv_MovementsAvailable[miMoveRegistered].DeviceId :=         evMovementRegisterData.DeviceId;
+            sv_MovementsAvailable[miMoveRegistered].pbDeviceReady :=    evMovementRegisterData.pbDeviceReady;        
+            sv_MovementsAvailable[miMoveRegistered].pMovementData :=    evMovementRegisterData.pMovementData;       
+            
+            FOR i := 1 TO cMaxMoveDevicesRegistered DO
+                            
+                IF sv_DeviceMovements[i].DeviceId = evMovementRegisterData.DeviceId OR (i > iRegisteredDevices) THEN
+                    
+                    IF i > iRegisteredDevices THEN
+                         iRegisteredDevices := iRegisteredDevices + 1;                       
+                    END_IF;
+                                     
+                    //add DeviceInfos
+                    sv_DeviceMovements[i].DeviceId := evMovementRegisterData.DeviceId;
+                    sv_DeviceMovements[i].pbDeviceReady := evMovementRegisterData.pbDeviceReady;
+                    //add MovementData
+                    IF sv_DeviceMovements[i].iNumberOfMovements < cMaxDeviceMovements THEN
+                        sv_DeviceMovements[i].iNumberOfMovements := sv_DeviceMovements[i].iNumberOfMovements + 1;
+                        sv_DeviceMovements[i].Movements[sv_DeviceMovements[i].iNumberOfMovements] := evMovementRegisterData.pMovementData;
+                    ELSE
+                        bError := TRUE;
+                        // too much movements per device registered
+                        SET_ALARM(Name := erMaxMovementsExeeded,
+                                SubID1 := evMovementRegisterData.DeviceId.CompId,
+                                SubID2 := evMovementRegisterData.DeviceId.IndexId,  
+                                SubID3 := cMaxDeviceMovements);
+                    END_IF;
+                    EXIT;   
+                ELSIF (iRegisteredDevices = cMaxMoveDevicesRegistered) THEN
+                    //too much devices that contain movements
+                    bError := TRUE;                      
+                    SET_ALARM(Name := erMaxMoveDevicesExceeded,
+                              SubID1 := cMaxMoveDevicesRegistered);
+                    EXIT;
+                END_IF;
+                   
+            END_FOR;  
+                    
+            IF miMoveRegistered = miMovementsToRegister THEN
+                // registration finished
+                sv_bMoveRegisterDone := TRUE;
+                //reset delaytime generator
+                abRegisterDelay.aReset();
+            END_IF;
+        ELSE
+            // cMaxMoveRegistered exeeded 
+            bError := TRUE;
+            SET_ALARM(Name := erMaxMoveRegisteredExeeded,
+                    SubID1 := cMaxMoveRegistered);
+        END_IF;
+    END_IF;
+END_IF;
+
+@END_Body 
+
+@@@BEG_Comment@@@ 
+@TL(0)
+
+@@@END_Comment@@@ 
+
+@BEG_SfcBody 
+7 6 8 
+
+@BEG_SfcData 2 
+@StepSeq @RT(4)sseq @F 7 
+@Step @RT(5)Step1 @F @T @F @F @RT(0) @F 
+@AcbCont @RT(7)unnamed @F 0 
+
+@Trans @RT(6)Trans1 @F @T @F @F @T @T @TL(2)
+sv_bInitStart
+
+@RT(6)Trans1 @F 
+@Step @RT(7)TIMEOUT @F @F @T @F @RT(0) @F 
+@AcbCont @RT(7)unnamed @F 1 
+@Acb @RT(7)Action2 @F @T @RT(1)P @RT(0) @F @F @T @TL(2)
+MoveRegisteredOld := miMoveRegistered
+
+@F 
+
+@AltBranch @RT(3)alt @F 3 
+@TransSeq @RT(4)tseq @F 1 
+@Trans @RT(6)Trans2 @F @T @F @F @T @T @TL(2)
+TIMEOUT.T > T#10s
+
+@RT(6)Trans2 @F 
+
+@TransSeq @RT(4)tseq @F 2 
+@Trans @RT(6)Trans3 @F @T @F @F @T @T @TL(3)
+miMoveRegistered 
+> MoveRegisteredOld
+
+@RT(6)Trans3 @F 
+@Goto @RT(7)TIMEOUT @F @F 
+
+@TransSeq @RT(4)tseq @F 2 
+@Trans @RT(6)Trans6 @F @T @F @F @T @T @TL(2)
+sv_bInitDone
+
+@RT(6)Trans6 @F 
+@Goto @RT(3)END @F @F 
+
+
+@Step @RT(5)ERROR @F @F @F @F @RT(0) @F 
+@AcbCont @RT(7)unnamed @F 1 
+@Acb @RT(7)Action6 @F @T @RT(1)P @RT(0) @F @F @T @TL(4)
+SET_ALARM(Name := erMovementRegistrationTimeout);
+dummy := Print("Timeout during movement registration: %i of %i movements registered",miMoveRegistered,miMovementsToRegister);
+
+
+@F 
+
+@Trans @RT(6)Trans7 @F @T @F @F @T @F @TL(2)
+TRUE
+
+@RT(6)Trans7 @F 
+@Step @RT(3)END @F @F @T @F @RT(0) @F 
+@AcbCont @RT(7)unnamed @F 1 
+@Acb @RT(7)Action3 @F @T @RT(1)P @RT(0) @F @F @T @TL(2)
+STOP_PROCESS_ALGORITHM();
+
+@F 
+
+@END_SfcData 
+@SaActions 0 
+@SaTrans 0 
+@SaExits 0 
+@END_SfcBody 
+
+@@@BEG_Comment@@@ 
+@TL(0)
+
+@@@END_Comment@@@ 
+@END_Body 
+
+@END_Contents 

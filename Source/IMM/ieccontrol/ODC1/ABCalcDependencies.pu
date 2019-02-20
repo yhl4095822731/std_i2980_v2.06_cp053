@@ -1,0 +1,1893 @@
+(*
+@h    ! WARNING !
+@h    The Kemro K2 system (including software) only meets category B according to EN 954-1,
+@h    thus it is not intended for usage in safety-relevant control applications in the field 
+@h    of personal safety (e.g. emergency stop).
+@h    To implement potentially necessary safety-relevant control tasks, always use additional 
+@h    external safety devices that are intended for the particular purpose, and meet the necessary 
+@h    functional safety.
+@h    For further information see EN 954-1 (EN ISO 13849-1) and/or the K2-x00 user manual, chapter 
+@h    "CE conformity, directives and standards".
+
+Calculates dependencies depending on step position
+- init dependency arrays
+- begin step (first step after sequence start)
+- suceeding step
+- parallel step
+- start branch step
+- consolidation step
+*)
+
+IMPORT_OVER_LISTFILE
+ cNoDependency
+, cMoveEndIf
+, cMoveIf
+, cODCDependencyDontCare
+, ABBrowse
+, ABDependencyCheck
+, tsODCStepPos
+, tsODCStepInfo
+, tyMovementRegisterList
+, tsODCDeviceMovementList
+, tyODCSequenceInternal
+, tyParallelOpenHelpData
+, tyODCDependencyArray
+, tyProgrammedMovement
+, FBAddDependency
+, tMoveIdent
+, tyDeviceRegistered
+
+END_IMPORT
+
+ALGORITHM_BLOCK ABCalcDependencies #DUMMY_EDIT_BLOCK
+
+SYSTEM_VAR
+ sv_ODCDeviceMovements : tsODCDeviceMovementList (* list of all devices that registered movements for the ODC *);
+ sv_ODCSequenceInt : tyODCSequenceInternal;
+END_VAR
+
+SYSTEM_VAR_IN
+ sv_MovementsAvailable : tyMovementRegisterList;
+END_VAR
+
+VAR_EXTERNAL
+ g_iAutoCycleLoopStartLine : DINT;
+ g_iAutoCycleLoopEndLine : DINT;
+ g_iODCMoveDevicesRegistered : DINT (* number of registered devices with ODC movements  *);
+ g_ParallelOpenHelpData : tyParallelOpenHelpData;
+END_VAR
+
+VAR
+ abBrowse : ABBrowse;
+ abDependencyCheck : ABDependencyCheck;
+ LStepPos : tsODCStepPos;
+ LStepInfo : tsODCStepInfo;
+END_VAR
+
+(*
+calculate init dependencies and store them to the start sequence steps
+*)
+
+ALGORITHM aInit
+
+
+VAR_OUTPUT
+ bError : BOOL;
+ Dependency : tyODCDependencyArray;
+END_VAR
+
+VAR_TEMP
+ i : DINT;
+END_VAR
+
+VAR
+ bSafetyRelevant : BOOL;
+ bHelpStep : BOOL;
+ EmptyDependency : tyODCDependencyArray;
+ bPartOfCondition : BOOL (* TRUE for all steps between IF ( ELSE) and END_IF *);
+ ProgrammedMovement : tyProgrammedMovement (* array with the last programmed movement of every device in a IF or ELSE part *);
+ bWriteTempDependency : BOOL;
+ fbAddDependency : FBAddDependency;
+END_VAR
+#BEGIN_EDIT_BLOCK
+(**************************************** WARNING ********************************************
+ *** The KEBA Kemro K2 System including software is not intended for safety control tasks! ***
+ ***                       For further information see Comment tab!                        ***
+ *********************************************************************************************)
+
+bError := FALSE;
+Dependency := EmptyDependency;
+bWriteTempDependency := FALSE;
+
+FOR i := 1 TO g_iODCMoveDevicesRegistered DO
+   ProgrammedMovement[i].iMoveNr := cODCDependencyDontCare;
+   ProgrammedMovement[i].iCount := 0;   
+END_FOR;
+
+(* store movements to first step of sequence *)
+LStepPos.iColumn := 1;
+LStepPos.iRow := 1;
+
+abBrowse.aSetRef(StepPos         := LStepPos,
+                 StepInfo        => LStepInfo,
+                 bHelpStep       => bHelpStep);
+              
+bSafetyRelevant := (sv_MovementsAvailable[LStepInfo.iMoveNr].pMovementData^.iSafetyIdentifier MOD 2 = 1);
+
+   
+REPEAT
+       
+   IF (LStepInfo.MoveId = cMoveIf) OR (LStepInfo.MoveId = cMoveElse) THEN
+      bPartOfCondition := TRUE;     
+   ELSIF sv_MovementsAvailable[LStepInfo.iMoveNr].pMovementData^.MoveId = cMoveEndIf THEN
+      bPartOfCondition := FALSE;      
+      bWriteTempDependency := TRUE;
+   END_IF;
+   
+   IF bPartOfCondition THEN
+      //movement is part of IF or ELSE -> save movements temporary 
+      IF bSafetyRelevant THEN
+         ProgrammedMovement[LStepInfo.iFuIndex].iMoveNr := LStepInfo.iMoveNr;
+         ProgrammedMovement[LStepInfo.iFuIndex].iCount := LStepInfo.iMoveCount;
+      ELSE
+         ProgrammedMovement[LStepInfo.iFuIndex].iMoveNr := cODCDependencyDontCare;
+         ProgrammedMovement[LStepInfo.iFuIndex].iCount := 0;
+      END_IF;
+   ELSIF bWriteTempDependency THEN
+      //write temporary movements to dependency array 
+      FOR i := 1 TO cMaxDeviceMovements DO        
+         IF ProgrammedMovement[i].iMoveNr > 0 THEN       
+            fbAddDependency(iFuIndex := i,
+                           iMoveNr := ProgrammedMovement[i].iMoveNr,
+                           iCount := ProgrammedMovement[i].iCount, 
+                           iMode := 1,
+                           Dependency := Dependency);
+            
+            ProgrammedMovement[i].iMoveNr := cODCDependencyDontCare;
+            ProgrammedMovement[i].iCount := 0;
+         END_IF;
+      END_FOR;
+      
+      bWriteTempDependency := FALSE;
+   ELSE
+   
+      IF NOT bHelpStep THEN
+         
+         (* store movement to dependency if safety relevant, set fu safety irrelevant otherwise *)
+         IF (bSafetyRelevant) THEN
+            fbAddDependency.iMoveNr :=  LStepInfo.iMoveNr;
+            fbAddDependency.iCount := LStepInfo.iMoveCount;        
+         ELSE
+            fbAddDependency.iMoveNr := 0;
+            fbAddDependency.iCount := 0;
+         END_IF;
+               
+         fbAddDependency(iFuIndex := LStepInfo.iFuIndex,
+                        iMode := BOOL_TO_DINT(bPartOfCondition),
+                        Dependency := Dependency);
+         
+      END_IF;
+   END_IF;
+      
+   (* get next step, does not deliver inactive steps *)
+   abBrowse.aFwd(StepInfo        => LStepInfo,
+                 bHelpStep       => bHelpStep,
+                 bSafetyRelevant => bSafetyRelevant);
+   
+UNTIL (abBrowse.aFwd.bEndStepAll OR
+       abBrowse.aFwd.bError)
+END_REPEAT;   
+
+IF abBrowse.aFwd.bError THEN
+   bError := TRUE;
+END_IF;
+
+// set default movements for non programmed safety relevant movements 
+FOR i := 1 TO g_iODCMoveDevicesRegistered DO
+   IF (Dependency[i].Dependency = cNoDependency) THEN
+      IF (sv_ODCDeviceMovements.Devices[i].iDefaultMoveNumber <> 0) AND
+         (sv_MovementsAvailable[sv_ODCDeviceMovements.Devices[i].iDefaultMoveNumber].pMovementData^.iSafetyIdentifier MOD 2 = 1) THEN
+         //write default movement to init safety
+         fbAddDependency(iFuIndex := i,
+                        iMoveNr := sv_ODCDeviceMovements.Devices[i].iDefaultMoveNumber,
+                        iCount := 0,                                 
+                        iMode := 0,
+                        Dependency := Dependency);
+      END_IF;
+   END_IF;
+END_FOR;
+
+
+;#END_EDIT_BLOCK END_ALGORITHM
+
+(*
+calculation of dependencies for the first start branch step of branch group
+- get dependendency from previous step as base
+- check dependencies forward until end of branch group reached
+*)
+
+ALGORITHM aStartBranch
+
+
+VAR_INPUT
+ StepPos : tsODCStepPos;
+ ActualMovements : tyODCDependencyArray;
+ PreviousDependencies : tyODCDependencyArray;
+END_VAR
+
+VAR_OUTPUT
+ StepDependency : tyODCDependencyArray;
+END_VAR
+#BEGIN_EDIT_BLOCK
+(**************************************** WARNING ********************************************
+ *** The KEBA Kemro K2 System including software is not intended for safety control tasks! ***
+ ***                       For further information see Comment tab!                        ***
+ *********************************************************************************************)
+
+(* set previous dependencies as base *)
+StepDependency := PreviousDependencies;
+
+(* calc dependencies scanning until end of branch block reached *)
+abBrowse.aSetRef(StepPos := StepPos);
+abBrowse.aFwd();
+
+REPEAT
+      
+   (* check dependencies forward *)
+   abDependencyCheck.aFwd(bHelpStep        := abBrowse.aFwd.bHelpStep,
+                          bSafetyRelevant  := abBrowse.aFwd.bSafetyRelevant,
+                          iDependence      := abBrowse.aFwd.iDependence,
+                          iFuIndex         := abBrowse.aFwd.StepInfo.iFuIndex,
+                          ActualMovements  := ActualMovements,
+                          StepDependency   := StepDependency);
+   
+   abBrowse.aFwd();
+   
+UNTIL (abBrowse.aFwd.bAllBranchFin OR
+       abBrowse.aFwd.bError)
+END_REPEAT;
+
+
+;#END_EDIT_BLOCK END_ALGORITHM
+
+(*
+dependency calculation for parallel start branch steps
+- get dependencies of parallel start branch step as base
+- check dependencies between actual and parallel start branch step within bwd scan
+- check dependencies through forward scan until end of own branch reached
+  - following steps are safety relevant
+  - parallel steps are safety irrelevant or partially relevant
+*)
+
+ALGORITHM aParallelBranch
+
+
+VAR_INPUT
+ StepPos : tsODCStepPos;
+ ActualMovements : tyODCDependencyArray;
+ PreviousDependencies : tyODCDependencyArray;
+END_VAR
+
+VAR_OUTPUT
+ StepDependency : tyODCDependencyArray;
+END_VAR
+#BEGIN_EDIT_BLOCK
+(**************************************** WARNING ********************************************
+ *** The KEBA Kemro K2 System including software is not intended for safety control tasks! ***
+ ***                       For further information see Comment tab!                        ***
+ *********************************************************************************************)
+
+(* set calculation base *)
+StepDependency := PreviousDependencies;
+
+(* calc dependencies scanning backward until parallel start branch step is reached *)
+abBrowse.aSetRef(StepPos := StepPos);
+abBrowse.aBwd();
+
+REPEAT
+   (* check dependencies backward *)
+   abDependencyCheck.aBwd(bHelpStep         := abBrowse.aBwd.bHelpStep,
+                          bSafetyRelevant   := abBrowse.aBwd.bSafetyRelevant,
+                          iDependence       := abBrowse.aBwd.iDependence,
+                          iFuIndex          := abBrowse.aBwd.StepInfo.iFuIndex,
+                          StepDependency    := StepDependency);
+  
+   abBrowse.aBwd();
+
+UNTIL ((abBrowse.aBwd.bBranchStart AND abBrowse.aBwd.StepPos.iRow = StepPos.iRow) OR
+        abBrowse.aBwd.bError)
+END_REPEAT;            
+
+
+// calc dependencies scanning until end of own branch reached
+abBrowse.aSetRef(StepPos := StepPos);
+abBrowse.aFwd();
+
+REPEAT
+   
+   // check dependencies forward
+   abDependencyCheck.aFwd(bHelpStep        := abBrowse.aFwd.bHelpStep,
+                          bSafetyRelevant  := abBrowse.aFwd.bSafetyRelevant,                          
+                          iDependence      := abBrowse.aFwd.iDependence,
+                          iFuIndex         := abBrowse.aFwd.StepInfo.iFuIndex,
+                          ActualMovements  := ActualMovements,
+                          StepDependency   := StepDependency);
+   
+   abBrowse.aFwd();
+   
+UNTIL (abBrowse.aFwd.bOwnBranchFin OR
+       abBrowse.aFwd.bError)
+END_REPEAT; 
+
+
+;#END_EDIT_BLOCK END_ALGORITHM
+
+(*
+dependency calculation for parallel start branch steps
+- get dependencies of parallel start branch step as base
+- check dependencies between actual and parallel start branch step within bwd scan
+- check dependencies through forward scan until end of own branch reached
+  - following steps are safety relevant
+  - parallel steps are safety irrelevant or partially relevant
+*)
+
+ALGORITHM aStartParallelOpen
+
+
+VAR_INPUT
+ StepPos : tsODCStepPos;
+ ActualMovements : tyODCDependencyArray;
+ PreviousDependencies : tyODCDependencyArray;
+END_VAR
+
+VAR_OUTPUT
+ StepDependency : tyODCDependencyArray;
+END_VAR
+
+VAR_TEMP
+ i : DINT;
+END_VAR
+
+VAR
+ bStartParallelOpen : BOOL;
+END_VAR
+#BEGIN_EDIT_BLOCK
+(**************************************** WARNING ********************************************
+ *** The KEBA Kemro K2 System including software is not intended for safety control tasks! ***
+ ***                       For further information see Comment tab!                        ***
+ *********************************************************************************************)
+
+// set calculation base
+StepDependency := PreviousDependencies;
+
+IF StepPos.iColumn > 1 THEN
+   //calc dependencies scanning backward until parallel start branch step is reached
+   abBrowse.aSetRef(StepPos := StepPos);
+   abBrowse.aBwd();
+   
+   REPEAT
+      // check dependencies backward
+      abDependencyCheck.aBwd(bHelpStep         := abBrowse.aBwd.bHelpStep,
+                             bSafetyRelevant   := abBrowse.aBwd.bSafetyRelevant,
+                             iDependence       := abBrowse.aBwd.iDependence,
+                             iFuIndex          := abBrowse.aBwd.StepInfo.iFuIndex,
+                             StepDependency    := StepDependency);
+   
+      abBrowse.aBwd();
+   
+   UNTIL ((abBrowse.aBwd.bBranchStart AND abBrowse.aBwd.StepPos.iRow = StepPos.iRow) OR
+         abBrowse.aBwd.bError)
+   END_REPEAT;            
+END_IF;
+
+
+//forward scan is necessary to handle parallel trees within this tree
+bStartParallelOpen := FALSE;
+abBrowse.aSetRef(StepPos := StepPos);
+abBrowse.aFwd();
+
+REPEAT
+        
+   //basically the dependency from ABBrowse.aFwd - block can be taken
+   //but: as soon as a start parallel open step is found everything is parallel
+   IF abBrowse.aFwd.StepInfo.MoveId = cMoveStartParallelOpen THEN
+      bStartParallelOpen := TRUE;
+   END_IF;
+   
+   IF bStartParallelOpen THEN
+      abDependencyCheck.aFwd.iDependence := nParallel;
+   ELSE
+      abDependencyCheck.aFwd.iDependence := abBrowse.aFwd.iDependence;
+   END_IF;
+      
+   // check dependencies forward
+   abDependencyCheck.aFwd(bHelpStep        := abBrowse.aFwd.bHelpStep,
+                          bSafetyRelevant  := abBrowse.aFwd.bSafetyRelevant,                          
+                          iFuIndex         := abBrowse.aFwd.StepInfo.iFuIndex,
+                          ActualMovements  := ActualMovements,
+                          StepDependency   := StepDependency);
+   
+   abBrowse.aFwd();
+
+UNTIL (abBrowse.aFwd.StepPos.iRow = (g_iAutoCycleLoopEndLine + 1) OR    //stop at end of (autocycle loop +1) 
+       abBrowse.aFwd.bError)
+END_REPEAT;
+
+//correct tmp dependency of parallel open tree for all optional added devices
+FOR i := 1 TO g_iODCMoveDevicesRegistered DO
+   IF g_ParallelOpenHelpData[StepPos.iColumn].OptionalDevices[i] THEN            
+      g_ParallelOpenHelpData[StepPos.iColumn].Dependency[i].Dependency := StepDependency[i].Dependency OR 
+                                                                          g_ParallelOpenHelpData[StepPos.iColumn].Dependency[i].Dependency;
+      
+   END_IF;
+END_FOR;
+
+
+
+
+;#END_EDIT_BLOCK END_ALGORITHM
+
+(*
+consolidation of dependency arrays in the end branch steps of a branch group
+*)
+
+ALGORITHM aConsolidation
+
+
+VAR_INPUT
+ CurrentDependency : tyODCDependencyArray;
+ PreviousDependency : tyODCDependencyArray;
+END_VAR
+
+VAR_OUTPUT
+ StepDependency : tyODCDependencyArray;
+END_VAR
+
+VAR_TEMP
+ i : DINT;
+END_VAR
+#BEGIN_EDIT_BLOCK
+(**************************************** WARNING ********************************************
+ *** The KEBA Kemro K2 System including software is not intended for safety control tasks! ***
+ ***                       For further information see Comment tab!                        ***
+ *********************************************************************************************)
+
+// set current dependency as base
+StepDependency := CurrentDependency;
+
+FOR i := 1 TO g_iODCMoveDevicesRegistered DO
+   IF (StepDependency[i] <> PreviousDependency[i]) THEN
+      IF (StepDependency[i].Dependency = cNoDependency) THEN
+         StepDependency[i] := PreviousDependency[i];
+      END_IF;
+   END_IF;
+   
+   //add both conditions
+   StepDependency[i].Dependency := CurrentDependency[i].Dependency OR PreviousDependency[i].Dependency;
+END_FOR;
+
+
+;#END_EDIT_BLOCK END_ALGORITHM
+
+ALGORITHM aEndParallelOpen
+
+
+VAR_INPUT
+ StepPos : tsODCStepPos;
+ PreviousDependencies : tyODCDependencyArray;
+END_VAR
+
+VAR_OUTPUT
+ StepDependency : tyODCDependencyArray;
+END_VAR
+
+VAR_TEMP
+ i : DINT;
+END_VAR
+
+VAR
+ iLine : DINT;
+ MoveId : tMoveIdent;
+ tmpDependency : tyODCDependencyArray;
+ EmptyDependency : tyODCDependencyArray;
+ NewDependency : tyODCDependencyArray;
+ ActDependency : tyODCDependencyArray;
+ fbAddDependency : FBAddDependency;
+ bHelpStep : BOOL;
+ bSafetyRelevant : BOOL;
+ StepInfo : tsODCStepInfo;
+ bPartOfCondition : BOOL (* TRUE for all steps between IF ( ELSE) and END_IF *);
+ ProgrammedMovement : tyProgrammedMovement (* array with the last programmed movement of every device in a IF or ELSE part *);
+ bWriteTempDependency : BOOL;
+ OptionalAdded : tyDeviceRegistered;
+END_VAR
+#BEGIN_EDIT_BLOCK
+(**************************************** WARNING ********************************************
+ *** The KEBA Kemro K2 System including software is not intended for safety control tasks! ***
+ ***                       For further information see Comment tab!                        ***
+ *********************************************************************************************)
+
+//init necessary data
+tmpDependency := EmptyDependency;
+bPartOfCondition := FALSE;
+bWriteTempDependency := FALSE;
+
+FOR i := 1 TO g_iODCMoveDevicesRegistered DO
+   ProgrammedMovement[i].iMoveNr := cODCDependencyDontCare;
+   ProgrammedMovement[i].iCount := 0;
+   OptionalAdded[i] := FALSE;
+END_FOR;
+
+//get StartParallelOpen step in this column
+iLine := g_ParallelOpenHelpData[StepPos.iColumn].iStartParallelOpenLine;
+
+//set start parallel open step as reference and browse fwd
+//until line number >= autocycleloop end line or moveid = cMoveStartParallelOpen 
+abBrowse.aSetRef.StepPos.iColumn := StepPos.iColumn;
+abBrowse.aSetRef.StepPos.iRow := iLine;
+abBrowse.aSetRef();
+
+abBrowse.aFwd(StepInfo        => StepInfo,
+              bHelpStep       => bHelpStep,
+              bSafetyRelevant => bSafetyRelevant);
+
+REPEAT   
+       
+   IF (StepInfo.MoveId = cMoveIf) OR (StepInfo.MoveId = cMoveElse) THEN
+      bPartOfCondition := TRUE;     
+   ELSIF StepInfo.MoveId = cMoveEndIf THEN
+      bPartOfCondition := FALSE;      
+      bWriteTempDependency := TRUE;
+   END_IF;
+   
+   IF bPartOfCondition THEN
+      //movement is part of IF or ELSE -> save movements temporary 
+      IF bSafetyRelevant THEN
+         ProgrammedMovement[StepInfo.iFuIndex].iMoveNr := StepInfo.iMoveNr;
+         ProgrammedMovement[StepInfo.iFuIndex].iCount := StepInfo.iMoveCount;
+      ELSE
+         ProgrammedMovement[StepInfo.iFuIndex].iMoveNr := cODCDependencyDontCare;
+         ProgrammedMovement[StepInfo.iFuIndex].iCount := 0;
+      END_IF;
+   ELSIF bWriteTempDependency THEN
+      //write temporary movements to dependency array 
+      FOR i := 1 TO cMaxDeviceMovements DO        
+         IF ProgrammedMovement[i].iMoveNr > 0 THEN       
+            fbAddDependency(iFuIndex := i,
+                           iMoveNr := ProgrammedMovement[i].iMoveNr,
+                           iCount := ProgrammedMovement[i].iCount, 
+                           iMode := 1,
+                           Dependency := tmpDependency);
+            
+            OptionalAdded[i] := TRUE;
+            ProgrammedMovement[i].iMoveNr := cODCDependencyDontCare;
+            ProgrammedMovement[i].iCount := 0;
+         END_IF;
+      END_FOR;
+      
+      bWriteTempDependency := FALSE;
+   ELSE
+   
+      IF NOT bHelpStep THEN
+         
+         // store movement to dependency if safety relevant, set fu safety irrelevant otherwise
+         IF (bSafetyRelevant) THEN
+            fbAddDependency.iMoveNr :=  StepInfo.iMoveNr;
+            fbAddDependency.iCount := StepInfo.iMoveCount;        
+         ELSE
+            fbAddDependency.iMoveNr := 0;
+            fbAddDependency.iCount := 0;
+         END_IF;
+               
+         fbAddDependency(iFuIndex := StepInfo.iFuIndex,
+                        iMode := BOOL_TO_DINT(bPartOfCondition),
+                        Dependency := tmpDependency);
+         OptionalAdded[i] := bPartOfCondition;
+         
+      END_IF;
+   END_IF;
+   
+   abBrowse.aFwd(StepInfo        => StepInfo,
+                 bHelpStep       => bHelpStep,
+                 bSafetyRelevant => bSafetyRelevant);
+   
+   MoveId := StepInfo.MoveId;
+
+UNTIL (abBrowse.aFwd.StepPos.iRow = (g_iAutoCycleLoopEndLine + 1)) OR 
+      (MoveId = cMoveStartParallelOpen) OR (abBrowse.aFwd.bError) 
+END_REPEAT;
+
+//save this tmp dependency
+//it is needed for calculating the conditions for the first step after autocycle end loop
+//optional added devices will be corrected in aStartParallelOpen
+g_ParallelOpenHelpData[StepPos.iColumn].Dependency := tmpDependency;
+g_ParallelOpenHelpData[StepPos.iColumn].OptionalDevices := OptionalAdded;
+
+//consolidate this tmpConditions with EndParallelOpen step in column 1
+NewDependency := PreviousDependencies;
+FOR i := 1 TO g_iODCMoveDevicesRegistered DO
+   IF (NewDependency[i] <> tmpDependency[i]) THEN
+      IF (tmpDependency[i].Dependency <> cNoDependency) THEN
+         //replace with tmpDependency or add tmpDependency
+         IF OptionalAdded[i] THEN
+            NewDependency[i].Dependency := NewDependency[i].Dependency OR tmpDependency[i].Dependency;
+         ELSE
+            NewDependency[i].Dependency := tmpDependency[i].Dependency;
+         END_IF;
+      END_IF;
+   END_IF;
+END_FOR;
+
+StepDependency := NewDependency;
+
+//correct safety array of EP open in first column
+sv_ODCSequenceInt[1,StepPos.iRow].SafetyArray := NewDependency;
+
+//browse bwd to autocycle loop begin and correct dependencies
+//(set parallel open steps to not safety relevant)
+abBrowse.aSetRef.StepPos.iColumn := 1;
+abBrowse.aSetRef.StepPos.iRow := StepPos.iRow;
+abBrowse.aSetRef();
+abBrowse.aBwd();
+
+REPEAT
+  
+   IF (abBrowse.aBwd.bSafetyRelevant) THEN
+      //safety relevant step -> get actual dependency
+      ActDependency := sv_ODCSequenceInt[abBrowse.aBwd.StepPos.iColumn,abBrowse.aBwd.StepPos.iRow].SafetyArray;      
+      FOR i := 1 TO g_iODCMoveDevicesRegistered DO
+         IF (tmpDependency[i].Dependency <> cNoDependency) THEN
+            //a movement of this fu is part of start parallel tree -> set it to "not safety relevant"             
+            sv_ODCSequenceInt[abBrowse.aBwd.StepPos.iColumn,abBrowse.aBwd.StepPos.iRow].SafetyArray[i].Dependency := cNoDependency;           
+         END_IF;  
+      END_FOR;      
+   END_IF;
+      
+   abBrowse.aBwd();
+   
+UNTIL (abBrowse.aBwd.StepPos.iRow = (g_iAutoCycleLoopStartLine)) OR
+      (abBrowse.aBwd.bError) 
+END_REPEAT;
+
+
+
+
+
+
+
+;#END_EDIT_BLOCK END_ALGORITHM
+
+ALGORITHM aConsolidateAfterAutoLoop
+
+
+VAR_OUTPUT
+ ResultingDependency : tyODCDependencyArray;
+END_VAR
+
+VAR_TEMP
+ iColumn : DINT;
+END_VAR
+
+VAR
+ PreviousDependency : tyODCDependencyArray;
+END_VAR
+#BEGIN_EDIT_BLOCK
+(**************************************** WARNING ********************************************
+ *** The KEBA Kemro K2 System including software is not intended for safety control tasks! ***
+ ***                       For further information see Comment tab!                        ***
+ *********************************************************************************************)
+
+//get actual conditions of end autocycle loop - step
+ResultingDependency := sv_ODCSequenceInt[1,g_iAutoCycleLoopEndLine].SafetyArray;
+
+FOR iColumn := cMaxParallelMovements TO 2 BY -1 DO
+   //consolidate relevant columns one by one
+   IF g_ParallelOpenHelpData[iColumn].bParallelOpen THEN
+
+      //get safety array of the last safety relevant step in this column
+      PreviousDependency := g_ParallelOpenHelpData[iColumn].Dependency;
+                
+      aConsolidation(CurrentDependency := ResultingDependency,
+                     PreviousDependency := PreviousDependency,
+                     StepDependency => ResultingDependency);
+   END_IF;
+END_FOR;
+
+
+;#END_EDIT_BLOCK END_ALGORITHM
+
+
+
+END_ALGORITHM_BLOCK
+
+
+
+#END_OF_IEC_PART
+
+@Puma @IecEditor 6 96 @Pou 25 
+@@@BEG_Comment@@@
+@h    ! WARNING !
+@h    The Kemro K2 system (including software) only meets category B according to EN 954-1,
+@h    thus it is not intended for usage in safety-relevant control applications in the field 
+@h    of personal safety (e.g. emergency stop).
+@h    To implement potentially necessary safety-relevant control tasks, always use additional 
+@h    external safety devices that are intended for the particular purpose, and meet the necessary 
+@h    functional safety.
+@h    For further information see EN 954-1 (EN ISO 13849-1) and/or the K2-x00 user manual, chapter 
+@h    "CE conformity, directives and standards".
+
+Calculates dependencies depending on step position
+- init dependency arrays
+- begin step (first step after sequence start)
+- suceeding step
+- parallel step
+- start branch step
+- consolidation step
+@@@END_Comment@@@
+
+@BEG_Contents 
+
+@BEG_Func 
+@RT(17)FuncTreeContainer 
+0 
+@END_Func 
+
+@BEG_Const 
+@RT(18)ConstTreeContainer 
+4 
+@Var @RT(13)cNoDependency @RT(0) @T @F @DT @RT(5)LWORD @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+0 @RT(4)16#0 @RT(0) 
+@END_Attrib 
+1 1 @F @F @F @F 
+
+@Var @RT(10)cMoveEndIf @RT(0) @T @F @DT @RT(4)DINT @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+0 @RT(1)4 @RT(6)END_IF 
+@END_Attrib 
+1 1 @F @F @F @F 
+
+@Var @RT(7)cMoveIf @RT(0) @T @F @DT @RT(4)DINT @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+0 @RT(1)2 @RT(2)IF 
+@END_Attrib 
+1 1 @F @F @F @F 
+
+@Var @RT(22)cODCDependencyDontCare @RT(0) @T @F @DT @RT(4)DINT @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+0 @RT(2)-1 @RT(76)dependency dont care, function unit not safety relevant, interpretation TRUE 
+@END_Attrib 
+1 1 @F @F @F @F 
+
+@END_Const 
+
+@BEG_Export 
+
+@BEG_Kind 
+@ALGORITHM_BLOCK @RT(18)ABCalcDependencies @STRUCTURED_TEXT 
+@RT(0) @RT(0) @RT(0) 
+@END_Kind 
+
+@BEG_Dcl 
+@RT(16)DclTreeContainer 
+11 
+@Var @RT(8)abBrowse @RT(0) @T @T @DERIVED 0 @T @T @DT @RT(8)ABBrowse @RT(0) @T @T @UNKNOWN 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(17)abDependencyCheck @RT(0) @T @T @DERIVED 0 @T @T @DT @RT(17)ABDependencyCheck @RT(0) @T @T @UNKNOWN 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(8)LStepPos @RT(0) @T @T @DERIVED 0 @T @T @DT @RT(12)tsODCStepPos @RT(0) @T @T @UNKNOWN 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(9)LStepInfo @RT(0) @T @T @DERIVED 0 @T @T @DT @RT(13)tsODCStepInfo @RT(0) @T @T @UNKNOWN 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(21)sv_MovementsAvailable @RT(0) @T @T @DERIVED 0 @T @T @DT @RT(22)tyMovementRegisterList @RT(0) @T @T @UNKNOWN 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 9 @F @F @F @F 
+
+@Var @RT(21)sv_ODCDeviceMovements @RT(0) @T @T @DERIVED 0 @T @T @DT @RT(23)tsODCDeviceMovementList @RT(0) @T @T @UNKNOWN 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(57)list of all devices that registered movements for the ODC @RT(0) 
+@END_Attrib 
+1 8 @F @F @F @F 
+
+@Var @RT(17)sv_ODCSequenceInt @RT(0) @T @T @DERIVED 0 @T @T @DT @RT(21)tyODCSequenceInternal @RT(0) @T @T @UNKNOWN 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 8 @F @F @F @F 
+
+@Var @RT(25)g_iAutoCycleLoopStartLine @RT(0) @T @F @DT @RT(4)DINT @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 6 @F @F @F @F 
+
+@Var @RT(23)g_iAutoCycleLoopEndLine @RT(0) @T @F @DT @RT(4)DINT @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 6 @F @F @F @F 
+
+@Var @RT(27)g_iODCMoveDevicesRegistered @RT(0) @T @F @DT @RT(4)DINT @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(48)number of registered devices with ODC movements  @RT(0) 
+@END_Attrib 
+1 6 @F @F @F @F 
+
+@Var @RT(22)g_ParallelOpenHelpData @RT(0) @T @T @DERIVED 0 @T @T @DT @RT(22)tyParallelOpenHelpData @RT(0) @T @T @UNKNOWN 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 6 @F @F @F @F 
+
+@END_Dcl 
+
+@END_Export 
+
+@BEG_Body 
+
+7 
+
+@BEG_Export 
+
+@BEG_Algo 
+@ALGORITHM @RT(5)aInit @STRUCTURED_TEXT 
+@RT(0) @RT(0) @RT(0) @F @F 
+@END_Algo 
+
+@BEG_Dcl 
+@RT(16)DclTreeContainer 
+10 
+@Var @RT(6)bError @RT(0) @T @F @DT @RT(4)BOOL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 3 @F @F @F @F 
+
+@Var @RT(15)bSafetyRelevant @RT(0) @T @F @DT @RT(4)BOOL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(9)bHelpStep @RT(0) @T @F @DT @RT(4)BOOL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(1)i @RT(0) @T @F @DT @RT(4)DINT @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 4 @F @F @F @F 
+
+@Var @RT(15)EmptyDependency @RT(0) @T @T @DERIVED 0 @T @T @DT @RT(20)tyODCDependencyArray @RT(0) @T @T @UNKNOWN 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(10)Dependency @RT(0) @T @T @DERIVED 0 @T @T @DT @RT(20)tyODCDependencyArray @RT(0) @T @T @UNKNOWN 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 3 @F @F @F @F 
+
+@Var @RT(16)bPartOfCondition @RT(0) @T @F @DT @RT(4)BOOL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(48)TRUE for all steps between IF ( ELSE) and END_IF @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(18)ProgrammedMovement @RT(0) @T @T @DERIVED 0 @T @T @DT @RT(20)tyProgrammedMovement @RT(0) @T @T @UNKNOWN 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(76)array with the last programmed movement of every device in a IF or ELSE part @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(20)bWriteTempDependency @RT(0) @T @F @DT @RT(4)BOOL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(15)fbAddDependency @RT(0) @T @T @DERIVED 0 @T @T @DT @RT(15)FBAddDependency @RT(0) @T @T @UNKNOWN 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@END_Dcl 
+
+@END_Export 
+
+@BEG_Export 
+
+@BEG_Algo 
+@ALGORITHM @RT(12)aStartBranch @STRUCTURED_TEXT 
+@RT(0) @RT(0) @RT(0) @F @F 
+@END_Algo 
+
+@BEG_Dcl 
+@RT(16)DclTreeContainer 
+4 
+@Var @RT(7)StepPos @RT(0) @T @T @DERIVED 0 @T @T @DT @RT(12)tsODCStepPos @RT(0) @T @T @UNKNOWN 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 1 @F @F @F @F 
+
+@Var @RT(15)ActualMovements @RT(0) @T @T @DERIVED 0 @T @T @DT @RT(20)tyODCDependencyArray @RT(0) @T @T @UNKNOWN 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 1 @F @F @F @F 
+
+@Var @RT(20)PreviousDependencies @RT(0) @T @T @DERIVED 0 @T @T @DT @RT(20)tyODCDependencyArray @RT(0) @T @T @UNKNOWN 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 1 @F @F @F @F 
+
+@Var @RT(14)StepDependency @RT(0) @T @T @DERIVED 0 @T @T @DT @RT(20)tyODCDependencyArray @RT(0) @T @T @UNKNOWN 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 3 @F @F @F @F 
+
+@END_Dcl 
+
+@END_Export 
+
+@BEG_Export 
+
+@BEG_Algo 
+@ALGORITHM @RT(15)aParallelBranch @STRUCTURED_TEXT 
+@RT(0) @RT(0) @RT(0) @F @F 
+@END_Algo 
+
+@BEG_Dcl 
+@RT(16)DclTreeContainer 
+4 
+@Var @RT(7)StepPos @RT(0) @T @T @DERIVED 0 @T @T @DT @RT(12)tsODCStepPos @RT(0) @T @T @UNKNOWN 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 1 @F @F @F @F 
+
+@Var @RT(15)ActualMovements @RT(0) @T @T @DERIVED 0 @T @T @DT @RT(20)tyODCDependencyArray @RT(0) @T @T @UNKNOWN 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 1 @F @F @F @F 
+
+@Var @RT(20)PreviousDependencies @RT(0) @T @T @DERIVED 0 @T @T @DT @RT(20)tyODCDependencyArray @RT(0) @T @T @UNKNOWN 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 1 @F @F @F @F 
+
+@Var @RT(14)StepDependency @RT(0) @T @T @DERIVED 0 @T @T @DT @RT(20)tyODCDependencyArray @RT(0) @T @T @UNKNOWN 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 3 @F @F @F @F 
+
+@END_Dcl 
+
+@END_Export 
+
+@BEG_Export 
+
+@BEG_Algo 
+@ALGORITHM @RT(18)aStartParallelOpen @STRUCTURED_TEXT 
+@RT(0) @RT(0) @RT(0) @F @F 
+@END_Algo 
+
+@BEG_Dcl 
+@RT(16)DclTreeContainer 
+6 
+@Var @RT(7)StepPos @RT(0) @T @T @DERIVED 0 @T @T @DT @RT(12)tsODCStepPos @RT(0) @T @T @UNKNOWN 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 1 @F @F @F @F 
+
+@Var @RT(15)ActualMovements @RT(0) @T @T @DERIVED 0 @T @T @DT @RT(20)tyODCDependencyArray @RT(0) @T @T @UNKNOWN 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 1 @F @F @F @F 
+
+@Var @RT(20)PreviousDependencies @RT(0) @T @T @DERIVED 0 @T @T @DT @RT(20)tyODCDependencyArray @RT(0) @T @T @UNKNOWN 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 1 @F @F @F @F 
+
+@Var @RT(14)StepDependency @RT(0) @T @T @DERIVED 0 @T @T @DT @RT(20)tyODCDependencyArray @RT(0) @T @T @UNKNOWN 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 3 @F @F @F @F 
+
+@Var @RT(18)bStartParallelOpen @RT(0) @T @F @DT @RT(4)BOOL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(1)i @RT(0) @T @F @DT @RT(4)DINT @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 4 @F @F @F @F 
+
+@END_Dcl 
+
+@END_Export 
+
+@BEG_Export 
+
+@BEG_Algo 
+@ALGORITHM @RT(14)aConsolidation @STRUCTURED_TEXT 
+@RT(0) @RT(0) @RT(0) @F @F 
+@END_Algo 
+
+@BEG_Dcl 
+@RT(16)DclTreeContainer 
+4 
+@Var @RT(17)CurrentDependency @RT(0) @T @T @DERIVED 0 @T @T @DT @RT(20)tyODCDependencyArray @RT(0) @T @T @UNKNOWN 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 1 @F @F @F @F 
+
+@Var @RT(18)PreviousDependency @RT(0) @T @T @DERIVED 0 @T @T @DT @RT(20)tyODCDependencyArray @RT(0) @T @T @UNKNOWN 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 1 @F @F @F @F 
+
+@Var @RT(14)StepDependency @RT(0) @T @T @DERIVED 0 @T @T @DT @RT(20)tyODCDependencyArray @RT(0) @T @T @UNKNOWN 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 3 @F @F @F @F 
+
+@Var @RT(1)i @RT(0) @T @F @DT @RT(4)DINT @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 4 @F @F @F @F 
+
+@END_Dcl 
+
+@END_Export 
+
+@BEG_Export 
+
+@BEG_Algo 
+@ALGORITHM @RT(16)aEndParallelOpen @STRUCTURED_TEXT 
+@RT(0) @RT(0) @RT(0) @F @F 
+@END_Algo 
+
+@BEG_Dcl 
+@RT(16)DclTreeContainer 
+18 
+@Var @RT(7)StepPos @RT(0) @T @T @DERIVED 0 @T @T @DT @RT(12)tsODCStepPos @RT(0) @T @T @UNKNOWN 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 1 @F @F @F @F 
+
+@Var @RT(20)PreviousDependencies @RT(0) @T @T @DERIVED 0 @T @T @DT @RT(20)tyODCDependencyArray @RT(0) @T @T @UNKNOWN 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 1 @F @F @F @F 
+
+@Var @RT(14)StepDependency @RT(0) @T @T @DERIVED 0 @T @T @DT @RT(20)tyODCDependencyArray @RT(0) @T @T @UNKNOWN 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 3 @F @F @F @F 
+
+@Var @RT(1)i @RT(0) @T @F @DT @RT(4)DINT @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 4 @F @F @F @F 
+
+@Var @RT(5)iLine @RT(0) @T @F @DT @RT(4)DINT @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(6)MoveId @RT(0) @T @T @DERIVED 0 @T @T @DT @RT(10)tMoveIdent @RT(0) @T @T @UNKNOWN 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(13)tmpDependency @RT(0) @T @T @DERIVED 0 @T @T @DT @RT(20)tyODCDependencyArray @RT(0) @T @T @UNKNOWN 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(15)EmptyDependency @RT(0) @T @T @DERIVED 0 @T @T @DT @RT(20)tyODCDependencyArray @RT(0) @T @T @UNKNOWN 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(13)NewDependency @RT(0) @T @T @DERIVED 0 @T @T @DT @RT(20)tyODCDependencyArray @RT(0) @T @T @UNKNOWN 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(13)ActDependency @RT(0) @T @T @DERIVED 0 @T @T @DT @RT(20)tyODCDependencyArray @RT(0) @T @T @UNKNOWN 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(15)fbAddDependency @RT(0) @T @T @DERIVED 0 @T @T @DT @RT(15)FBAddDependency @RT(0) @T @T @UNKNOWN 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(9)bHelpStep @RT(0) @T @F @DT @RT(4)BOOL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(15)bSafetyRelevant @RT(0) @T @F @DT @RT(4)BOOL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(8)StepInfo @RT(0) @T @T @DERIVED 0 @T @T @DT @RT(13)tsODCStepInfo @RT(0) @T @T @UNKNOWN 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(16)bPartOfCondition @RT(0) @T @F @DT @RT(4)BOOL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(48)TRUE for all steps between IF ( ELSE) and END_IF @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(18)ProgrammedMovement @RT(0) @T @T @DERIVED 0 @T @T @DT @RT(20)tyProgrammedMovement @RT(0) @T @T @UNKNOWN 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(76)array with the last programmed movement of every device in a IF or ELSE part @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(20)bWriteTempDependency @RT(0) @T @F @DT @RT(4)BOOL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(13)OptionalAdded @RT(0) @T @T @DERIVED 0 @T @T @DT @RT(18)tyDeviceRegistered @RT(0) @T @T @UNKNOWN 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@END_Dcl 
+
+@END_Export 
+
+@BEG_Export 
+
+@BEG_Algo 
+@ALGORITHM @RT(25)aConsolidateAfterAutoLoop @STRUCTURED_TEXT 
+@RT(0) @RT(0) @RT(0) @F @F 
+@END_Algo 
+
+@BEG_Dcl 
+@RT(16)DclTreeContainer 
+3 
+@Var @RT(19)ResultingDependency @RT(0) @T @T @DERIVED 0 @T @T @DT @RT(20)tyODCDependencyArray @RT(0) @T @T @UNKNOWN 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 3 @F @F @F @F 
+
+@Var @RT(18)PreviousDependency @RT(0) @T @T @DERIVED 0 @T @T @DT @RT(20)tyODCDependencyArray @RT(0) @T @T @UNKNOWN 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(7)iColumn @RT(0) @T @F @DT @RT(4)DINT @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 4 @F @F @F @F 
+
+@END_Dcl 
+
+@END_Export 
+
+@BEG_Body 
+@TL(107)
+(**************************************** WARNING ********************************************
+ *** The KEBA Kemro K2 System including software is not intended for safety control tasks! ***
+ ***                       For further information see Comment tab!                        ***
+ *********************************************************************************************)
+
+bError := FALSE;
+Dependency := EmptyDependency;
+bWriteTempDependency := FALSE;
+
+FOR i := 1 TO g_iODCMoveDevicesRegistered DO
+   ProgrammedMovement[i].iMoveNr := cODCDependencyDontCare;
+   ProgrammedMovement[i].iCount := 0;   
+END_FOR;
+
+(* store movements to first step of sequence *)
+LStepPos.iColumn := 1;
+LStepPos.iRow := 1;
+
+abBrowse.aSetRef(StepPos         := LStepPos,
+                 StepInfo        => LStepInfo,
+                 bHelpStep       => bHelpStep);
+              
+bSafetyRelevant := (sv_MovementsAvailable[LStepInfo.iMoveNr].pMovementData^.iSafetyIdentifier MOD 2 = 1);
+
+   
+REPEAT
+       
+   IF (LStepInfo.MoveId = cMoveIf) OR (LStepInfo.MoveId = cMoveElse) THEN
+      bPartOfCondition := TRUE;     
+   ELSIF sv_MovementsAvailable[LStepInfo.iMoveNr].pMovementData^.MoveId = cMoveEndIf THEN
+      bPartOfCondition := FALSE;      
+      bWriteTempDependency := TRUE;
+   END_IF;
+   
+   IF bPartOfCondition THEN
+      //movement is part of IF or ELSE -> save movements temporary 
+      IF bSafetyRelevant THEN
+         ProgrammedMovement[LStepInfo.iFuIndex].iMoveNr := LStepInfo.iMoveNr;
+         ProgrammedMovement[LStepInfo.iFuIndex].iCount := LStepInfo.iMoveCount;
+      ELSE
+         ProgrammedMovement[LStepInfo.iFuIndex].iMoveNr := cODCDependencyDontCare;
+         ProgrammedMovement[LStepInfo.iFuIndex].iCount := 0;
+      END_IF;
+   ELSIF bWriteTempDependency THEN
+      //write temporary movements to dependency array 
+      FOR i := 1 TO cMaxDeviceMovements DO        
+         IF ProgrammedMovement[i].iMoveNr > 0 THEN       
+            fbAddDependency(iFuIndex := i,
+                           iMoveNr := ProgrammedMovement[i].iMoveNr,
+                           iCount := ProgrammedMovement[i].iCount, 
+                           iMode := 1,
+                           Dependency := Dependency);
+            
+            ProgrammedMovement[i].iMoveNr := cODCDependencyDontCare;
+            ProgrammedMovement[i].iCount := 0;
+         END_IF;
+      END_FOR;
+      
+      bWriteTempDependency := FALSE;
+   ELSE
+   
+      IF NOT bHelpStep THEN
+         
+         (* store movement to dependency if safety relevant, set fu safety irrelevant otherwise *)
+         IF (bSafetyRelevant) THEN
+            fbAddDependency.iMoveNr :=  LStepInfo.iMoveNr;
+            fbAddDependency.iCount := LStepInfo.iMoveCount;        
+         ELSE
+            fbAddDependency.iMoveNr := 0;
+            fbAddDependency.iCount := 0;
+         END_IF;
+               
+         fbAddDependency(iFuIndex := LStepInfo.iFuIndex,
+                        iMode := BOOL_TO_DINT(bPartOfCondition),
+                        Dependency := Dependency);
+         
+      END_IF;
+   END_IF;
+      
+   (* get next step, does not deliver inactive steps *)
+   abBrowse.aFwd(StepInfo        => LStepInfo,
+                 bHelpStep       => bHelpStep,
+                 bSafetyRelevant => bSafetyRelevant);
+   
+UNTIL (abBrowse.aFwd.bEndStepAll OR
+       abBrowse.aFwd.bError)
+END_REPEAT;   
+
+IF abBrowse.aFwd.bError THEN
+   bError := TRUE;
+END_IF;
+
+// set default movements for non programmed safety relevant movements 
+FOR i := 1 TO g_iODCMoveDevicesRegistered DO
+   IF (Dependency[i].Dependency = cNoDependency) THEN
+      IF (sv_ODCDeviceMovements.Devices[i].iDefaultMoveNumber <> 0) AND
+         (sv_MovementsAvailable[sv_ODCDeviceMovements.Devices[i].iDefaultMoveNumber].pMovementData^.iSafetyIdentifier MOD 2 = 1) THEN
+         //write default movement to init safety
+         fbAddDependency(iFuIndex := i,
+                        iMoveNr := sv_ODCDeviceMovements.Devices[i].iDefaultMoveNumber,
+                        iCount := 0,                                 
+                        iMode := 0,
+                        Dependency := Dependency);
+      END_IF;
+   END_IF;
+END_FOR;
+
+@END_Body 
+
+@@@BEG_Comment@@@ 
+@TL(1)
+calculate init dependencies and store them to the start sequence steps
+@@@END_Comment@@@ 
+
+@BEG_Body 
+@TL(28)
+(**************************************** WARNING ********************************************
+ *** The KEBA Kemro K2 System including software is not intended for safety control tasks! ***
+ ***                       For further information see Comment tab!                        ***
+ *********************************************************************************************)
+
+(* set previous dependencies as base *)
+StepDependency := PreviousDependencies;
+
+(* calc dependencies scanning until end of branch block reached *)
+abBrowse.aSetRef(StepPos := StepPos);
+abBrowse.aFwd();
+
+REPEAT
+      
+   (* check dependencies forward *)
+   abDependencyCheck.aFwd(bHelpStep        := abBrowse.aFwd.bHelpStep,
+                          bSafetyRelevant  := abBrowse.aFwd.bSafetyRelevant,
+                          iDependence      := abBrowse.aFwd.iDependence,
+                          iFuIndex         := abBrowse.aFwd.StepInfo.iFuIndex,
+                          ActualMovements  := ActualMovements,
+                          StepDependency   := StepDependency);
+   
+   abBrowse.aFwd();
+   
+UNTIL (abBrowse.aFwd.bAllBranchFin OR
+       abBrowse.aFwd.bError)
+END_REPEAT;
+
+@END_Body 
+
+@@@BEG_Comment@@@ 
+@TL(3)
+calculation of dependencies for the first start branch step of branch group
+- get dependendency from previous step as base
+- check dependencies forward until end of branch group reached
+@@@END_Comment@@@ 
+
+@BEG_Body 
+@TL(47)
+(**************************************** WARNING ********************************************
+ *** The KEBA Kemro K2 System including software is not intended for safety control tasks! ***
+ ***                       For further information see Comment tab!                        ***
+ *********************************************************************************************)
+
+(* set calculation base *)
+StepDependency := PreviousDependencies;
+
+(* calc dependencies scanning backward until parallel start branch step is reached *)
+abBrowse.aSetRef(StepPos := StepPos);
+abBrowse.aBwd();
+
+REPEAT
+   (* check dependencies backward *)
+   abDependencyCheck.aBwd(bHelpStep         := abBrowse.aBwd.bHelpStep,
+                          bSafetyRelevant   := abBrowse.aBwd.bSafetyRelevant,
+                          iDependence       := abBrowse.aBwd.iDependence,
+                          iFuIndex          := abBrowse.aBwd.StepInfo.iFuIndex,
+                          StepDependency    := StepDependency);
+  
+   abBrowse.aBwd();
+
+UNTIL ((abBrowse.aBwd.bBranchStart AND abBrowse.aBwd.StepPos.iRow = StepPos.iRow) OR
+        abBrowse.aBwd.bError)
+END_REPEAT;            
+
+
+// calc dependencies scanning until end of own branch reached
+abBrowse.aSetRef(StepPos := StepPos);
+abBrowse.aFwd();
+
+REPEAT
+   
+   // check dependencies forward
+   abDependencyCheck.aFwd(bHelpStep        := abBrowse.aFwd.bHelpStep,
+                          bSafetyRelevant  := abBrowse.aFwd.bSafetyRelevant,                          
+                          iDependence      := abBrowse.aFwd.iDependence,
+                          iFuIndex         := abBrowse.aFwd.StepInfo.iFuIndex,
+                          ActualMovements  := ActualMovements,
+                          StepDependency   := StepDependency);
+   
+   abBrowse.aFwd();
+   
+UNTIL (abBrowse.aFwd.bOwnBranchFin OR
+       abBrowse.aFwd.bError)
+END_REPEAT; 
+
+@END_Body 
+
+@@@BEG_Comment@@@ 
+@TL(6)
+dependency calculation for parallel start branch steps
+- get dependencies of parallel start branch step as base
+- check dependencies between actual and parallel start branch step within bwd scan
+- check dependencies through forward scan until end of own branch reached
+  - following steps are safety relevant
+  - parallel steps are safety irrelevant or partially relevant
+@@@END_Comment@@@ 
+
+@BEG_Body 
+@TL(72)
+(**************************************** WARNING ********************************************
+ *** The KEBA Kemro K2 System including software is not intended for safety control tasks! ***
+ ***                       For further information see Comment tab!                        ***
+ *********************************************************************************************)
+
+// set calculation base
+StepDependency := PreviousDependencies;
+
+IF StepPos.iColumn > 1 THEN
+   //calc dependencies scanning backward until parallel start branch step is reached
+   abBrowse.aSetRef(StepPos := StepPos);
+   abBrowse.aBwd();
+   
+   REPEAT
+      // check dependencies backward
+      abDependencyCheck.aBwd(bHelpStep         := abBrowse.aBwd.bHelpStep,
+                             bSafetyRelevant   := abBrowse.aBwd.bSafetyRelevant,
+                             iDependence       := abBrowse.aBwd.iDependence,
+                             iFuIndex          := abBrowse.aBwd.StepInfo.iFuIndex,
+                             StepDependency    := StepDependency);
+   
+      abBrowse.aBwd();
+   
+   UNTIL ((abBrowse.aBwd.bBranchStart AND abBrowse.aBwd.StepPos.iRow = StepPos.iRow) OR
+         abBrowse.aBwd.bError)
+   END_REPEAT;            
+END_IF;
+
+
+//forward scan is necessary to handle parallel trees within this tree
+bStartParallelOpen := FALSE;
+abBrowse.aSetRef(StepPos := StepPos);
+abBrowse.aFwd();
+
+REPEAT
+        
+   //basically the dependency from ABBrowse.aFwd - block can be taken
+   //but: as soon as a start parallel open step is found everything is parallel
+   IF abBrowse.aFwd.StepInfo.MoveId = cMoveStartParallelOpen THEN
+      bStartParallelOpen := TRUE;
+   END_IF;
+   
+   IF bStartParallelOpen THEN
+      abDependencyCheck.aFwd.iDependence := nParallel;
+   ELSE
+      abDependencyCheck.aFwd.iDependence := abBrowse.aFwd.iDependence;
+   END_IF;
+      
+   // check dependencies forward
+   abDependencyCheck.aFwd(bHelpStep        := abBrowse.aFwd.bHelpStep,
+                          bSafetyRelevant  := abBrowse.aFwd.bSafetyRelevant,                          
+                          iFuIndex         := abBrowse.aFwd.StepInfo.iFuIndex,
+                          ActualMovements  := ActualMovements,
+                          StepDependency   := StepDependency);
+   
+   abBrowse.aFwd();
+
+UNTIL (abBrowse.aFwd.StepPos.iRow = (g_iAutoCycleLoopEndLine + 1) OR    //stop at end of (autocycle loop +1) 
+       abBrowse.aFwd.bError)
+END_REPEAT;
+
+//correct tmp dependency of parallel open tree for all optional added devices
+FOR i := 1 TO g_iODCMoveDevicesRegistered DO
+   IF g_ParallelOpenHelpData[StepPos.iColumn].OptionalDevices[i] THEN            
+      g_ParallelOpenHelpData[StepPos.iColumn].Dependency[i].Dependency := StepDependency[i].Dependency OR 
+                                                                          g_ParallelOpenHelpData[StepPos.iColumn].Dependency[i].Dependency;
+      
+   END_IF;
+END_FOR;
+
+
+
+@END_Body 
+
+@@@BEG_Comment@@@ 
+@TL(6)
+dependency calculation for parallel start branch steps
+- get dependencies of parallel start branch step as base
+- check dependencies between actual and parallel start branch step within bwd scan
+- check dependencies through forward scan until end of own branch reached
+  - following steps are safety relevant
+  - parallel steps are safety irrelevant or partially relevant
+@@@END_Comment@@@ 
+
+@BEG_Body 
+@TL(19)
+(**************************************** WARNING ********************************************
+ *** The KEBA Kemro K2 System including software is not intended for safety control tasks! ***
+ ***                       For further information see Comment tab!                        ***
+ *********************************************************************************************)
+
+// set current dependency as base
+StepDependency := CurrentDependency;
+
+FOR i := 1 TO g_iODCMoveDevicesRegistered DO
+   IF (StepDependency[i] <> PreviousDependency[i]) THEN
+      IF (StepDependency[i].Dependency = cNoDependency) THEN
+         StepDependency[i] := PreviousDependency[i];
+      END_IF;
+   END_IF;
+   
+   //add both conditions
+   StepDependency[i].Dependency := CurrentDependency[i].Dependency OR PreviousDependency[i].Dependency;
+END_FOR;
+
+@END_Body 
+
+@@@BEG_Comment@@@ 
+@TL(1)
+consolidation of dependency arrays in the end branch steps of a branch group
+@@@END_Comment@@@ 
+
+@BEG_Body 
+@TL(152)
+(**************************************** WARNING ********************************************
+ *** The KEBA Kemro K2 System including software is not intended for safety control tasks! ***
+ ***                       For further information see Comment tab!                        ***
+ *********************************************************************************************)
+
+//init necessary data
+tmpDependency := EmptyDependency;
+bPartOfCondition := FALSE;
+bWriteTempDependency := FALSE;
+
+FOR i := 1 TO g_iODCMoveDevicesRegistered DO
+   ProgrammedMovement[i].iMoveNr := cODCDependencyDontCare;
+   ProgrammedMovement[i].iCount := 0;
+   OptionalAdded[i] := FALSE;
+END_FOR;
+
+//get StartParallelOpen step in this column
+iLine := g_ParallelOpenHelpData[StepPos.iColumn].iStartParallelOpenLine;
+
+//set start parallel open step as reference and browse fwd
+//until line number >= autocycleloop end line or moveid = cMoveStartParallelOpen 
+abBrowse.aSetRef.StepPos.iColumn := StepPos.iColumn;
+abBrowse.aSetRef.StepPos.iRow := iLine;
+abBrowse.aSetRef();
+
+abBrowse.aFwd(StepInfo        => StepInfo,
+              bHelpStep       => bHelpStep,
+              bSafetyRelevant => bSafetyRelevant);
+
+REPEAT   
+       
+   IF (StepInfo.MoveId = cMoveIf) OR (StepInfo.MoveId = cMoveElse) THEN
+      bPartOfCondition := TRUE;     
+   ELSIF StepInfo.MoveId = cMoveEndIf THEN
+      bPartOfCondition := FALSE;      
+      bWriteTempDependency := TRUE;
+   END_IF;
+   
+   IF bPartOfCondition THEN
+      //movement is part of IF or ELSE -> save movements temporary 
+      IF bSafetyRelevant THEN
+         ProgrammedMovement[StepInfo.iFuIndex].iMoveNr := StepInfo.iMoveNr;
+         ProgrammedMovement[StepInfo.iFuIndex].iCount := StepInfo.iMoveCount;
+      ELSE
+         ProgrammedMovement[StepInfo.iFuIndex].iMoveNr := cODCDependencyDontCare;
+         ProgrammedMovement[StepInfo.iFuIndex].iCount := 0;
+      END_IF;
+   ELSIF bWriteTempDependency THEN
+      //write temporary movements to dependency array 
+      FOR i := 1 TO cMaxDeviceMovements DO        
+         IF ProgrammedMovement[i].iMoveNr > 0 THEN       
+            fbAddDependency(iFuIndex := i,
+                           iMoveNr := ProgrammedMovement[i].iMoveNr,
+                           iCount := ProgrammedMovement[i].iCount, 
+                           iMode := 1,
+                           Dependency := tmpDependency);
+            
+            OptionalAdded[i] := TRUE;
+            ProgrammedMovement[i].iMoveNr := cODCDependencyDontCare;
+            ProgrammedMovement[i].iCount := 0;
+         END_IF;
+      END_FOR;
+      
+      bWriteTempDependency := FALSE;
+   ELSE
+   
+      IF NOT bHelpStep THEN
+         
+         // store movement to dependency if safety relevant, set fu safety irrelevant otherwise
+         IF (bSafetyRelevant) THEN
+            fbAddDependency.iMoveNr :=  StepInfo.iMoveNr;
+            fbAddDependency.iCount := StepInfo.iMoveCount;        
+         ELSE
+            fbAddDependency.iMoveNr := 0;
+            fbAddDependency.iCount := 0;
+         END_IF;
+               
+         fbAddDependency(iFuIndex := StepInfo.iFuIndex,
+                        iMode := BOOL_TO_DINT(bPartOfCondition),
+                        Dependency := tmpDependency);
+         OptionalAdded[i] := bPartOfCondition;
+         
+      END_IF;
+   END_IF;
+   
+   abBrowse.aFwd(StepInfo        => StepInfo,
+                 bHelpStep       => bHelpStep,
+                 bSafetyRelevant => bSafetyRelevant);
+   
+   MoveId := StepInfo.MoveId;
+
+UNTIL (abBrowse.aFwd.StepPos.iRow = (g_iAutoCycleLoopEndLine + 1)) OR 
+      (MoveId = cMoveStartParallelOpen) OR (abBrowse.aFwd.bError) 
+END_REPEAT;
+
+//save this tmp dependency
+//it is needed for calculating the conditions for the first step after autocycle end loop
+//optional added devices will be corrected in aStartParallelOpen
+g_ParallelOpenHelpData[StepPos.iColumn].Dependency := tmpDependency;
+g_ParallelOpenHelpData[StepPos.iColumn].OptionalDevices := OptionalAdded;
+
+//consolidate this tmpConditions with EndParallelOpen step in column 1
+NewDependency := PreviousDependencies;
+FOR i := 1 TO g_iODCMoveDevicesRegistered DO
+   IF (NewDependency[i] <> tmpDependency[i]) THEN
+      IF (tmpDependency[i].Dependency <> cNoDependency) THEN
+         //replace with tmpDependency or add tmpDependency
+         IF OptionalAdded[i] THEN
+            NewDependency[i].Dependency := NewDependency[i].Dependency OR tmpDependency[i].Dependency;
+         ELSE
+            NewDependency[i].Dependency := tmpDependency[i].Dependency;
+         END_IF;
+      END_IF;
+   END_IF;
+END_FOR;
+
+StepDependency := NewDependency;
+
+//correct safety array of EP open in first column
+sv_ODCSequenceInt[1,StepPos.iRow].SafetyArray := NewDependency;
+
+//browse bwd to autocycle loop begin and correct dependencies
+//(set parallel open steps to not safety relevant)
+abBrowse.aSetRef.StepPos.iColumn := 1;
+abBrowse.aSetRef.StepPos.iRow := StepPos.iRow;
+abBrowse.aSetRef();
+abBrowse.aBwd();
+
+REPEAT
+  
+   IF (abBrowse.aBwd.bSafetyRelevant) THEN
+      //safety relevant step -> get actual dependency
+      ActDependency := sv_ODCSequenceInt[abBrowse.aBwd.StepPos.iColumn,abBrowse.aBwd.StepPos.iRow].SafetyArray;      
+      FOR i := 1 TO g_iODCMoveDevicesRegistered DO
+         IF (tmpDependency[i].Dependency <> cNoDependency) THEN
+            //a movement of this fu is part of start parallel tree -> set it to "not safety relevant"             
+            sv_ODCSequenceInt[abBrowse.aBwd.StepPos.iColumn,abBrowse.aBwd.StepPos.iRow].SafetyArray[i].Dependency := cNoDependency;           
+         END_IF;  
+      END_FOR;      
+   END_IF;
+      
+   abBrowse.aBwd();
+   
+UNTIL (abBrowse.aBwd.StepPos.iRow = (g_iAutoCycleLoopStartLine)) OR
+      (abBrowse.aBwd.bError) 
+END_REPEAT;
+
+
+
+
+
+
+@END_Body 
+
+@@@BEG_Comment@@@ 
+@TL(0)
+
+@@@END_Comment@@@ 
+
+@BEG_Body 
+@TL(21)
+(**************************************** WARNING ********************************************
+ *** The KEBA Kemro K2 System including software is not intended for safety control tasks! ***
+ ***                       For further information see Comment tab!                        ***
+ *********************************************************************************************)
+
+//get actual conditions of end autocycle loop - step
+ResultingDependency := sv_ODCSequenceInt[1,g_iAutoCycleLoopEndLine].SafetyArray;
+
+FOR iColumn := cMaxParallelMovements TO 2 BY -1 DO
+   //consolidate relevant columns one by one
+   IF g_ParallelOpenHelpData[iColumn].bParallelOpen THEN
+
+      //get safety array of the last safety relevant step in this column
+      PreviousDependency := g_ParallelOpenHelpData[iColumn].Dependency;
+                
+      aConsolidation(CurrentDependency := ResultingDependency,
+                     PreviousDependency := PreviousDependency,
+                     StepDependency => ResultingDependency);
+   END_IF;
+END_FOR;
+
+@END_Body 
+
+@@@BEG_Comment@@@ 
+@TL(0)
+
+@@@END_Comment@@@ 
+@END_Body 
+
+@END_Contents 
+@@@BEG_Password@@@
+NGhzZm9kYzQ=
+@@@END_Password@@@

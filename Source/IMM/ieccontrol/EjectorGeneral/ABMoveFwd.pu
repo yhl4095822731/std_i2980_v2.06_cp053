@@ -1,0 +1,1737 @@
+IMPORT_OVER_LISTFILE
+ GET_MY_FU_NAME
+, WRITE_SVREAL_DIRECT
+, KSWO_AddVariable
+, FAddToScopeGroup
+, cLockGroupClampingUnit
+, cLockGroupMotor
+, cLockGroupSafetyGateMold
+, cLockGroupRotateEjectPos
+, cMoveFwd
+, nActive
+, nDeviceState
+, nInactive
+, nSetup
+, tnCalibState_Error
+, cScopeGroupEjector
+, tsMoveData
+, tnOperationMode
+, tsVelPre
+, KCTRL_Lintab_Point
+, tsCalibMovement
+, tsSetTimes
+, tsActTimes
+, KAPPL_LintabData
+, ABProfileMovement
+, ABConstMovement
+, ABConstCalib
+, ABLintabApply
+, ABStepOutput
+, ABMovementRegister
+, FBSetMovementState
+, FBDebugTrace2
+, KAPPL_VisProfile
+, KSWO_Status
+
+END_IMPORT
+
+ALGORITHM_BLOCK ABMoveFwd #DUMMY_EDIT_BLOCK
+
+SYSTEM_VAR
+ sv_MoveFwd : tsMoveData;
+ sv_rEjectorPosition : REAL;
+ sv_bFwdActive : BOOL (* Ejector forward is active *);
+ sv_rPressure : REAL;
+ sv_rVelocity : REAL;
+ sv_iActiveStage : DINT;
+ sv_OperationMode : tnOperationMode;
+ sv_ConstFwdVis : tsVelPre;
+ sv_bDoTransducerCalib : BOOL;
+ sv_TmpLintabPoint : KCTRL_Lintab_Point;
+ sv_rEjectorStroke : REAL (* Position when ejector is completely forward *);
+ ai_Position : REAL;
+ sv_dStandStillDetectTime : TIME (* time for standstill detection *);
+ sv_CalibState : tsCalibMovement;
+ sv_bOutputActive : BOOL (* Output is active *);
+ sv_bPreOutputReady : BOOL (* PreOutput is ready *);
+ sv_rMaxVoltageDiff : REAL (* max. voltage difference to detect stand still *);
+ sv_bTransducerError : BOOL;
+ sv_bEjectorFwd : BOOL (* ejector is in fwd endposition *);
+ sv_EjectorFwdTimesSet : tsSetTimes;
+ sv_EjectorFwdTimesAct : tsActTimes;
+ sv_LintabOutFwdP : KAPPL_LintabData;
+ sv_LintabOutFwdV : KAPPL_LintabData;
+ sv_rPressureAbs : REAL;
+ sv_rVelocityAbs : REAL;
+ sv_rMaxSpeedFwd : REAL;
+ sv_bTransducerAvailable : BOOL (* chad(CR_0038565) *);
+ sv_ConstFwdVisLS : tsVelPre (* chad(CR_0038565) *);
+ sv_bVerticalMachine : BOOL;
+ sv_bMoveIdent : BOOL;
+ sv_rIdentPosition : REAL;
+ sv_rIdentStopRamp : REAL;
+ sv_dSetDelayTimeOffFwd : TIME;
+ sv_rSmoothFactor : REAL;
+END_VAR
+
+SYSTEM_OBJECT
+ TaskSlow : TASK;
+ TaskAnalog : TASK;
+ erEjectorNotForward : ALARM;
+END_OBJECT
+
+VAR_EXTERNAL
+ g_dActMoveTimeFwd : TIME;
+END_VAR
+
+VAR
+ abEjectorFwd : ABProfileMovement;
+ abEjectorFwdConst : ABConstMovement;
+ abEjectorFwdCalib : ABConstCalib;
+ abLintabApplyVel : ABLintabApply;
+ abLintabApplyPres : ABLintabApply;
+ mpdCalculatedDuration : REFTO TIME;
+ abEjectorFwdConstLS : ABConstMovement (* chad(CR_0038565) *);
+ abEjectorFwdStep : ABStepOutput;
+END_VAR
+
+ALGORITHM aRegister
+
+
+VAR
+ abMovementRegister : ABMovementRegister;
+END_VAR
+#BEGIN_EDIT_BLOCK
+(**************************************** WARNING ********************************************
+ *** The KEBA Kemro K2 System including software is not intended for safety control tasks! ***
+ ***                       For further information see Comment tab!                        ***
+ *********************************************************************************************)
+
+IF sv_bVerticalMachine THEN
+   //for a vertical machine the ejector can also be operated while mold is closed(depending on mode)
+   //ejector can be inserted after mold close
+   //-> the automatic safety check could forbid ejector operation in manual mode while mold is open
+   sv_MoveFwd.iSafetyIdentifier := 0;
+END_IF;
+
+// movement registration
+sv_MoveFwd.LockGroups[1] := cLockGroupClampingUnit;
+sv_MoveFwd.LockGroups[2] := cLockGroupMotor;
+sv_MoveFwd.LockGroups[3] := cLockGroupSafetyGateMold;
+sv_MoveFwd.LockGroups[4] := cLockGroupRotateEjectPos;
+sv_MoveFwd.Alarm.AlarmId := erEjectorNotForward;
+
+sv_MoveFwd.pbPosReached := @sv_bEjectorFwd;
+sv_MoveFwd.pdStartDelaySet := @sv_EjectorFwdTimesSet.dSetDelayTime;
+sv_MoveFwd.pdStartDelayAct := @sv_EjectorFwdTimesAct.dActDelayTime;
+sv_MoveFwd.pdActiveTimeAct := @sv_EjectorFwdTimesAct.dActMoveTime;
+sv_MoveFwd.pdTimeLimit     := @sv_EjectorFwdTimesSet.dMaxMoveTime;
+sv_MoveFwd.sIconPath := CONCAT(GET_MY_FU_NAME(), "\hmi\images\movEjectFwd.gif");
+
+abMovementRegister.aRegister(@sv_MoveFwd);
+
+
+
+;#END_EDIT_BLOCK END_ALGORITHM
+
+ALGORITHM aRun
+
+
+VAR_OUTPUT
+ bReady : BOOL;
+END_VAR
+
+VAR_INPUT
+ bStop : BOOL;
+END_VAR
+
+VAR_TEMP
+ b : BOOL;
+END_VAR
+
+VAR
+ dummy : DINT;
+ fbSetMovementState : FBSetMovementState;
+ bError : BOOL;
+ iErrorInfo : DINT;
+ fbDebugTrace2 : FBDebugTrace2;
+END_VAR
+
+(* IecGraph-Code *)
+
+(* init step *)
+INITIAL_STEP START:
+AStart (P);
+END_STEP
+
+ACTION AStart: #BEGIN_EDIT_BLOCK
+bReady := FALSE; 
+fbSetMovementState(MoveId   := cMoveFwd,
+                   MoveDir  := cMoveFwd,
+                   State    := nActive);
+sv_bFwdActive := TRUE;
+fbDebugTrace2(nDeviceState, 'Ejector Fwd Started');
+
+;#END_EDIT_BLOCK END_ACTION (*AStart*)
+
+(* steps *)
+STEP S_CheckIfCalib:
+END_STEP
+
+STEP S_ConstMove:
+AResetConstBlock (P);
+AConstOutput (N);
+END_STEP
+
+STEP S_Calib:
+AResetCalibBlock (P);
+ATransducerCalib (N);
+ACheckCalibError (N);
+END_STEP
+
+STEP S_MoveIdent:
+AResetIdentBlock (P);
+AStepOutput (N);
+END_STEP
+
+STEP S_IsTransLinkedAndActive:
+END_STEP
+
+STEP S_ProfileMove:
+AResetProfileBlock (P);
+AProfileOutput (N);
+END_STEP
+
+STEP S_ConstMoveLS:
+AResetConstBlockLS (P);
+AConstOutputLS (N);
+END_STEP
+
+STEP READY:
+AReady (P);
+END_STEP
+
+ACTION AReady: #BEGIN_EDIT_BLOCK
+bReady := TRUE;
+fbSetMovementState(MoveId   := cMoveFwd,
+                   MoveDir  := cMoveFwd,
+                   State    := nInactive);
+sv_bFwdActive := FALSE;                   
+fbDebugTrace2(nDeviceState, 'Ejector Fwd Ready');
+
+;#END_EDIT_BLOCK END_ACTION (*AReady*)
+
+(* transitions *)
+GO_ON_TRANSITION TSetupMode (* TSetupMode *) FROM START TO S_CheckIfCalib :=  #BEGIN_EDIT_BLOCK
+sv_OperationMode = nSetup
+;#END_EDIT_BLOCK
+END_TRANSITION
+
+GO_ON_TRANSITION TNotCalib (* TNotCalib *) FROM S_CheckIfCalib TO S_ConstMove :=  #BEGIN_EDIT_BLOCK
+NOT sv_bDoTransducerCalib AND
+NOT sv_bMoveIdent
+;#END_EDIT_BLOCK
+END_TRANSITION
+
+TRANSITION TConstMoveReady (* TConstMoveReady *) FROM S_ConstMove TO READY :=  #BEGIN_EDIT_BLOCK
+NOT abEjectorFwdConst.aRun.bActive 
+;#END_EDIT_BLOCK
+END_TRANSITION
+
+GO_ON_TRANSITION TCalibActivated (* TCalibActivated *) FROM S_CheckIfCalib TO S_Calib :=  #BEGIN_EDIT_BLOCK
+sv_bDoTransducerCalib
+;#END_EDIT_BLOCK
+END_TRANSITION
+
+TRANSITION TCalibReady (* TCalibReady *) FROM S_Calib TO READY :=  #BEGIN_EDIT_BLOCK
+NOT abEjectorFwdCalib.aRun.bActive OR bError
+;#END_EDIT_BLOCK
+END_TRANSITION
+
+GO_ON_TRANSITION TMoveIdentActivated (* TMoveIdentActivated *) FROM S_CheckIfCalib TO S_MoveIdent :=  #BEGIN_EDIT_BLOCK
+sv_bMoveIdent
+;#END_EDIT_BLOCK
+END_TRANSITION
+
+TRANSITION TMoveIdentReady (* TMoveIdentReady *) FROM S_MoveIdent TO READY :=  #BEGIN_EDIT_BLOCK
+NOT abEjectorFwdStep.aRun.bActive
+;#END_EDIT_BLOCK
+END_TRANSITION
+
+GO_ON_TRANSITION TNotSetup (* TNotSetup *) FROM START TO S_IsTransLinkedAndActive :=  #BEGIN_EDIT_BLOCK
+sv_OperationMode <> nSetup
+;#END_EDIT_BLOCK
+END_TRANSITION
+
+GO_ON_TRANSITION TTransLinkedAndActivated (* TTransLinkedAndActivated *) FROM S_IsTransLinkedAndActive TO S_ProfileMove :=  #BEGIN_EDIT_BLOCK
+sv_bTransducerAvailable
+;#END_EDIT_BLOCK
+END_TRANSITION
+
+GO_ON_TRANSITION TProfileMoveReady (* TProfileMoveReady *) FROM S_ProfileMove TO READY :=  #BEGIN_EDIT_BLOCK
+NOT abEjectorFwd.aRun.bActive
+;#END_EDIT_BLOCK
+END_TRANSITION
+
+GO_ON_TRANSITION TTransNotActivated (* TTransNotActivated *) FROM S_IsTransLinkedAndActive TO S_ConstMoveLS :=  #BEGIN_EDIT_BLOCK
+NOT sv_bTransducerAvailable
+;#END_EDIT_BLOCK
+END_TRANSITION
+
+GO_ON_TRANSITION TConstMoveLSReady (* TConstMoveLSReady *) FROM S_ConstMoveLS TO READY :=  #BEGIN_EDIT_BLOCK
+NOT abEjectorFwdConstLS.aRun.bActive
+;#END_EDIT_BLOCK
+END_TRANSITION
+
+TRANSITION Trans12 (* Trans12 *) FROM READY TO START :=  #BEGIN_EDIT_BLOCK
+TRUE
+;#END_EDIT_BLOCK
+END_TRANSITION
+
+(* end IecGraph-Code *)
+(* sfc-code *)
+
+(* stand alone actions *)
+ACTION AResetProfileBlock: #BEGIN_EDIT_BLOCK
+(**************************************** WARNING ********************************************
+ *** The KEBA Kemro K2 System including software is not intended for safety control tasks! ***
+ ***                       For further information see Comment tab!                        ***
+ *********************************************************************************************)
+ 
+abEjectorFwd.aRun(bStart := FALSE);
+
+;#END_EDIT_BLOCK END_ACTION (*AResetProfileBlock*)
+ACTION AResetCalibBlock: #BEGIN_EDIT_BLOCK
+(**************************************** WARNING ********************************************
+ *** The KEBA Kemro K2 System including software is not intended for safety control tasks! ***
+ ***                       For further information see Comment tab!                        ***
+ *********************************************************************************************)
+bError := FALSE;
+abEjectorFwdCalib.aRun(bStart := FALSE,
+                       LintabPoint := sv_TmpLintabPoint);
+IF  abEjectorFwdCalib.aRun.bError THEN
+   sv_CalibState.Status := tnCalibState_Error;
+   bError := TRUE;
+   dummy := Print("Calib Error: Reset calib block failed"); 
+END_IF;
+
+;#END_EDIT_BLOCK END_ACTION (*AResetCalibBlock*)
+ACTION AResetConstBlockLS: #BEGIN_EDIT_BLOCK
+(**************************************** WARNING ********************************************
+ *** The KEBA Kemro K2 System including software is not intended for safety control tasks! ***
+ ***                       For further information see Comment tab!                        ***
+ *********************************************************************************************)
+
+abEjectorFwdConstLS.aRun(bStart := FALSE);
+
+;#END_EDIT_BLOCK END_ACTION (*AResetConstBlockLS*)
+ACTION ACheckCalibError: #BEGIN_EDIT_BLOCK
+IF bError THEN
+   sv_CalibState.Status := tnCalibState_Error;
+   dummy := Print("Calib Error: %i", iErrorInfo);
+END_IF;
+
+;#END_EDIT_BLOCK END_ACTION (*ACheckCalibError*)
+ACTION AResetConstBlock: #BEGIN_EDIT_BLOCK
+(**************************************** WARNING ********************************************
+ *** The KEBA Kemro K2 System including software is not intended for safety control tasks! ***
+ ***                       For further information see Comment tab!                        ***
+ *********************************************************************************************)
+
+abEjectorFwdConst.aRun(bStart := FALSE);
+
+;#END_EDIT_BLOCK END_ACTION (*AResetConstBlock*)
+ACTION AResetIdentBlock: #BEGIN_EDIT_BLOCK
+abEjectorFwdStep.aRun(bStart := FALSE);
+
+
+;#END_EDIT_BLOCK END_ACTION (*AResetIdentBlock*)
+ACTION ATransducerCalib: #BEGIN_EDIT_BLOCK
+(**************************************** WARNING ********************************************
+ *** The KEBA Kemro K2 System including software is not intended for safety control tasks! ***
+ ***                       For further information see Comment tab!                        ***
+ *********************************************************************************************)
+
+abEjectorFwdCalib.aRun(bStop := bStop OR sv_bTransducerError,
+                       bStart := TRUE,
+                       rActVoltage := ai_Position,
+                       rMaxVoltageDiff := sv_rMaxVoltageDiff,
+                       dStandStillDetectTime := sv_dStandStillDetectTime,
+                       LintabPoint := sv_TmpLintabPoint,
+                       rSetValue := sv_rEjectorStroke,
+                       dDelayTimeOn := sv_EjectorFwdTimesSet.dSetDelayTimePump,
+                       dDelayTimeOff := sv_EjectorFwdTimesSet.dSetDelayTimeValve,
+                       bActive => sv_bOutputActive,
+                       rOutputPre => sv_rPressureAbs,
+                       rOutputVel => sv_rVelocityAbs,
+                       bPreOutputReached => sv_bPreOutputReady,
+                       iErrorInfo => iErrorInfo);
+
+sv_bDoTransducerCalib := NOT (abEjectorFwdCalib.aRun.bPointDetected);
+bError := abEjectorFwdCalib.aRun.bError OR bError;
+
+abLintabApplyPres.aCalc(rX := sv_rPressureAbs,
+                        rY => sv_rPressure);
+
+abLintabApplyVel.aCalc(rX := sv_rVelocityAbs,
+                       rY => sv_rVelocity);
+
+;#END_EDIT_BLOCK END_ACTION (*ATransducerCalib*)
+ACTION AStepOutput: #BEGIN_EDIT_BLOCK
+(**************************************** WARNING ********************************************
+ *** The KEBA Kemro K2 System including software is not intended for safety control tasks! ***
+ ***                       For further information see Comment tab!                        ***
+ *********************************************************************************************)
+
+abEjectorFwdStep.aRun(bUsePosDetect := sv_rIdentPosition <> 0.0,
+                      rPositionDown := (sv_rEjectorPosition + sv_rIdentPosition) * 0.5,
+                      rLowOutput := sv_rMaxSpeedFwd * 0.1,
+                      bStart := TRUE,
+                      bStop := bStop,
+                      bDirection := TRUE,
+                      rActPos := sv_rEjectorPosition,
+                      rTargetPos := sv_rIdentPosition,
+                      dDelayTimeOn := sv_EjectorFwdTimesSet.dSetDelayTimePump,
+                      dDelayTimeOff := sv_dSetDelayTimeOffFwd,
+                      rPositionUp := sv_rEjectorPosition,
+                      rHighOutput := sv_ConstFwdVis.Velocity.Output.rOutputValue,
+                      dMaxMoveTime := sv_EjectorFwdTimesSet.dMaxMoveTime,
+                      rStopRamp := sv_rIdentStopRamp,
+                      bActive => sv_bOutputActive,
+                      rOutputPre => sv_rPressureAbs,
+                      rOutputVel => sv_rVelocityAbs,
+                      bPreOutputReached => sv_bPreOutputReady);
+
+abLintabApplyPres.aCalc(rX := sv_rPressureAbs,
+                        rY => sv_rPressure);
+
+abLintabApplyVel.aCalc(rX := sv_rVelocityAbs,
+                       rY => sv_rVelocity);
+
+
+;#END_EDIT_BLOCK END_ACTION (*AStepOutput*)
+ACTION AProfileOutput: #BEGIN_EDIT_BLOCK
+(**************************************** WARNING ********************************************
+ *** The KEBA Kemro K2 System including software is not intended for safety control tasks! ***
+ ***                       For further information see Comment tab!                        ***
+ *********************************************************************************************)
+
+abEjectorFwd.aRun(bStop := bStop OR sv_bTransducerError,
+                  bStart := TRUE,
+                  rActPosition := sv_rEjectorPosition,
+                  dMaxMoveTime := sv_EjectorFwdTimesSet.dMaxMoveTime,
+                  dDelayTimeOn := sv_EjectorFwdTimesSet.dSetDelayTimePump,
+                  dDelayTimeOff := sv_EjectorFwdTimesSet.dSetDelayTimeValve,
+                  DeadTime := sv_dSetDelayTimeOffFwd,
+                  rSmoothFactor := sv_rSmoothFactor,
+                  bActive => sv_bOutputActive,
+                  iActiveStage => sv_iActiveStage,
+                  bPreOutputReached => sv_bPreOutputReady,
+                  dActMoveTime => g_dActMoveTimeFwd);
+
+b := WRITE_SVREAL_DIRECT(sv_rPressureAbs, abEjectorFwd.aRun.rPressureOutput);
+b := WRITE_SVREAL_DIRECT(sv_rVelocityAbs, abEjectorFwd.aRun.rVelocityOutput);
+
+abLintabApplyPres.aCalc(rX := sv_rPressureAbs);
+b := WRITE_SVREAL_DIRECT(sv_rPressure, abLintabApplyPres.aCalc.rY);
+
+abLintabApplyVel.aCalc(rX := sv_rVelocityAbs);
+b := WRITE_SVREAL_DIRECT(sv_rVelocity, abLintabApplyVel.aCalc.rY);
+
+;#END_EDIT_BLOCK END_ACTION (*AProfileOutput*)
+ACTION AConstOutputLS: #BEGIN_EDIT_BLOCK
+(**************************************** WARNING ********************************************
+ *** The KEBA Kemro K2 System including software is not intended for safety control tasks! ***
+ ***                       For further information see Comment tab!                        ***
+ *********************************************************************************************)
+
+abEjectorFwdConstLS.aRun(bStop := bStop OR sv_bEjectorFwd,
+                         bStart := TRUE,
+                         dMaxTime := sv_EjectorFwdTimesSet.dMaxMoveTime,
+                         dDelayTimeOn := sv_EjectorFwdTimesSet.dSetDelayTimePump,
+                         dDelayTimeOff := sv_EjectorFwdTimesSet.dSetDelayTimeValve,
+                         bActive => sv_bOutputActive,
+                         dActTime => g_dActMoveTimeFwd,
+                         bPreOutputReached => sv_bPreOutputReady);
+
+b := WRITE_SVREAL_DIRECT(sv_rPressureAbs, abEjectorFwdConstLS.aRun.rOutputPre);
+b := WRITE_SVREAL_DIRECT(sv_rVelocityAbs, abEjectorFwdConstLS.aRun.rOutputVel);
+
+abLintabApplyPres.aCalc(rX := sv_rPressureAbs);
+b := WRITE_SVREAL_DIRECT(sv_rPressure, abLintabApplyPres.aCalc.rY);
+
+abLintabApplyVel.aCalc(rX := sv_rVelocityAbs);
+b := WRITE_SVREAL_DIRECT(sv_rVelocity, abLintabApplyVel.aCalc.rY);
+
+
+;#END_EDIT_BLOCK END_ACTION (*AConstOutputLS*)
+ACTION AConstOutput: #BEGIN_EDIT_BLOCK
+(**************************************** WARNING ********************************************
+ *** The KEBA Kemro K2 System including software is not intended for safety control tasks! ***
+ ***                       For further information see Comment tab!                        ***
+ *********************************************************************************************)
+
+abEjectorFwdConst.aRun(bStart := TRUE,
+                       bStop := bStop,
+                       dDelayTimeOn := sv_EjectorFwdTimesSet.dSetDelayTimePump,
+                       dDelayTimeOff := sv_EjectorFwdTimesSet.dSetDelayTimeValve,
+                       rOutputPre => sv_rPressureAbs,
+                       rOutputVel => sv_rVelocityAbs,
+                       bActive => sv_bOutputActive,
+                       dActTime => sv_EjectorFwdTimesAct.dActMoveTime,
+                       bPreOutputReached => sv_bPreOutputReady);
+
+abLintabApplyPres.aCalc(rX := sv_rPressureAbs,
+                        rY => sv_rPressure);
+
+abLintabApplyVel.aCalc(rX := sv_rVelocityAbs,
+                       rY => sv_rVelocity);
+
+
+;#END_EDIT_BLOCK END_ACTION (*AConstOutput*)
+(* end sfc-code *)
+
+
+END_ALGORITHM
+
+ALGORITHM aInit
+
+
+VAR_INPUT
+ pProfile : REFTO KAPPL_VisProfile;
+ pdCalculatedDuration : REFTO TIME;
+ prCalcDurationStartPosition : REFTO REAL;
+END_VAR
+#BEGIN_EDIT_BLOCK
+(**************************************** WARNING ********************************************
+ *** The KEBA Kemro K2 System including software is not intended for safety control tasks! ***
+ ***                       For further information see Comment tab!                        ***
+ *********************************************************************************************)
+
+abEjectorFwd.aInit(pProfile := pProfile,
+                   MoveDir := cMoveFwd,
+                   pdCalcedDuration := pdCalculatedDuration,
+                   prCalcDurationStartPosition := prCalcDurationStartPosition);
+
+mpdCalculatedDuration := pdCalculatedDuration;
+
+abEjectorFwdConst.aInit(pConst := @sv_ConstFwdVis,
+                        MoveId := cMoveFwd);
+
+abEjectorFwdConstLS.aInit(pConst := @sv_ConstFwdVisLS,
+                          MoveId := cMoveFwd);
+
+abEjectorFwdCalib.aInit(pConst := @sv_ConstFwdVis,
+                        MoveId := cMoveFwd);
+
+abLintabApplyPres.aInit(pLintab := @sv_LintabOutFwdP);
+
+abLintabApplyVel.aInit(pLintab := @sv_LintabOutFwdV);
+
+abEjectorFwdStep.aInit(pConst := @sv_ConstFwdVis,
+                       MoveId := cMoveFwd,
+                       prMaxSpeed := @sv_rMaxSpeedFwd);
+
+
+;#END_EDIT_BLOCK END_ALGORITHM
+
+PROCESS_ALGORITHM paInitDebugMeasurement ON TaskSlow AUTOSTART
+
+
+VAR
+ fuName : STRING(255);
+ variableName : STRING(255);
+ swoState : KSWO_Status;
+ b : BOOL;
+END_VAR
+#BEGIN_EDIT_BLOCK
+fuName := GET_MY_FU_NAME();
+variableName := CONCAT(fuName,'.Fwd.rSetPressure bar');
+swoState := KSWO_AddVariable( Task := TaskAnalog,
+                              Name := variableName,
+                              Variable := sv_rPressureAbs);
+b := FAddToScopeGroup(Task := TaskAnalog, 
+                      Name := variableName, 
+                      GroupId := cScopeGroupEjector);
+variableName := CONCAT(fuName,'.Fwd.rSetVelocity mm/s');
+swoState := KSWO_AddVariable( Task := TaskAnalog,
+                              Name := variableName,
+                              Variable := sv_rVelocityAbs);
+b := FAddToScopeGroup(Task := TaskAnalog, 
+                      Name := variableName, 
+                      GroupId := cScopeGroupEjector);
+variableName := CONCAT(fuName,'.Fwd.bActive');
+swoState := KSWO_AddVariable( Task := TaskAnalog,
+                              Name := variableName,
+                              Variable := sv_bOutputActive);
+b := FAddToScopeGroup(Task := TaskAnalog, 
+                      Name := variableName, 
+                      GroupId := cScopeGroupEjector);
+STOP_PROCESS_ALGORITHM();
+
+
+;#END_EDIT_BLOCK END_ALGORITHM
+
+
+
+END_ALGORITHM_BLOCK
+
+
+
+#END_OF_IEC_PART
+
+@Puma @IecEditor 6 152 @Pou 25 
+@@@BEG_Comment@@@
+
+@@@END_Comment@@@
+
+@BEG_Contents 
+
+@BEG_Func 
+@RT(17)FuncTreeContainer 
+4 
+@Var @RT(14)GET_MY_FU_NAME @RT(0) @T @T @DERIVED 0 @F @RT(22)KEBA_STANDARD_FUNCTION @F 
+@T 
+@BEG_Attrib 
+0 @RT(0) @RT(0) 
+@END_Attrib 
+1 1 @F @F @F @F 
+
+@Var @RT(19)WRITE_SVREAL_DIRECT @RT(0) @T @T @DERIVED 0 @F @RT(22)KEBA_STANDARD_FUNCTION @F 
+@T 
+@BEG_Attrib 
+0 @RT(0) @RT(0) 
+@END_Attrib 
+1 1 @F @F @F @F 
+
+@Var @RT(16)KSWO_AddVariable @RT(0) @T @T @DERIVED 0 @F @RT(22)KEBA_STANDARD_FUNCTION @F 
+@T 
+@BEG_Attrib 
+0 @RT(0) @RT(0) 
+@END_Attrib 
+1 1 @F @F @F @F 
+
+@Var @RT(16)FAddToScopeGroup @RT(0) @T @T @DERIVED 0 @F @RT(8)FUNCTION @F 
+@T 
+@BEG_Attrib 
+0 @RT(0) @RT(0) 
+@END_Attrib 
+1 1 @F @F @F @F 
+
+@END_Func 
+
+@BEG_Const 
+@RT(18)ConstTreeContainer 
+11 
+@Var @RT(22)cLockGroupClampingUnit @RT(0) @T @F @DT @RT(4)DINT @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+0 @RT(2)65 @RT(29)Members: Mold, Ejector, Cores 
+@END_Attrib 
+1 1 @F @F @F @F 
+
+@Var @RT(15)cLockGroupMotor @RT(0) @T @F @DT @RT(4)DINT @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+0 @RT(2)69 @RT(56)Members: Mold, Ejector, Cores, Injection, Plast, Purge,  
+@END_Attrib 
+1 1 @F @F @F @F 
+
+@Var @RT(24)cLockGroupSafetyGateMold @RT(0) @T @F @DT @RT(4)DINT @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+0 @RT(2)61 @RT(73)Members: Mold Close, Mold Hight Forward, Auto Mold Hight, Core In, Inject 
+@END_Attrib 
+1 1 @F @F @F @F 
+
+@Var @RT(24)cLockGroupRotateEjectPos @RT(0) @T @F @DT @RT(4)DINT @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+0 @RT(2)73 @RT(8)Members: 
+@END_Attrib 
+1 1 @F @F @F @F 
+
+@Var @RT(8)cMoveFwd @RT(0) @T @F @DT @RT(4)DINT @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+0 @RT(2)12 @RT(16)movement forward 
+@END_Attrib 
+1 1 @F @F @F @F 
+
+@Var @RT(7)nActive @RT(0) @T @T @DERIVED 0 @F @RT(16)tnActiveInactive @F 
+@T 
+@BEG_Attrib 
+0 @RT(1)1 @RT(0) 
+@END_Attrib 
+1 1 @F @F @F @F 
+
+@Var @RT(12)nDeviceState @RT(0) @T @T @DERIVED 0 @F @RT(12)tnTraceLevel @F 
+@T 
+@BEG_Attrib 
+0 @RT(1)3 @RT(0) 
+@END_Attrib 
+1 1 @F @F @F @F 
+
+@Var @RT(9)nInactive @RT(0) @T @T @DERIVED 0 @F @RT(16)tnActiveInactive @F 
+@T 
+@BEG_Attrib 
+0 @RT(1)0 @RT(0) 
+@END_Attrib 
+1 1 @F @F @F @F 
+
+@Var @RT(6)nSetup @RT(0) @T @T @DERIVED 0 @F @RT(15)tnOperationMode @F 
+@T 
+@BEG_Attrib 
+0 @RT(1)0 @RT(36)Setup mode only for service engineer 
+@END_Attrib 
+1 1 @F @F @F @F 
+
+@Var @RT(18)tnCalibState_Error @RT(0) @T @T @DERIVED 0 @F @RT(12)tnCalibState @F 
+@T 
+@BEG_Attrib 
+0 @RT(1)3 @RT(32)error occured during calibration 
+@END_Attrib 
+1 1 @F @F @F @F 
+
+@Var @RT(18)cScopeGroupEjector @RT(0) @T @F @DT @RT(5)UDINT @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+0 @RT(1)1 @RT(0) 
+@END_Attrib 
+1 1 @F @F @F @F 
+
+@END_Const 
+
+@BEG_Export 
+
+@BEG_Kind 
+@ALGORITHM_BLOCK @RT(9)ABMoveFwd @STRUCTURED_TEXT 
+@RT(0) @RT(0) @RT(0) 
+@END_Kind 
+
+@BEG_Dcl 
+@RT(16)DclTreeContainer 
+46 
+@Var @RT(10)sv_MoveFwd @RT(0) @T @T @DERIVED 0 @T @T @DT @RT(10)tsMoveData @RT(0) @T @T @UNKNOWN 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 8 @F @F @F @F 
+
+@Var @RT(19)sv_rEjectorPosition @RT(0) @T @F @DT @RT(4)REAL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 8 @F @F @F @F 
+
+@Var @RT(13)sv_bFwdActive @RT(0) @T @F @DT @RT(4)BOOL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(25)Ejector forward is active @RT(0) 
+@END_Attrib 
+1 8 @F @F @F @F 
+
+@Var @RT(12)sv_rPressure @RT(0) @T @F @DT @RT(4)REAL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 8 @F @F @F @F 
+
+@Var @RT(12)sv_rVelocity @RT(0) @T @F @DT @RT(4)REAL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 8 @F @F @F @F 
+
+@Var @RT(15)sv_iActiveStage @RT(0) @T @F @DT @RT(4)DINT @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 8 @F @F @F @F 
+
+@Var @RT(16)sv_OperationMode @RT(0) @T @T @DERIVED 0 @T @T @DT @RT(15)tnOperationMode @RT(0) @T @T @UNKNOWN 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 8 @F @F @F @F 
+
+@Var @RT(14)sv_ConstFwdVis @RT(0) @T @T @DERIVED 0 @T @T @DT @RT(8)tsVelPre @RT(0) @T @T @UNKNOWN 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 8 @F @F @F @F 
+
+@Var @RT(21)sv_bDoTransducerCalib @RT(0) @T @F @DT @RT(4)BOOL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 8 @F @F @F @F 
+
+@Var @RT(17)sv_TmpLintabPoint @RT(0) @T @T @DERIVED 0 @T @T @DT @RT(18)KCTRL_Lintab_Point @RT(0) @T @T @UNKNOWN 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 8 @F @F @F @F 
+
+@Var @RT(17)sv_rEjectorStroke @RT(0) @T @F @DT @RT(4)REAL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(43)Position when ejector is completely forward @RT(0) 
+@END_Attrib 
+1 8 @F @F @F @F 
+
+@Var @RT(11)ai_Position @RT(0) @T @F @DT @RT(4)REAL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 8 @F @F @F @F 
+
+@Var @RT(24)sv_dStandStillDetectTime @RT(0) @T @F @DT @RT(4)TIME @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(29)time for standstill detection @RT(0) 
+@END_Attrib 
+1 8 @F @F @F @F 
+
+@Var @RT(13)sv_CalibState @RT(0) @T @T @DERIVED 0 @T @T @DT @RT(15)tsCalibMovement @RT(0) @T @T @UNKNOWN 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 8 @F @F @F @F 
+
+@Var @RT(16)sv_bOutputActive @RT(0) @T @F @DT @RT(4)BOOL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(16)Output is active @RT(0) 
+@END_Attrib 
+1 8 @F @F @F @F 
+
+@Var @RT(18)sv_bPreOutputReady @RT(0) @T @F @DT @RT(4)BOOL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(18)PreOutput is ready @RT(0) 
+@END_Attrib 
+1 8 @F @F @F @F 
+
+@Var @RT(18)sv_rMaxVoltageDiff @RT(0) @T @F @DT @RT(4)REAL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(45)max. voltage difference to detect stand still @RT(0) 
+@END_Attrib 
+1 8 @F @F @F @F 
+
+@Var @RT(19)sv_bTransducerError @RT(0) @T @F @DT @RT(4)BOOL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 8 @F @F @F @F 
+
+@Var @RT(14)sv_bEjectorFwd @RT(0) @T @F @DT @RT(4)BOOL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(29)ejector is in fwd endposition @RT(0) 
+@END_Attrib 
+1 8 @F @F @F @F 
+
+@Var @RT(21)sv_EjectorFwdTimesSet @RT(0) @T @T @DERIVED 0 @T @T @DT @RT(10)tsSetTimes @RT(0) @T @T @UNKNOWN 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 8 @F @F @F @F 
+
+@Var @RT(21)sv_EjectorFwdTimesAct @RT(0) @T @T @DERIVED 0 @T @T @DT @RT(10)tsActTimes @RT(0) @T @T @UNKNOWN 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 8 @F @F @F @F 
+
+@Var @RT(16)sv_LintabOutFwdP @RT(0) @T @T @DERIVED 0 @T @T @DT @RT(16)KAPPL_LintabData @RT(0) @T @T @UNKNOWN 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 8 @F @F @F @F 
+
+@Var @RT(16)sv_LintabOutFwdV @RT(0) @T @T @DERIVED 0 @T @T @DT @RT(16)KAPPL_LintabData @RT(0) @T @T @UNKNOWN 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 8 @F @F @F @F 
+
+@Var @RT(15)sv_rPressureAbs @RT(0) @T @F @DT @RT(4)REAL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 8 @F @F @F @F 
+
+@Var @RT(15)sv_rVelocityAbs @RT(0) @T @F @DT @RT(4)REAL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 8 @F @F @F @F 
+
+@Var @RT(15)sv_rMaxSpeedFwd @RT(0) @T @F @DT @RT(4)REAL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 8 @F @F @F @F 
+
+@Var @RT(23)sv_bTransducerAvailable @RT(0) @T @F @DT @RT(4)BOOL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(16)chad(CR_0038565) @RT(0) 
+@END_Attrib 
+1 8 @F @F @F @F 
+
+@Var @RT(16)sv_ConstFwdVisLS @RT(0) @T @T @DERIVED 0 @T @T @DT @RT(8)tsVelPre @RT(0) @T @T @UNKNOWN 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(16)chad(CR_0038565) @RT(0) 
+@END_Attrib 
+1 8 @F @F @F @F 
+
+@Var @RT(19)sv_bVerticalMachine @RT(0) @T @F @DT @RT(4)BOOL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 8 @F @F @F @F 
+
+@Var @RT(13)sv_bMoveIdent @RT(0) @T @F @DT @RT(4)BOOL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 8 @F @F @F @F 
+
+@Var @RT(17)sv_rIdentPosition @RT(0) @T @F @DT @RT(4)REAL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 8 @F @F @F @F 
+
+@Var @RT(17)sv_rIdentStopRamp @RT(0) @T @F @DT @RT(4)REAL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 8 @F @F @F @F 
+
+@Var @RT(22)sv_dSetDelayTimeOffFwd @RT(0) @T @F @DT @RT(4)TIME @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 8 @F @F @F @F 
+
+@Var @RT(16)sv_rSmoothFactor @RT(0) @T @F @DT @RT(4)REAL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 8 @F @F @F @F 
+
+@Var @RT(8)TaskSlow @RT(0) @T @F @DT @RT(4)TASK @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 7 @F @F @F @F 
+
+@Var @RT(10)TaskAnalog @RT(0) @T @F @DT @RT(4)TASK @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 7 @F @F @F @F 
+
+@Var @RT(19)erEjectorNotForward @RT(0) @T @F @DT @RT(5)ALARM @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 7 @F @F @F @F 
+
+@Var @RT(17)g_dActMoveTimeFwd @RT(0) @T @F @DT @RT(4)TIME @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 6 @F @F @F @F 
+
+@Var @RT(12)abEjectorFwd @RT(0) @T @T @DERIVED 0 @T @T @DT @RT(17)ABProfileMovement @RT(0) @T @T @UNKNOWN 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(17)abEjectorFwdConst @RT(0) @T @T @DERIVED 0 @T @T @DT @RT(15)ABConstMovement @RT(0) @T @T @UNKNOWN 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(17)abEjectorFwdCalib @RT(0) @T @T @DERIVED 0 @T @T @DT @RT(12)ABConstCalib @RT(0) @T @T @UNKNOWN 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(16)abLintabApplyVel @RT(0) @T @T @DERIVED 0 @T @T @DT @RT(13)ABLintabApply @RT(0) @T @T @UNKNOWN 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(17)abLintabApplyPres @RT(0) @T @T @DERIVED 0 @T @T @DT @RT(13)ABLintabApply @RT(0) @T @T @UNKNOWN 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(21)mpdCalculatedDuration @RT(0) @T @T @REFTO 0 @T @DT @RT(4)TIME @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(19)abEjectorFwdConstLS @RT(0) @T @T @DERIVED 0 @T @T @DT @RT(15)ABConstMovement @RT(0) @T @T @UNKNOWN 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(16)chad(CR_0038565) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(16)abEjectorFwdStep @RT(0) @T @T @DERIVED 0 @T @T @DT @RT(12)ABStepOutput @RT(0) @T @T @UNKNOWN 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@END_Dcl 
+
+@END_Export 
+
+@BEG_Body 
+
+4 
+
+@BEG_Export 
+
+@BEG_Algo 
+@ALGORITHM @RT(9)aRegister @STRUCTURED_TEXT 
+@RT(0) @RT(0) @RT(0) @F @F 
+@END_Algo 
+
+@BEG_Dcl 
+@RT(16)DclTreeContainer 
+1 
+@Var @RT(18)abMovementRegister @RT(0) @T @T @DERIVED 0 @T @T @DT @RT(18)ABMovementRegister @RT(0) @T @T @UNKNOWN 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@END_Dcl 
+
+@END_Export 
+
+@BEG_Export 
+
+@BEG_Algo 
+@ALGORITHM @RT(4)aRun @SEQUENTIAL_FLOW_CHART 
+@RT(0) @RT(0) @RT(0) @F @F 
+@END_Algo 
+
+@BEG_Dcl 
+@RT(16)DclTreeContainer 
+8 
+@Var @RT(6)bReady @RT(0) @T @F @DT @RT(4)BOOL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 3 @F @F @F @F 
+
+@Var @RT(5)bStop @RT(0) @T @F @DT @RT(4)BOOL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 1 @F @F @F @F 
+
+@Var @RT(1)b @RT(0) @T @F @DT @RT(4)BOOL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 4 @F @F @F @F 
+
+@Var @RT(5)dummy @RT(0) @T @F @DT @RT(4)DINT @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(18)fbSetMovementState @RT(0) @T @T @DERIVED 0 @T @T @DT @RT(18)FBSetMovementState @RT(0) @T @T @UNKNOWN 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(6)bError @RT(0) @T @F @DT @RT(4)BOOL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(10)iErrorInfo @RT(0) @T @F @DT @RT(4)DINT @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(13)fbDebugTrace2 @RT(0) @T @T @DERIVED 0 @T @T @DT @RT(13)FBDebugTrace2 @RT(0) @T @T @UNKNOWN 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@END_Dcl 
+
+@END_Export 
+
+@BEG_Export 
+
+@BEG_Algo 
+@ALGORITHM @RT(5)aInit @STRUCTURED_TEXT 
+@RT(0) @RT(0) @RT(0) @F @F 
+@END_Algo 
+
+@BEG_Dcl 
+@RT(16)DclTreeContainer 
+3 
+@Var @RT(8)pProfile @RT(0) @T @T @REFTO 0 @F @DERIVED 0 @T @T @DT @RT(16)KAPPL_VisProfile @RT(0) @T @T @UNKNOWN 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 1 @F @F @F @F 
+
+@Var @RT(20)pdCalculatedDuration @RT(0) @T @T @REFTO 0 @T @DT @RT(4)TIME @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 1 @F @F @F @F 
+
+@Var @RT(27)prCalcDurationStartPosition @RT(0) @T @T @REFTO 0 @T @DT @RT(4)REAL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 1 @F @F @F @F 
+
+@END_Dcl 
+
+@END_Export 
+
+@BEG_Export 
+
+@BEG_Algo 
+@PROCESS_ALGORITHM @RT(22)paInitDebugMeasurement @STRUCTURED_TEXT 
+@RT(0) @RT(0) @RT(8)TaskSlow @T @F 
+@END_Algo 
+
+@BEG_Dcl 
+@RT(16)DclTreeContainer 
+4 
+@Var @RT(6)fuName @RT(0) @T @F @DT @RT(11)STRING(255) @RT(0) @T @T @STRING 0 @F @RT(3)255 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(12)variableName @RT(0) @T @F @DT @RT(11)STRING(255) @RT(0) @T @T @STRING 0 @F @RT(3)255 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(8)swoState @RT(0) @T @T @DERIVED 0 @T @T @DT @RT(11)KSWO_Status @RT(0) @T @T @UNKNOWN 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(1)b @RT(0) @T @F @DT @RT(4)BOOL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@END_Dcl 
+
+@END_Export 
+
+@BEG_Body 
+@TL(29)
+(**************************************** WARNING ********************************************
+ *** The KEBA Kemro K2 System including software is not intended for safety control tasks! ***
+ ***                       For further information see Comment tab!                        ***
+ *********************************************************************************************)
+
+IF sv_bVerticalMachine THEN
+   //for a vertical machine the ejector can also be operated while mold is closed(depending on mode)
+   //ejector can be inserted after mold close
+   //-> the automatic safety check could forbid ejector operation in manual mode while mold is open
+   sv_MoveFwd.iSafetyIdentifier := 0;
+END_IF;
+
+// movement registration
+sv_MoveFwd.LockGroups[1] := cLockGroupClampingUnit;
+sv_MoveFwd.LockGroups[2] := cLockGroupMotor;
+sv_MoveFwd.LockGroups[3] := cLockGroupSafetyGateMold;
+sv_MoveFwd.LockGroups[4] := cLockGroupRotateEjectPos;
+sv_MoveFwd.Alarm.AlarmId := erEjectorNotForward;
+
+sv_MoveFwd.pbPosReached := @sv_bEjectorFwd;
+sv_MoveFwd.pdStartDelaySet := @sv_EjectorFwdTimesSet.dSetDelayTime;
+sv_MoveFwd.pdStartDelayAct := @sv_EjectorFwdTimesAct.dActDelayTime;
+sv_MoveFwd.pdActiveTimeAct := @sv_EjectorFwdTimesAct.dActMoveTime;
+sv_MoveFwd.pdTimeLimit     := @sv_EjectorFwdTimesSet.dMaxMoveTime;
+sv_MoveFwd.sIconPath := CONCAT(GET_MY_FU_NAME(), "\hmi\images\movEjectFwd.gif");
+
+abMovementRegister.aRegister(@sv_MoveFwd);
+
+
+@END_Body 
+
+@@@BEG_Comment@@@ 
+@TL(0)
+
+@@@END_Comment@@@ 
+
+@BEG_SfcBody 
+14 10 14 
+
+@BEG_SfcData 2 
+@StepSeq @RT(4)sseq @F 1 
+@Loop @RT(4)loop @F 2 
+@StepSeq @RT(4)sseq @F 3 
+@Step @RT(5)START @F @T @F @F @RT(0) @F 
+@AcbCont @RT(7)unnamed @F 1 
+@Acb @RT(6)AStart @F @T @RT(1)P @RT(0) @F @F @T @TL(7)
+bReady := FALSE; 
+fbSetMovementState(MoveId   := cMoveFwd,
+                   MoveDir  := cMoveFwd,
+                   State    := nActive);
+sv_bFwdActive := TRUE;
+fbDebugTrace2(nDeviceState, 'Ejector Fwd Started');
+
+@F 
+
+@AltBranch @RT(3)alt @F 2 
+@TransSeq @RT(4)tseq @F 3 
+@Trans @RT(10)TSetupMode @F @T @F @F @T @F @TL(2)
+sv_OperationMode = nSetup
+
+@RT(10)TSetupMode @F 
+@Step @RT(14)S_CheckIfCalib @F @F @F @F @RT(0) @F 
+@AcbCont @RT(7)unnamed @F 0 
+
+@AltBranch @RT(3)alt @F 3 
+@TransSeq @RT(4)tseq @F 3 
+@Trans @RT(9)TNotCalib @F @T @F @F @T @F @TL(3)
+NOT sv_bDoTransducerCalib AND
+NOT sv_bMoveIdent
+
+@RT(9)TNotCalib @F 
+@Step @RT(11)S_ConstMove @F @F @F @F @RT(0) @F 
+@AcbCont @RT(7)unnamed @F 2 
+@Acb @RT(16)AResetConstBlock @F @F @RT(1)P @RT(0) @F @F @F @F 
+@Acb @RT(12)AConstOutput @F @F @RT(1)N @RT(0) @F @F @F @F 
+
+@Trans @RT(15)TConstMoveReady @F @T @F @F @T @T @TL(2)
+NOT abEjectorFwdConst.aRun.bActive 
+
+@RT(15)TConstMoveReady @F 
+
+@TransSeq @RT(4)tseq @F 3 
+@Trans @RT(15)TCalibActivated @F @T @F @F @T @F @TL(2)
+sv_bDoTransducerCalib
+
+@RT(15)TCalibActivated @F 
+@Step @RT(7)S_Calib @F @F @F @F @RT(0) @F 
+@AcbCont @RT(7)unnamed @F 3 
+@Acb @RT(16)AResetCalibBlock @F @F @RT(1)P @RT(0) @F @F @F @F 
+@Acb @RT(16)ATransducerCalib @F @F @RT(1)N @RT(0) @F @F @F @F 
+@Acb @RT(16)ACheckCalibError @F @F @RT(1)N @RT(0) @F @F @F @F 
+
+@Trans @RT(11)TCalibReady @F @T @F @F @T @T @TL(2)
+NOT abEjectorFwdCalib.aRun.bActive OR bError
+
+@RT(11)TCalibReady @F 
+
+@TransSeq @RT(4)tseq @F 3 
+@Trans @RT(19)TMoveIdentActivated @F @T @F @F @T @F @TL(2)
+sv_bMoveIdent
+
+@RT(19)TMoveIdentActivated @F 
+@Step @RT(11)S_MoveIdent @F @F @F @F @RT(0) @F 
+@AcbCont @RT(7)unnamed @F 2 
+@Acb @RT(16)AResetIdentBlock @F @F @RT(1)P @RT(0) @F @F @F @F 
+@Acb @RT(11)AStepOutput @F @F @RT(1)N @RT(0) @F @F @F @F 
+
+@Trans @RT(15)TMoveIdentReady @F @T @F @F @T @T @TL(2)
+NOT abEjectorFwdStep.aRun.bActive
+
+@RT(15)TMoveIdentReady @F 
+
+
+
+@TransSeq @RT(4)tseq @F 3 
+@Trans @RT(9)TNotSetup @F @T @F @F @T @F @TL(2)
+sv_OperationMode <> nSetup
+
+@RT(9)TNotSetup @F 
+@Step @RT(24)S_IsTransLinkedAndActive @F @F @F @F @RT(0) @F 
+@AcbCont @RT(7)unnamed @F 0 
+
+@AltBranch @RT(3)alt @F 2 
+@TransSeq @RT(4)tseq @F 3 
+@Trans @RT(24)TTransLinkedAndActivated @F @T @F @F @T @F @TL(2)
+sv_bTransducerAvailable
+
+@RT(24)TTransLinkedAndActivated @F 
+@Step @RT(13)S_ProfileMove @F @F @F @F @RT(0) @F 
+@AcbCont @RT(7)unnamed @F 2 
+@Acb @RT(18)AResetProfileBlock @F @F @RT(1)P @RT(0) @F @F @F @F 
+@Acb @RT(14)AProfileOutput @F @F @RT(1)N @RT(0) @F @F @F @F 
+
+@Trans @RT(17)TProfileMoveReady @F @T @F @F @T @F @TL(2)
+NOT abEjectorFwd.aRun.bActive
+
+@RT(17)TProfileMoveReady @F 
+
+@TransSeq @RT(4)tseq @F 3 
+@Trans @RT(18)TTransNotActivated @F @T @F @F @T @F @TL(2)
+NOT sv_bTransducerAvailable
+
+@RT(18)TTransNotActivated @F 
+@Step @RT(13)S_ConstMoveLS @F @F @F @F @RT(0) @F 
+@AcbCont @RT(7)unnamed @F 2 
+@Acb @RT(18)AResetConstBlockLS @F @F @RT(1)P @RT(0) @F @F @F @F 
+@Acb @RT(14)AConstOutputLS @F @F @RT(1)N @RT(0) @F @F @F @F 
+
+@Trans @RT(17)TConstMoveLSReady @F @T @F @F @T @F @TL(2)
+NOT abEjectorFwdConstLS.aRun.bActive
+
+@RT(17)TConstMoveLSReady @F 
+
+
+
+
+@Step @RT(5)READY @F @F @F @F @RT(0) @F 
+@AcbCont @RT(7)unnamed @F 1 
+@Acb @RT(6)AReady @F @T @RT(1)P @RT(0) @F @F @T @TL(7)
+bReady := TRUE;
+fbSetMovementState(MoveId   := cMoveFwd,
+                   MoveDir  := cMoveFwd,
+                   State    := nInactive);
+sv_bFwdActive := FALSE;                   
+fbDebugTrace2(nDeviceState, 'Ejector Fwd Ready');
+
+@F 
+
+
+@Trans @RT(7)Trans12 @F @T @F @T @T @T @TL(2)
+TRUE
+
+@RT(7)Trans12 @F 
+
+@END_SfcData 
+@SaActions 11 
+@SaText @RT(18)AResetProfileBlock 1 @TL(7)
+(**************************************** WARNING ********************************************
+ *** The KEBA Kemro K2 System including software is not intended for safety control tasks! ***
+ ***                       For further information see Comment tab!                        ***
+ *********************************************************************************************)
+ 
+abEjectorFwd.aRun(bStart := FALSE);
+
+
+@SaText @RT(16)AResetCalibBlock 1 @TL(13)
+(**************************************** WARNING ********************************************
+ *** The KEBA Kemro K2 System including software is not intended for safety control tasks! ***
+ ***                       For further information see Comment tab!                        ***
+ *********************************************************************************************)
+bError := FALSE;
+abEjectorFwdCalib.aRun(bStart := FALSE,
+                       LintabPoint := sv_TmpLintabPoint);
+IF  abEjectorFwdCalib.aRun.bError THEN
+   sv_CalibState.Status := tnCalibState_Error;
+   bError := TRUE;
+   dummy := Print("Calib Error: Reset calib block failed"); 
+END_IF;
+
+
+@SaText @RT(18)AResetConstBlockLS 1 @TL(7)
+(**************************************** WARNING ********************************************
+ *** The KEBA Kemro K2 System including software is not intended for safety control tasks! ***
+ ***                       For further information see Comment tab!                        ***
+ *********************************************************************************************)
+
+abEjectorFwdConstLS.aRun(bStart := FALSE);
+
+
+@SaText @RT(16)ACheckCalibError 1 @TL(5)
+IF bError THEN
+   sv_CalibState.Status := tnCalibState_Error;
+   dummy := Print("Calib Error: %i", iErrorInfo);
+END_IF;
+
+
+@SaText @RT(16)AResetConstBlock 1 @TL(7)
+(**************************************** WARNING ********************************************
+ *** The KEBA Kemro K2 System including software is not intended for safety control tasks! ***
+ ***                       For further information see Comment tab!                        ***
+ *********************************************************************************************)
+
+abEjectorFwdConst.aRun(bStart := FALSE);
+
+
+@SaText @RT(16)AResetIdentBlock 1 @TL(3)
+abEjectorFwdStep.aRun(bStart := FALSE);
+
+
+
+@SaText @RT(16)ATransducerCalib 1 @TL(29)
+(**************************************** WARNING ********************************************
+ *** The KEBA Kemro K2 System including software is not intended for safety control tasks! ***
+ ***                       For further information see Comment tab!                        ***
+ *********************************************************************************************)
+
+abEjectorFwdCalib.aRun(bStop := bStop OR sv_bTransducerError,
+                       bStart := TRUE,
+                       rActVoltage := ai_Position,
+                       rMaxVoltageDiff := sv_rMaxVoltageDiff,
+                       dStandStillDetectTime := sv_dStandStillDetectTime,
+                       LintabPoint := sv_TmpLintabPoint,
+                       rSetValue := sv_rEjectorStroke,
+                       dDelayTimeOn := sv_EjectorFwdTimesSet.dSetDelayTimePump,
+                       dDelayTimeOff := sv_EjectorFwdTimesSet.dSetDelayTimeValve,
+                       bActive => sv_bOutputActive,
+                       rOutputPre => sv_rPressureAbs,
+                       rOutputVel => sv_rVelocityAbs,
+                       bPreOutputReached => sv_bPreOutputReady,
+                       iErrorInfo => iErrorInfo);
+
+sv_bDoTransducerCalib := NOT (abEjectorFwdCalib.aRun.bPointDetected);
+bError := abEjectorFwdCalib.aRun.bError OR bError;
+
+abLintabApplyPres.aCalc(rX := sv_rPressureAbs,
+                        rY => sv_rPressure);
+
+abLintabApplyVel.aCalc(rX := sv_rVelocityAbs,
+                       rY => sv_rVelocity);
+
+
+@SaText @RT(11)AStepOutput 1 @TL(31)
+(**************************************** WARNING ********************************************
+ *** The KEBA Kemro K2 System including software is not intended for safety control tasks! ***
+ ***                       For further information see Comment tab!                        ***
+ *********************************************************************************************)
+
+abEjectorFwdStep.aRun(bUsePosDetect := sv_rIdentPosition <> 0.0,
+                      rPositionDown := (sv_rEjectorPosition + sv_rIdentPosition) * 0.5,
+                      rLowOutput := sv_rMaxSpeedFwd * 0.1,
+                      bStart := TRUE,
+                      bStop := bStop,
+                      bDirection := TRUE,
+                      rActPos := sv_rEjectorPosition,
+                      rTargetPos := sv_rIdentPosition,
+                      dDelayTimeOn := sv_EjectorFwdTimesSet.dSetDelayTimePump,
+                      dDelayTimeOff := sv_dSetDelayTimeOffFwd,
+                      rPositionUp := sv_rEjectorPosition,
+                      rHighOutput := sv_ConstFwdVis.Velocity.Output.rOutputValue,
+                      dMaxMoveTime := sv_EjectorFwdTimesSet.dMaxMoveTime,
+                      rStopRamp := sv_rIdentStopRamp,
+                      bActive => sv_bOutputActive,
+                      rOutputPre => sv_rPressureAbs,
+                      rOutputVel => sv_rVelocityAbs,
+                      bPreOutputReached => sv_bPreOutputReady);
+
+abLintabApplyPres.aCalc(rX := sv_rPressureAbs,
+                        rY => sv_rPressure);
+
+abLintabApplyVel.aCalc(rX := sv_rVelocityAbs,
+                       rY => sv_rVelocity);
+
+
+
+@SaText @RT(14)AProfileOutput 1 @TL(27)
+(**************************************** WARNING ********************************************
+ *** The KEBA Kemro K2 System including software is not intended for safety control tasks! ***
+ ***                       For further information see Comment tab!                        ***
+ *********************************************************************************************)
+
+abEjectorFwd.aRun(bStop := bStop OR sv_bTransducerError,
+                  bStart := TRUE,
+                  rActPosition := sv_rEjectorPosition,
+                  dMaxMoveTime := sv_EjectorFwdTimesSet.dMaxMoveTime,
+                  dDelayTimeOn := sv_EjectorFwdTimesSet.dSetDelayTimePump,
+                  dDelayTimeOff := sv_EjectorFwdTimesSet.dSetDelayTimeValve,
+                  DeadTime := sv_dSetDelayTimeOffFwd,
+                  rSmoothFactor := sv_rSmoothFactor,
+                  bActive => sv_bOutputActive,
+                  iActiveStage => sv_iActiveStage,
+                  bPreOutputReached => sv_bPreOutputReady,
+                  dActMoveTime => g_dActMoveTimeFwd);
+
+b := WRITE_SVREAL_DIRECT(sv_rPressureAbs, abEjectorFwd.aRun.rPressureOutput);
+b := WRITE_SVREAL_DIRECT(sv_rVelocityAbs, abEjectorFwd.aRun.rVelocityOutput);
+
+abLintabApplyPres.aCalc(rX := sv_rPressureAbs);
+b := WRITE_SVREAL_DIRECT(sv_rPressure, abLintabApplyPres.aCalc.rY);
+
+abLintabApplyVel.aCalc(rX := sv_rVelocityAbs);
+b := WRITE_SVREAL_DIRECT(sv_rVelocity, abLintabApplyVel.aCalc.rY);
+
+
+@SaText @RT(14)AConstOutputLS 1 @TL(24)
+(**************************************** WARNING ********************************************
+ *** The KEBA Kemro K2 System including software is not intended for safety control tasks! ***
+ ***                       For further information see Comment tab!                        ***
+ *********************************************************************************************)
+
+abEjectorFwdConstLS.aRun(bStop := bStop OR sv_bEjectorFwd,
+                         bStart := TRUE,
+                         dMaxTime := sv_EjectorFwdTimesSet.dMaxMoveTime,
+                         dDelayTimeOn := sv_EjectorFwdTimesSet.dSetDelayTimePump,
+                         dDelayTimeOff := sv_EjectorFwdTimesSet.dSetDelayTimeValve,
+                         bActive => sv_bOutputActive,
+                         dActTime => g_dActMoveTimeFwd,
+                         bPreOutputReached => sv_bPreOutputReady);
+
+b := WRITE_SVREAL_DIRECT(sv_rPressureAbs, abEjectorFwdConstLS.aRun.rOutputPre);
+b := WRITE_SVREAL_DIRECT(sv_rVelocityAbs, abEjectorFwdConstLS.aRun.rOutputVel);
+
+abLintabApplyPres.aCalc(rX := sv_rPressureAbs);
+b := WRITE_SVREAL_DIRECT(sv_rPressure, abLintabApplyPres.aCalc.rY);
+
+abLintabApplyVel.aCalc(rX := sv_rVelocityAbs);
+b := WRITE_SVREAL_DIRECT(sv_rVelocity, abLintabApplyVel.aCalc.rY);
+
+
+
+@SaText @RT(12)AConstOutput 1 @TL(22)
+(**************************************** WARNING ********************************************
+ *** The KEBA Kemro K2 System including software is not intended for safety control tasks! ***
+ ***                       For further information see Comment tab!                        ***
+ *********************************************************************************************)
+
+abEjectorFwdConst.aRun(bStart := TRUE,
+                       bStop := bStop,
+                       dDelayTimeOn := sv_EjectorFwdTimesSet.dSetDelayTimePump,
+                       dDelayTimeOff := sv_EjectorFwdTimesSet.dSetDelayTimeValve,
+                       rOutputPre => sv_rPressureAbs,
+                       rOutputVel => sv_rVelocityAbs,
+                       bActive => sv_bOutputActive,
+                       dActTime => sv_EjectorFwdTimesAct.dActMoveTime,
+                       bPreOutputReached => sv_bPreOutputReady);
+
+abLintabApplyPres.aCalc(rX := sv_rPressureAbs,
+                        rY => sv_rPressure);
+
+abLintabApplyVel.aCalc(rX := sv_rVelocityAbs,
+                       rY => sv_rVelocity);
+
+
+
+@SaTrans 0 
+@SaExits 0 
+@END_SfcBody 
+
+@@@BEG_Comment@@@ 
+@TL(0)
+
+@@@END_Comment@@@ 
+
+@BEG_Body 
+@TL(29)
+(**************************************** WARNING ********************************************
+ *** The KEBA Kemro K2 System including software is not intended for safety control tasks! ***
+ ***                       For further information see Comment tab!                        ***
+ *********************************************************************************************)
+
+abEjectorFwd.aInit(pProfile := pProfile,
+                   MoveDir := cMoveFwd,
+                   pdCalcedDuration := pdCalculatedDuration,
+                   prCalcDurationStartPosition := prCalcDurationStartPosition);
+
+mpdCalculatedDuration := pdCalculatedDuration;
+
+abEjectorFwdConst.aInit(pConst := @sv_ConstFwdVis,
+                        MoveId := cMoveFwd);
+
+abEjectorFwdConstLS.aInit(pConst := @sv_ConstFwdVisLS,
+                          MoveId := cMoveFwd);
+
+abEjectorFwdCalib.aInit(pConst := @sv_ConstFwdVis,
+                        MoveId := cMoveFwd);
+
+abLintabApplyPres.aInit(pLintab := @sv_LintabOutFwdP);
+
+abLintabApplyVel.aInit(pLintab := @sv_LintabOutFwdV);
+
+abEjectorFwdStep.aInit(pConst := @sv_ConstFwdVis,
+                       MoveId := cMoveFwd,
+                       prMaxSpeed := @sv_rMaxSpeedFwd);
+
+@END_Body 
+
+@@@BEG_Comment@@@ 
+@TL(0)
+
+@@@END_Comment@@@ 
+
+@BEG_Body 
+@TL(24)
+fuName := GET_MY_FU_NAME();
+variableName := CONCAT(fuName,'.Fwd.rSetPressure bar');
+swoState := KSWO_AddVariable( Task := TaskAnalog,
+                              Name := variableName,
+                              Variable := sv_rPressureAbs);
+b := FAddToScopeGroup(Task := TaskAnalog, 
+                      Name := variableName, 
+                      GroupId := cScopeGroupEjector);
+variableName := CONCAT(fuName,'.Fwd.rSetVelocity mm/s');
+swoState := KSWO_AddVariable( Task := TaskAnalog,
+                              Name := variableName,
+                              Variable := sv_rVelocityAbs);
+b := FAddToScopeGroup(Task := TaskAnalog, 
+                      Name := variableName, 
+                      GroupId := cScopeGroupEjector);
+variableName := CONCAT(fuName,'.Fwd.bActive');
+swoState := KSWO_AddVariable( Task := TaskAnalog,
+                              Name := variableName,
+                              Variable := sv_bOutputActive);
+b := FAddToScopeGroup(Task := TaskAnalog, 
+                      Name := variableName, 
+                      GroupId := cScopeGroupEjector);
+STOP_PROCESS_ALGORITHM();
+
+@END_Body 
+
+@@@BEG_Comment@@@ 
+@TL(0)
+
+@@@END_Comment@@@ 
+@END_Body 
+
+@END_Contents 

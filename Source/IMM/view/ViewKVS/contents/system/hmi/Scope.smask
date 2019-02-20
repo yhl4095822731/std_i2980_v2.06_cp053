@@ -1,0 +1,525 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<base:Mask xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xmlns:base="http://www.keba.at/viewedit.model.base" widgetId="kvs.mask" name="Scope">
+  <resolution width="714" height="476"/>
+  <position x="1" y="1"/>
+  <attributeValues key="Icon" value="system/hmi/images/maskicons/iconScope.gif"/>
+  <attributeValues key="DisplayLevel" value="8"/>
+  <widgetInstances xsi:type="base:ContainerWidgetInstance" widgetId="kvs.panel" name="panelMain" layoutConstraint="CENTER">
+    <resolution width="714" height="476"/>
+    <position/>
+    <border name="TitledBorder" id="kv.border.TitledBorder"/>
+    <widgetInstances xsi:type="base:ContainerWidgetInstance" widgetId="kvs.panel" name="panelTop" layoutConstraint="NORTH">
+      <resolution width="708" height="66"/>
+      <position x="3" y="5"/>
+      <attributeValues key="PreferredSize" value="708, 66"/>
+      <widgetInstances xsi:type="base:ContainerWidgetInstance" widgetId="keplast.kvs.borderpanelsmall" name="brdPanelConfiguration" layoutConstraint="0,0,100,100">
+        <resolution width="708" height="66"/>
+        <position/>
+        <attributeValues key="Title" value="Configuration"/>
+        <widgetInstances xsi:type="base:ContainerWidgetInstance" widgetId="kvs.panel" name="container3" layoutConstraint="CENTER">
+          <resolution width="361" height="29"/>
+          <position x="344" y="33"/>
+          <attributeValues key="PreferredSize" value="268, 30"/>
+          <layout layoutID="kvs.layout.PercentLayout" name="PercentLayout"/>
+        </widgetInstances>
+        <widgetInstances xsi:type="base:ContainerWidgetInstance" widgetId="kvs.panel" name="container2" layoutConstraint="WEST">
+          <resolution width="341" height="29"/>
+          <position x="3" y="33"/>
+          <attributeValues key="PreferredSize" value="341, 30"/>
+          <widgetInstances xsi:type="base:ContainerWidgetInstance" widgetId="kvs.panel" name="container17" layoutConstraint="WEST">
+            <resolution width="127" height="29"/>
+            <position/>
+            <widgetInstances xsi:type="base:ContainerWidgetInstance" widgetId="kvs.panel" name="container19" layoutConstraint="WEST">
+              <resolution width="3" height="29"/>
+              <position/>
+              <attributeValues key="PreferredSize" value="3, 29"/>
+              <layout layoutID="kvs.layout.PercentLayout" name="PercentLayout"/>
+            </widgetInstances>
+            <widgetInstances widgetId="kvs.label" name="lblLoad" layoutConstraint="CENTER">
+              <resolution width="124" height="29"/>
+              <position x="3"/>
+              <attributeValues key="Text" value="Load"/>
+              <attributeValues key="Alignment" value="MIDDLE/LEFT"/>
+              <attributeValues key="PreferredSize" value="124, 29"/>
+            </widgetInstances>
+            <layout layoutID="kvs.layout.BorderLayout" name="BorderLayout"/>
+          </widgetInstances>
+          <widgetInstances widgetId="kvs.textselectliststd" name="selectList" layoutConstraint="CENTER">
+            <resolution width="214" height="29"/>
+            <position x="127"/>
+            <attributeValues key="PreferredSize" value="174, 29"/>
+            <dynamicAttributes key="Enabled">
+              <value function="n1_EQ_const : ViewEditFunctions" equal="true" unequal="false">
+                <parameter key="1" value="kvariable;Scope.sv_iMeasureState"/>
+                <parameter key="2" value="double;0.0"/>
+              </value>
+            </dynamicAttributes>
+          </widgetInstances>
+          <layout layoutID="kvs.layout.BorderLayout" name="BorderLayout"/>
+        </widgetInstances>
+        <layout layoutID="kvs.layout.BorderLayout" name="BorderLayout"/>
+      </widgetInstances>
+      <layout layoutID="kvs.layout.PercentLayout" name="PercentLayout"/>
+    </widgetInstances>
+    <widgetInstances xsi:type="base:ContainerWidgetInstance" widgetId="kvs.panel" name="panelBottom" layoutConstraint="CENTER">
+      <resolution width="708" height="400"/>
+      <position x="3" y="71"/>
+      <attributeValues key="PreferredSize" value="708, 384"/>
+      <border name="TitledBorder" id="kv.border.TitledBorder">
+        <attributeValues key="Sides" value="false, false, false, false"/>
+        <attributeValues key="InnerInsets" value="0, 0, 0, 0"/>
+      </border>
+      <widgetInstances xsi:type="base:ContainerWidgetInstance" widgetId="kvs.panel" name="panelLeft" layoutConstraint="LEFT">
+        <resolution width="351" height="400"/>
+        <position/>
+        <attributeValues key="PreferredSize" value="348, 523"/>
+        <widgetInstances xsi:type="base:ContainerWidgetInstance" widgetId="keplast.kvs.borderpanelsmall" name="brdPanelMeasure" layoutConstraint="null">
+          <resolution width="351" height="153"/>
+          <position/>
+          <attributeValues key="Title" value="Measurement"/>
+          <widgetInstances widgetId="keplast.kvs.startbuttonmarktext" name="fActivateMeasure" layoutConstraint="null">
+            <resolution width="345" height="29"/>
+            <position x="3" y="33"/>
+            <attributeValues key="Variable" value="Scope.sv_bActivateMeasure"/>
+            <attributeValues key="RemoveMark" value="true"/>
+            <attributeValues key="MarkColumnWidth" value="60"/>
+          </widgetInstances>
+          <widgetInstances xsi:type="base:ContainerWidgetInstance" widgetId="kvs.panel" name="container6" layoutConstraint="null">
+            <resolution width="345" height="29"/>
+            <position x="3" y="62"/>
+            <attributeValues key="PreferredSize" value="345, 29"/>
+            <widgetInstances widgetId="kvs.varlabel" name="lblState" layoutConstraint="CENTER">
+              <resolution width="181" height="29"/>
+              <position x="2"/>
+              <attributeValues key="Alignment" value="MIDDLE/LEFT"/>
+              <attributeValues key="LabelType" value="Short Variable Label"/>
+              <attributeValues key="Variable" value="Scope.sv_iMeasureState"/>
+              <attributeValues key="PreferredSize" value="139, 29"/>
+            </widgetInstances>
+            <widgetInstances xsi:type="base:ContainerWidgetInstance" widgetId="kvs.panel" name="pActivate" layoutConstraint="EAST">
+              <resolution width="162" height="29"/>
+              <position x="183"/>
+              <widgetInstances widgetId="kvs.textdisplay" name="fState" layoutConstraint="CENTER">
+                <resolution width="120" height="29"/>
+                <position/>
+                <attributeValues key="Variable" value="Scope.sv_iMeasureState"/>
+                <attributeValues key="Alignment" value="MIDDLE/RIGHT"/>
+                <attributeValues key="PreferredSize" value="120, 29"/>
+              </widgetInstances>
+              <widgetInstances xsi:type="base:ContainerWidgetInstance" widgetId="kvs.panel" name="container7" layoutConstraint="EAST">
+                <resolution width="42" height="29"/>
+                <position x="120"/>
+                <attributeValues key="PreferredSize" value="42, 29"/>
+                <layout layoutID="kvs.layout.PercentLayout" name="PercentLayout"/>
+              </widgetInstances>
+              <layout layoutID="kvs.layout.BorderLayout" name="BorderLayout"/>
+            </widgetInstances>
+            <widgetInstances xsi:type="base:ContainerWidgetInstance" widgetId="kvs.panel" name="container14" layoutConstraint="WEST">
+              <resolution width="2" height="29"/>
+              <position/>
+              <attributeValues key="PreferredSize" value="2, 2"/>
+              <layout layoutID="kvs.layout.PercentLayout" name="PercentLayout"/>
+            </widgetInstances>
+            <layout layoutID="kvs.layout.BorderLayout" name="BorderLayout"/>
+          </widgetInstances>
+          <widgetInstances widgetId="keplast.kvs.actsetnumfieldtext" name="fMeasureTime" layoutConstraint="null">
+            <resolution width="345" height="29"/>
+            <position x="3" y="91"/>
+            <attributeValues key="Variable" value="Scope.sv_MeasureTime.dSet"/>
+            <attributeValues key="VariableActual" value="Scope.sv_MeasureTime.dAct"/>
+            <attributeValues key="PostComma" value="-1"/>
+            <dynamicAttributes key="Enabled">
+              <value function="n1_EQ_const : ViewEditFunctions" equal="true" unequal="false">
+                <parameter key="1" value="kvariable;Scope.sv_iMeasureState"/>
+                <parameter key="2" value="double;0.0"/>
+              </value>
+            </dynamicAttributes>
+          </widgetInstances>
+          <widgetInstances xsi:type="base:ContainerWidgetInstance" widgetId="kvs.panel" name="container4" layoutConstraint="null">
+            <resolution width="345" height="29"/>
+            <position x="3" y="120"/>
+            <attributeValues key="PreferredSize" value="345, 29"/>
+            <layout layoutID="kvs.layout.PercentLayout" name="PercentLayout"/>
+          </widgetInstances>
+          <layout layoutID="kvs.layout.VerticalFlowLayout" name="VerticalFlowLayout">
+            <attributeValues key="OuterGaps" value="false"/>
+            <attributeValues key="Vgap" value="0"/>
+          </layout>
+        </widgetInstances>
+        <widgetInstances xsi:type="base:ContainerWidgetInstance" widgetId="keplast.kvs.borderpanelsmall" name="brdPanelFileSave" layoutConstraint="null">
+          <resolution width="351" height="66"/>
+          <position y="155"/>
+          <attributeValues key="Title" value="Settings for saving measurement data"/>
+          <widgetInstances widgetId="keplast.kvs.actsetnumfieldtext" name="fMeasureCycles" layoutConstraint="null">
+            <resolution width="345" height="29"/>
+            <position x="3" y="33"/>
+            <attributeValues key="Variable" value="Scope.sv_MeasureCycles.iSet"/>
+            <attributeValues key="VariableActual" value="Scope.sv_MeasureCycles.iAct"/>
+            <attributeValues key="PostComma" value="-1"/>
+            <dynamicAttributes key="Enabled">
+              <value function="n1_EQ_const : ViewEditFunctions" equal="true" unequal="false">
+                <parameter key="1" value="kvariable;Scope.sv_iMeasureState"/>
+                <parameter key="2" value="double;0.0"/>
+              </value>
+            </dynamicAttributes>
+          </widgetInstances>
+          <layout layoutID="kvs.layout.VerticalFlowLayout" name="VerticalFlowLayout">
+            <attributeValues key="Vgap" value="0"/>
+            <attributeValues key="OuterGaps" value="false"/>
+          </layout>
+        </widgetInstances>
+        <widgetInstances xsi:type="base:ContainerWidgetInstance" widgetId="keplast.kvs.borderpanelsmall" name="brdPanelExport" layoutConstraint="null">
+          <resolution width="351" height="177"/>
+          <position y="223"/>
+          <attributeValues key="Title" value="Export settings"/>
+          <widgetInstances widgetId="keplast.kvs.comboboxtext" name="cbExportType" layoutConstraint="null">
+            <resolution width="345" height="29"/>
+            <position x="3" y="33"/>
+            <attributeValues key="Variable" value="Scope.sv_iExportType"/>
+            <attributeValues key="TextLabelType" value="Short Variable Label"/>
+            <attributeValues key="PreferredSize" value="345, 29"/>
+            <attributeValues key="PreferredSizeComboBox" value="176, 29"/>
+            <dynamicAttributes key="Enabled">
+              <value function="n1_EQ_const : ViewEditFunctions" equal="true" unequal="false">
+                <parameter key="1" value="kvariable;Scope.sv_iMeasureState"/>
+                <parameter key="2" value="double;0.0"/>
+              </value>
+            </dynamicAttributes>
+          </widgetInstances>
+          <widgetInstances xsi:type="base:ContainerWidgetInstance" widgetId="kvs.panel" name="container5" layoutConstraint="null">
+            <resolution width="345" height="29"/>
+            <position x="3" y="62"/>
+            <widgetInstances xsi:type="base:ContainerWidgetInstance" widgetId="kvs.panel" name="container11" layoutConstraint="EAST">
+              <resolution width="39" height="29"/>
+              <position x="306"/>
+              <attributeValues key="PreferredSize" value="39, 29"/>
+              <layout layoutID="kvs.layout.PercentLayout" name="PercentLayout"/>
+            </widgetInstances>
+            <widgetInstances xsi:type="base:ContainerWidgetInstance" widgetId="kvs.panel" name="container8" layoutConstraint="WEST">
+              <resolution width="130" height="29"/>
+              <position/>
+              <attributeValues key="PreferredSize" value="130, 29"/>
+              <widgetInstances xsi:type="base:ContainerWidgetInstance" widgetId="kvs.panel" name="container12" layoutConstraint="WEST">
+                <resolution width="3" height="29"/>
+                <position/>
+                <attributeValues key="PreferredSize" value="3, 10"/>
+                <layout layoutID="kvs.layout.PercentLayout" name="PercentLayout"/>
+              </widgetInstances>
+              <widgetInstances widgetId="kvs.varlabel" name="lblExportDevice" layoutConstraint="CENTER">
+                <resolution width="127" height="29"/>
+                <position x="3"/>
+                <attributeValues key="Alignment" value="MIDDLE/LEFT"/>
+                <attributeValues key="LabelType" value="Short Variable Label"/>
+                <attributeValues key="Variable" value="Scope.sv_sExportDevice"/>
+              </widgetInstances>
+              <layout layoutID="kvs.layout.BorderLayout" name="BorderLayout"/>
+            </widgetInstances>
+            <widgetInstances widgetId="kvs.textfieldnew" name="fExportDevice" layoutConstraint="CENTER">
+              <resolution width="176" height="29"/>
+              <position x="130"/>
+              <attributeValues key="Variable" value="Scope.sv_sExportDevice"/>
+              <attributeValues key="Editable" value="false"/>
+              <attributeValues key="PreferredSize" value="175, 29"/>
+            </widgetInstances>
+            <layout layoutID="kvs.layout.BorderLayout" name="BorderLayout"/>
+          </widgetInstances>
+          <layout layoutID="kvs.layout.VerticalFlowLayout" name="VerticalFlowLayout">
+            <attributeValues key="Vgap" value="0"/>
+            <attributeValues key="OuterGaps" value="false"/>
+          </layout>
+        </widgetInstances>
+        <layout layoutID="kvs.layout.VerticalFlowLayout" name="VerticalFlowLayout">
+          <attributeValues key="Hgap" value="0"/>
+          <attributeValues key="OuterGaps" value="false"/>
+          <attributeValues key="Alignment" value="TOP"/>
+          <attributeValues key="Vgap" value="2"/>
+          <attributeValues key="HorizontalFill" value="true"/>
+          <attributeValues key="VerticalFill" value="true"/>
+        </layout>
+      </widgetInstances>
+      <widgetInstances xsi:type="base:ContainerWidgetInstance" widgetId="kvs.panel" name="panelRight" layoutConstraint="RIGHT">
+        <resolution width="351" height="400"/>
+        <position x="357"/>
+        <attributeValues key="PreferredSize" value="348, 608"/>
+        <widgetInstances xsi:type="base:ContainerWidgetInstance" widgetId="keplast.kvs.borderpanelsmall" name="brdPanelStart" layoutConstraint="null">
+          <resolution width="351" height="153"/>
+          <position/>
+          <attributeValues key="Title" value="Start settings"/>
+          <widgetInstances xsi:type="base:ContainerWidgetInstance" widgetId="kvs.panel" name="pStartTriggerType" layoutConstraint="null">
+            <resolution width="345" height="29"/>
+            <position x="3" y="33"/>
+            <widgetInstances xsi:type="base:ContainerWidgetInstance" widgetId="kvs.panel" name="container15" layoutConstraint="WEST">
+              <resolution width="40" height="29"/>
+              <position/>
+              <attributeValues key="PreferredSize" value="40, 29"/>
+              <widgetInstances widgetId="kvs.symboldisplay" name="imgStartTriggerState" layoutConstraint="CENTER">
+                <resolution width="40" height="29"/>
+                <position/>
+                <attributeValues key="Variable" value="Scope.sv_StartTrigger.iState"/>
+                <attributeValues key="Alignment" value="MIDDLE/CENTER"/>
+              </widgetInstances>
+              <layout layoutID="kvs.layout.BorderLayout" name="BorderLayout"/>
+            </widgetInstances>
+            <widgetInstances xsi:type="base:ContainerWidgetInstance" widgetId="kvs.panel" name="container16" layoutConstraint="CENTER">
+              <resolution width="305" height="29"/>
+              <position x="40"/>
+              <attributeValues key="PreferredSize" value="139, 29"/>
+              <widgetInstances widgetId="keplast.kvs.comboboxtext" name="cbStartTriggerType" layoutConstraint="CENTER">
+                <resolution width="305" height="29"/>
+                <position/>
+                <attributeValues key="Variable" value="Scope.sv_StartTrigger.iTriggerIdx"/>
+                <attributeValues key="TextLabelType" value="Short Variable Label"/>
+                <attributeValues key="PreferredSizeComboBox" value="124, 29"/>
+                <dynamicAttributes key="Enabled">
+                  <value function="n1_EQ_const : ViewEditFunctions" equal="true" unequal="false">
+                    <parameter key="1" value="kvariable;Scope.sv_iMeasureState"/>
+                    <parameter key="2" value="double;0.0"/>
+                  </value>
+                </dynamicAttributes>
+              </widgetInstances>
+              <layout layoutID="kvs.layout.BorderLayout" name="BorderLayout"/>
+            </widgetInstances>
+            <layout layoutID="kvs.layout.BorderLayout" name="BorderLayout"/>
+          </widgetInstances>
+          <widgetInstances xsi:type="base:ContainerWidgetInstance" widgetId="kvs.panel" name="pStartFallingEdge" layoutConstraint="null">
+            <resolution width="345" height="29"/>
+            <position x="3" y="62"/>
+            <widgetInstances widgetId="keplast.kvs.comboboxtext" name="cbStartFallingEdge" layoutConstraint="CENTER">
+              <resolution width="305" height="29"/>
+              <position x="40"/>
+              <attributeValues key="Variable" value="Scope.sv_StartTrigger.bFallingEdge"/>
+              <attributeValues key="PreferredSize" value="342, 29"/>
+              <attributeValues key="PreferredSizeComboBox" value="124, 29"/>
+              <dynamicAttributes key="Enabled">
+                <value function="n1_EQ_const : ViewEditFunctions" equal="true" unequal="false">
+                  <parameter key="1" value="kvariable;Scope.sv_iMeasureState"/>
+                  <parameter key="2" value="double;0.0"/>
+                </value>
+              </dynamicAttributes>
+            </widgetInstances>
+            <widgetInstances xsi:type="base:ContainerWidgetInstance" widgetId="kvs.panel" name="container31" layoutConstraint="WEST">
+              <resolution width="40" height="29"/>
+              <position/>
+              <attributeValues key="PreferredSize" value="40, 21"/>
+              <layout layoutID="kvs.layout.PercentLayout" name="PercentLayout"/>
+            </widgetInstances>
+            <layout layoutID="kvs.layout.BorderLayout" name="BorderLayout"/>
+          </widgetInstances>
+          <widgetInstances xsi:type="base:ContainerWidgetInstance" widgetId="kvs.panel" name="container13" layoutConstraint="null">
+            <resolution width="345" height="29"/>
+            <position x="3" y="91"/>
+            <widgetInstances xsi:type="base:ContainerWidgetInstance" widgetId="kvs.panel" name="pStartCounter" layoutConstraint="null">
+              <resolution width="345" height="29"/>
+              <position/>
+              <widgetInstances xsi:type="base:ContainerWidgetInstance" widgetId="kvs.panel" name="container23" layoutConstraint="WEST">
+                <resolution width="40" height="29"/>
+                <position/>
+                <attributeValues key="PreferredSize" value="40, 21"/>
+                <layout layoutID="kvs.layout.PercentLayout" name="PercentLayout"/>
+              </widgetInstances>
+              <widgetInstances widgetId="keplast.kvs.actsetnumfieldtext" name="fStartCounter" layoutConstraint="CENTER">
+                <resolution width="305" height="29"/>
+                <position x="40"/>
+                <attributeValues key="Variable" value="Scope.sv_StartTrigger.Reduction.iSet"/>
+                <attributeValues key="VariableActual" value="Scope.sv_StartTrigger.Reduction.iAct"/>
+                <attributeValues key="PostComma" value="-1"/>
+                <dynamicAttributes key="Enabled">
+                  <value function="n1_EQ_const : ViewEditFunctions" equal="true" unequal="false">
+                    <parameter key="1" value="kvariable;Scope.sv_iMeasureState"/>
+                    <parameter key="2" value="double;0.0"/>
+                  </value>
+                </dynamicAttributes>
+              </widgetInstances>
+              <layout layoutID="kvs.layout.BorderLayout" name="BorderLayout"/>
+            </widgetInstances>
+            <layout layoutID="kvs.layout.GridLayout" name="GridLayout"/>
+          </widgetInstances>
+          <widgetInstances xsi:type="base:ContainerWidgetInstance" widgetId="kvs.panel" name="pStartTriggerDelay" layoutConstraint="null">
+            <resolution width="345" height="29"/>
+            <position x="3" y="120"/>
+            <widgetInstances widgetId="keplast.kvs.numfieldtext" name="fStartTriggerDelay" layoutConstraint="CENTER">
+              <resolution width="305" height="29"/>
+              <position x="40"/>
+              <attributeValues key="Variable" value="Scope.sv_StartTrigger.dTriggerDelay"/>
+              <dynamicAttributes key="Enabled">
+                <value function="n1_EQ_const : ViewEditFunctions" equal="true" unequal="false">
+                  <parameter key="1" value="kvariable;Scope.sv_iMeasureState"/>
+                  <parameter key="2" value="double;0.0"/>
+                </value>
+              </dynamicAttributes>
+            </widgetInstances>
+            <widgetInstances xsi:type="base:ContainerWidgetInstance" widgetId="kvs.panel" name="container24" layoutConstraint="WEST">
+              <resolution width="40" height="29"/>
+              <position/>
+              <attributeValues key="PreferredSize" value="40, 21"/>
+              <layout layoutID="kvs.layout.PercentLayout" name="PercentLayout"/>
+            </widgetInstances>
+            <layout layoutID="kvs.layout.BorderLayout" name="BorderLayout"/>
+          </widgetInstances>
+          <layout layoutID="kvs.layout.VerticalFlowLayout" name="VerticalFlowLayout">
+            <attributeValues key="Vgap" value="0"/>
+            <attributeValues key="OuterGaps" value="false"/>
+          </layout>
+        </widgetInstances>
+        <widgetInstances xsi:type="base:ContainerWidgetInstance" widgetId="keplast.kvs.borderpanelsmall" name="brdPanelStop" layoutConstraint="null">
+          <resolution width="351" height="245"/>
+          <position y="155"/>
+          <attributeValues key="Title" value="Stop settings"/>
+          <widgetInstances xsi:type="base:ContainerWidgetInstance" widgetId="kvs.panel" name="pStopTriggerType" layoutConstraint="null">
+            <resolution width="345" height="29"/>
+            <position x="3" y="33"/>
+            <widgetInstances xsi:type="base:ContainerWidgetInstance" widgetId="kvs.panel" name="container25" layoutConstraint="WEST">
+              <resolution width="40" height="29"/>
+              <position/>
+              <attributeValues key="PreferredSize" value="40, 29"/>
+              <widgetInstances widgetId="kvs.symboldisplay" name="imgStopTriggerState" layoutConstraint="CENTER">
+                <resolution width="40" height="29"/>
+                <position/>
+                <attributeValues key="Variable" value="Scope.sv_StopTrigger.iState"/>
+                <attributeValues key="Alignment" value="MIDDLE/CENTER"/>
+              </widgetInstances>
+              <layout layoutID="kvs.layout.BorderLayout" name="BorderLayout"/>
+            </widgetInstances>
+            <widgetInstances xsi:type="base:ContainerWidgetInstance" widgetId="kvs.panel" name="container26" layoutConstraint="CENTER">
+              <resolution width="305" height="29"/>
+              <position x="40"/>
+              <attributeValues key="PreferredSize" value="139, 29"/>
+              <widgetInstances widgetId="keplast.kvs.comboboxtext" name="cbStopTriggerType" layoutConstraint="CENTER">
+                <resolution width="305" height="29"/>
+                <position/>
+                <attributeValues key="Variable" value="Scope.sv_StopTrigger.iTriggerIdx"/>
+                <attributeValues key="TextLabelType" value="Short Variable Label"/>
+                <attributeValues key="PreferredSizeComboBox" value="124, 29"/>
+                <dynamicAttributes key="Enabled">
+                  <value function="n1_EQ_const : ViewEditFunctions" equal="true" unequal="false">
+                    <parameter key="1" value="kvariable;Scope.sv_iMeasureState"/>
+                    <parameter key="2" value="double;0.0"/>
+                  </value>
+                </dynamicAttributes>
+              </widgetInstances>
+              <layout layoutID="kvs.layout.BorderLayout" name="BorderLayout"/>
+            </widgetInstances>
+            <layout layoutID="kvs.layout.BorderLayout" name="BorderLayout"/>
+          </widgetInstances>
+          <widgetInstances xsi:type="base:ContainerWidgetInstance" widgetId="kvs.panel" name="pStopFallingEdge" layoutConstraint="null">
+            <resolution width="345" height="29"/>
+            <position x="3" y="62"/>
+            <widgetInstances widgetId="keplast.kvs.comboboxtext" name="cbStopFallingEdge" layoutConstraint="CENTER">
+              <resolution width="305" height="29"/>
+              <position x="40"/>
+              <attributeValues key="Variable" value="Scope.sv_StopTrigger.bFallingEdge"/>
+              <attributeValues key="PreferredSize" value="342, 29"/>
+              <attributeValues key="PreferredSizeComboBox" value="124, 29"/>
+              <dynamicAttributes key="Enabled">
+                <value function="n1_EQ_const : ViewEditFunctions" equal="true" unequal="false">
+                  <parameter key="1" value="kvariable;Scope.sv_iMeasureState"/>
+                  <parameter key="2" value="double;0.0"/>
+                </value>
+              </dynamicAttributes>
+            </widgetInstances>
+            <widgetInstances xsi:type="base:ContainerWidgetInstance" widgetId="kvs.panel" name="container30" layoutConstraint="WEST">
+              <resolution width="40" height="29"/>
+              <position/>
+              <attributeValues key="PreferredSize" value="40, 21"/>
+              <layout layoutID="kvs.layout.PercentLayout" name="PercentLayout"/>
+            </widgetInstances>
+            <layout layoutID="kvs.layout.BorderLayout" name="BorderLayout"/>
+          </widgetInstances>
+          <widgetInstances xsi:type="base:ContainerWidgetInstance" widgetId="kvs.panel" name="pStopCounter" layoutConstraint="null">
+            <resolution width="345" height="29"/>
+            <position x="3" y="91"/>
+            <widgetInstances xsi:type="base:ContainerWidgetInstance" widgetId="kvs.panel" name="container29" layoutConstraint="WEST">
+              <resolution width="40" height="29"/>
+              <position/>
+              <attributeValues key="PreferredSize" value="40, 21"/>
+              <layout layoutID="kvs.layout.PercentLayout" name="PercentLayout"/>
+            </widgetInstances>
+            <widgetInstances widgetId="keplast.kvs.actsetnumfieldtext" name="fStopCounter" layoutConstraint="CENTER">
+              <resolution width="305" height="29"/>
+              <position x="40"/>
+              <attributeValues key="Variable" value="Scope.sv_StopTrigger.Reduction.iSet"/>
+              <attributeValues key="VariableActual" value="Scope.sv_StopTrigger.Reduction.iAct"/>
+              <attributeValues key="PostComma" value="-1"/>
+              <dynamicAttributes key="Enabled">
+                <value function="n1_EQ_const : ViewEditFunctions" equal="true" unequal="false">
+                  <parameter key="1" value="kvariable;Scope.sv_iMeasureState"/>
+                  <parameter key="2" value="double;0.0"/>
+                </value>
+              </dynamicAttributes>
+            </widgetInstances>
+            <layout layoutID="kvs.layout.BorderLayout" name="BorderLayout"/>
+          </widgetInstances>
+          <widgetInstances xsi:type="base:ContainerWidgetInstance" widgetId="kvs.panel" name="pStopTriggerDelay" layoutConstraint="null">
+            <resolution width="345" height="29"/>
+            <position x="3" y="120"/>
+            <widgetInstances widgetId="keplast.kvs.numfieldtext" name="fStopTriggerDelay" layoutConstraint="CENTER">
+              <resolution width="305" height="29"/>
+              <position x="40"/>
+              <attributeValues key="Variable" value="Scope.sv_StopTrigger.dTriggerDelay"/>
+              <dynamicAttributes key="Enabled">
+                <value function="n1_EQ_const : ViewEditFunctions" equal="true" unequal="false">
+                  <parameter key="1" value="kvariable;Scope.sv_iMeasureState"/>
+                  <parameter key="2" value="double;0.0"/>
+                </value>
+              </dynamicAttributes>
+            </widgetInstances>
+            <widgetInstances xsi:type="base:ContainerWidgetInstance" widgetId="kvs.panel" name="container27" layoutConstraint="WEST">
+              <resolution width="40" height="29"/>
+              <position/>
+              <attributeValues key="PreferredSize" value="40, 21"/>
+              <layout layoutID="kvs.layout.PercentLayout" name="PercentLayout"/>
+            </widgetInstances>
+            <layout layoutID="kvs.layout.BorderLayout" name="BorderLayout"/>
+          </widgetInstances>
+          <widgetInstances xsi:type="base:ContainerWidgetInstance" widgetId="kvs.panel" name="container9" layoutConstraint="null">
+            <resolution width="345" height="29"/>
+            <position x="3" y="149"/>
+            <attributeValues key="PreferredSize" value="345, 29"/>
+            <layout layoutID="kvs.layout.PercentLayout" name="PercentLayout"/>
+          </widgetInstances>
+          <widgetInstances xsi:type="base:ContainerWidgetInstance" widgetId="kvs.panel" name="pStopAtMeasureTime" layoutConstraint="null">
+            <resolution width="345" height="29"/>
+            <position x="3" y="178"/>
+            <widgetInstances widgetId="keplast.kvs.comboboxtext" name="cbStopAtMeasureTime" layoutConstraint="CENTER">
+              <resolution width="345" height="29"/>
+              <position/>
+              <attributeValues key="Variable" value="Scope.sv_bMeasureTimeStop"/>
+              <attributeValues key="TextLabelType" value="Short Variable Label"/>
+              <attributeValues key="PreferredSize" value="342, 29"/>
+              <attributeValues key="PreferredSizeComboBox" value="124, 29"/>
+              <dynamicAttributes key="Enabled">
+                <value function="n1_EQ_const : ViewEditFunctions" equal="true" unequal="false">
+                  <parameter key="1" value="kvariable;Scope.sv_iMeasureState"/>
+                  <parameter key="2" value="double;0.0"/>
+                </value>
+              </dynamicAttributes>
+            </widgetInstances>
+            <layout layoutID="kvs.layout.BorderLayout" name="BorderLayout"/>
+          </widgetInstances>
+          <layout layoutID="kvs.layout.VerticalFlowLayout" name="VerticalFlowLayout">
+            <attributeValues key="Vgap" value="0"/>
+            <attributeValues key="OuterGaps" value="false"/>
+          </layout>
+        </widgetInstances>
+        <layout layoutID="kvs.layout.VerticalFlowLayout" name="VerticalFlowLayout">
+          <attributeValues key="Vgap" value="2"/>
+          <attributeValues key="Hgap" value="0"/>
+          <attributeValues key="OuterGaps" value="false"/>
+          <attributeValues key="VerticalFill" value="true"/>
+          <attributeValues key="Alignment" value="TOP"/>
+          <attributeValues key="HorizontalFill" value="true"/>
+        </layout>
+      </widgetInstances>
+      <layout layoutID="keplast.kvs.layout.horizontalsplitlayout" name="HorizontalSplitLayout">
+        <attributeValues key="InsetsLeft" value="0, 0, 0, 3"/>
+        <attributeValues key="InsetsRight" value="0, 3, 0, 0"/>
+      </layout>
+    </widgetInstances>
+    <layout layoutID="kvs.layout.BorderLayout" name="BorderLayout"/>
+  </widgetInstances>
+  <layout layoutID="kvs.layout.BorderLayout" name="BorderLayout"/>
+  <guides position="137"/>
+  <guides position="311"/>
+  <guides position="191"/>
+  <guides position="544"/>
+</base:Mask>

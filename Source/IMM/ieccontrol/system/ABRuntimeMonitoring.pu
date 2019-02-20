@@ -1,0 +1,1030 @@
+(*
+@h    ! WARNING !
+@h    The Kemro K2 system (including software) only meets category B according to EN 954-1,
+@h    thus it is not intended for usage in safety-relevant control applications in the field 
+@h    of personal safety (e.g. emergency stop).
+@h    To implement potentially necessary safety-relevant control tasks, always use additional 
+@h    external safety devices that are intended for the particular purpose, and meet the necessary 
+@h    functional safety.
+@h    For further information see EN 954-1 (EN ISO 13849-1) and/or the K2-x00 user manual, chapter 
+@h    "CE conformity, directives and standards".
+
+
+This AB reacts on changes of sv_DataState and ODC1.sv_iInitOk
+If sv_DataState is not nReady (this means reading or writing of data is in progress), 
+the runtime monitoring of the IEC - tasks will be switched off.
+After sv_DataState changes to nReady again, the runtime monitoring will be switched on.
+If the IEC - project is executed on Windows the runtime monitoring is switched off all the time.
+The creation of the machine sequence, calculation of safety conditions, .... runs in TaskMid
+To avoid cycle overflows during this procedure, the supervision is set to a higher value
+during sequence creation. 
+Attention:
+The supervision of TaskMid during creation of sequence should not be disabled so that
+endless loops can be detected.
+*)
+
+IMPORT_OVER_LISTFILE
+ SET_MAXIMUM_ACTIVE_INTERVAL
+, tnDataState
+, KCAT_HandleData
+, KCAT_Status
+, KSYS_Status
+
+END_IMPORT
+
+ALGORITHM_BLOCK ABRuntimeMonitoring #DUMMY_EDIT_BLOCK
+
+SYSTEM_VAR
+ sv_DataState : tnDataState (* indicates the state of xml handling (set by hmi) *);
+ sv_bInitDone : BOOL;
+ sv_bAllPUTasksExecuted : BOOL;
+ sv_bInitStart : BOOL;
+ sv_iActiveParamTransfers : DINT (* number of actually active parameter transfers (written by ABDriveParam.pu) *);
+ sv_iReadMachineDataCount : UDINT (* counter which is increased after every loading of machine data  *);
+ sv_iReadMoldDataCount : UDINT (* counter which is increased after every loading of mold data  *);
+END_VAR
+
+SYSTEM_OBJECT
+ TaskException : TASK;
+ TaskInject : TASK;
+ TaskAnalog : TASK;
+ TaskMid : TASK;
+ TaskSequencer : TASK;
+ PU_Task_13 : TASK;
+ PU_Task_7 : TASK;
+ PU_Task_3 : TASK;
+ EV_Task_3 : TASK;
+ EV_Task_7 : TASK;
+ TaskHeating : TASK;
+END_OBJECT
+
+VAR
+ mpiSequenceCreateState : REFTO DINT (* 0 nothing initialized, 10 sequence array initialized, 20 sequence array + safety initialized *);
+ mbTaskPU13 : BOOL := FALSE;
+ mbTaskPU7 : BOOL := FALSE;
+ mbTaskPU3 : BOOL := FALSE;
+ mbTaskEV3 : BOOL := FALSE;
+ mbTaskEV7 : BOOL := FALSE;
+END_VAR
+
+POSTUPDATE_ALGORITHM pActivateDeactivate ON TaskException WITH sv_DataState,sv_bInitDone,mpiSequenceCreateState^,sv_iActiveParamTransfers
+
+
+VAR
+ StatusName : KCAT_HandleData;
+ Name : STRING(255);
+ Status : KCAT_Status;
+ sValue : STRING(255);
+ bIsWinNT : BOOL;
+ bInitDone : BOOL;
+ state : KSYS_Status;
+ dSetInterval : TIME;
+ bODC : BOOL;
+ dSetTrigger : DINT;
+END_VAR
+#BEGIN_EDIT_BLOCK
+(**************************************** WARNING ********************************************
+ *** The KEBA Kemro K2 System including software is not intended for safety control tasks! ***
+ ***                       For further information see Comment tab!                        ***
+ *********************************************************************************************)
+
+IF NOT bInitDone THEN
+   Name := 'UOS.System';
+   StatusName := KCAT_GetHandle(Name);
+   IF StatusName.Status = KCAT_Status_OK THEN
+      Status := KCAT_GetValue(Handle := StatusName.Handle, Buffer := sValue);
+      IF (sValue = 'WINNT') THEN
+         bIsWinNT := TRUE;
+      ELSE
+         bIsWinNT := FALSE;
+      END_IF;
+   END_IF;
+   
+   //get reference to state variable of sequence creation
+   mpiSequenceCreateState := GET_SYNC_REFTO('ODC1.sv_iInitOK', T#0s, state);
+   bODC := (state = KSYS_Status_OK);
+   
+   bInitDone := TRUE;
+END_IF;
+
+
+IF bIsWinNT THEN
+   //don´t activate runtime monitoring if application is running on a pc
+   RETURN;
+END_IF;
+
+IF bODC AND (mpiSequenceCreateState^ <> 20) THEN
+   //creating of sequence in progress
+   //creation of sequence, calculation of safety conditions, .... runs in TaskMid
+   //-> set supervision to a higher value to avoid cycle overflows
+   //supervision of TaskMid should not be disabled to detect endless loops
+   dSetInterval := SET_MAXIMUM_ACTIVE_INTERVAL(TaskInject, GET_TASK_INTERVAL(TaskInject) * 10);
+   dSetInterval := SET_MAXIMUM_ACTIVE_INTERVAL(TaskAnalog, GET_TASK_INTERVAL(TaskAnalog) * 10);
+   dSetInterval := SET_MAXIMUM_ACTIVE_INTERVAL(TaskSequencer, GET_TASK_INTERVAL(TaskSequencer) * 10);
+   dSetInterval := SET_MAXIMUM_ACTIVE_INTERVAL(TaskMid, GET_TASK_INTERVAL(TaskMid) * 200);
+
+ELSIF sv_DataState <> nReady THEN
+   //deactivate task runtime monitoring
+   //if reading or writing of data is in progress
+   dSetInterval := SET_MAXIMUM_ACTIVE_INTERVAL(TaskInject, T#0ms);
+   dSetInterval := SET_MAXIMUM_ACTIVE_INTERVAL(TaskAnalog, T#0ms);
+   dSetInterval := SET_MAXIMUM_ACTIVE_INTERVAL(TaskSequencer, T#0ms);
+   dSetInterval := SET_MAXIMUM_ACTIVE_INTERVAL(TaskMid, T#0ms);           
+
+ELSIF sv_iActiveParamTransfers > 0 THEN
+   //at least one paramter transfer is in progress -> increase maximum active interval of TaskMid
+   dSetInterval := SET_MAXIMUM_ACTIVE_INTERVAL(TaskInject, GET_TASK_INTERVAL(TaskInject) * 10);
+   dSetInterval := SET_MAXIMUM_ACTIVE_INTERVAL(TaskAnalog, GET_TASK_INTERVAL(TaskAnalog) * 10);
+   dSetInterval := SET_MAXIMUM_ACTIVE_INTERVAL(TaskSequencer, GET_TASK_INTERVAL(TaskSequencer) * 10);
+   dSetInterval := SET_MAXIMUM_ACTIVE_INTERVAL(TaskMid, GET_TASK_INTERVAL(TaskMid) * 200);
+
+ELSE
+   //activate task runtime monitoring
+   dSetInterval := SET_MAXIMUM_ACTIVE_INTERVAL(TaskInject, GET_TASK_INTERVAL(TaskInject) * 10);
+   dSetInterval := SET_MAXIMUM_ACTIVE_INTERVAL(TaskAnalog, GET_TASK_INTERVAL(TaskAnalog) * 10);
+   dSetInterval := SET_MAXIMUM_ACTIVE_INTERVAL(TaskSequencer, GET_TASK_INTERVAL(TaskSequencer) * 10);
+   dSetInterval := SET_MAXIMUM_ACTIVE_INTERVAL(TaskMid, GET_TASK_INTERVAL(TaskMid) * 10);
+   dSetInterval := SET_MAXIMUM_ACTIVE_INTERVAL(TaskHeating, GET_TASK_INTERVAL(TaskHeating) * 10);
+   
+   dSetTrigger := SET_MAXIMUM_ACTIVE_TRIGGER(TaskHeating, 10);
+END_IF;
+
+
+
+;#END_EDIT_BLOCK END_ALGORITHM
+
+(*
+@h    ! WARNING !
+@h    The Kemro K2 system (including software) only meets category B according to EN 954-1,
+@h    thus it is not intended for usage in safety-relevant control applications in the field 
+@h    of personal safety (e.g. emergency stop).
+@h    To implement potentially necessary safety-relevant control tasks, always use additional 
+@h    external safety devices that are intended for the particular purpose, and meet the necessary 
+@h    functional safety.
+@h    For further information see EN 954-1 (EN ISO 13849-1) and/or the K2-x00 user manual, chapter 
+@h    "CE conformity, directives and standards".
+*)
+
+POSTUPDATE_ALGORITHM pTaskPU13 ON PU_Task_13(2147483653) WITH sv_bInitStart
+
+#BEGIN_EDIT_BLOCK
+(**************************************** WARNING ********************************************
+ *** The KEBA Kemro K2 System including software is not intended for safety control tasks! ***
+ ***                       For further information see Comment tab!                        ***
+ *********************************************************************************************)
+
+mbTaskPU13 := TRUE; 
+
+
+;#END_EDIT_BLOCK END_ALGORITHM
+
+(*
+@h    ! WARNING !
+@h    The Kemro K2 system (including software) only meets category B according to EN 954-1,
+@h    thus it is not intended for usage in safety-relevant control applications in the field 
+@h    of personal safety (e.g. emergency stop).
+@h    To implement potentially necessary safety-relevant control tasks, always use additional 
+@h    external safety devices that are intended for the particular purpose, and meet the necessary 
+@h    functional safety.
+@h    For further information see EN 954-1 (EN ISO 13849-1) and/or the K2-x00 user manual, chapter 
+@h    "CE conformity, directives and standards".
+*)
+
+POSTUPDATE_ALGORITHM pTaskPU7 ON PU_Task_7(2147483653) WITH sv_bInitStart
+
+#BEGIN_EDIT_BLOCK
+(**************************************** WARNING ********************************************
+ *** The KEBA Kemro K2 System including software is not intended for safety control tasks! ***
+ ***                       For further information see Comment tab!                        ***
+ *********************************************************************************************)
+
+mbTaskPU7 := TRUE; 
+
+
+;#END_EDIT_BLOCK END_ALGORITHM
+
+(*
+@h    ! WARNING !
+@h    The Kemro K2 system (including software) only meets category B according to EN 954-1,
+@h    thus it is not intended for usage in safety-relevant control applications in the field 
+@h    of personal safety (e.g. emergency stop).
+@h    To implement potentially necessary safety-relevant control tasks, always use additional 
+@h    external safety devices that are intended for the particular purpose, and meet the necessary 
+@h    functional safety.
+@h    For further information see EN 954-1 (EN ISO 13849-1) and/or the K2-x00 user manual, chapter 
+@h    "CE conformity, directives and standards".
+*)
+
+POSTUPDATE_ALGORITHM pTaskPU3 ON PU_Task_3(2147483653) WITH sv_bInitStart
+
+#BEGIN_EDIT_BLOCK
+(**************************************** WARNING ********************************************
+ *** The KEBA Kemro K2 System including software is not intended for safety control tasks! ***
+ ***                       For further information see Comment tab!                        ***
+ *********************************************************************************************)
+
+mbTaskPU3 := TRUE; 
+
+
+;#END_EDIT_BLOCK END_ALGORITHM
+
+(*
+@h    ! WARNING !
+@h    The Kemro K2 system (including software) only meets category B according to EN 954-1,
+@h    thus it is not intended for usage in safety-relevant control applications in the field 
+@h    of personal safety (e.g. emergency stop).
+@h    To implement potentially necessary safety-relevant control tasks, always use additional 
+@h    external safety devices that are intended for the particular purpose, and meet the necessary 
+@h    functional safety.
+@h    For further information see EN 954-1 (EN ISO 13849-1) and/or the K2-x00 user manual, chapter 
+@h    "CE conformity, directives and standards".
+*)
+
+POSTUPDATE_ALGORITHM pTaskEV3 ON EV_Task_3(2147483653) WITH sv_bInitStart
+
+#BEGIN_EDIT_BLOCK
+(**************************************** WARNING ********************************************
+ *** The KEBA Kemro K2 System including software is not intended for safety control tasks! ***
+ ***                       For further information see Comment tab!                        ***
+ *********************************************************************************************)
+
+mbTaskEV3 := TRUE; 
+
+
+;#END_EDIT_BLOCK END_ALGORITHM
+
+(*
+@h    ! WARNING !
+@h    The Kemro K2 system (including software) only meets category B according to EN 954-1,
+@h    thus it is not intended for usage in safety-relevant control applications in the field 
+@h    of personal safety (e.g. emergency stop).
+@h    To implement potentially necessary safety-relevant control tasks, always use additional 
+@h    external safety devices that are intended for the particular purpose, and meet the necessary 
+@h    functional safety.
+@h    For further information see EN 954-1 (EN ISO 13849-1) and/or the K2-x00 user manual, chapter 
+@h    "CE conformity, directives and standards".
+*)
+
+POSTUPDATE_ALGORITHM pTaskEV7 ON EV_Task_7(2147483653) WITH sv_bInitStart
+
+#BEGIN_EDIT_BLOCK
+(**************************************** WARNING ********************************************
+ *** The KEBA Kemro K2 System including software is not intended for safety control tasks! ***
+ ***                       For further information see Comment tab!                        ***
+ *********************************************************************************************)
+
+mbTaskEV7 := TRUE; 
+
+
+;#END_EDIT_BLOCK END_ALGORITHM
+
+PROCESS_ALGORITHM paCheckExecutedTasks ON TaskMid AUTOSTART
+
+#BEGIN_EDIT_BLOCK
+(**************************************** WARNING ********************************************
+ *** The KEBA Kemro K2 System including software is not intended for safety control tasks! ***
+ ***                       For further information see Comment tab!                        ***
+ *********************************************************************************************)
+
+IF mbTaskEV3 AND mbTaskEV7 AND mbTaskPU13 AND mbTaskPU3 AND mbTaskPU7 THEN
+   //set SV for ABMovementRegister to signalize that sv_bInitStart is TRUE
+   //and all relevant postupdate tasks and event tasks are executed at least one time
+   sv_bAllPUTasksExecuted := TRUE;
+   STOP_PROCESS_ALGORITHM();
+END_IF;
+
+
+;#END_EDIT_BLOCK END_ALGORITHM
+
+POSTUPDATE_ALGORITHM pDataState ON PU_Task_3(1) WITH sv_DataState
+
+
+VAR
+ oldDataState : tnDataState;
+END_VAR
+#BEGIN_EDIT_BLOCK
+(**************************************** WARNING ********************************************
+ *** The KEBA Kemro K2 System including software is not intended for safety control tasks! ***
+ ***                       For further information see Comment tab!                        ***
+ *********************************************************************************************)
+
+IF (sv_DataState = nReady) THEN
+   IF (oldDataState = nReadMachineData) THEN
+      sv_iReadMachineDataCount := sv_iReadMachineDataCount + 1;
+   ELSIF oldDataState = nReadMoldData THEN
+      sv_iReadMoldDataCount := sv_iReadMoldDataCount + 1;
+   END_IF; 
+END_IF;
+
+oldDataState := sv_DataState;
+
+
+
+;#END_EDIT_BLOCK END_ALGORITHM
+
+
+
+END_ALGORITHM_BLOCK
+
+
+
+#END_OF_IEC_PART
+
+@Puma @IecEditor 6 68 @Pou 25 
+@@@BEG_Comment@@@
+@h    ! WARNING !
+@h    The Kemro K2 system (including software) only meets category B according to EN 954-1,
+@h    thus it is not intended for usage in safety-relevant control applications in the field 
+@h    of personal safety (e.g. emergency stop).
+@h    To implement potentially necessary safety-relevant control tasks, always use additional 
+@h    external safety devices that are intended for the particular purpose, and meet the necessary 
+@h    functional safety.
+@h    For further information see EN 954-1 (EN ISO 13849-1) and/or the K2-x00 user manual, chapter 
+@h    "CE conformity, directives and standards".
+
+
+This AB reacts on changes of sv_DataState and ODC1.sv_iInitOk
+If sv_DataState is not nReady (this means reading or writing of data is in progress), 
+the runtime monitoring of the IEC - tasks will be switched off.
+After sv_DataState changes to nReady again, the runtime monitoring will be switched on.
+If the IEC - project is executed on Windows the runtime monitoring is switched off all the time.
+The creation of the machine sequence, calculation of safety conditions, .... runs in TaskMid
+To avoid cycle overflows during this procedure, the supervision is set to a higher value
+during sequence creation. 
+Attention:
+The supervision of TaskMid during creation of sequence should not be disabled so that
+endless loops can be detected.
+@@@END_Comment@@@
+
+@BEG_Contents 
+
+@BEG_Func 
+@RT(17)FuncTreeContainer 
+1 
+@Var @RT(27)SET_MAXIMUM_ACTIVE_INTERVAL @RT(0) @T @T @DERIVED 0 @F @RT(22)KEBA_STANDARD_FUNCTION @F 
+@T 
+@BEG_Attrib 
+0 @RT(0) @RT(0) 
+@END_Attrib 
+1 1 @F @F @F @F 
+
+@END_Func 
+
+@BEG_Const 
+@RT(18)ConstTreeContainer 
+0 
+@END_Const 
+
+@BEG_Export 
+
+@BEG_Kind 
+@ALGORITHM_BLOCK @RT(19)ABRuntimeMonitoring @STRUCTURED_TEXT 
+@RT(0) @RT(0) @RT(0) 
+@END_Kind 
+
+@BEG_Dcl 
+@RT(16)DclTreeContainer 
+24 
+@Var @RT(13)TaskException @RT(0) @T @F @DT @RT(4)TASK @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 7 @F @F @F @F 
+
+@Var @RT(12)sv_DataState @RT(0) @T @T @DERIVED 0 @T @T @DT @RT(11)tnDataState @RT(0) @T @T @UNKNOWN 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(48)indicates the state of xml handling (set by hmi) @RT(0) 
+@END_Attrib 
+1 8 @F @F @F @F 
+
+@Var @RT(12)sv_bInitDone @RT(0) @T @F @DT @RT(4)BOOL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 8 @F @F @F @F 
+
+@Var @RT(22)mpiSequenceCreateState @RT(0) @T @T @REFTO 0 @T @DT @RT(4)DINT @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(92)0 nothing initialized, 10 sequence array initialized, 20 sequence array + safety initialized @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(10)TaskInject @RT(0) @T @F @DT @RT(4)TASK @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 7 @F @F @F @F 
+
+@Var @RT(10)TaskAnalog @RT(0) @T @F @DT @RT(4)TASK @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 7 @F @F @F @F 
+
+@Var @RT(7)TaskMid @RT(0) @T @F @DT @RT(4)TASK @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 7 @F @F @F @F 
+
+@Var @RT(13)TaskSequencer @RT(0) @T @F @DT @RT(4)TASK @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 7 @F @F @F @F 
+
+@Var @RT(10)mbTaskPU13 @RT(0) @T @F @DT @RT(4)BOOL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(5)FALSE @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(9)mbTaskPU7 @RT(0) @T @F @DT @RT(4)BOOL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(5)FALSE @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(9)mbTaskPU3 @RT(0) @T @F @DT @RT(4)BOOL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(5)FALSE @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(9)mbTaskEV3 @RT(0) @T @F @DT @RT(4)BOOL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(5)FALSE @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(9)mbTaskEV7 @RT(0) @T @F @DT @RT(4)BOOL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(5)FALSE @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(22)sv_bAllPUTasksExecuted @RT(0) @T @F @DT @RT(4)BOOL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 8 @F @F @F @F 
+
+@Var @RT(13)sv_bInitStart @RT(0) @T @F @DT @RT(4)BOOL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 8 @F @F @F @F 
+
+@Var @RT(10)PU_Task_13 @RT(0) @T @F @DT @RT(4)TASK @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 7 @F @F @F @F 
+
+@Var @RT(9)PU_Task_7 @RT(0) @T @F @DT @RT(4)TASK @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 7 @F @F @F @F 
+
+@Var @RT(9)PU_Task_3 @RT(0) @T @F @DT @RT(4)TASK @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 7 @F @F @F @F 
+
+@Var @RT(9)EV_Task_3 @RT(0) @T @F @DT @RT(4)TASK @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 7 @F @F @F @F 
+
+@Var @RT(9)EV_Task_7 @RT(0) @T @F @DT @RT(4)TASK @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 7 @F @F @F @F 
+
+@Var @RT(24)sv_iActiveParamTransfers @RT(0) @T @F @DT @RT(4)DINT @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(74)number of actually active parameter transfers (written by ABDriveParam.pu) @RT(0) 
+@END_Attrib 
+1 8 @F @F @F @F 
+
+@Var @RT(11)TaskHeating @RT(0) @T @F @DT @RT(4)TASK @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 7 @F @F @F @F 
+
+@Var @RT(24)sv_iReadMachineDataCount @RT(0) @T @F @DT @RT(5)UDINT @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(63)counter which is increased after every loading of machine data  @RT(0) 
+@END_Attrib 
+1 8 @F @F @F @F 
+
+@Var @RT(21)sv_iReadMoldDataCount @RT(0) @T @F @DT @RT(5)UDINT @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(60)counter which is increased after every loading of mold data  @RT(0) 
+@END_Attrib 
+1 8 @F @F @F @F 
+
+@END_Dcl 
+
+@END_Export 
+
+@BEG_Body 
+
+8 
+
+@BEG_Export 
+
+@BEG_Algo 
+@POSTUPDATE_ALGORITHM @RT(19)pActivateDeactivate @STRUCTURED_TEXT 
+@RT(0) @RT(74)sv_DataState,sv_bInitDone,mpiSequenceCreateState^,sv_iActiveParamTransfers @RT(13)TaskException @F @F 
+@END_Algo 
+
+@BEG_Dcl 
+@RT(16)DclTreeContainer 
+10 
+@Var @RT(10)StatusName @RT(0) @T @T @DERIVED 0 @T @T @DT @RT(15)KCAT_HandleData @RT(0) @T @T @UNKNOWN 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(4)Name @RT(0) @T @F @DT @RT(11)STRING(255) @RT(0) @T @T @STRING 0 @F @RT(3)255 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(6)Status @RT(0) @T @T @DERIVED 0 @T @T @DT @RT(11)KCAT_Status @RT(0) @T @T @UNKNOWN 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(6)sValue @RT(0) @T @F @DT @RT(11)STRING(255) @RT(0) @T @T @STRING 0 @F @RT(3)255 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(8)bIsWinNT @RT(0) @T @F @DT @RT(4)BOOL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(9)bInitDone @RT(0) @T @F @DT @RT(4)BOOL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(5)state @RT(0) @T @T @DERIVED 0 @T @T @DT @RT(11)KSYS_Status @RT(0) @T @T @UNKNOWN 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(12)dSetInterval @RT(0) @T @F @DT @RT(4)TIME @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(4)bODC @RT(0) @T @F @DT @RT(4)BOOL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(11)dSetTrigger @RT(0) @T @F @DT @RT(4)DINT @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@END_Dcl 
+
+@END_Export 
+
+@BEG_Export 
+
+@BEG_Algo 
+@POSTUPDATE_ALGORITHM @RT(9)pTaskPU13 @STRUCTURED_TEXT 
+@RT(0) @RT(13)sv_bInitStart @RT(22)PU_Task_13(2147483653) @F @F 
+@END_Algo 
+
+@BEG_Dcl 
+@RT(16)DclTreeContainer 
+0 
+@END_Dcl 
+
+@END_Export 
+
+@BEG_Export 
+
+@BEG_Algo 
+@POSTUPDATE_ALGORITHM @RT(8)pTaskPU7 @STRUCTURED_TEXT 
+@RT(0) @RT(13)sv_bInitStart @RT(21)PU_Task_7(2147483653) @F @F 
+@END_Algo 
+
+@BEG_Dcl 
+@RT(16)DclTreeContainer 
+0 
+@END_Dcl 
+
+@END_Export 
+
+@BEG_Export 
+
+@BEG_Algo 
+@POSTUPDATE_ALGORITHM @RT(8)pTaskPU3 @STRUCTURED_TEXT 
+@RT(0) @RT(13)sv_bInitStart @RT(21)PU_Task_3(2147483653) @F @F 
+@END_Algo 
+
+@BEG_Dcl 
+@RT(16)DclTreeContainer 
+0 
+@END_Dcl 
+
+@END_Export 
+
+@BEG_Export 
+
+@BEG_Algo 
+@POSTUPDATE_ALGORITHM @RT(8)pTaskEV3 @STRUCTURED_TEXT 
+@RT(0) @RT(13)sv_bInitStart @RT(21)EV_Task_3(2147483653) @F @F 
+@END_Algo 
+
+@BEG_Dcl 
+@RT(16)DclTreeContainer 
+0 
+@END_Dcl 
+
+@END_Export 
+
+@BEG_Export 
+
+@BEG_Algo 
+@POSTUPDATE_ALGORITHM @RT(8)pTaskEV7 @STRUCTURED_TEXT 
+@RT(0) @RT(13)sv_bInitStart @RT(21)EV_Task_7(2147483653) @F @F 
+@END_Algo 
+
+@BEG_Dcl 
+@RT(16)DclTreeContainer 
+0 
+@END_Dcl 
+
+@END_Export 
+
+@BEG_Export 
+
+@BEG_Algo 
+@PROCESS_ALGORITHM @RT(20)paCheckExecutedTasks @STRUCTURED_TEXT 
+@RT(0) @RT(0) @RT(7)TaskMid @T @F 
+@END_Algo 
+
+@BEG_Dcl 
+@RT(16)DclTreeContainer 
+0 
+@END_Dcl 
+
+@END_Export 
+
+@BEG_Export 
+
+@BEG_Algo 
+@POSTUPDATE_ALGORITHM @RT(10)pDataState @STRUCTURED_TEXT 
+@RT(0) @RT(12)sv_DataState @RT(12)PU_Task_3(1) @F @F 
+@END_Algo 
+
+@BEG_Dcl 
+@RT(16)DclTreeContainer 
+1 
+@Var @RT(12)oldDataState @RT(0) @T @T @DERIVED 0 @F @RT(11)tnDataState @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@END_Dcl 
+
+@END_Export 
+
+@BEG_Body 
+@TL(67)
+(**************************************** WARNING ********************************************
+ *** The KEBA Kemro K2 System including software is not intended for safety control tasks! ***
+ ***                       For further information see Comment tab!                        ***
+ *********************************************************************************************)
+
+IF NOT bInitDone THEN
+   Name := 'UOS.System';
+   StatusName := KCAT_GetHandle(Name);
+   IF StatusName.Status = KCAT_Status_OK THEN
+      Status := KCAT_GetValue(Handle := StatusName.Handle, Buffer := sValue);
+      IF (sValue = 'WINNT') THEN
+         bIsWinNT := TRUE;
+      ELSE
+         bIsWinNT := FALSE;
+      END_IF;
+   END_IF;
+   
+   //get reference to state variable of sequence creation
+   mpiSequenceCreateState := GET_SYNC_REFTO('ODC1.sv_iInitOK', T#0s, state);
+   bODC := (state = KSYS_Status_OK);
+   
+   bInitDone := TRUE;
+END_IF;
+
+
+IF bIsWinNT THEN
+   //don´t activate runtime monitoring if application is running on a pc
+   RETURN;
+END_IF;
+
+IF bODC AND (mpiSequenceCreateState^ <> 20) THEN
+   //creating of sequence in progress
+   //creation of sequence, calculation of safety conditions, .... runs in TaskMid
+   //-> set supervision to a higher value to avoid cycle overflows
+   //supervision of TaskMid should not be disabled to detect endless loops
+   dSetInterval := SET_MAXIMUM_ACTIVE_INTERVAL(TaskInject, GET_TASK_INTERVAL(TaskInject) * 10);
+   dSetInterval := SET_MAXIMUM_ACTIVE_INTERVAL(TaskAnalog, GET_TASK_INTERVAL(TaskAnalog) * 10);
+   dSetInterval := SET_MAXIMUM_ACTIVE_INTERVAL(TaskSequencer, GET_TASK_INTERVAL(TaskSequencer) * 10);
+   dSetInterval := SET_MAXIMUM_ACTIVE_INTERVAL(TaskMid, GET_TASK_INTERVAL(TaskMid) * 200);
+
+ELSIF sv_DataState <> nReady THEN
+   //deactivate task runtime monitoring
+   //if reading or writing of data is in progress
+   dSetInterval := SET_MAXIMUM_ACTIVE_INTERVAL(TaskInject, T#0ms);
+   dSetInterval := SET_MAXIMUM_ACTIVE_INTERVAL(TaskAnalog, T#0ms);
+   dSetInterval := SET_MAXIMUM_ACTIVE_INTERVAL(TaskSequencer, T#0ms);
+   dSetInterval := SET_MAXIMUM_ACTIVE_INTERVAL(TaskMid, T#0ms);           
+
+ELSIF sv_iActiveParamTransfers > 0 THEN
+   //at least one paramter transfer is in progress -> increase maximum active interval of TaskMid
+   dSetInterval := SET_MAXIMUM_ACTIVE_INTERVAL(TaskInject, GET_TASK_INTERVAL(TaskInject) * 10);
+   dSetInterval := SET_MAXIMUM_ACTIVE_INTERVAL(TaskAnalog, GET_TASK_INTERVAL(TaskAnalog) * 10);
+   dSetInterval := SET_MAXIMUM_ACTIVE_INTERVAL(TaskSequencer, GET_TASK_INTERVAL(TaskSequencer) * 10);
+   dSetInterval := SET_MAXIMUM_ACTIVE_INTERVAL(TaskMid, GET_TASK_INTERVAL(TaskMid) * 200);
+
+ELSE
+   //activate task runtime monitoring
+   dSetInterval := SET_MAXIMUM_ACTIVE_INTERVAL(TaskInject, GET_TASK_INTERVAL(TaskInject) * 10);
+   dSetInterval := SET_MAXIMUM_ACTIVE_INTERVAL(TaskAnalog, GET_TASK_INTERVAL(TaskAnalog) * 10);
+   dSetInterval := SET_MAXIMUM_ACTIVE_INTERVAL(TaskSequencer, GET_TASK_INTERVAL(TaskSequencer) * 10);
+   dSetInterval := SET_MAXIMUM_ACTIVE_INTERVAL(TaskMid, GET_TASK_INTERVAL(TaskMid) * 10);
+   dSetInterval := SET_MAXIMUM_ACTIVE_INTERVAL(TaskHeating, GET_TASK_INTERVAL(TaskHeating) * 10);
+   
+   dSetTrigger := SET_MAXIMUM_ACTIVE_TRIGGER(TaskHeating, 10);
+END_IF;
+
+
+@END_Body 
+
+@@@BEG_Comment@@@ 
+@TL(0)
+
+@@@END_Comment@@@ 
+
+@BEG_Body 
+@TL(7)
+(**************************************** WARNING ********************************************
+ *** The KEBA Kemro K2 System including software is not intended for safety control tasks! ***
+ ***                       For further information see Comment tab!                        ***
+ *********************************************************************************************)
+
+mbTaskPU13 := TRUE; 
+
+@END_Body 
+
+@@@BEG_Comment@@@ 
+@TL(9)
+@h    ! WARNING !
+@h    The Kemro K2 system (including software) only meets category B according to EN 954-1,
+@h    thus it is not intended for usage in safety-relevant control applications in the field 
+@h    of personal safety (e.g. emergency stop).
+@h    To implement potentially necessary safety-relevant control tasks, always use additional 
+@h    external safety devices that are intended for the particular purpose, and meet the necessary 
+@h    functional safety.
+@h    For further information see EN 954-1 (EN ISO 13849-1) and/or the K2-x00 user manual, chapter 
+@h    "CE conformity, directives and standards".
+@@@END_Comment@@@ 
+
+@BEG_Body 
+@TL(7)
+(**************************************** WARNING ********************************************
+ *** The KEBA Kemro K2 System including software is not intended for safety control tasks! ***
+ ***                       For further information see Comment tab!                        ***
+ *********************************************************************************************)
+
+mbTaskPU7 := TRUE; 
+
+@END_Body 
+
+@@@BEG_Comment@@@ 
+@TL(9)
+@h    ! WARNING !
+@h    The Kemro K2 system (including software) only meets category B according to EN 954-1,
+@h    thus it is not intended for usage in safety-relevant control applications in the field 
+@h    of personal safety (e.g. emergency stop).
+@h    To implement potentially necessary safety-relevant control tasks, always use additional 
+@h    external safety devices that are intended for the particular purpose, and meet the necessary 
+@h    functional safety.
+@h    For further information see EN 954-1 (EN ISO 13849-1) and/or the K2-x00 user manual, chapter 
+@h    "CE conformity, directives and standards".
+@@@END_Comment@@@ 
+
+@BEG_Body 
+@TL(7)
+(**************************************** WARNING ********************************************
+ *** The KEBA Kemro K2 System including software is not intended for safety control tasks! ***
+ ***                       For further information see Comment tab!                        ***
+ *********************************************************************************************)
+
+mbTaskPU3 := TRUE; 
+
+@END_Body 
+
+@@@BEG_Comment@@@ 
+@TL(9)
+@h    ! WARNING !
+@h    The Kemro K2 system (including software) only meets category B according to EN 954-1,
+@h    thus it is not intended for usage in safety-relevant control applications in the field 
+@h    of personal safety (e.g. emergency stop).
+@h    To implement potentially necessary safety-relevant control tasks, always use additional 
+@h    external safety devices that are intended for the particular purpose, and meet the necessary 
+@h    functional safety.
+@h    For further information see EN 954-1 (EN ISO 13849-1) and/or the K2-x00 user manual, chapter 
+@h    "CE conformity, directives and standards".
+@@@END_Comment@@@ 
+
+@BEG_Body 
+@TL(7)
+(**************************************** WARNING ********************************************
+ *** The KEBA Kemro K2 System including software is not intended for safety control tasks! ***
+ ***                       For further information see Comment tab!                        ***
+ *********************************************************************************************)
+
+mbTaskEV3 := TRUE; 
+
+@END_Body 
+
+@@@BEG_Comment@@@ 
+@TL(9)
+@h    ! WARNING !
+@h    The Kemro K2 system (including software) only meets category B according to EN 954-1,
+@h    thus it is not intended for usage in safety-relevant control applications in the field 
+@h    of personal safety (e.g. emergency stop).
+@h    To implement potentially necessary safety-relevant control tasks, always use additional 
+@h    external safety devices that are intended for the particular purpose, and meet the necessary 
+@h    functional safety.
+@h    For further information see EN 954-1 (EN ISO 13849-1) and/or the K2-x00 user manual, chapter 
+@h    "CE conformity, directives and standards".
+@@@END_Comment@@@ 
+
+@BEG_Body 
+@TL(7)
+(**************************************** WARNING ********************************************
+ *** The KEBA Kemro K2 System including software is not intended for safety control tasks! ***
+ ***                       For further information see Comment tab!                        ***
+ *********************************************************************************************)
+
+mbTaskEV7 := TRUE; 
+
+@END_Body 
+
+@@@BEG_Comment@@@ 
+@TL(9)
+@h    ! WARNING !
+@h    The Kemro K2 system (including software) only meets category B according to EN 954-1,
+@h    thus it is not intended for usage in safety-relevant control applications in the field 
+@h    of personal safety (e.g. emergency stop).
+@h    To implement potentially necessary safety-relevant control tasks, always use additional 
+@h    external safety devices that are intended for the particular purpose, and meet the necessary 
+@h    functional safety.
+@h    For further information see EN 954-1 (EN ISO 13849-1) and/or the K2-x00 user manual, chapter 
+@h    "CE conformity, directives and standards".
+@@@END_Comment@@@ 
+
+@BEG_Body 
+@TL(12)
+(**************************************** WARNING ********************************************
+ *** The KEBA Kemro K2 System including software is not intended for safety control tasks! ***
+ ***                       For further information see Comment tab!                        ***
+ *********************************************************************************************)
+
+IF mbTaskEV3 AND mbTaskEV7 AND mbTaskPU13 AND mbTaskPU3 AND mbTaskPU7 THEN
+   //set SV for ABMovementRegister to signalize that sv_bInitStart is TRUE
+   //and all relevant postupdate tasks and event tasks are executed at least one time
+   sv_bAllPUTasksExecuted := TRUE;
+   STOP_PROCESS_ALGORITHM();
+END_IF;
+
+@END_Body 
+
+@@@BEG_Comment@@@ 
+@TL(0)
+
+@@@END_Comment@@@ 
+
+@BEG_Body 
+@TL(16)
+(**************************************** WARNING ********************************************
+ *** The KEBA Kemro K2 System including software is not intended for safety control tasks! ***
+ ***                       For further information see Comment tab!                        ***
+ *********************************************************************************************)
+
+IF (sv_DataState = nReady) THEN
+   IF (oldDataState = nReadMachineData) THEN
+      sv_iReadMachineDataCount := sv_iReadMachineDataCount + 1;
+   ELSIF oldDataState = nReadMoldData THEN
+      sv_iReadMoldDataCount := sv_iReadMoldDataCount + 1;
+   END_IF; 
+END_IF;
+
+oldDataState := sv_DataState;
+
+
+@END_Body 
+
+@@@BEG_Comment@@@ 
+@TL(0)
+
+@@@END_Comment@@@ 
+@END_Body 
+
+@END_Contents 

@@ -1,0 +1,553 @@
+(*
+@h    ! WARNING !
+@h    The Kemro K2 system (including software) only meets category B according to EN 954-1,
+@h    thus it is not intended for usage in safety-relevant control applications in the field 
+@h    of personal safety (e.g. emergency stop).
+@h    To implement potentially necessary safety-relevant control tasks, always use additional 
+@h    external safety devices that are intended for the particular purpose, and meet the necessary 
+@h    functional safety.
+@h    For further information see EN 954-1 (EN ISO 13849-1) and/or the K2-x00 user manual, chapter 
+@h    "CE conformity, directives and standards".
+
+analog output to electric plast motor
+
+@FunctionID: CR_0033583
+
+*)
+
+IMPORT_OVER_LISTFILE
+ nElectric
+, nHydraulic
+, cMovePlast
+, cMoveIntrusion
+, cMovePlastPurge
+, tnMotorType
+, tsMoveCtrl
+, ABAnalogHWOut
+, tnDataState
+
+END_IMPORT
+
+ALGORITHM_BLOCK ABOutElectricPlast #DUMMY_EDIT_BLOCK
+
+SYSTEM_VAR
+ sv_bPreOutputReady : BOOL (* PreOutput is ready *);
+ sv_bInitStart : BOOL (* Device registration finished - custom IEC initialisation can be started *);
+ sv_PlastMotor : tnMotorType (* type of plast motor *);
+ sv_bOutputActive : BOOL (* Output is active *);
+ sv_rVelocity : REAL (* set value for velocity *);
+ sv_DataState : tnDataState;
+END_VAR
+
+SYSTEM_OBJECT
+ PU_Task_7 : TASK;
+ TaskAnalog : TASK;
+END_OBJECT
+
+VAR_EXTERNAL
+ g_MoveCtrl : tsMoveCtrl;
+END_VAR
+
+VAR
+ abAnalogOut : ABAnalogHWOut;
+END_VAR
+
+POSTUPDATE_ALGORITHM pDataState ON PU_Task_7 WITH sv_DataState
+
+
+VAR
+ bMDLoadingInProgress : BOOL (* loading of machine data in progress *);
+END_VAR
+#BEGIN_EDIT_BLOCK
+(**************************************** WARNING ********************************************
+ *** The KEBA Kemro K2 System including software is not intended for safety control tasks! ***
+ ***                       For further information see Comment tab!                        ***
+ *********************************************************************************************)
+
+IF sv_DataState = nReadMachineData THEN
+   //loading of machinedata in progress
+   bMDLoadingInProgress := TRUE;
+   RETURN;
+END_IF;
+
+IF sv_DataState = nReady AND bMDLoadingInProgress THEN
+   
+   //set sv_PlastMotor after loading of machine data
+   IF (abAnalogOut.aIsLinked()) THEN
+      sv_PlastMotor := nElectric;
+   ELSE    
+      sv_PlastMotor := nHydraulic;
+   END_IF;
+   
+   bMDLoadingInProgress := FALSE;
+END_IF;
+
+
+
+
+;#END_EDIT_BLOCK END_ALGORITHM
+
+POSTUPDATE_ALGORITHM pCheckMode ON PU_Task_7 WITH sv_bInitStart
+
+#BEGIN_EDIT_BLOCK
+(**************************************** WARNING ********************************************
+ *** The KEBA Kemro K2 System including software is not intended for safety control tasks! ***
+ ***                       For further information see Comment tab!                        ***
+ *********************************************************************************************)
+
+IF (abAnalogOut.aIsLinked()) THEN
+    sv_PlastMotor := nElectric;
+ELSE    
+    sv_PlastMotor := nHydraulic;
+END_IF;
+
+
+;#END_EDIT_BLOCK END_ALGORITHM
+
+PROCESS_ALGORITHM paRun ON TaskAnalog
+
+
+(* IecGraph-Code *)
+
+(* init step *)
+INITIAL_STEP START:
+END_STEP
+
+
+(* steps *)
+STEP Step20:
+Action21 (N);
+END_STEP
+
+ACTION Action21: #BEGIN_EDIT_BLOCK
+abAnalogOut.aOut(sv_rVelocity/10.0);
+
+;#END_EDIT_BLOCK END_ACTION (*Action21*)
+STEP END:
+Action3 (P);
+END_STEP
+
+ACTION Action3: #BEGIN_EDIT_BLOCK
+abAnalogOut.aOut(0.0);
+STOP_PROCESS_ALGORITHM();
+
+;#END_EDIT_BLOCK END_ACTION (*Action3*)
+
+(* transitions *)
+GO_ON_TRANSITION Trans32 (* Trans32 *) FROM START TO Step20 :=  #BEGIN_EDIT_BLOCK
+sv_bPreOutputReady AND
+sv_bOutputActive
+;#END_EDIT_BLOCK
+END_TRANSITION
+
+GO_ON_TRANSITION Trans33 (* Trans33 *) FROM START TO END :=  #BEGIN_EDIT_BLOCK
+NOT sv_bOutputActive
+;#END_EDIT_BLOCK
+END_TRANSITION
+
+GO_ON_TRANSITION Trans34 (* Trans34 *) FROM Step20 TO END :=  #BEGIN_EDIT_BLOCK
+NOT sv_bOutputActive
+;#END_EDIT_BLOCK
+END_TRANSITION
+
+TRANSITION Trans16 (* Trans16 *) FROM END TO START :=  #BEGIN_EDIT_BLOCK
+TRUE
+;#END_EDIT_BLOCK
+END_TRANSITION
+
+(* end IecGraph-Code *)
+(* sfc-code *)
+(* end sfc-code *)
+
+
+END_ALGORITHM
+
+POSTUPDATE_ALGORITHM pOutputActive ON PU_Task_7 WITH sv_bOutputActive
+
+#BEGIN_EDIT_BLOCK
+IF sv_bOutputActive THEN
+    IF  (((g_MoveCtrl.pData^.MoveId = cMovePlast) 
+            OR (g_MoveCtrl.pData^.MoveId = cMoveIntrusion)
+            OR (g_MoveCtrl.pData^.MoveId = cMovePlastPurge)) 
+        AND (sv_PlastMotor = nElectric)) THEN
+        START_PROCESS_ALGORITHM(paRun);        
+    END_IF;
+END_IF;
+
+
+;#END_EDIT_BLOCK END_ALGORITHM
+
+
+
+END_ALGORITHM_BLOCK
+
+
+
+#END_OF_IEC_PART
+
+@Puma @IecEditor 6 114 @Pou 25 
+@@@BEG_Comment@@@
+@h    ! WARNING !
+@h    The Kemro K2 system (including software) only meets category B according to EN 954-1,
+@h    thus it is not intended for usage in safety-relevant control applications in the field 
+@h    of personal safety (e.g. emergency stop).
+@h    To implement potentially necessary safety-relevant control tasks, always use additional 
+@h    external safety devices that are intended for the particular purpose, and meet the necessary 
+@h    functional safety.
+@h    For further information see EN 954-1 (EN ISO 13849-1) and/or the K2-x00 user manual, chapter 
+@h    "CE conformity, directives and standards".
+
+analog output to electric plast motor
+
+@FunctionID: CR_0033583
+
+@@@END_Comment@@@
+
+@BEG_Contents 
+
+@BEG_Func 
+@RT(17)FuncTreeContainer 
+0 
+@END_Func 
+
+@BEG_Const 
+@RT(18)ConstTreeContainer 
+5 
+@Var @RT(9)nElectric @RT(0) @T @T @DERIVED 0 @F @RT(11)tnMotorType @F 
+@T 
+@BEG_Attrib 
+0 @RT(1)1 @RT(14)electric motor 
+@END_Attrib 
+1 1 @F @F @F @F 
+
+@Var @RT(10)nHydraulic @RT(0) @T @T @DERIVED 0 @F @RT(11)tnMotorType @F 
+@T 
+@BEG_Attrib 
+0 @RT(1)0 @RT(15)hydraulic motor 
+@END_Attrib 
+1 1 @F @F @F @F 
+
+@Var @RT(10)cMovePlast @RT(0) @T @F @DT @RT(4)DINT @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+0 @RT(2)13 @RT(23)plast movement (rotate) 
+@END_Attrib 
+1 1 @F @F @F @F 
+
+@Var @RT(14)cMoveIntrusion @RT(0) @T @F @DT @RT(4)DINT @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+0 @RT(2)28 @RT(9)intrusion 
+@END_Attrib 
+1 1 @F @F @F @F 
+
+@Var @RT(15)cMovePlastPurge @RT(0) @T @F @DT @RT(4)DINT @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+0 @RT(2)34 @RT(26)plast movement for purging 
+@END_Attrib 
+1 1 @F @F @F @F 
+
+@END_Const 
+
+@BEG_Export 
+
+@BEG_Kind 
+@ALGORITHM_BLOCK @RT(18)ABOutElectricPlast @STRUCTURED_TEXT 
+@RT(0) @RT(0) @RT(0) 
+@END_Kind 
+
+@BEG_Dcl 
+@RT(16)DclTreeContainer 
+10 
+@Var @RT(18)sv_bPreOutputReady @RT(0) @T @F @DT @RT(4)BOOL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(18)PreOutput is ready @RT(0) 
+@END_Attrib 
+1 8 @F @F @F @F 
+
+@Var @RT(13)sv_bInitStart @RT(0) @T @F @DT @RT(4)BOOL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(71)Device registration finished - custom IEC initialisation can be started @RT(0) 
+@END_Attrib 
+1 8 @F @F @F @F 
+
+@Var @RT(13)sv_PlastMotor @RT(0) @T @T @DERIVED 0 @T @T @DT @RT(11)tnMotorType @RT(0) @T @T @UNKNOWN 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(19)type of plast motor @RT(0) 
+@END_Attrib 
+1 8 @F @F @F @F 
+
+@Var @RT(16)sv_bOutputActive @RT(0) @T @F @DT @RT(4)BOOL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(16)Output is active @RT(0) 
+@END_Attrib 
+1 8 @F @F @F @F 
+
+@Var @RT(12)sv_rVelocity @RT(0) @T @F @DT @RT(4)REAL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(22)set value for velocity @RT(0) 
+@END_Attrib 
+1 8 @F @F @F @F 
+
+@Var @RT(9)PU_Task_7 @RT(0) @T @F @DT @RT(4)TASK @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 7 @F @F @F @F 
+
+@Var @RT(10)TaskAnalog @RT(0) @T @F @DT @RT(4)TASK @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 7 @F @F @F @F 
+
+@Var @RT(10)g_MoveCtrl @RT(0) @T @T @DERIVED 0 @T @T @DT @RT(10)tsMoveCtrl @RT(0) @T @T @UNKNOWN 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 6 @F @F @F @F 
+
+@Var @RT(11)abAnalogOut @RT(0) @T @T @DERIVED 0 @T @T @DT @RT(13)ABAnalogHWOut @RT(0) @T @T @UNKNOWN 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(12)sv_DataState @RT(0) @T @T @DERIVED 0 @T @T @DT @RT(11)tnDataState @RT(0) @T @T @UNKNOWN 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 8 @F @F @F @F 
+
+@END_Dcl 
+
+@END_Export 
+
+@BEG_Body 
+
+4 
+
+@BEG_Export 
+
+@BEG_Algo 
+@POSTUPDATE_ALGORITHM @RT(10)pDataState @STRUCTURED_TEXT 
+@RT(0) @RT(12)sv_DataState @RT(9)PU_Task_7 @F @F 
+@END_Algo 
+
+@BEG_Dcl 
+@RT(16)DclTreeContainer 
+1 
+@Var @RT(20)bMDLoadingInProgress @RT(0) @T @F @DT @RT(4)BOOL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(35)loading of machine data in progress @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@END_Dcl 
+
+@END_Export 
+
+@BEG_Export 
+
+@BEG_Algo 
+@POSTUPDATE_ALGORITHM @RT(10)pCheckMode @STRUCTURED_TEXT 
+@RT(0) @RT(13)sv_bInitStart @RT(9)PU_Task_7 @F @F 
+@END_Algo 
+
+@BEG_Dcl 
+@RT(16)DclTreeContainer 
+0 
+@END_Dcl 
+
+@END_Export 
+
+@BEG_Export 
+
+@BEG_Algo 
+@PROCESS_ALGORITHM @RT(5)paRun @SEQUENTIAL_FLOW_CHART 
+@RT(0) @RT(0) @RT(10)TaskAnalog @F @F 
+@END_Algo 
+
+@BEG_Dcl 
+@RT(16)DclTreeContainer 
+0 
+@END_Dcl 
+
+@END_Export 
+
+@BEG_Export 
+
+@BEG_Algo 
+@POSTUPDATE_ALGORITHM @RT(13)pOutputActive @STRUCTURED_TEXT 
+@RT(0) @RT(16)sv_bOutputActive @RT(9)PU_Task_7 @F @F 
+@END_Algo 
+
+@BEG_Dcl 
+@RT(16)DclTreeContainer 
+0 
+@END_Dcl 
+
+@END_Export 
+
+@BEG_Body 
+@TL(25)
+(**************************************** WARNING ********************************************
+ *** The KEBA Kemro K2 System including software is not intended for safety control tasks! ***
+ ***                       For further information see Comment tab!                        ***
+ *********************************************************************************************)
+
+IF sv_DataState = nReadMachineData THEN
+   //loading of machinedata in progress
+   bMDLoadingInProgress := TRUE;
+   RETURN;
+END_IF;
+
+IF sv_DataState = nReady AND bMDLoadingInProgress THEN
+   
+   //set sv_PlastMotor after loading of machine data
+   IF (abAnalogOut.aIsLinked()) THEN
+      sv_PlastMotor := nElectric;
+   ELSE    
+      sv_PlastMotor := nHydraulic;
+   END_IF;
+   
+   bMDLoadingInProgress := FALSE;
+END_IF;
+
+
+
+@END_Body 
+
+@@@BEG_Comment@@@ 
+@TL(0)
+
+@@@END_Comment@@@ 
+
+@BEG_Body 
+@TL(11)
+(**************************************** WARNING ********************************************
+ *** The KEBA Kemro K2 System including software is not intended for safety control tasks! ***
+ ***                       For further information see Comment tab!                        ***
+ *********************************************************************************************)
+
+IF (abAnalogOut.aIsLinked()) THEN
+    sv_PlastMotor := nElectric;
+ELSE    
+    sv_PlastMotor := nHydraulic;
+END_IF;
+
+@END_Body 
+
+@@@BEG_Comment@@@ 
+@TL(0)
+
+@@@END_Comment@@@ 
+
+@BEG_SfcBody 
+3 5 5 
+
+@BEG_SfcData 2 
+@StepSeq @RT(4)sseq @F 1 
+@Loop @RT(4)loop @F 2 
+@StepSeq @RT(4)sseq @F 5 
+@Step @RT(5)START @F @T @F @F @RT(0) @F 
+@AcbCont @RT(7)unnamed @F 0 
+
+@AltBranch @RT(3)alt @F 2 
+@TransSeq @RT(4)tseq @F 1 
+@Trans @RT(7)Trans32 @F @T @F @F @T @F @TL(3)
+sv_bPreOutputReady AND
+sv_bOutputActive
+
+@RT(7)Trans32 @F 
+
+@TransSeq @RT(4)tseq @F 2 
+@Trans @RT(7)Trans33 @F @T @F @F @T @F @TL(2)
+NOT sv_bOutputActive
+
+@RT(7)Trans33 @F 
+@Goto @RT(3)END @F @F 
+
+
+@Step @RT(6)Step20 @F @F @F @F @RT(0) @F 
+@AcbCont @RT(7)unnamed @F 1 
+@Acb @RT(8)Action21 @F @T @RT(1)N @RT(0) @F @F @T @TL(2)
+abAnalogOut.aOut(sv_rVelocity/10.0);
+
+@F 
+
+@Trans @RT(7)Trans34 @F @T @F @F @T @F @TL(2)
+NOT sv_bOutputActive
+
+@RT(7)Trans34 @F 
+@Step @RT(3)END @F @F @T @F @RT(0) @F 
+@AcbCont @RT(7)unnamed @F 1 
+@Acb @RT(7)Action3 @F @T @RT(1)P @RT(0) @F @F @T @TL(3)
+abAnalogOut.aOut(0.0);
+STOP_PROCESS_ALGORITHM();
+
+@F 
+
+
+@Trans @RT(7)Trans16 @F @T @F @T @T @T @TL(2)
+TRUE
+
+@RT(7)Trans16 @F 
+
+@END_SfcData 
+@SaActions 0 
+@SaTrans 0 
+@SaExits 0 
+@END_SfcBody 
+
+@@@BEG_Comment@@@ 
+@TL(0)
+
+@@@END_Comment@@@ 
+
+@BEG_Body 
+@TL(9)
+IF sv_bOutputActive THEN
+    IF  (((g_MoveCtrl.pData^.MoveId = cMovePlast) 
+            OR (g_MoveCtrl.pData^.MoveId = cMoveIntrusion)
+            OR (g_MoveCtrl.pData^.MoveId = cMovePlastPurge)) 
+        AND (sv_PlastMotor = nElectric)) THEN
+        START_PROCESS_ALGORITHM(paRun);        
+    END_IF;
+END_IF;
+
+@END_Body 
+
+@@@BEG_Comment@@@ 
+@TL(0)
+
+@@@END_Comment@@@ 
+@END_Body 
+
+@END_Contents 

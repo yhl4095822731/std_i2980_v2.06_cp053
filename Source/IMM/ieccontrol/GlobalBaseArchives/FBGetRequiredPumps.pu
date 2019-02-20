@@ -1,0 +1,194 @@
+(*
+@h    ! WARNING !
+@h    The Kemro K2 system (including software) only meets category B according to EN 954-1,
+@h    thus it is not intended for usage in safety-relevant control applications in the field 
+@h    of personal safety (e.g. emergency stop).
+@h    To implement potentially necessary safety-relevant control tasks, always use additional 
+@h    external safety devices that are intended for the particular purpose, and meet the necessary 
+@h    functional safety.
+@h    For further information see EN 954-1 (EN ISO 13849-1) and/or the K2-x00 user manual, chapter 
+@h    "CE conformity, directives and standards".
+
+get reference to the systemvariable with information about reuqired pumps for a defined movement
+If the movement is not found, the reference pPumps is EMPTY.
+*)
+
+IMPORT_OVER_LISTFILE
+ tsDeviceId
+, tMoveIdent
+, tsRequiredPumps
+, tDeviceMovementList
+
+END_IMPORT
+
+FUNCTION_BLOCK FBGetRequiredPumps #DUMMY_EDIT_BLOCK
+
+VAR_INPUT
+ DeviceId : tsDeviceId;
+ MoveDir : tMoveIdent;
+ MoveId : tMoveIdent;
+END_VAR
+
+VAR_OUTPUT
+ pPumps : REFTO tsRequiredPumps;
+END_VAR
+
+SYSTEM_VAR
+ sv_DeviceMovements : tDeviceMovementList;
+END_VAR
+
+VAR_TEMP
+ i : DINT;
+ k : DINT;
+END_VAR
+#BEGIN_EDIT_BLOCK
+(**************************************** WARNING ********************************************
+ *** The KEBA Kemro K2 System including software is not intended for safety control tasks! ***
+ ***                       For further information see Comment tab!                        ***
+ *********************************************************************************************)
+
+pPumps := EMPTY;
+
+FOR i := 1 TO cMaxMoveDevicesRegistered DO
+   IF (sv_DeviceMovements[i].DeviceId = DeviceId) THEN
+      FOR k := 1 TO sv_DeviceMovements[i].iNumberOfMovements DO
+         IF (sv_DeviceMovements[i].Movements[k]^.MoveDir = MoveDir) AND (sv_DeviceMovements[i].Movements[k]^.MoveId = MoveId) THEN
+            pPumps := sv_DeviceMovements[i].Movements[k]^.AnaOutData.pRequiredPumps;
+            EXIT;
+         END_IF;
+      END_FOR;
+      EXIT;
+   END_IF;   
+END_FOR;
+
+
+
+;#END_EDIT_BLOCK END_FUNCTION_BLOCK
+
+
+
+#END_OF_IEC_PART
+
+@Puma @IecEditor 6 144 @Pou 25 
+@@@BEG_Comment@@@
+@h    ! WARNING !
+@h    The Kemro K2 system (including software) only meets category B according to EN 954-1,
+@h    thus it is not intended for usage in safety-relevant control applications in the field 
+@h    of personal safety (e.g. emergency stop).
+@h    To implement potentially necessary safety-relevant control tasks, always use additional 
+@h    external safety devices that are intended for the particular purpose, and meet the necessary 
+@h    functional safety.
+@h    For further information see EN 954-1 (EN ISO 13849-1) and/or the K2-x00 user manual, chapter 
+@h    "CE conformity, directives and standards".
+
+get reference to the systemvariable with information about reuqired pumps for a defined movement
+If the movement is not found, the reference pPumps is EMPTY.
+@@@END_Comment@@@
+
+@BEG_Contents 
+
+@BEG_Func 
+@RT(17)FuncTreeContainer 
+0 
+@END_Func 
+
+@BEG_Const 
+@RT(18)ConstTreeContainer 
+0 
+@END_Const 
+
+@BEG_Export 
+
+@BEG_Kind 
+@FUNCTION_BLOCK @RT(18)FBGetRequiredPumps @STRUCTURED_TEXT 
+@RT(0) @RT(0) @RT(0) 
+@END_Kind 
+
+@BEG_Dcl 
+@RT(16)DclTreeContainer 
+7 
+@Var @RT(8)DeviceId @RT(0) @T @T @DERIVED 0 @T @T @DT @RT(10)tsDeviceId @RT(0) @T @T @UNKNOWN 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 1 @F @F @F @F 
+
+@Var @RT(7)MoveDir @RT(0) @T @T @DERIVED 0 @T @T @DT @RT(10)tMoveIdent @RT(0) @T @T @UNKNOWN 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 1 @F @F @F @F 
+
+@Var @RT(6)MoveId @RT(0) @T @T @DERIVED 0 @T @T @DT @RT(10)tMoveIdent @RT(0) @T @T @UNKNOWN 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 1 @F @F @F @F 
+
+@Var @RT(6)pPumps @RT(0) @T @T @REFTO 0 @F @DERIVED 0 @T @T @DT @RT(15)tsRequiredPumps @RT(0) @T @T @UNKNOWN 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 3 @F @F @F @F 
+
+@Var @RT(18)sv_DeviceMovements @RT(0) @T @T @DERIVED 0 @T @T @DT @RT(19)tDeviceMovementList @RT(0) @T @T @UNKNOWN 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 8 @F @F @F @F 
+
+@Var @RT(1)i @RT(0) @T @F @DT @RT(4)DINT @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 4 @F @F @F @F 
+
+@Var @RT(1)k @RT(0) @T @F @DT @RT(4)DINT @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 4 @F @F @F @F 
+
+@END_Dcl 
+
+@END_Export 
+
+@BEG_Body 
+@TL(20)
+(**************************************** WARNING ********************************************
+ *** The KEBA Kemro K2 System including software is not intended for safety control tasks! ***
+ ***                       For further information see Comment tab!                        ***
+ *********************************************************************************************)
+
+pPumps := EMPTY;
+
+FOR i := 1 TO cMaxMoveDevicesRegistered DO
+   IF (sv_DeviceMovements[i].DeviceId = DeviceId) THEN
+      FOR k := 1 TO sv_DeviceMovements[i].iNumberOfMovements DO
+         IF (sv_DeviceMovements[i].Movements[k]^.MoveDir = MoveDir) AND (sv_DeviceMovements[i].Movements[k]^.MoveId = MoveId) THEN
+            pPumps := sv_DeviceMovements[i].Movements[k]^.AnaOutData.pRequiredPumps;
+            EXIT;
+         END_IF;
+      END_FOR;
+      EXIT;
+   END_IF;   
+END_FOR;
+
+
+@END_Body 
+
+@END_Contents 

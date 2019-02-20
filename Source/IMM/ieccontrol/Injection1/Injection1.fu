@@ -1,0 +1,280 @@
+(*
+responsible for all injection related tasks
+*)
+
+IMPORT_OVER_LISTFILE
+ tsMoveCtrl
+, tyLockList
+, ABDeviceRegister
+, ABControl
+, ABMeasure
+, ABButtonControl
+, ABMovementAdmin
+, ABValveControl
+, ABEndPosMon
+, ABTransducerCalibCycle
+, ABInjectionCalibCycle
+, ABBackPressureCalibCycle
+, ABRPMCalibCycle
+, ABCheckColdDropPossible
+, ABOutElectricPlast
+, ABODCFunctions
+, ABChangeProfile
+, ABMoveCombinedPlast
+, ABPlasticizeStop
+, ABIdentMovement
+
+END_IMPORT
+
+FUNCTIONAL_UNIT Injection1 #DUMMY_EDIT_BLOCK
+
+VAR_GLOBAL
+ g_MoveCtrl : tsMoveCtrl;
+ g_LockList : tyLockList;
+ g_dActiveTimestamp : TIME;
+END_VAR
+
+VAR
+ abDeviceRegister : ABDeviceRegister;
+ abControl : ABControl;
+ abMeasure : ABMeasure;
+ abButtonControl : ABButtonControl;
+ abMovementAdmin : ABMovementAdmin;
+ abValveControl : ABValveControl;
+ abPlastEndMon : ABEndPosMon;
+ abTransducerCalibCycle : ABTransducerCalibCycle;
+ abInjectionCalibCycle : ABInjectionCalibCycle;
+ abBackPCalibCycle : ABBackPressureCalibCycle;
+ abRPMCalibCycle : ABRPMCalibCycle;
+ abInjectPosMon : ABEndPosMon;
+ abCheckColdDropPossible : ABCheckColdDropPossible;
+ abOutElectricPlast : ABOutElectricPlast;
+ abODCFunctions : ABODCFunctions;
+ abChangeProfile : ABChangeProfile;
+ abMoveCombinedPlast : ABMoveCombinedPlast;
+ abPlasticizeStop : ABPlasticizeStop;
+ abIdentMovement : ABIdentMovement;
+END_VAR
+
+
+
+
+
+END_FUNCTIONAL_UNIT
+
+
+
+#END_OF_IEC_PART
+
+@Puma @IecEditor 6 120 @Fou 25 
+@@@BEG_Comment@@@
+responsible for all injection related tasks
+@@@END_Comment@@@
+
+@BEG_Contents 
+
+@BEG_Const 
+@RT(18)ConstTreeContainer 
+0 
+@END_Const 
+
+@BEG_Export 
+
+@BEG_Kind 
+@FUNCTIONAL_UNIT @RT(10)Injection1 @STRUCTURED_TEXT 
+@RT(0) @RT(0) @RT(0) 
+@END_Kind 
+
+@BEG_Dcl 
+@RT(16)DclTreeContainer 
+22 
+@Var @RT(10)g_MoveCtrl @RT(0) @T @T @DERIVED 0 @T @T @DT @RT(10)tsMoveCtrl @RT(0) @T @T @UNKNOWN 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 5 @F @F @F @F 
+
+@Var @RT(10)g_LockList @RT(0) @T @T @DERIVED 0 @T @T @DT @RT(10)tyLockList @RT(0) @T @T @UNKNOWN 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 5 @F @F @F @F 
+
+@Var @RT(16)abDeviceRegister @RT(0) @T @T @DERIVED 0 @T @T @DT @RT(16)ABDeviceRegister @RT(0) @T @T @UNKNOWN 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(9)abControl @RT(0) @T @T @DERIVED 0 @T @T @DT @RT(9)ABControl @RT(0) @T @T @UNKNOWN 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(9)abMeasure @RT(0) @T @T @DERIVED 0 @T @T @DT @RT(9)ABMeasure @RT(0) @T @T @UNKNOWN 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(15)abButtonControl @RT(0) @T @T @DERIVED 0 @F @RT(15)ABButtonControl @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(15)abMovementAdmin @RT(0) @T @T @DERIVED 0 @T @T @DT @RT(15)ABMovementAdmin @RT(0) @T @T @UNKNOWN 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(14)abValveControl @RT(0) @T @T @DERIVED 0 @T @T @DT @RT(14)ABValveControl @RT(0) @T @T @UNKNOWN 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(13)abPlastEndMon @RT(0) @T @T @DERIVED 0 @T @T @DT @RT(11)ABEndPosMon @RT(0) @T @T @UNKNOWN 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(22)abTransducerCalibCycle @RT(0) @T @T @DERIVED 0 @T @T @DT @RT(22)ABTransducerCalibCycle @RT(0) @T @T @UNKNOWN 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(21)abInjectionCalibCycle @RT(0) @T @T @DERIVED 0 @T @T @DT @RT(21)ABInjectionCalibCycle @RT(0) @T @T @UNKNOWN 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(17)abBackPCalibCycle @RT(0) @T @T @DERIVED 0 @T @T @DT @RT(24)ABBackPressureCalibCycle @RT(0) @T @T @UNKNOWN 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(15)abRPMCalibCycle @RT(0) @T @T @DERIVED 0 @T @T @DT @RT(15)ABRPMCalibCycle @RT(0) @T @T @UNKNOWN 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(14)abInjectPosMon @RT(0) @T @T @DERIVED 0 @T @T @DT @RT(11)ABEndPosMon @RT(0) @T @T @UNKNOWN 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(23)abCheckColdDropPossible @RT(0) @T @T @DERIVED 0 @T @T @DT @RT(23)ABCheckColdDropPossible @RT(0) @T @T @UNKNOWN 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(18)abOutElectricPlast @RT(0) @T @T @DERIVED 0 @T @T @DT @RT(18)ABOutElectricPlast @RT(0) @T @T @UNKNOWN 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(14)abODCFunctions @RT(0) @T @T @DERIVED 0 @T @T @DT @RT(14)ABODCFunctions @RT(0) @T @T @UNKNOWN 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(15)abChangeProfile @RT(0) @T @T @DERIVED 0 @T @T @DT @RT(15)ABChangeProfile @RT(0) @T @T @UNKNOWN 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(19)abMoveCombinedPlast @RT(0) @T @T @DERIVED 0 @T @T @DT @RT(19)ABMoveCombinedPlast @RT(0) @T @T @UNKNOWN 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(16)abPlasticizeStop @RT(0) @T @T @DERIVED 0 @T @T @DT @RT(16)ABPlasticizeStop @RT(0) @T @T @UNKNOWN 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(15)abIdentMovement @RT(0) @T @T @DERIVED 0 @T @T @DT @RT(15)ABIdentMovement @RT(0) @T @T @UNKNOWN 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(18)g_dActiveTimestamp @RT(0) @T @F @DT @RT(4)TIME @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 5 @F @F @F @F 
+
+@END_Dcl 
+
+@END_Export 
+
+@BEG_Plug 
+@RT(17)PlugTreeContainer 
+0 
+@END_Plug 
+
+@BEG_Body 
+@TL(0)
+
+@END_Body 
+
+@END_Contents 

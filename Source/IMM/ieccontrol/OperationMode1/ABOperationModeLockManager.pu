@@ -1,0 +1,145 @@
+IMPORT_OVER_LISTFILE
+ ABResourceLockManager
+, tsLockOperationModeAuto
+, tsResourceLock
+
+END_IMPORT
+
+ALGORITHM_BLOCK ABOperationModeLockManager #DUMMY_EDIT_BLOCK
+
+SYSTEM_VAR
+ sv_LockOperationModeAuto : tsLockOperationModeAuto;
+ sv_LockDataState : tsResourceLock;
+END_VAR
+
+SYSTEM_OBJECT
+ TaskSlow : TASK;
+END_OBJECT
+
+VAR
+ abModeAutoLockManager : ABResourceLockManager;
+ abDataStateLockManager : ABResourceLockManager;
+END_VAR
+
+PROCESS_ALGORITHM paInit ON TaskSlow AUTOSTART
+
+#BEGIN_EDIT_BLOCK
+abModeAutoLockManager.aInit("LockOpModeAuto", @sv_LockOperationModeAuto.sResourceLock, T#10s);
+abDataStateLockManager.aInit("LockDataState", @sv_LockDataState, T#3m);
+STOP_PROCESS_ALGORITHM();
+
+
+;#END_EDIT_BLOCK END_ALGORITHM
+
+
+
+END_ALGORITHM_BLOCK
+
+
+
+#END_OF_IEC_PART
+
+@Puma @IecEditor 6 159 @Pou 25 
+@@@BEG_Comment@@@
+
+@@@END_Comment@@@
+
+@BEG_Contents 
+
+@BEG_Func 
+@RT(17)FuncTreeContainer 
+0 
+@END_Func 
+
+@BEG_Const 
+@RT(18)ConstTreeContainer 
+0 
+@END_Const 
+
+@BEG_Export 
+
+@BEG_Kind 
+@ALGORITHM_BLOCK @RT(26)ABOperationModeLockManager @STRUCTURED_TEXT 
+@RT(0) @RT(0) @RT(0) 
+@END_Kind 
+
+@BEG_Dcl 
+@RT(16)DclTreeContainer 
+5 
+@Var @RT(21)abModeAutoLockManager @RT(0) @T @T @DERIVED 0 @T @T @DT @RT(21)ABResourceLockManager @RT(0) @T @T @UNKNOWN 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(22)abDataStateLockManager @RT(0) @T @T @DERIVED 0 @T @T @DT @RT(21)ABResourceLockManager @RT(0) @T @T @UNKNOWN 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(24)sv_LockOperationModeAuto @RT(0) @T @T @DERIVED 0 @T @T @DT @RT(23)tsLockOperationModeAuto @RT(0) @T @T @UNKNOWN 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 8 @F @F @F @F 
+
+@Var @RT(16)sv_LockDataState @RT(0) @T @T @DERIVED 0 @T @T @DT @RT(14)tsResourceLock @RT(0) @T @T @UNKNOWN 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 8 @F @F @F @F 
+
+@Var @RT(8)TaskSlow @RT(0) @T @T @RENAMED 0 @T @T @DT @RT(4)TASK @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 7 @F @F @F @F 
+
+@END_Dcl 
+
+@END_Export 
+
+@BEG_Body 
+
+1 
+
+@BEG_Export 
+
+@BEG_Algo 
+@PROCESS_ALGORITHM @RT(6)paInit @STRUCTURED_TEXT 
+@RT(0) @RT(0) @RT(8)TaskSlow @T @F 
+@END_Algo 
+
+@BEG_Dcl 
+@RT(16)DclTreeContainer 
+0 
+@END_Dcl 
+
+@END_Export 
+
+@BEG_Body 
+@TL(4)
+abModeAutoLockManager.aInit("LockOpModeAuto", @sv_LockOperationModeAuto.sResourceLock, T#10s);
+abDataStateLockManager.aInit("LockDataState", @sv_LockDataState, T#3m);
+STOP_PROCESS_ALGORITHM();
+
+@END_Body 
+
+@@@BEG_Comment@@@ 
+@TL(0)
+
+@@@END_Comment@@@ 
+@END_Body 
+
+@END_Contents 

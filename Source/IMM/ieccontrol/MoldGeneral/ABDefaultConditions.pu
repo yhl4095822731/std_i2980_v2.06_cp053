@@ -1,0 +1,503 @@
+(*
+@h    ! WARNING !
+@h    The Kemro K2 system (including software) only meets category B according to EN 954-1,
+@h    thus it is not intended for usage in safety-relevant control applications in the field 
+@h    of personal safety (e.g. emergency stop).
+@h    To implement potentially necessary safety-relevant control tasks, always use additional 
+@h    external safety devices that are intended for the particular purpose, and meet the necessary 
+@h    functional safety.
+@h    For further information see EN 954-1 (EN ISO 13849-1) and/or the K2-x00 user manual, chapter 
+@h    "CE conformity, directives and standards".
+
+This AB monitors following default condition:
+If the mold is not open, all ejector fwd movements are locked.
+
+This default condition is not monitored in the following cases:
++ The machine sequence is created by machine sequencer and not by ODC - files
++ "override ejector safety" is activated
++ monitoring is deactivated (sv_bIgnoreDefaultConditions = TRUE)
++ "eject during mold open" is activated
+*)
+
+IMPORT_OVER_LISTFILE
+ GET_SYNC_REFTO
+, cCompEjector
+, FBLockUnlock
+, KSYS_Status
+
+END_IMPORT
+
+ALGORITHM_BLOCK ABDefaultConditions #DUMMY_EDIT_BLOCK
+
+SYSTEM_VAR
+ sv_bMoldOpen : BOOL;
+ sv_bOverrideEjectorSafety : BOOL;
+ sv_bIgnoreDefaultConditions : BOOL;
+ sv_bUseProgramSwitches : BOOL;
+ sv_bInitStart : BOOL;
+ sv_bInitDone : BOOL;
+END_VAR
+
+SYSTEM_OBJECT
+ erMoldNotOpen : ALARM;
+ PU_Task_7 : TASK;
+ PU_Task_3 : TASK;
+END_OBJECT
+
+VAR
+ mpiNewSequence : REFTO DINT;
+ mpbEjectorFwdDuringOpen : REFTO BOOL;
+ mpiEjectorSelector : REFTO INT;
+END_VAR
+
+ALGORITHM aLockUnlock
+
+
+VAR
+ fbLockUnlock : FBLockUnlock;
+END_VAR
+#BEGIN_EDIT_BLOCK
+(**************************************** WARNING ********************************************
+ *** The KEBA Kemro K2 System including software is not intended for safety control tasks! ***
+ ***                       For further information see Comment tab!                        ***
+ *********************************************************************************************)
+
+IF NOT sv_bInitDone THEN
+   RETURN;  //no lock / unlock before sv_bInitDone
+END_IF;
+
+IF sv_bIgnoreDefaultConditions OR NOT sv_bUseProgramSwitches THEN
+   //sequence programmmed by machine sequencer or 
+   //default conditions deactivated
+   fbLockUnlock.Mode := nUnlock;
+ELSE
+   //sequence programmed by files and default conditions activated
+   //-> check default conditions
+   IF sv_bMoldOpen OR mpbEjectorFwdDuringOpen^ THEN
+      //mold open or eject during mold open is activated
+      fbLockUnlock.Mode := nUnlock;
+   ELSE
+      fbLockUnlock.Mode := nLockAbort;
+   END_IF;
+END_IF;
+
+//lock / unlock all ejector fwd movements
+//also consider "override ejector safety"
+IF sv_bOverrideEjectorSafety THEN
+   fbLockUnlock.Mode := nUnlock;
+END_IF;
+
+fbLockUnlock.DeviceId.CompId := cCompEjector;
+fbLockUnlock.DeviceId.IndexId := 1;
+fbLockUnlock.MoveDir := cMoveFwd;
+fbLockUnlock.MoveId := cMoveAll;
+fbLockUnlock.Alarm.AlarmId := erMoldNotOpen;
+fbLockUnlock();
+
+
+
+
+
+;#END_EDIT_BLOCK END_ALGORITHM
+
+POSTUPDATE_ALGORITHM pInitStart ON PU_Task_7 WITH sv_bInitStart
+
+
+VAR
+ state : KSYS_Status;
+END_VAR
+#BEGIN_EDIT_BLOCK
+(**************************************** WARNING ********************************************
+ *** The KEBA Kemro K2 System including software is not intended for safety control tasks! ***
+ ***                       For further information see Comment tab!                        ***
+ *********************************************************************************************)
+
+//get references
+mpiNewSequence := GET_SYNC_REFTO('ODC1.sv_iODCSequenceUpdated', T#0s, state);
+mpbEjectorFwdDuringOpen := GET_SYNC_REFTO('CentralCoordination1.sv_bEjectorFwdDuringMldOpen', T#0s, state);
+mpiEjectorSelector := GET_SYNC_REFTO('Ejector1.sv_iODCSelector', T#0s, state);
+
+
+;#END_EDIT_BLOCK END_ALGORITHM
+
+POSTUPDATE_ALGORITHM pCheckDefaultConditions ON PU_Task_3 WITH sv_bMoldOpen,mpiNewSequence^,sv_bIgnoreDefaultConditions,sv_bOverrideEjectorSafety,mpbEjectorFwdDuringOpen^
+
+#BEGIN_EDIT_BLOCK
+(**************************************** WARNING ********************************************
+ *** The KEBA Kemro K2 System including software is not intended for safety control tasks! ***
+ ***                       For further information see Comment tab!                        ***
+ *********************************************************************************************)
+
+aLockUnlock();
+
+
+;#END_EDIT_BLOCK END_ALGORITHM
+
+POSTUPDATE_ALGORITHM pEjectorODCSelector ON PU_Task_7 WITH mpiEjectorSelector^
+
+#BEGIN_EDIT_BLOCK
+(**************************************** WARNING ********************************************
+ *** The KEBA Kemro K2 System including software is not intended for safety control tasks! ***
+ ***                       For further information see Comment tab!                        ***
+ *********************************************************************************************)
+
+IF (mpiEjectorSelector^ >= 5) THEN
+   //ejector movement after mold close -> deactivate default conditions
+   sv_bIgnoreDefaultConditions := TRUE;
+ELSE
+   sv_bIgnoreDefaultConditions := FALSE;
+END_IF;
+
+
+;#END_EDIT_BLOCK END_ALGORITHM
+
+
+
+END_ALGORITHM_BLOCK
+
+
+
+#END_OF_IEC_PART
+
+@Puma @IecEditor 6 126 @Pou 25 
+@@@BEG_Comment@@@
+@h    ! WARNING !
+@h    The Kemro K2 system (including software) only meets category B according to EN 954-1,
+@h    thus it is not intended for usage in safety-relevant control applications in the field 
+@h    of personal safety (e.g. emergency stop).
+@h    To implement potentially necessary safety-relevant control tasks, always use additional 
+@h    external safety devices that are intended for the particular purpose, and meet the necessary 
+@h    functional safety.
+@h    For further information see EN 954-1 (EN ISO 13849-1) and/or the K2-x00 user manual, chapter 
+@h    "CE conformity, directives and standards".
+
+This AB monitors following default condition:
+If the mold is not open, all ejector fwd movements are locked.
+
+This default condition is not monitored in the following cases:
++ The machine sequence is created by machine sequencer and not by ODC - files
++ "override ejector safety" is activated
++ monitoring is deactivated (sv_bIgnoreDefaultConditions = TRUE)
++ "eject during mold open" is activated
+@@@END_Comment@@@
+
+@BEG_Contents 
+
+@BEG_Func 
+@RT(17)FuncTreeContainer 
+1 
+@Var @RT(14)GET_SYNC_REFTO @RT(0) @T @T @DERIVED 0 @F @RT(22)KEBA_STANDARD_FUNCTION @F 
+@T 
+@BEG_Attrib 
+0 @RT(0) @RT(0) 
+@END_Attrib 
+1 1 @F @F @F @F 
+
+@END_Func 
+
+@BEG_Const 
+@RT(18)ConstTreeContainer 
+1 
+@Var @RT(12)cCompEjector @RT(0) @T @F @DT @RT(4)DINT @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+0 @RT(3)102 @RT(17)Component Ejector 
+@END_Attrib 
+1 1 @F @F @F @F 
+
+@END_Const 
+
+@BEG_Export 
+
+@BEG_Kind 
+@ALGORITHM_BLOCK @RT(19)ABDefaultConditions @STRUCTURED_TEXT 
+@RT(0) @RT(0) @RT(0) 
+@END_Kind 
+
+@BEG_Dcl 
+@RT(16)DclTreeContainer 
+12 
+@Var @RT(12)sv_bMoldOpen @RT(0) @T @T @RENAMED 0 @T @T @DT @RT(4)BOOL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 8 @F @F @F @F 
+
+@Var @RT(14)mpiNewSequence @RT(0) @T @T @REFTO 0 @T @DT @RT(4)DINT @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(25)sv_bOverrideEjectorSafety @RT(0) @T @T @RENAMED 0 @T @T @DT @RT(4)BOOL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 8 @F @F @F @F 
+
+@Var @RT(27)sv_bIgnoreDefaultConditions @RT(0) @T @T @RENAMED 0 @T @T @DT @RT(4)BOOL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 8 @F @F @F @F 
+
+@Var @RT(22)sv_bUseProgramSwitches @RT(0) @T @F @DT @RT(4)BOOL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 8 @F @F @F @F 
+
+@Var @RT(13)erMoldNotOpen @RT(0) @T @F @DT @RT(5)ALARM @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 7 @F @F @F @F 
+
+@Var @RT(9)PU_Task_7 @RT(0) @T @F @DT @RT(4)TASK @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 7 @F @F @F @F 
+
+@Var @RT(13)sv_bInitStart @RT(0) @T @F @DT @RT(4)BOOL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 8 @F @F @F @F 
+
+@Var @RT(12)sv_bInitDone @RT(0) @T @F @DT @RT(4)BOOL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 8 @F @F @F @F 
+
+@Var @RT(23)mpbEjectorFwdDuringOpen @RT(0) @T @T @REFTO 0 @T @DT @RT(4)BOOL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(18)mpiEjectorSelector @RT(0) @T @T @REFTO 0 @T @DT @RT(3)INT @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(9)PU_Task_3 @RT(0) @T @T @RENAMED 0 @T @T @DT @RT(4)TASK @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 7 @F @F @F @F 
+
+@END_Dcl 
+
+@END_Export 
+
+@BEG_Body 
+
+4 
+
+@BEG_Export 
+
+@BEG_Algo 
+@ALGORITHM @RT(11)aLockUnlock @STRUCTURED_TEXT 
+@RT(0) @RT(0) @RT(0) @F @F 
+@END_Algo 
+
+@BEG_Dcl 
+@RT(16)DclTreeContainer 
+1 
+@Var @RT(12)fbLockUnlock @RT(0) @T @T @DERIVED 0 @T @T @DT @RT(12)FBLockUnlock @RT(0) @T @T @UNKNOWN 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@END_Dcl 
+
+@END_Export 
+
+@BEG_Export 
+
+@BEG_Algo 
+@POSTUPDATE_ALGORITHM @RT(10)pInitStart @STRUCTURED_TEXT 
+@RT(0) @RT(13)sv_bInitStart @RT(9)PU_Task_7 @F @F 
+@END_Algo 
+
+@BEG_Dcl 
+@RT(16)DclTreeContainer 
+1 
+@Var @RT(5)state @RT(0) @T @T @DERIVED 0 @T @T @DT @RT(11)KSYS_Status @RT(0) @T @T @UNKNOWN 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@END_Dcl 
+
+@END_Export 
+
+@BEG_Export 
+
+@BEG_Algo 
+@POSTUPDATE_ALGORITHM @RT(23)pCheckDefaultConditions @STRUCTURED_TEXT 
+@RT(0) @RT(107)sv_bMoldOpen,mpiNewSequence^,sv_bIgnoreDefaultConditions,sv_bOverrideEjectorSafety,mpbEjectorFwdDuringOpen^ @RT(9)PU_Task_3 @F @F 
+@END_Algo 
+
+@BEG_Dcl 
+@RT(16)DclTreeContainer 
+0 
+@END_Dcl 
+
+@END_Export 
+
+@BEG_Export 
+
+@BEG_Algo 
+@POSTUPDATE_ALGORITHM @RT(19)pEjectorODCSelector @STRUCTURED_TEXT 
+@RT(0) @RT(19)mpiEjectorSelector^ @RT(9)PU_Task_7 @F @F 
+@END_Algo 
+
+@BEG_Dcl 
+@RT(16)DclTreeContainer 
+0 
+@END_Dcl 
+
+@END_Export 
+
+@BEG_Body 
+@TL(40)
+(**************************************** WARNING ********************************************
+ *** The KEBA Kemro K2 System including software is not intended for safety control tasks! ***
+ ***                       For further information see Comment tab!                        ***
+ *********************************************************************************************)
+
+IF NOT sv_bInitDone THEN
+   RETURN;  //no lock / unlock before sv_bInitDone
+END_IF;
+
+IF sv_bIgnoreDefaultConditions OR NOT sv_bUseProgramSwitches THEN
+   //sequence programmmed by machine sequencer or 
+   //default conditions deactivated
+   fbLockUnlock.Mode := nUnlock;
+ELSE
+   //sequence programmed by files and default conditions activated
+   //-> check default conditions
+   IF sv_bMoldOpen OR mpbEjectorFwdDuringOpen^ THEN
+      //mold open or eject during mold open is activated
+      fbLockUnlock.Mode := nUnlock;
+   ELSE
+      fbLockUnlock.Mode := nLockAbort;
+   END_IF;
+END_IF;
+
+//lock / unlock all ejector fwd movements
+//also consider "override ejector safety"
+IF sv_bOverrideEjectorSafety THEN
+   fbLockUnlock.Mode := nUnlock;
+END_IF;
+
+fbLockUnlock.DeviceId.CompId := cCompEjector;
+fbLockUnlock.DeviceId.IndexId := 1;
+fbLockUnlock.MoveDir := cMoveFwd;
+fbLockUnlock.MoveId := cMoveAll;
+fbLockUnlock.Alarm.AlarmId := erMoldNotOpen;
+fbLockUnlock();
+
+
+
+
+@END_Body 
+
+@@@BEG_Comment@@@ 
+@TL(0)
+
+@@@END_Comment@@@ 
+
+@BEG_Body 
+@TL(10)
+(**************************************** WARNING ********************************************
+ *** The KEBA Kemro K2 System including software is not intended for safety control tasks! ***
+ ***                       For further information see Comment tab!                        ***
+ *********************************************************************************************)
+
+//get references
+mpiNewSequence := GET_SYNC_REFTO('ODC1.sv_iODCSequenceUpdated', T#0s, state);
+mpbEjectorFwdDuringOpen := GET_SYNC_REFTO('CentralCoordination1.sv_bEjectorFwdDuringMldOpen', T#0s, state);
+mpiEjectorSelector := GET_SYNC_REFTO('Ejector1.sv_iODCSelector', T#0s, state);
+
+@END_Body 
+
+@@@BEG_Comment@@@ 
+@TL(0)
+
+@@@END_Comment@@@ 
+
+@BEG_Body 
+@TL(7)
+(**************************************** WARNING ********************************************
+ *** The KEBA Kemro K2 System including software is not intended for safety control tasks! ***
+ ***                       For further information see Comment tab!                        ***
+ *********************************************************************************************)
+
+aLockUnlock();
+
+@END_Body 
+
+@@@BEG_Comment@@@ 
+@TL(0)
+
+@@@END_Comment@@@ 
+
+@BEG_Body 
+@TL(12)
+(**************************************** WARNING ********************************************
+ *** The KEBA Kemro K2 System including software is not intended for safety control tasks! ***
+ ***                       For further information see Comment tab!                        ***
+ *********************************************************************************************)
+
+IF (mpiEjectorSelector^ >= 5) THEN
+   //ejector movement after mold close -> deactivate default conditions
+   sv_bIgnoreDefaultConditions := TRUE;
+ELSE
+   sv_bIgnoreDefaultConditions := FALSE;
+END_IF;
+
+@END_Body 
+
+@@@BEG_Comment@@@ 
+@TL(0)
+
+@@@END_Comment@@@ 
+@END_Body 
+
+@END_Contents 

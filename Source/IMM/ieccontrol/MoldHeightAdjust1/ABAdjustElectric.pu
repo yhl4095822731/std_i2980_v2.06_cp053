@@ -1,0 +1,981 @@
+(*
+@h    ! WARNING !
+@h    The Kemro K2 system (including software) only meets category B according to EN 954-1,
+@h    thus it is not intended for usage in safety-relevant control applications in the field 
+@h    of personal safety (e.g. emergency stop).
+@h    To implement potentially necessary safety-relevant control tasks, always use additional 
+@h    external safety devices that are intended for the particular purpose, and meet the necessary 
+@h    functional safety.
+@h    For further information see EN 954-1 (EN ISO 13849-1) and/or the K2-x00 user manual, chapter 
+@h    "CE conformity, directives and standards". 
+
+Electrical mold height adjust with a input for motor overcurrent / at end pos input
+*)
+
+IMPORT_OVER_LISTFILE
+ SET_ALARM
+, REAL_TO_FORMATTED_STRING
+, tevStartRequest
+, tsTraceLevel
+, FBDebugTrace
+, tsClampForces
+, KAPPL_LintabData
+, tsDeviceId
+, FBCheckReady
+, FBCheckPosReached
+, tevStartRequestData
+, FBStop
+, ABAdjustStretchToggleLever
+, ABCalculateMoldHeightMm
+
+END_IMPORT
+
+ALGORITHM_BLOCK ABAdjustElectric #DUMMY_EDIT_BLOCK
+
+SYSTEM_VAR
+ sv_TraceLevel : tsTraceLevel;
+ sv_ClampForce : tsClampForces;
+ sv_rMoldPosOffset : REAL;
+ sv_ClampForceLintab : KAPPL_LintabData;
+ sv_ToggleLeverLintab : KAPPL_LintabData (* lintab for toggleleverpos(x) -> platenpos(y) *);
+ sv_bOpenMHUntilMoldHeightCalib : BOOL;
+ sv_rOpenPosForMHAdjust : REAL;
+ sv_iThisStepsSetImpulses : UDINT;
+ sv_bStandStillDetectionArmed : BOOL;
+END_VAR
+
+SYSTEM_OBJECT
+ evStartRequest : tevStartRequest;
+ erMoldHeightAdjustAborted : ALARM;
+ erMoldHeightAdjustFinished : ALARM;
+END_OBJECT
+
+VAR
+ fbDebugTrace : FBDebugTrace;
+END_VAR
+
+(*
+Electric mold height adjust:
+
+stretch toggle lever
+if not possible, move backward until toggle lever can be stretched
+
+move MH forward until standstill
+open mold to position depending on clamp force and a lintab
+move MH forward until standstill
+
+done
+*)
+
+ALGORITHM aRun
+
+
+VAR_INPUT
+ bStop : BOOL;
+END_VAR
+
+VAR_OUTPUT
+ bReady : BOOL;
+END_VAR
+
+VAR_INPUT
+ DeviceIdMold : tsDeviceId;
+ DeviceIdMoldHeight : tsDeviceId;
+END_VAR
+
+VAR
+ bMoldOpen : BOOL;
+ fbCheckReady : FBCheckReady;
+ fbCheckPosReached : FBCheckPosReached;
+ evStartRequestData : tevStartRequestData;
+ bMoldOpenReady : BOOL;
+ bMoldHeightFwdReady : BOOL;
+ bFinished : BOOL;
+ fbStop : FBStop;
+ abAdjustStretchToggleLever : ABAdjustStretchToggleLever;
+ dMHBackwardTime : TIME := t#5s (* time to move backward when stretching the toggle lever does not work *);
+ abCalculateMoldHeightMm : ABCalculateMoldHeightMm;
+ rMoldOpenStroke : REAL (* stoke that mold needs to open for given clamp force *);
+ rToggleLeverStroke : REAL (* stoke that togglelever needs to open for given clamp force *);
+END_VAR
+
+(* IecGraph-Code *)
+
+(* init step *)
+INITIAL_STEP START:
+aPrepareAdjustment (P);
+END_STEP
+
+
+(* steps *)
+STEP S_StretchToggleLever:
+aStretchToggleLever (N);
+END_STEP
+
+STEP S_CheckMoldClosed:
+aCheckMoldClosed (N);
+END_STEP
+
+STEP S_MHFwdUntilStandstill:
+aMoveMoldHeightFwd (P);
+aCheckMoldHeightFwdReady (N);
+END_STEP
+
+STEP S_MoldOpenForClampForce:
+aCalculateMoldOpenSize (P);
+aOpenMold (P);
+aCheckMoldOpen (N);
+END_STEP
+
+STEP S_MHFwdSetTonnage:
+aMoveMoldHeightFwd (P);
+aCheckMoldHeightFwdReady (N);
+END_STEP
+
+STEP S_CheckReady:
+AFinish (P);
+END_STEP
+
+ACTION AFinish: #BEGIN_EDIT_BLOCK
+sv_ClampForce.rActualClampForce := sv_ClampForce.rSetClampForce;
+sv_rMoldPosOffset := rMoldOpenStroke;
+bFinished := TRUE;
+
+;#END_EDIT_BLOCK END_ACTION (*AFinish*)
+STEP S_Stop:
+AStop (P);
+END_STEP
+
+ACTION AStop: #BEGIN_EDIT_BLOCK
+//stop active movement
+IF bStop THEN
+    fbStop(DeviceId := DeviceIdMold);
+    fbStop(DeviceId := DeviceIdMoldHeight);
+END_IF;
+
+;#END_EDIT_BLOCK END_ACTION (*AStop*)
+STEP S_Ready:
+AReady (P);
+END_STEP
+
+ACTION AReady: #BEGIN_EDIT_BLOCK
+IF bFinished THEN
+    SET_ALARM(erMoldHeightAdjustFinished);
+ELSE
+    SET_ALARM(erMoldHeightAdjustAborted);
+END_IF;
+
+sv_bOpenMHUntilMoldHeightCalib := FALSE;
+
+bReady := TRUE;
+
+;#END_EDIT_BLOCK END_ACTION (*AReady*)
+
+(* transitions *)
+TRANSITION TStart FROM START TO S_StretchToggleLever :=  #BEGIN_EDIT_BLOCK
+TRUE
+;#END_EDIT_BLOCK
+END_TRANSITION
+
+TRANSITION Trans71 FROM S_StretchToggleLever TO S_CheckMoldClosed :=  #BEGIN_EDIT_BLOCK
+abAdjustStretchToggleLever.aRun.bReady AND
+abAdjustStretchToggleLever.aRun.bSuccess
+;#END_EDIT_BLOCK
+END_TRANSITION
+
+TRANSITION Trans72 FROM S_StretchToggleLever TO S_Stop :=  #BEGIN_EDIT_BLOCK
+(abAdjustStretchToggleLever.aRun.bReady AND
+NOT abAdjustStretchToggleLever.aRun.bSuccess)
+//OR bStop
+;#END_EDIT_BLOCK
+END_TRANSITION
+
+TRANSITION Trans57 FROM S_CheckMoldClosed TO S_MHFwdUntilStandstill :=  #BEGIN_EDIT_BLOCK
+fbCheckReady.bReady
+;#END_EDIT_BLOCK
+END_TRANSITION
+
+TRANSITION Trans70 FROM S_CheckMoldClosed TO S_Stop :=  #BEGIN_EDIT_BLOCK
+NOT fbCheckReady.bReady
+;#END_EDIT_BLOCK
+(*Comment :maybe set alarm?*)
+END_TRANSITION
+
+TRANSITION TAdjFwdReady FROM S_MHFwdUntilStandstill TO S_MoldOpenForClampForce :=  #BEGIN_EDIT_BLOCK
+bMoldHeightFwdReady
+;#END_EDIT_BLOCK
+END_TRANSITION
+
+TRANSITION Trans64 FROM S_MoldOpenForClampForce TO S_MHFwdSetTonnage :=  #BEGIN_EDIT_BLOCK
+bMoldOpenReady
+;#END_EDIT_BLOCK
+END_TRANSITION
+
+TRANSITION Trans73 FROM S_MoldOpenForClampForce TO S_Stop :=  #BEGIN_EDIT_BLOCK
+bStop
+;#END_EDIT_BLOCK
+END_TRANSITION
+
+TRANSITION TStopAdjFwd FROM S_MHFwdUntilStandstill TO S_Stop :=  #BEGIN_EDIT_BLOCK
+bStop
+;#END_EDIT_BLOCK
+END_TRANSITION
+
+TRANSITION Trans67 FROM S_MHFwdSetTonnage TO S_CheckReady :=  #BEGIN_EDIT_BLOCK
+bMoldHeightFwdReady
+//maybe check pos reached?
+;#END_EDIT_BLOCK
+END_TRANSITION
+
+TRANSITION Trans68 FROM S_MHFwdSetTonnage TO S_Stop :=  #BEGIN_EDIT_BLOCK
+bStop
+;#END_EDIT_BLOCK
+END_TRANSITION
+
+GO_ON_TRANSITION TFinished FROM S_CheckReady TO S_Stop :=  #BEGIN_EDIT_BLOCK
+TRUE
+;#END_EDIT_BLOCK
+END_TRANSITION
+
+GO_ON_TRANSITION TReady FROM S_Stop TO S_Ready :=  #BEGIN_EDIT_BLOCK
+TRUE
+;#END_EDIT_BLOCK
+END_TRANSITION
+
+TRANSITION Trans33 FROM S_Ready TO START :=  #BEGIN_EDIT_BLOCK
+TRUE
+;#END_EDIT_BLOCK
+END_TRANSITION
+
+(* end IecGraph-Code *)
+(* sfc-code *)
+
+(* stand alone actions *)
+ACTION aPrepareAdjustment: #BEGIN_EDIT_BLOCK
+bReady := FALSE;
+bFinished := FALSE;
+
+IF sv_TraceLevel.bApplication THEN   
+    fbDebugTrace(sText := 'ElectricMoldHeightAuto: start');
+END_IF;
+
+
+;#END_EDIT_BLOCK END_ACTION (*aPrepareAdjustment*)
+ACTION aCheckMoldClosed: #BEGIN_EDIT_BLOCK
+//Check the status of mold close movement
+// - Finished
+// - PositionReached
+fbCheckReady(DeviceId := DeviceIdMold);
+//fbCheckPosReached(DeviceId := DeviceIdMold,
+//                  MoveDir := cMoveFwd,
+//                  MoveId := cMoveFwdForMHAdjustSetup);
+
+;#END_EDIT_BLOCK END_ACTION (*aCheckMoldClosed*)
+ACTION aOpenMold: #BEGIN_EDIT_BLOCK
+// Start the mold open movement until pos determined from clamp force and clamp force lintab
+IF sv_TraceLevel.bApplication THEN   
+    fbDebugTrace(sText := 'ElectricMoldHeightAuto: opening Mold until clamp force set point');
+END_IF;
+
+sv_bOpenMHUntilMoldHeightCalib := TRUE;
+sv_rOpenPosForMHAdjust := rToggleLeverStroke;
+
+
+evStartRequestData.DeviceId := DeviceIdMold;
+evStartRequestData.MoveDir := cMoveBwd; 
+evStartRequestData.MoveId := cMoveBwdForMHAdjustSetup;
+SET_EVENT(evStartRequest, evStartRequestData); 
+
+;#END_EDIT_BLOCK END_ACTION (*aOpenMold*)
+ACTION aMoveMoldHeightFwd: #BEGIN_EDIT_BLOCK
+// Because the mold height forward movement
+// can be stopped by either the detection of a stand still or
+// the reaching of desired impulses for this step, these two
+// conditions are combined into the bMoldHeightFwdReady flag.
+// Of course this flag has to be reset when the movement starts
+
+IF sv_TraceLevel.bApplication THEN   
+    fbDebugTrace(sText := 'ElectricMoldHeightAuto: MH forward until standstill');
+END_IF;
+
+bMoldHeightFwdReady := FALSE;
+sv_bStandStillDetectionArmed := TRUE;
+sv_iThisStepsSetImpulses := 100000;
+
+// Start the mold height forward movement
+evStartRequestData.DeviceId := DeviceIdMoldHeight;
+evStartRequestData.MoveDir := cMoveFwd; 
+evStartRequestData.MoveId := cMoveFwd;
+SET_EVENT(evStartRequest, evStartRequestData); 
+
+;#END_EDIT_BLOCK END_ACTION (*aMoveMoldHeightFwd*)
+ACTION aCheckMoldHeightFwdReady: #BEGIN_EDIT_BLOCK
+(**************************************** WARNING ********************************************
+ *** The KEBA Kemro K2 System including software is not intended for safety control tasks! ***
+ ***                       For further information see Comment tab!                        ***
+ *********************************************************************************************)
+
+fbCheckReady(DeviceId := DeviceIdMoldHeight,
+             bReady => bMoldHeightFwdReady);
+
+fbCheckPosReached(DeviceId := DeviceIdMoldHeight,
+                  MoveDir := cMoveFwd,
+                  MoveId := cMoveFwd);
+
+;#END_EDIT_BLOCK END_ACTION (*aCheckMoldHeightFwdReady*)
+ACTION aCheckMoldOpen: #BEGIN_EDIT_BLOCK
+// Check the status of mold open movement
+// - Finished
+// - PositionReached
+fbCheckReady(DeviceId := DeviceIdMold,
+             bReady => bMoldOpenReady);
+fbCheckPosReached(DeviceId := DeviceIdMold,
+                  MoveDir := cMoveBwd,
+                  MoveId := cMoveBwdForMHAdjustSetup,
+                  bPosReached => bMoldOpen);
+
+;#END_EDIT_BLOCK END_ACTION (*aCheckMoldOpen*)
+ACTION aStretchToggleLever: #BEGIN_EDIT_BLOCK
+// try to stretch toggle lever
+// if not possible move backward time dependent
+abAdjustStretchToggleLever.aRun(bStop := bStop, DeviceIdMold := DeviceIdMold, 
+                                DeviceIdMoldHeight := DeviceIdMoldHeight,
+                                bUseImpulses := FALSE, dTime := dMHBackwardTime);
+
+;#END_EDIT_BLOCK END_ACTION (*aStretchToggleLever*)
+ACTION aCalculateMoldOpenSize: #BEGIN_EDIT_BLOCK
+//calculate mold open length from clamp force
+abCalculateMoldHeightMm.aInit(LintabClampF := sv_ClampForceLintab,
+                              LintabToggleLever := sv_ToggleLeverLintab);
+abCalculateMoldHeightMm.aCalc(rForce := sv_ClampForce.rSetClampForce);
+
+rMoldOpenStroke := abCalculateMoldHeightMm.aCalc.rMoldPos;
+rToggleLeverStroke := abCalculateMoldHeightMm.aCalc.rToggleLeverPos;
+
+;#END_EDIT_BLOCK END_ACTION (*aCalculateMoldOpenSize*)
+(* end sfc-code *)
+
+
+END_ALGORITHM
+
+
+
+END_ALGORITHM_BLOCK
+
+
+
+#END_OF_IEC_PART
+
+@Puma @IecEditor 6 97 @Pou 25 
+@@@BEG_Comment@@@
+@h    ! WARNING !
+@h    The Kemro K2 system (including software) only meets category B according to EN 954-1,
+@h    thus it is not intended for usage in safety-relevant control applications in the field 
+@h    of personal safety (e.g. emergency stop).
+@h    To implement potentially necessary safety-relevant control tasks, always use additional 
+@h    external safety devices that are intended for the particular purpose, and meet the necessary 
+@h    functional safety.
+@h    For further information see EN 954-1 (EN ISO 13849-1) and/or the K2-x00 user manual, chapter 
+@h    "CE conformity, directives and standards". 
+
+Electrical mold height adjust with a input for motor overcurrent / at end pos input
+@@@END_Comment@@@
+
+@BEG_Contents 
+
+@BEG_Func 
+@RT(17)FuncTreeContainer 
+2 
+@Var @RT(9)SET_ALARM @RT(0) @T @T @DERIVED 0 @F @RT(23)KEBA_STANDARD_PROCEDURE @F 
+@T 
+@BEG_Attrib 
+0 @RT(0) @RT(0) 
+@END_Attrib 
+1 1 @F @F @F @F 
+
+@Var @RT(24)REAL_TO_FORMATTED_STRING @RT(0) @T @T @DERIVED 0 @F @RT(22)KEBA_STANDARD_FUNCTION @F 
+@T 
+@BEG_Attrib 
+0 @RT(0) @RT(0) 
+@END_Attrib 
+1 1 @F @F @F @F 
+
+@END_Func 
+
+@BEG_Const 
+@RT(18)ConstTreeContainer 
+0 
+@END_Const 
+
+@BEG_Export 
+
+@BEG_Kind 
+@ALGORITHM_BLOCK @RT(16)ABAdjustElectric @STRUCTURED_TEXT 
+@RT(0) @RT(0) @RT(0) 
+@END_Kind 
+
+@BEG_Dcl 
+@RT(16)DclTreeContainer 
+13 
+@Var @RT(14)evStartRequest @RT(0) @T @T @DERIVED 0 @T @T @DT @RT(15)tevStartRequest @RT(0) @T @T @UNKNOWN 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 7 @F @F @F @F 
+
+@Var @RT(25)erMoldHeightAdjustAborted @RT(0) @T @F @DT @RT(5)ALARM @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 7 @F @F @F @F 
+
+@Var @RT(26)erMoldHeightAdjustFinished @RT(0) @T @F @DT @RT(5)ALARM @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 7 @F @F @F @F 
+
+@Var @RT(13)sv_TraceLevel @RT(0) @T @T @DERIVED 0 @T @T @DT @RT(12)tsTraceLevel @RT(0) @T @T @UNKNOWN 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 8 @F @F @F @F 
+
+@Var @RT(12)fbDebugTrace @RT(0) @T @T @DERIVED 0 @T @T @DT @RT(12)FBDebugTrace @RT(0) @T @T @UNKNOWN 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(13)sv_ClampForce @RT(0) @T @T @DERIVED 0 @T @T @DT @RT(13)tsClampForces @RT(0) @T @T @UNKNOWN 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 8 @F @F @F @F 
+
+@Var @RT(17)sv_rMoldPosOffset @RT(0) @T @T @RENAMED 0 @T @T @DT @RT(4)REAL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 8 @F @F @F @F 
+
+@Var @RT(19)sv_ClampForceLintab @RT(0) @T @T @DERIVED 0 @T @T @DT @RT(16)KAPPL_LintabData @RT(0) @T @T @UNKNOWN 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 8 @F @F @F @F 
+
+@Var @RT(20)sv_ToggleLeverLintab @RT(0) @T @T @DERIVED 0 @T @T @DT @RT(16)KAPPL_LintabData @RT(0) @T @T @UNKNOWN 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(44)lintab for toggleleverpos(x) -> platenpos(y) @RT(0) 
+@END_Attrib 
+1 8 @F @F @F @F 
+
+@Var @RT(30)sv_bOpenMHUntilMoldHeightCalib @RT(0) @T @T @RENAMED 0 @T @T @DT @RT(4)BOOL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 8 @F @F @F @F 
+
+@Var @RT(22)sv_rOpenPosForMHAdjust @RT(0) @T @T @RENAMED 0 @T @T @DT @RT(4)REAL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 8 @F @F @F @F 
+
+@Var @RT(24)sv_iThisStepsSetImpulses @RT(0) @T @F @DT @RT(5)UDINT @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 8 @F @F @F @F 
+
+@Var @RT(28)sv_bStandStillDetectionArmed @RT(0) @T @F @DT @RT(4)BOOL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 8 @F @F @F @F 
+
+@END_Dcl 
+
+@END_Export 
+
+@BEG_Body 
+
+1 
+
+@BEG_Export 
+
+@BEG_Algo 
+@ALGORITHM @RT(4)aRun @SEQUENTIAL_FLOW_CHART 
+@RT(0) @RT(0) @RT(0) @F @F 
+@END_Algo 
+
+@BEG_Dcl 
+@RT(16)DclTreeContainer 
+17 
+@Var @RT(5)bStop @RT(0) @T @F @DT @RT(4)BOOL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 1 @F @F @F @F 
+
+@Var @RT(6)bReady @RT(0) @T @F @DT @RT(4)BOOL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 3 @F @F @F @F 
+
+@Var @RT(12)DeviceIdMold @RT(0) @T @T @DERIVED 0 @T @T @DT @RT(10)tsDeviceId @RT(0) @T @T @UNKNOWN 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 1 @F @F @F @F 
+
+@Var @RT(18)DeviceIdMoldHeight @RT(0) @T @T @DERIVED 0 @T @T @DT @RT(10)tsDeviceId @RT(0) @T @T @UNKNOWN 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 1 @F @F @F @F 
+
+@Var @RT(9)bMoldOpen @RT(0) @T @F @DT @RT(4)BOOL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(12)fbCheckReady @RT(0) @T @T @DERIVED 0 @T @T @DT @RT(12)FBCheckReady @RT(0) @T @T @UNKNOWN 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(17)fbCheckPosReached @RT(0) @T @T @DERIVED 0 @T @T @DT @RT(17)FBCheckPosReached @RT(0) @T @T @UNKNOWN 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(18)evStartRequestData @RT(0) @T @T @DERIVED 0 @T @T @DT @RT(19)tevStartRequestData @RT(0) @T @T @UNKNOWN 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(14)bMoldOpenReady @RT(0) @T @F @DT @RT(4)BOOL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(19)bMoldHeightFwdReady @RT(0) @T @F @DT @RT(4)BOOL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(9)bFinished @RT(0) @T @F @DT @RT(4)BOOL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(6)fbStop @RT(0) @T @T @DERIVED 0 @T @T @DT @RT(6)FBStop @RT(0) @T @T @UNKNOWN 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(26)abAdjustStretchToggleLever @RT(0) @T @T @DERIVED 0 @T @T @DT @RT(26)ABAdjustStretchToggleLever @RT(0) @T @T @UNKNOWN 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(15)dMHBackwardTime @RT(0) @T @F @DT @RT(4)TIME @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(4)t#5s @RT(68)time to move backward when stretching the toggle lever does not work @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(23)abCalculateMoldHeightMm @RT(0) @T @T @DERIVED 0 @T @T @DT @RT(23)ABCalculateMoldHeightMm @RT(0) @T @T @UNKNOWN 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(15)rMoldOpenStroke @RT(0) @T @F @DT @RT(4)REAL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(51)stoke that mold needs to open for given clamp force @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(18)rToggleLeverStroke @RT(0) @T @F @DT @RT(4)REAL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(58)stoke that togglelever needs to open for given clamp force @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@END_Dcl 
+
+@END_Export 
+
+@BEG_SfcBody 
+64 48 75 
+
+@BEG_SfcData 2 
+@StepSeq @RT(4)sseq @F 1 
+@Loop @RT(4)loop @F 2 
+@StepSeq @RT(3)seq @F 15 
+@Step @RT(5)START @F @T @F @F @RT(0) @F 
+@AcbCont @RT(7)unnamed @F 1 
+@Acb @RT(18)aPrepareAdjustment @F @F @RT(1)P @RT(0) @F @F @T @F 
+
+@Trans @RT(6)TStart @F @T @F @F @T @T @TL(2)
+TRUE
+
+@RT(6)Trans1 @F 
+@Step @RT(20)S_StretchToggleLever @F @F @F @F @RT(0) @F 
+@AcbCont @RT(7)unnamed @F 1 
+@Acb @RT(19)aStretchToggleLever @F @F @RT(1)N @RT(0) @F @F @T @F 
+
+@AltBranch @RT(3)alt @F 2 
+@TransSeq @RT(4)tseq @F 1 
+@Trans @RT(7)Trans71 @F @T @F @F @T @T @TL(3)
+abAdjustStretchToggleLever.aRun.bReady AND
+abAdjustStretchToggleLever.aRun.bSuccess
+
+@RT(7)Trans71 @F 
+
+@TransSeq @RT(4)tseq @F 2 
+@Trans @RT(7)Trans72 @F @T @F @F @T @T @TL(4)
+(abAdjustStretchToggleLever.aRun.bReady AND
+NOT abAdjustStretchToggleLever.aRun.bSuccess)
+//OR bStop
+
+@RT(7)Trans72 @F 
+@Goto @RT(6)S_Stop @F @F 
+
+
+@Step @RT(17)S_CheckMoldClosed @F @F @F @F @RT(0) @F 
+@AcbCont @RT(7)unnamed @F 1 
+@Acb @RT(16)aCheckMoldClosed @F @F @RT(1)N @RT(0) @F @F @T @T @TL(1)
+Comment :be paranoid and check if really closed
+
+
+@AltBranch @RT(3)alt @F 2 
+@TransSeq @RT(4)tseq @F 1 
+@Trans @RT(7)Trans57 @F @T @F @F @T @T @TL(2)
+fbCheckReady.bReady
+
+@RT(7)Trans57 @F 
+
+@TransSeq @RT(4)tseq @F 2 
+@Trans @RT(7)Trans70 @F @T @F @F @T @T @TL(2)
+NOT fbCheckReady.bReady
+
+@RT(7)Trans70 @T @TL(1)
+Comment :maybe set alarm?
+
+@Goto @RT(6)S_Stop @F @F 
+
+
+@Step @RT(22)S_MHFwdUntilStandstill @F @F @F @F @RT(0) @F 
+@AcbCont @RT(7)unnamed @F 2 
+@Acb @RT(18)aMoveMoldHeightFwd @F @F @RT(1)P @RT(0) @F @F @T @F 
+@Acb @RT(24)aCheckMoldHeightFwdReady @F @F @RT(1)N @RT(0) @F @F @T @F 
+
+@AltBranch @RT(3)alt @F 2 
+@TransSeq @RT(4)tseq @F 3 
+@Trans @RT(12)TAdjFwdReady @F @T @F @F @T @T @TL(2)
+bMoldHeightFwdReady
+
+@RT(7)Trans41 @F 
+@Step @RT(23)S_MoldOpenForClampForce @F @F @F @F @RT(0) @F 
+@AcbCont @RT(7)unnamed @F 3 
+@Acb @RT(22)aCalculateMoldOpenSize @F @F @RT(1)P @RT(0) @F @F @T @F 
+@Acb @RT(9)aOpenMold @F @F @RT(1)P @RT(0) @F @F @T @T @TL(1)
+Comment :only open until value set by profile
+
+@Acb @RT(14)aCheckMoldOpen @F @F @RT(1)N @RT(0) @F @F @T @F 
+
+@AltBranch @RT(3)alt @F 2 
+@TransSeq @RT(4)tseq @F 1 
+@Trans @RT(7)Trans64 @F @T @F @F @T @T @TL(2)
+bMoldOpenReady
+
+@RT(7)Trans64 @F 
+
+@TransSeq @RT(4)tseq @F 2 
+@Trans @RT(7)Trans73 @F @T @F @F @T @T @TL(2)
+bStop
+
+@RT(7)Trans73 @F 
+@Goto @RT(6)S_Stop @F @F 
+
+
+
+@TransSeq @RT(4)tseq @F 2 
+@Trans @RT(11)TStopAdjFwd @F @T @F @F @T @T @TL(2)
+bStop
+
+@RT(7)Trans42 @F 
+@Goto @RT(6)S_Stop @F @F 
+
+
+@Step @RT(17)S_MHFwdSetTonnage @F @F @F @F @RT(0) @F 
+@AcbCont @RT(7)unnamed @F 2 
+@Acb @RT(18)aMoveMoldHeightFwd @F @F @RT(1)P @RT(0) @F @F @T @T @TL(2)
+Comment :move forward again
+until standstill
+
+@Acb @RT(24)aCheckMoldHeightFwdReady @F @F @RT(1)N @RT(0) @F @F @T @F 
+
+@AltBranch @RT(3)alt @F 2 
+@TransSeq @RT(4)tseq @F 1 
+@Trans @RT(7)Trans67 @F @T @F @F @T @T @TL(3)
+bMoldHeightFwdReady
+//maybe check pos reached?
+
+@RT(7)Trans67 @F 
+
+@TransSeq @RT(4)tseq @F 2 
+@Trans @RT(7)Trans68 @F @T @F @F @T @T @TL(2)
+bStop
+
+@RT(7)Trans68 @F 
+@Goto @RT(6)S_Stop @F @F 
+
+
+@Step @RT(12)S_CheckReady @F @F @F @F @RT(0) @F 
+@AcbCont @RT(7)unnamed @F 1 
+@Acb @RT(7)AFinish @F @T @RT(1)P @RT(0) @F @F @T @TL(4)
+sv_ClampForce.rActualClampForce := sv_ClampForce.rSetClampForce;
+sv_rMoldPosOffset := rMoldOpenStroke;
+bFinished := TRUE;
+
+@F 
+
+@Trans @RT(9)TFinished @F @T @F @F @T @F @TL(2)
+TRUE
+
+@RT(7)Trans30 @F 
+@Step @RT(6)S_Stop @F @F @T @F @RT(0) @F 
+@AcbCont @RT(7)unnamed @F 1 
+@Acb @RT(5)AStop @F @T @RT(1)P @RT(0) @F @F @T @TL(6)
+//stop active movement
+IF bStop THEN
+    fbStop(DeviceId := DeviceIdMold);
+    fbStop(DeviceId := DeviceIdMoldHeight);
+END_IF;
+
+@F 
+
+@Trans @RT(6)TReady @F @T @F @F @T @F @TL(2)
+TRUE
+
+@RT(7)Trans32 @F 
+@Step @RT(7)S_Ready @F @F @F @F @RT(0) @F 
+@AcbCont @RT(7)unnamed @F 1 
+@Acb @RT(6)AReady @F @T @RT(1)P @RT(0) @F @F @T @TL(10)
+IF bFinished THEN
+    SET_ALARM(erMoldHeightAdjustFinished);
+ELSE
+    SET_ALARM(erMoldHeightAdjustAborted);
+END_IF;
+
+sv_bOpenMHUntilMoldHeightCalib := FALSE;
+
+bReady := TRUE;
+
+@F 
+
+
+@Trans @RT(7)Trans33 @F @T @T @T @T @T @TL(2)
+TRUE
+
+@RT(7)Trans33 @F 
+
+@END_SfcData 
+@SaActions 8 
+@SaText @RT(18)aPrepareAdjustment 1 @TL(8)
+bReady := FALSE;
+bFinished := FALSE;
+
+IF sv_TraceLevel.bApplication THEN   
+    fbDebugTrace(sText := 'ElectricMoldHeightAuto: start');
+END_IF;
+
+
+
+@SaText @RT(16)aCheckMoldClosed 1 @TL(8)
+//Check the status of mold close movement
+// - Finished
+// - PositionReached
+fbCheckReady(DeviceId := DeviceIdMold);
+//fbCheckPosReached(DeviceId := DeviceIdMold,
+//                  MoveDir := cMoveFwd,
+//                  MoveId := cMoveFwdForMHAdjustSetup);
+
+
+@SaText @RT(9)aOpenMold 1 @TL(14)
+// Start the mold open movement until pos determined from clamp force and clamp force lintab
+IF sv_TraceLevel.bApplication THEN   
+    fbDebugTrace(sText := 'ElectricMoldHeightAuto: opening Mold until clamp force set point');
+END_IF;
+
+sv_bOpenMHUntilMoldHeightCalib := TRUE;
+sv_rOpenPosForMHAdjust := rToggleLeverStroke;
+
+
+evStartRequestData.DeviceId := DeviceIdMold;
+evStartRequestData.MoveDir := cMoveBwd; 
+evStartRequestData.MoveId := cMoveBwdForMHAdjustSetup;
+SET_EVENT(evStartRequest, evStartRequestData); 
+
+
+@SaText @RT(18)aMoveMoldHeightFwd 1 @TL(20)
+// Because the mold height forward movement
+// can be stopped by either the detection of a stand still or
+// the reaching of desired impulses for this step, these two
+// conditions are combined into the bMoldHeightFwdReady flag.
+// Of course this flag has to be reset when the movement starts
+
+IF sv_TraceLevel.bApplication THEN   
+    fbDebugTrace(sText := 'ElectricMoldHeightAuto: MH forward until standstill');
+END_IF;
+
+bMoldHeightFwdReady := FALSE;
+sv_bStandStillDetectionArmed := TRUE;
+sv_iThisStepsSetImpulses := 100000;
+
+// Start the mold height forward movement
+evStartRequestData.DeviceId := DeviceIdMoldHeight;
+evStartRequestData.MoveDir := cMoveFwd; 
+evStartRequestData.MoveId := cMoveFwd;
+SET_EVENT(evStartRequest, evStartRequestData); 
+
+
+@SaText @RT(24)aCheckMoldHeightFwdReady 1 @TL(12)
+(**************************************** WARNING ********************************************
+ *** The KEBA Kemro K2 System including software is not intended for safety control tasks! ***
+ ***                       For further information see Comment tab!                        ***
+ *********************************************************************************************)
+
+fbCheckReady(DeviceId := DeviceIdMoldHeight,
+             bReady => bMoldHeightFwdReady);
+
+fbCheckPosReached(DeviceId := DeviceIdMoldHeight,
+                  MoveDir := cMoveFwd,
+                  MoveId := cMoveFwd);
+
+
+@SaText @RT(14)aCheckMoldOpen 1 @TL(10)
+// Check the status of mold open movement
+// - Finished
+// - PositionReached
+fbCheckReady(DeviceId := DeviceIdMold,
+             bReady => bMoldOpenReady);
+fbCheckPosReached(DeviceId := DeviceIdMold,
+                  MoveDir := cMoveBwd,
+                  MoveId := cMoveBwdForMHAdjustSetup,
+                  bPosReached => bMoldOpen);
+
+
+@SaText @RT(19)aStretchToggleLever 1 @TL(6)
+// try to stretch toggle lever
+// if not possible move backward time dependent
+abAdjustStretchToggleLever.aRun(bStop := bStop, DeviceIdMold := DeviceIdMold, 
+                                DeviceIdMoldHeight := DeviceIdMoldHeight,
+                                bUseImpulses := FALSE, dTime := dMHBackwardTime);
+
+
+@SaText @RT(22)aCalculateMoldOpenSize 1 @TL(8)
+//calculate mold open length from clamp force
+abCalculateMoldHeightMm.aInit(LintabClampF := sv_ClampForceLintab,
+                              LintabToggleLever := sv_ToggleLeverLintab);
+abCalculateMoldHeightMm.aCalc(rForce := sv_ClampForce.rSetClampForce);
+
+rMoldOpenStroke := abCalculateMoldHeightMm.aCalc.rMoldPos;
+rToggleLeverStroke := abCalculateMoldHeightMm.aCalc.rToggleLeverPos;
+
+
+@SaTrans 0 
+@SaExits 0 
+@END_SfcBody 
+
+@@@BEG_Comment@@@ 
+@TL(10)
+Electric mold height adjust:
+
+stretch toggle lever
+if not possible, move backward until toggle lever can be stretched
+
+move MH forward until standstill
+open mold to position depending on clamp force and a lintab
+move MH forward until standstill
+
+done
+@@@END_Comment@@@ 
+@END_Body 
+
+@END_Contents 

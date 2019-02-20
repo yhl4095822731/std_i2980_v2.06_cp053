@@ -1,0 +1,2239 @@
+IMPORT_OVER_LISTFILE
+ SET_ALARM
+, RESET_ALARM
+, cCompAll
+, cMoveAll
+, cAllDevIndex
+, tnOperationMode
+, tevPanelButtonRegister
+, tsDeviceId
+, FBDeltaWye
+, tevPanelButtonRegisterData
+, FBLockUnlockGroup
+
+END_IMPORT
+
+ALGORITHM_BLOCK ABMotor #DUMMY_EDIT_BLOCK
+
+SYSTEM_VAR
+ do_MotorOnMain : BOOL;
+ do_MotorOnY : BOOL;
+ do_MotorOnDelta : BOOL;
+ sv_OperationMode : tnOperationMode;
+ sv_dYOnTime : TIME;
+ sv_dDeltaDelayTime : TIME;
+ sv_dDelayStartMotor2 : TIME;
+ sv_bUseMotor2 : BOOL;
+ do_Motor2OnMain : BOOL;
+ do_Motor2OnDelta : BOOL;
+ sv_bMotorStarting : BOOL;
+ sv_bMotor2Starting : BOOL;
+ di_ButtonMotor : BOOL;
+ sv_bLedMotor_ledAttr : BYTE (* LED Attribute *);
+ sv_bLedMotor : BOOL;
+ sv_bHMILedMotor_ledAttr : BYTE (* LED Attribute *);
+ sv_bHMILedMotor : BOOL;
+ sv_bMotorRunning : BOOL;
+ do_Motor2OnY : BOOL;
+ sv_bMotorStarted : BOOL;
+ di_Overload : BOOL;
+ sv_bInitDone : BOOL;
+ do_MotorOff : BOOL;
+ sv_bMotorLocked : BOOL;
+ sv_bAllMotorsRunning : BOOL;
+ sv_bMotorOverloadMode : BOOL;
+ sv_bInitStart : BOOL;
+ sv_DeviceId : tsDeviceId;
+ sv_bButtonMotor : BOOL;
+END_VAR
+
+SYSTEM_OBJECT
+ erMotorOverLoad : ALARM;
+ TaskMid : TASK;
+ PU_Task_7 : TASK;
+ erSwitchToManual : ALARM;
+ erMotorStarting : ALARM;
+ PU_Task_3 : TASK;
+ erMotorNotRunning : ALARM;
+ evPanelButtonRegister : tevPanelButtonRegister;
+END_OBJECT
+
+VAR
+ fbMotor : FBDeltaWye;
+ fbMotor2 : FBDeltaWye;
+ mbStopMotor : BOOL;
+ mbMotor2Started : BOOL;
+ mbMotorOffLinked : BOOL;
+ mbMotorOnMainLinked : BOOL;
+ mbMotorOnDeltaLinked : BOOL;
+ mbMotorOnYLinked : BOOL;
+ mbMotor2OnMainLinked : BOOL;
+ mbMotor2OnDeltaLinked : BOOL;
+ mbMotor2OnYLinked : BOOL;
+ evPanelButtonRegisterData : tevPanelButtonRegisterData;
+ mbDIButtonMotorLinked : BOOL;
+END_VAR
+
+VAR CONSTANT
+ cButtonMotorOn : DINT := 1;
+END_VAR
+
+POSTUPDATE_ALGORITHM pInitStart ON PU_Task_7 WITH sv_bInitStart
+
+#BEGIN_EDIT_BLOCK
+(**************************************** WARNING ********************************************
+ *** The KEBA Kemro K2 System including software is not intended for safety control tasks! ***
+ ***                       For further information see Comment tab!                        ***
+ *********************************************************************************************)
+
+evPanelButtonRegisterData.Button.nPanelButtonType := nPanelButtonAction; 
+evPanelButtonRegisterData.Button.iCompId := sv_DeviceId.CompId;
+evPanelButtonRegisterData.Button.iIndexId := sv_DeviceId.IndexId;
+evPanelButtonRegisterData.Button.iButtonId := cButtonMotorOn;
+evPanelButtonRegisterData.Button.pbActionVar1 := @sv_bButtonMotor;
+evPanelButtonRegisterData.Button.Optional.pbLedVar := @sv_bHMILedMotor;
+evPanelButtonRegisterData.Button.Optional.piLedVarAttr := @sv_bHMILedMotor_ledAttr;
+SET_EVENT(evPanelButtonRegister, evPanelButtonRegisterData);
+
+mbDIButtonMotorLinked := IS_LINKED(di_ButtonMotor);
+
+
+;#END_EDIT_BLOCK END_ALGORITHM
+
+PROCESS_ALGORITHM paStartMotor ON TaskMid
+
+
+(* IecGraph-Code *)
+
+(* init step *)
+INITIAL_STEP Start:
+AInit (P);
+END_STEP
+
+
+(* steps *)
+STEP S_Checkcondition:
+END_STEP
+
+STEP S_StartMotor:
+AResetMotorOff (P);
+AStartMotor1 (N);
+ASetStartingMessage1 (P);
+END_STEP
+
+ACTION ASetStartingMessage1: #BEGIN_EDIT_BLOCK
+SET_ALARM(Name := erMotorStarting,
+          SubID1 := 1);
+
+;#END_EDIT_BLOCK END_ACTION (*ASetStartingMessage1*)
+STEP S_CheckFinished:
+AResetStartingMessage1 (P);
+END_STEP
+
+ACTION AResetStartingMessage1: #BEGIN_EDIT_BLOCK
+RESET_ALARM(Name := erMotorStarting,
+            SubID1 := 1);
+
+;#END_EDIT_BLOCK END_ACTION (*AResetStartingMessage1*)
+STEP S_DelayMotor2:
+END_STEP
+
+STEP S_StartMotor2:
+AStartMotor2 (N);
+ASetStartingMessage2 (P);
+END_STEP
+
+ACTION ASetStartingMessage2: #BEGIN_EDIT_BLOCK
+SET_ALARM(Name := erMotorStarting,
+          SubID1 := 2);
+
+;#END_EDIT_BLOCK END_ACTION (*ASetStartingMessage2*)
+STEP S_ResetMessage:
+AResetStartingMessage2 (P);
+END_STEP
+
+ACTION AResetStartingMessage2: #BEGIN_EDIT_BLOCK
+RESET_ALARM(Name := erMotorStarting,
+          SubID1 := 2);
+
+;#END_EDIT_BLOCK END_ACTION (*AResetStartingMessage2*)
+STEP S_Ready:
+AReady (P);
+END_STEP
+
+ACTION AReady: #BEGIN_EDIT_BLOCK
+STOP_PROCESS_ALGORITHM();
+
+;#END_EDIT_BLOCK END_ACTION (*AReady*)
+
+(* transitions *)
+TRANSITION T_Start (* T_Start *) FROM Start TO S_Checkcondition :=  #BEGIN_EDIT_BLOCK
+TRUE
+;#END_EDIT_BLOCK
+END_TRANSITION
+
+TRANSITION T_StartMotor (* T_StartMotor *) FROM S_Checkcondition TO S_StartMotor :=  #BEGIN_EDIT_BLOCK
+NOT mbStopMotor  
+
+;#END_EDIT_BLOCK
+END_TRANSITION
+
+TRANSITION T_MotorStartFinished (* T_MotorStartFinished *) FROM S_StartMotor TO S_CheckFinished :=  #BEGIN_EDIT_BLOCK
+sv_bMotorStarted
+;#END_EDIT_BLOCK
+END_TRANSITION
+
+TRANSITION T_CheckUseMotor2 (* T_CheckUseMotor2 *) FROM S_CheckFinished TO S_DelayMotor2 :=  #BEGIN_EDIT_BLOCK
+sv_bUseMotor2
+;#END_EDIT_BLOCK
+END_TRANSITION
+
+TRANSITION T_CheckNotUseMotor2 (* T_CheckNotUseMotor2 *) FROM S_CheckFinished TO S_Ready :=  #BEGIN_EDIT_BLOCK
+NOT sv_bUseMotor2
+;#END_EDIT_BLOCK
+END_TRANSITION
+
+TRANSITION T_StartMotor2Delay (* T_StartMotor2Delay *) FROM S_DelayMotor2 TO S_StartMotor2 :=  #BEGIN_EDIT_BLOCK
+S_DelayMotor2.T >= sv_dDelayStartMotor2
+;#END_EDIT_BLOCK
+END_TRANSITION
+
+TRANSITION TMotor2Started (* TMotor2Started *) FROM S_StartMotor2 TO S_ResetMessage :=  #BEGIN_EDIT_BLOCK
+mbMotor2Started
+;#END_EDIT_BLOCK
+END_TRANSITION
+
+TRANSITION T_Motor2StartFinished (* T_Motor2StartFinished *) FROM S_ResetMessage TO S_Ready :=  #BEGIN_EDIT_BLOCK
+TRUE
+;#END_EDIT_BLOCK
+END_TRANSITION
+
+TRANSITION TTrue (* TTrue *) FROM S_Ready TO S_Checkcondition :=  #BEGIN_EDIT_BLOCK
+TRUE
+;#END_EDIT_BLOCK
+END_TRANSITION
+
+(* end IecGraph-Code *)
+(* sfc-code *)
+
+(* stand alone actions *)
+ACTION AInit: #BEGIN_EDIT_BLOCK
+(**************************************** WARNING ********************************************
+ *** The KEBA Kemro K2 System including software is not intended for safety control tasks! ***
+ ***                       For further information see Comment tab!                        ***
+ *********************************************************************************************)
+
+//check if do_MotorOff is available
+mbMotorOffLinked := IS_LINKED(do_MotorOff);
+
+//check which Motor DOs are available
+mbMotorOnMainLinked := IS_LINKED(do_MotorOnMain);
+mbMotorOnYLinked := IS_LINKED(do_MotorOnY);
+mbMotorOnDeltaLinked := IS_LINKED(do_MotorOnDelta);   
+
+mbMotor2OnMainLinked := IS_LINKED(do_Motor2OnMain);
+mbMotor2OnYLinked := IS_LINKED(do_Motor2OnY);
+mbMotor2OnDeltaLinked := IS_LINKED(do_Motor2OnDelta);
+
+
+
+
+
+
+
+;#END_EDIT_BLOCK END_ACTION (*AInit*)
+ACTION AResetMotorOff: #BEGIN_EDIT_BLOCK
+(**************************************** WARNING ********************************************
+ *** The KEBA Kemro K2 System including software is not intended for safety control tasks! ***
+ ***                       For further information see Comment tab!                        ***
+ *********************************************************************************************)
+
+IF mbMotorOffLinked THEN
+    do_MotorOff := FALSE;
+END_IF;
+
+
+;#END_EDIT_BLOCK END_ACTION (*AResetMotorOff*)
+ACTION AStartMotor1: #BEGIN_EDIT_BLOCK
+fbMotor(bStart := TRUE,
+        bStop := FALSE,
+        dOnY := sv_dYOnTime,
+        dDelayTri := sv_dDeltaDelayTime);
+
+//set output only if DO is linked
+IF mbMotorOnMainLinked THEN
+   do_MotorOnMain := fbMotor.bOnMain;
+END_IF;
+
+//set output only if DO is linked
+IF mbMotorOnYLinked THEN
+   do_MotorOnY := fbMotor.bOnY;
+END_IF;
+
+//set output only if DO is linked
+IF mbMotorOnDeltaLinked THEN
+   do_MotorOnDelta := fbMotor.bOnTri;
+END_IF;
+
+sv_bMotorStarting := fbMotor.bStarting;
+sv_bMotorStarted := fbMotor.bStarted;
+sv_bMotorRunning := fbMotor.bMotorRun;
+
+;#END_EDIT_BLOCK END_ACTION (*AStartMotor1*)
+ACTION AStartMotor2: #BEGIN_EDIT_BLOCK
+fbMotor2(bStart := TRUE,
+         bStop := FALSE,
+         dOnY := sv_dYOnTime,
+         dDelayTri := sv_dDeltaDelayTime);
+
+//set output only if DO is linked
+IF mbMotor2OnMainLinked THEN
+   do_Motor2OnMain := fbMotor2.bOnMain;
+END_IF;
+
+//set output only if DO is linked
+IF mbMotor2OnYLinked THEN
+   do_Motor2OnY := fbMotor2.bOnY;
+END_IF;
+
+//set output only if DO is linked
+IF mbMotor2OnDeltaLinked THEN
+   do_Motor2OnDelta := fbMotor2.bOnTri;
+END_IF;
+
+sv_bMotor2Starting := fbMotor2.bStarting;
+mbMotor2Started := fbMotor2.bStarted;
+
+;#END_EDIT_BLOCK END_ACTION (*AStartMotor2*)
+
+(* exits *)
+
+EXIT_TRANSITION StopMotor := #BEGIN_EDIT_BLOCK
+mbStopMotor = TRUE;
+;#END_EDIT_BLOCK
+PRIORITY 16 WITH 
+(* init step *)
+INITIAL_STEP Step16:
+Action16 (P);
+END_STEP
+
+ACTION Action16: #BEGIN_EDIT_BLOCK
+mbStopMotor := FALSE;
+
+;#END_EDIT_BLOCK END_ACTION (*Action16*)
+STEP S_Ready:
+AReady (P);
+END_STEP
+
+
+(* steps *)
+
+(* transitions *)
+GO_ON_TRANSITION Trans19 (* Trans19 *) FROM Step16 TO S_Ready :=  #BEGIN_EDIT_BLOCK
+TRUE
+;#END_EDIT_BLOCK
+END_TRANSITION
+
+END_TRANSITION
+(* end sfc-code *)
+
+
+END_ALGORITHM
+
+PROCESS_ALGORITHM paStopMotor ON TaskMid
+
+
+(* IecGraph-Code *)
+
+(* init step *)
+INITIAL_STEP S_Init:
+END_STEP
+
+
+(* steps *)
+STEP S_StopMotor1:
+AResetStartingAlarms (P);
+ASetMotorOff (P);
+AStopMotor1 (P);
+END_STEP
+
+ACTION AResetStartingAlarms: #BEGIN_EDIT_BLOCK
+RESET_ALARM(Name := erMotorStarting,
+            SubID1 := ANY);
+
+;#END_EDIT_BLOCK END_ACTION (*AResetStartingAlarms*)
+STEP S_StopMotor2:
+AStopMotor2 (P);
+END_STEP
+
+STEP S_Ready:
+AReady (P);
+END_STEP
+
+ACTION AReady: #BEGIN_EDIT_BLOCK
+STOP_PROCESS_ALGORITHM();
+
+;#END_EDIT_BLOCK END_ACTION (*AReady*)
+
+(* transitions *)
+TRANSITION TStopMotor (* TStopMotor *) FROM S_Init TO S_StopMotor1 :=  #BEGIN_EDIT_BLOCK
+TRUE
+;#END_EDIT_BLOCK
+END_TRANSITION
+
+TRANSITION TNoSecondMotor (* TNoSecondMotor *) FROM S_StopMotor1 TO S_Ready :=  #BEGIN_EDIT_BLOCK
+NOT sv_bUseMotor2
+;#END_EDIT_BLOCK
+END_TRANSITION
+
+TRANSITION TStopSecondMotor (* TStopSecondMotor *) FROM S_StopMotor1 TO S_StopMotor2 :=  #BEGIN_EDIT_BLOCK
+sv_bUseMotor2
+;#END_EDIT_BLOCK
+END_TRANSITION
+
+TRANSITION TMotor2Stopped (* TMotor2Stopped *) FROM S_StopMotor2 TO S_Ready :=  #BEGIN_EDIT_BLOCK
+TRUE
+;#END_EDIT_BLOCK
+END_TRANSITION
+
+TRANSITION TStopped (* TStopped *) FROM S_Ready TO S_Init :=  #BEGIN_EDIT_BLOCK
+TRUE
+;#END_EDIT_BLOCK
+END_TRANSITION
+
+(* end IecGraph-Code *)
+(* sfc-code *)
+
+(* stand alone actions *)
+ACTION ASetMotorOff: #BEGIN_EDIT_BLOCK
+(**************************************** WARNING ********************************************
+ *** The KEBA Kemro K2 System including software is not intended for safety control tasks! ***
+ ***                       For further information see Comment tab!                        ***
+ *********************************************************************************************)
+
+IF mbMotorOffLinked THEN
+    do_MotorOff := TRUE;
+END_IF;
+
+;#END_EDIT_BLOCK END_ACTION (*ASetMotorOff*)
+ACTION AStopMotor1: #BEGIN_EDIT_BLOCK
+fbMotor(bStart := FALSE,
+        bStop := TRUE);
+
+//set output only if DO is linked
+IF mbMotorOnMainLinked THEN
+   do_MotorOnMain := fbMotor.bOnMain;
+END_IF;
+
+//set output only if DO is linked
+IF mbMotorOnYLinked THEN
+   do_MotorOnY := fbMotor.bOnY;
+END_IF;
+
+//set output only if DO is linked
+IF mbMotorOnDeltaLinked THEN
+   do_MotorOnDelta := fbMotor.bOnTri;
+END_IF;
+
+sv_bMotorStarting := fbMotor.bStarting;
+sv_bMotorStarted := fbMotor.bStarted;
+sv_bMotorRunning := fbMotor.bMotorRun;
+
+;#END_EDIT_BLOCK END_ACTION (*AStopMotor1*)
+ACTION AStopMotor2: #BEGIN_EDIT_BLOCK
+fbMotor2(bStart := FALSE,
+         bStop := TRUE);
+
+//set output only if DO is linked
+IF mbMotor2OnMainLinked THEN
+   do_Motor2OnMain := fbMotor2.bOnMain;
+END_IF;
+
+//set output only if DO is linked
+IF mbMotor2OnYLinked THEN
+   do_Motor2OnY := fbMotor2.bOnY;
+END_IF;
+
+//set output only if DO is linked
+IF mbMotor2OnDeltaLinked THEN
+   do_Motor2OnDelta := fbMotor2.bOnTri;
+END_IF;
+
+sv_bMotor2Starting := fbMotor2.bStarting;
+mbMotor2Started := fbMotor2.bStarted;
+
+;#END_EDIT_BLOCK END_ACTION (*AStopMotor2*)
+(* end sfc-code *)
+
+
+END_ALGORITHM
+
+PROCESS_ALGORITHM paStopMotor2 ON TaskMid
+
+#BEGIN_EDIT_BLOCK
+fbMotor2(bStart := FALSE,
+         bStop := NOT sv_bUseMotor2);
+
+//set output only if DO is linked
+IF mbMotor2OnMainLinked THEN
+   do_Motor2OnMain := fbMotor2.bOnMain;
+END_IF;
+
+//set output only if DO is linked
+IF mbMotor2OnYLinked THEN
+   do_Motor2OnY := fbMotor2.bOnY;
+END_IF;
+
+//set output only if DO is linked
+IF mbMotor2OnDeltaLinked THEN
+   do_Motor2OnDelta := fbMotor2.bOnTri;
+END_IF;
+
+sv_bMotor2Starting := fbMotor2.bStarting;
+mbMotor2Started := fbMotor2.bStarted;
+
+STOP_PROCESS_ALGORITHM();
+
+
+;#END_EDIT_BLOCK END_ALGORITHM
+
+POSTUPDATE_ALGORITHM pCheckUseMotor2 ON PU_Task_7 WITH sv_bUseMotor2
+
+#BEGIN_EDIT_BLOCK
+(**************************************** WARNING ********************************************
+ *** The KEBA Kemro K2 System including software is not intended for safety control tasks! ***
+ ***                       For further information see Comment tab!                        ***
+ *********************************************************************************************)
+
+IF sv_bMotorStarted AND NOT mbMotor2Started THEN
+   IF NOT sv_bUseMotor2 THEN
+      mbStopMotor := TRUE;
+      START_PROCESS_ALGORITHM(paStopMotor2);   
+   END_IF;
+ELSIF mbMotor2Started THEN
+   IF NOT sv_bUseMotor2 THEN
+      START_PROCESS_ALGORITHM(paStopMotor2);
+   END_IF;
+END_IF;
+
+
+;#END_EDIT_BLOCK END_ALGORITHM
+
+POSTUPDATE_ALGORITHM pLedControl ON PU_Task_7 WITH sv_bMotorStarting,sv_bMotor2Starting,sv_bMotorRunning
+
+
+VAR
+ mInit : BOOL;
+ bLedLinked : BOOL;
+END_VAR
+#BEGIN_EDIT_BLOCK
+(**************************************** WARNING ********************************************
+ *** The KEBA Kemro K2 System including software is not intended for safety control tasks! ***
+ ***                       For further information see Comment tab!                        ***
+ *********************************************************************************************)
+
+IF NOT mInit THEN
+   sv_bHMILedMotor_ledAttr := 16#1;
+   IF IS_LINKED(sv_bLedMotor) AND IS_LINKED(sv_bLedMotor_ledAttr) THEN
+      bLedLinked := TRUE;
+      sv_bLedMotor_ledAttr := 16#1;
+   END_IF;  
+   mInit := TRUE;
+END_IF;
+
+sv_bHMILedMotor := sv_bMotorRunning;
+IF NOT sv_bUseMotor2 THEN
+   IF sv_bMotorStarting THEN
+      sv_bHMILedMotor_ledAttr := 16#3; 
+   ELSE
+      sv_bHMILedMotor_ledAttr := 16#1; 
+   END_IF;
+ELSE
+   IF (sv_bMotorRunning AND NOT mbMotor2Started) THEN
+      sv_bHMILedMotor_ledAttr := 16#3; 
+   ELSE
+      sv_bHMILedMotor_ledAttr := 16#1;
+   END_IF;
+END_IF;
+
+IF bLedLinked THEN
+   sv_bLedMotor := sv_bHMILedMotor;
+   sv_bLedMotor_ledAttr := sv_bHMILedMotor_ledAttr;
+END_IF;
+
+
+;#END_EDIT_BLOCK END_ALGORITHM
+
+POSTUPDATE_ALGORITHM pMotorLocked ON PU_Task_3 WITH sv_bMotorLocked
+
+#BEGIN_EDIT_BLOCK
+(**************************************** WARNING ********************************************
+ *** The KEBA Kemro K2 System including software is not intended for safety control tasks! ***
+ ***                       For further information see Comment tab!                        ***
+ *********************************************************************************************)
+
+IF sv_bMotorLocked THEN
+    
+    //set flag that motor stops if it is starting
+    mbStopMotor := TRUE;
+    
+    //Start alog for stop the motor
+    START_PROCESS_ALGORITHM(paStopMotor);
+    
+END_IF;
+
+
+;#END_EDIT_BLOCK END_ALGORITHM
+
+ALGORITHM aMotorButton
+
+
+VAR_INPUT
+ bButtonMotor : BOOL;
+END_VAR
+
+VAR
+ bRunning : BOOL;
+ bExit : BOOL;
+END_VAR
+
+(* IecGraph-Code *)
+
+(* init step *)
+INITIAL_STEP S_Init:
+AInit (P);
+END_STEP
+
+ACTION AInit: #BEGIN_EDIT_BLOCK
+bExit := FALSE;
+
+;#END_EDIT_BLOCK END_ACTION (*AInit*)
+
+(* steps *)
+STEP S_CheckIfMotorRunning:
+ACheck (P);
+END_STEP
+
+ACTION ACheck: #BEGIN_EDIT_BLOCK
+bRunning := sv_bMotorStarted OR mbMotor2Started
+OR sv_bMotorStarting OR sv_bMotor2Starting 
+
+;#END_EDIT_BLOCK END_ACTION (*ACheck*)
+STEP S_StopMotor:
+AStop (P);
+END_STEP
+
+ACTION AStop: #BEGIN_EDIT_BLOCK
+mbStopMotor := TRUE;
+START_PROCESS_ALGORITHM(paStopMotor);
+
+;#END_EDIT_BLOCK END_ACTION (*AStop*)
+STEP S_CheckOpMode:
+END_STEP
+
+STEP S_WrongOpMode:
+ASetAlarm (P);
+END_STEP
+
+ACTION ASetAlarm: #BEGIN_EDIT_BLOCK
+STOP_PROCESS_ALGORITHM(paStartMotor);
+SET_ALARM(Name := erSwitchToManual);
+
+;#END_EDIT_BLOCK END_ACTION (*ASetAlarm*)
+STEP S_StartMotor:
+AStart (P);
+END_STEP
+
+ACTION AStart: #BEGIN_EDIT_BLOCK
+IF NOT sv_bMotorLocked THEN 
+    mbStopMotor := FALSE;
+    STOP_PROCESS_ALGORITHM(paStopMotor);
+    START_PROCESS_ALGORITHM(paStartMotor);
+END_IF;
+
+;#END_EDIT_BLOCK END_ACTION (*AStart*)
+STEP S_End:
+AExit (P);
+END_STEP
+
+ACTION AExit: #BEGIN_EDIT_BLOCK
+bExit := TRUE;
+
+;#END_EDIT_BLOCK END_ACTION (*AExit*)
+
+(* transitions *)
+GO_ON_TRANSITION TButton (* TButton *) FROM S_Init TO S_CheckIfMotorRunning :=  #BEGIN_EDIT_BLOCK
+bButtonMotor AND sv_bInitDone
+;#END_EDIT_BLOCK
+END_TRANSITION
+
+GO_ON_TRANSITION TIgnore (* TIgnore *) FROM S_Init TO S_End :=  #BEGIN_EDIT_BLOCK
+NOT bButtonMotor OR NOT sv_bInitDone
+;#END_EDIT_BLOCK
+END_TRANSITION
+
+GO_ON_TRANSITION TMotorNotRunning (* TMotorNotRunning *) FROM S_CheckIfMotorRunning TO S_CheckOpMode :=  #BEGIN_EDIT_BLOCK
+NOT bRunning
+;#END_EDIT_BLOCK
+END_TRANSITION
+
+GO_ON_TRANSITION TMotorRunningOrStarting (* TMotorRunningOrStarting *) FROM S_CheckIfMotorRunning TO S_StopMotor :=  #BEGIN_EDIT_BLOCK
+bRunning
+;#END_EDIT_BLOCK
+END_TRANSITION
+
+GO_ON_TRANSITION TStop (* TStop *) FROM S_StopMotor TO S_End :=  #BEGIN_EDIT_BLOCK
+TRUE
+;#END_EDIT_BLOCK
+END_TRANSITION
+
+GO_ON_TRANSITION TManual (* TManual *) FROM S_CheckOpMode TO S_StartMotor :=  #BEGIN_EDIT_BLOCK
+sv_OperationMode <= nManual
+;#END_EDIT_BLOCK
+END_TRANSITION
+
+GO_ON_TRANSITION TNotManual (* TNotManual *) FROM S_CheckOpMode TO S_WrongOpMode :=  #BEGIN_EDIT_BLOCK
+sv_OperationMode > nManual
+;#END_EDIT_BLOCK
+END_TRANSITION
+
+GO_ON_TRANSITION TAlarmSet (* TAlarmSet *) FROM S_WrongOpMode TO S_End :=  #BEGIN_EDIT_BLOCK
+TRUE
+;#END_EDIT_BLOCK
+END_TRANSITION
+
+GO_ON_TRANSITION TStarted (* TStarted *) FROM S_StartMotor TO S_End :=  #BEGIN_EDIT_BLOCK
+TRUE
+;#END_EDIT_BLOCK
+END_TRANSITION
+
+(* end IecGraph-Code *)
+(* sfc-code *)
+
+(* exits *)
+
+EXIT_TRANSITION S_Exit := #BEGIN_EDIT_BLOCK
+bExit
+;#END_EDIT_BLOCK
+PRIORITY 1 WITH  INITIAL_STEP S_Init: END_STEP
+END_TRANSITION
+(* end sfc-code *)
+
+
+END_ALGORITHM
+
+POSTUPDATE_ALGORITHM pMotorButton ON PU_Task_7 WITH di_ButtonMotor,sv_bButtonMotor
+
+
+VAR
+ bButtonMotor : BOOL;
+END_VAR
+#BEGIN_EDIT_BLOCK
+(**************************************** WARNING ********************************************
+ *** The KEBA Kemro K2 System including software is not intended for safety control tasks! ***
+ ***                       For further information see Comment tab!                        ***
+ *********************************************************************************************)
+
+bButtonMotor := sv_bButtonMotor;
+
+IF mbDIButtonMotorLinked THEN
+    bButtonMotor := bButtonMotor OR di_ButtonMotor;
+END_IF;
+
+aMotorButton(bButtonMotor);
+
+
+;#END_EDIT_BLOCK END_ALGORITHM
+
+POSTUPDATE_ALGORITHM pMotorOverLoad ON PU_Task_3 WITH di_Overload,sv_bMotorStarted,sv_bInitDone,sv_bMotorOverloadMode
+
+#BEGIN_EDIT_BLOCK
+(**************************************** WARNING ********************************************
+ *** The KEBA Kemro K2 System including software is not intended for safety control tasks! ***
+ ***                       For further information see Comment tab!                        ***
+ *********************************************************************************************)
+
+//sv_bIMotorOverloadMode FALSE: normally closed TRUE: normally open
+IF IS_LINKED(di_Overload) AND (di_Overload XOR NOT sv_bMotorOverloadMode) THEN
+   SET_ALARM(Name:= erMotorOverLoad,
+              SubID1 := 1);   
+ELSE
+    RESET_ALARM(Name:= erMotorOverLoad,
+                SubID1 := 1);
+END_IF;
+
+
+
+;#END_EDIT_BLOCK END_ALGORITHM
+
+POSTUPDATE_ALGORITHM pMotorStarted ON PU_Task_3 WITH sv_bMotorStarted,sv_bInitDone
+
+
+VAR
+ bInitDone : BOOL;
+ fbLockUnlockGroup : FBLockUnlockGroup;
+END_VAR
+#BEGIN_EDIT_BLOCK
+(**************************************** WARNING ********************************************
+ *** The KEBA Kemro K2 System including software is not intended for safety control tasks! ***
+ ***                       For further information see Comment tab!                        ***
+ *********************************************************************************************)
+
+IF NOT sv_bInitDone THEN
+   RETURN; //no lock / unlock before sv_bInitDone
+END_IF;
+
+sv_bAllMotorsRunning := sv_bMotorStarted;
+
+IF NOT bInitDone THEN
+   fbLockUnlockGroup.Alarm.AlarmId := erMotorNotRunning;
+   fbLockUnlockGroup.Group := cLockGroupMotor;
+   bInitDone := TRUE;
+END_IF;
+
+IF NOT sv_bMotorStarted THEN
+   //lock all movements which are in the group cLockGroupMotor 
+   fbLockUnlockGroup.Mode := nLockAbort;
+ELSE
+   //unlock all movements which are in the group cLockGroupMotor
+   fbLockUnlockGroup.Mode := nUnlock;
+END_IF;
+
+fbLockUnlockGroup();
+
+
+;#END_EDIT_BLOCK END_ALGORITHM
+
+
+
+END_ALGORITHM_BLOCK
+
+
+
+#END_OF_IEC_PART
+
+@Puma @IecEditor 6 97 @Pou 25 
+@@@BEG_Comment@@@
+
+@@@END_Comment@@@
+
+@BEG_Contents 
+
+@BEG_Func 
+@RT(17)FuncTreeContainer 
+2 
+@Var @RT(9)SET_ALARM @RT(0) @T @T @DERIVED 0 @F @RT(23)KEBA_STANDARD_PROCEDURE @F 
+@T 
+@BEG_Attrib 
+0 @RT(0) @RT(0) 
+@END_Attrib 
+1 1 @F @F @F @F 
+
+@Var @RT(11)RESET_ALARM @RT(0) @T @T @DERIVED 0 @F @RT(23)KEBA_STANDARD_PROCEDURE @F 
+@T 
+@BEG_Attrib 
+0 @RT(0) @RT(0) 
+@END_Attrib 
+1 1 @F @F @F @F 
+
+@END_Func 
+
+@BEG_Const 
+@RT(18)ConstTreeContainer 
+3 
+@Var @RT(8)cCompAll @RT(0) @T @F @DT @RT(4)DINT @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+0 @RT(10)cMaxCompId @RT(22)to lock all components 
+@END_Attrib 
+1 1 @F @F @F @F 
+
+@Var @RT(8)cMoveAll @RT(0) @T @F @DT @RT(4)DINT @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+0 @RT(13)cMaxMoveIdent @RT(32)all movements (for evLockUnlock) 
+@END_Attrib 
+1 1 @F @F @F @F 
+
+@Var @RT(12)cAllDevIndex @RT(0) @T @F @DT @RT(4)DINT @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+0 @RT(2)11 @RT(59)to lock all devices of a component ( = cMaxDeviceIndex + 1) 
+@END_Attrib 
+1 1 @F @F @F @F 
+
+@END_Const 
+
+@BEG_Export 
+
+@BEG_Kind 
+@ALGORITHM_BLOCK @RT(7)ABMotor @STRUCTURED_TEXT 
+@RT(0) @RT(0) @RT(0) 
+@END_Kind 
+
+@BEG_Dcl 
+@RT(16)DclTreeContainer 
+51 
+@Var @RT(14)do_MotorOnMain @RT(0) @T @F @DT @RT(4)BOOL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 8 @F @F @F @F 
+
+@Var @RT(11)do_MotorOnY @RT(0) @T @F @DT @RT(4)BOOL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 8 @F @F @F @F 
+
+@Var @RT(15)do_MotorOnDelta @RT(0) @T @F @DT @RT(4)BOOL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 8 @F @F @F @F 
+
+@Var @RT(16)sv_OperationMode @RT(0) @T @T @DERIVED 0 @T @T @DT @RT(15)tnOperationMode @RT(0) @T @T @UNKNOWN 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 8 @F @F @F @F 
+
+@Var @RT(11)sv_dYOnTime @RT(0) @T @F @DT @RT(4)TIME @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 8 @F @F @F @F 
+
+@Var @RT(18)sv_dDeltaDelayTime @RT(0) @T @F @DT @RT(4)TIME @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 8 @F @F @F @F 
+
+@Var @RT(20)sv_dDelayStartMotor2 @RT(0) @T @F @DT @RT(4)TIME @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 8 @F @F @F @F 
+
+@Var @RT(13)sv_bUseMotor2 @RT(0) @T @F @DT @RT(4)BOOL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 8 @F @F @F @F 
+
+@Var @RT(15)do_Motor2OnMain @RT(0) @T @F @DT @RT(4)BOOL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 8 @F @F @F @F 
+
+@Var @RT(16)do_Motor2OnDelta @RT(0) @T @F @DT @RT(4)BOOL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 8 @F @F @F @F 
+
+@Var @RT(17)sv_bMotorStarting @RT(0) @T @F @DT @RT(4)BOOL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 8 @F @F @F @F 
+
+@Var @RT(18)sv_bMotor2Starting @RT(0) @T @F @DT @RT(4)BOOL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 8 @F @F @F @F 
+
+@Var @RT(14)di_ButtonMotor @RT(0) @T @F @DT @RT(4)BOOL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 8 @F @F @F @F 
+
+@Var @RT(20)sv_bLedMotor_ledAttr @RT(0) @T @F @DT @RT(4)BYTE @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(13)LED Attribute @RT(0) 
+@END_Attrib 
+1 8 @F @F @F @F 
+
+@Var @RT(12)sv_bLedMotor @RT(0) @T @F @DT @RT(4)BOOL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 8 @F @F @F @F 
+
+@Var @RT(23)sv_bHMILedMotor_ledAttr @RT(0) @T @F @DT @RT(4)BYTE @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(13)LED Attribute @RT(0) 
+@END_Attrib 
+1 8 @F @F @F @F 
+
+@Var @RT(15)sv_bHMILedMotor @RT(0) @T @F @DT @RT(4)BOOL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 8 @F @F @F @F 
+
+@Var @RT(16)sv_bMotorRunning @RT(0) @T @F @DT @RT(4)BOOL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 8 @F @F @F @F 
+
+@Var @RT(12)do_Motor2OnY @RT(0) @T @F @DT @RT(4)BOOL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 8 @F @F @F @F 
+
+@Var @RT(16)sv_bMotorStarted @RT(0) @T @F @DT @RT(4)BOOL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 8 @F @F @F @F 
+
+@Var @RT(11)di_Overload @RT(0) @T @F @DT @RT(4)BOOL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 8 @F @F @F @F 
+
+@Var @RT(12)sv_bInitDone @RT(0) @T @F @DT @RT(4)BOOL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 8 @F @F @F @F 
+
+@Var @RT(15)erMotorOverLoad @RT(0) @T @F @DT @RT(5)ALARM @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 7 @F @F @F @F 
+
+@Var @RT(11)do_MotorOff @RT(0) @T @F @DT @RT(4)BOOL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 8 @F @F @F @F 
+
+@Var @RT(15)sv_bMotorLocked @RT(0) @T @F @DT @RT(4)BOOL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 8 @F @F @F @F 
+
+@Var @RT(20)sv_bAllMotorsRunning @RT(0) @T @F @DT @RT(4)BOOL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 8 @F @F @F @F 
+
+@Var @RT(21)sv_bMotorOverloadMode @RT(0) @T @F @DT @RT(4)BOOL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 8 @F @F @F @F 
+
+@Var @RT(7)TaskMid @RT(0) @T @F @DT @RT(4)TASK @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 7 @F @F @F @F 
+
+@Var @RT(9)PU_Task_7 @RT(0) @T @F @DT @RT(4)TASK @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 7 @F @F @F @F 
+
+@Var @RT(16)erSwitchToManual @RT(0) @T @F @DT @RT(5)ALARM @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 7 @F @F @F @F 
+
+@Var @RT(15)erMotorStarting @RT(0) @T @F @DT @RT(5)ALARM @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 7 @F @F @F @F 
+
+@Var @RT(9)PU_Task_3 @RT(0) @T @F @DT @RT(4)TASK @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 7 @F @F @F @F 
+
+@Var @RT(17)erMotorNotRunning @RT(0) @T @F @DT @RT(5)ALARM @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 7 @F @F @F @F 
+
+@Var @RT(21)evPanelButtonRegister @RT(0) @T @T @DERIVED 0 @T @T @DT @RT(22)tevPanelButtonRegister @RT(0) @T @T @UNKNOWN 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 7 @F @F @F @F 
+
+@Var @RT(13)sv_bInitStart @RT(0) @T @T @RENAMED 0 @T @T @DT @RT(4)BOOL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 8 @F @F @F @F 
+
+@Var @RT(11)sv_DeviceId @RT(0) @T @T @DERIVED 0 @T @T @DT @RT(10)tsDeviceId @RT(0) @T @T @UNKNOWN 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 8 @F @F @F @F 
+
+@Var @RT(15)sv_bButtonMotor @RT(0) @T @F @DT @RT(4)BOOL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 8 @F @F @F @F 
+
+@Var @RT(14)cButtonMotorOn @RT(0) @T @F @DT @RT(4)DINT @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(1)1 @RT(0) @RT(0) 
+@END_Attrib 
+1 15 @F @F @F @F 
+
+@Var @RT(7)fbMotor @RT(0) @T @T @DERIVED 0 @T @T @DT @RT(10)FBDeltaWye @RT(0) @T @T @UNKNOWN 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(8)fbMotor2 @RT(0) @T @T @DERIVED 0 @T @T @DT @RT(10)FBDeltaWye @RT(0) @T @T @UNKNOWN 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(11)mbStopMotor @RT(0) @T @F @DT @RT(4)BOOL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(15)mbMotor2Started @RT(0) @T @F @DT @RT(4)BOOL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(16)mbMotorOffLinked @RT(0) @T @F @DT @RT(4)BOOL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(19)mbMotorOnMainLinked @RT(0) @T @T @RENAMED 0 @T @T @DT @RT(4)BOOL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(20)mbMotorOnDeltaLinked @RT(0) @T @T @RENAMED 0 @T @T @DT @RT(4)BOOL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(16)mbMotorOnYLinked @RT(0) @T @T @RENAMED 0 @T @T @DT @RT(4)BOOL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(20)mbMotor2OnMainLinked @RT(0) @T @T @RENAMED 0 @T @T @DT @RT(4)BOOL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(21)mbMotor2OnDeltaLinked @RT(0) @T @T @RENAMED 0 @T @T @DT @RT(4)BOOL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(17)mbMotor2OnYLinked @RT(0) @T @T @RENAMED 0 @T @T @DT @RT(4)BOOL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(25)evPanelButtonRegisterData @RT(0) @T @T @DERIVED 0 @T @T @DT @RT(26)tevPanelButtonRegisterData @RT(0) @T @T @UNKNOWN 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(21)mbDIButtonMotorLinked @RT(0) @T @F @DT @RT(4)BOOL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@END_Dcl 
+
+@END_Export 
+
+@BEG_Body 
+
+11 
+
+@BEG_Export 
+
+@BEG_Algo 
+@POSTUPDATE_ALGORITHM @RT(10)pInitStart @STRUCTURED_TEXT 
+@RT(0) @RT(13)sv_bInitStart @RT(9)PU_Task_7 @F @F 
+@END_Algo 
+
+@BEG_Dcl 
+@RT(16)DclTreeContainer 
+0 
+@END_Dcl 
+
+@END_Export 
+
+@BEG_Export 
+
+@BEG_Algo 
+@PROCESS_ALGORITHM @RT(12)paStartMotor @SEQUENTIAL_FLOW_CHART 
+@RT(0) @RT(0) @RT(7)TaskMid @F @F 
+@END_Algo 
+
+@BEG_Dcl 
+@RT(16)DclTreeContainer 
+0 
+@END_Dcl 
+
+@END_Export 
+
+@BEG_Export 
+
+@BEG_Algo 
+@PROCESS_ALGORITHM @RT(11)paStopMotor @SEQUENTIAL_FLOW_CHART 
+@RT(0) @RT(0) @RT(7)TaskMid @F @F 
+@END_Algo 
+
+@BEG_Dcl 
+@RT(16)DclTreeContainer 
+0 
+@END_Dcl 
+
+@END_Export 
+
+@BEG_Export 
+
+@BEG_Algo 
+@PROCESS_ALGORITHM @RT(12)paStopMotor2 @STRUCTURED_TEXT 
+@RT(0) @RT(0) @RT(7)TaskMid @F @F 
+@END_Algo 
+
+@BEG_Dcl 
+@RT(16)DclTreeContainer 
+0 
+@END_Dcl 
+
+@END_Export 
+
+@BEG_Export 
+
+@BEG_Algo 
+@POSTUPDATE_ALGORITHM @RT(15)pCheckUseMotor2 @STRUCTURED_TEXT 
+@RT(0) @RT(13)sv_bUseMotor2 @RT(9)PU_Task_7 @F @F 
+@END_Algo 
+
+@BEG_Dcl 
+@RT(16)DclTreeContainer 
+0 
+@END_Dcl 
+
+@END_Export 
+
+@BEG_Export 
+
+@BEG_Algo 
+@POSTUPDATE_ALGORITHM @RT(11)pLedControl @STRUCTURED_TEXT 
+@RT(0) @RT(53)sv_bMotorStarting,sv_bMotor2Starting,sv_bMotorRunning @RT(9)PU_Task_7 @F @F 
+@END_Algo 
+
+@BEG_Dcl 
+@RT(16)DclTreeContainer 
+2 
+@Var @RT(5)mInit @RT(0) @T @F @DT @RT(4)BOOL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(10)bLedLinked @RT(0) @T @F @DT @RT(4)BOOL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@END_Dcl 
+
+@END_Export 
+
+@BEG_Export 
+
+@BEG_Algo 
+@POSTUPDATE_ALGORITHM @RT(12)pMotorLocked @STRUCTURED_TEXT 
+@RT(0) @RT(15)sv_bMotorLocked @RT(9)PU_Task_3 @F @F 
+@END_Algo 
+
+@BEG_Dcl 
+@RT(16)DclTreeContainer 
+0 
+@END_Dcl 
+
+@END_Export 
+
+@BEG_Export 
+
+@BEG_Algo 
+@ALGORITHM @RT(12)aMotorButton @SEQUENTIAL_FLOW_CHART 
+@RT(0) @RT(0) @RT(0) @F @F 
+@END_Algo 
+
+@BEG_Dcl 
+@RT(16)DclTreeContainer 
+3 
+@Var @RT(8)bRunning @RT(0) @T @F @DT @RT(4)BOOL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(5)bExit @RT(0) @T @F @DT @RT(4)BOOL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(12)bButtonMotor @RT(0) @T @F @DT @RT(4)BOOL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 1 @F @F @F @F 
+
+@END_Dcl 
+
+@END_Export 
+
+@BEG_Export 
+
+@BEG_Algo 
+@POSTUPDATE_ALGORITHM @RT(12)pMotorButton @STRUCTURED_TEXT 
+@RT(0) @RT(30)di_ButtonMotor,sv_bButtonMotor @RT(9)PU_Task_7 @F @F 
+@END_Algo 
+
+@BEG_Dcl 
+@RT(16)DclTreeContainer 
+1 
+@Var @RT(12)bButtonMotor @RT(0) @T @F @DT @RT(4)BOOL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@END_Dcl 
+
+@END_Export 
+
+@BEG_Export 
+
+@BEG_Algo 
+@POSTUPDATE_ALGORITHM @RT(14)pMotorOverLoad @STRUCTURED_TEXT 
+@RT(0) @RT(63)di_Overload,sv_bMotorStarted,sv_bInitDone,sv_bMotorOverloadMode @RT(9)PU_Task_3 @F @F 
+@END_Algo 
+
+@BEG_Dcl 
+@RT(16)DclTreeContainer 
+0 
+@END_Dcl 
+
+@END_Export 
+
+@BEG_Export 
+
+@BEG_Algo 
+@POSTUPDATE_ALGORITHM @RT(13)pMotorStarted @STRUCTURED_TEXT 
+@RT(0) @RT(29)sv_bMotorStarted,sv_bInitDone @RT(9)PU_Task_3 @F @F 
+@END_Algo 
+
+@BEG_Dcl 
+@RT(16)DclTreeContainer 
+2 
+@Var @RT(9)bInitDone @RT(0) @T @F @DT @RT(4)BOOL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(17)fbLockUnlockGroup @RT(0) @T @T @DERIVED 0 @T @T @DT @RT(17)FBLockUnlockGroup @RT(0) @T @T @UNKNOWN 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@END_Dcl 
+
+@END_Export 
+
+@BEG_Body 
+@TL(16)
+(**************************************** WARNING ********************************************
+ *** The KEBA Kemro K2 System including software is not intended for safety control tasks! ***
+ ***                       For further information see Comment tab!                        ***
+ *********************************************************************************************)
+
+evPanelButtonRegisterData.Button.nPanelButtonType := nPanelButtonAction; 
+evPanelButtonRegisterData.Button.iCompId := sv_DeviceId.CompId;
+evPanelButtonRegisterData.Button.iIndexId := sv_DeviceId.IndexId;
+evPanelButtonRegisterData.Button.iButtonId := cButtonMotorOn;
+evPanelButtonRegisterData.Button.pbActionVar1 := @sv_bButtonMotor;
+evPanelButtonRegisterData.Button.Optional.pbLedVar := @sv_bHMILedMotor;
+evPanelButtonRegisterData.Button.Optional.piLedVarAttr := @sv_bHMILedMotor_ledAttr;
+SET_EVENT(evPanelButtonRegister, evPanelButtonRegisterData);
+
+mbDIButtonMotorLinked := IS_LINKED(di_ButtonMotor);
+
+@END_Body 
+
+@@@BEG_Comment@@@ 
+@TL(0)
+
+@@@END_Comment@@@ 
+
+@BEG_SfcBody 
+12 10 11 
+
+@BEG_SfcData 2 
+@StepSeq @RT(4)sseq @F 3 
+@Step @RT(5)Start @F @T @F @F @RT(0) @F 
+@AcbCont @RT(7)unnamed @F 1 
+@Acb @RT(5)AInit @F @F @RT(1)P @RT(0) @F @F @F @F 
+
+@Trans @RT(7)T_Start @F @T @F @F @T @T @TL(2)
+TRUE
+
+@RT(7)T_Start @F 
+@Loop @RT(4)loop @F 2 
+@StepSeq @RT(4)sseq @F 13 
+@Step @RT(16)S_Checkcondition @F @F @F @F @RT(0) @F 
+@AcbCont @RT(7)unnamed @F 0 
+
+@Trans @RT(12)T_StartMotor @F @T @F @F @T @T @TL(3)
+NOT mbStopMotor  
+
+
+@RT(12)T_StartMotor @F 
+@Step @RT(12)S_StartMotor @F @F @F @F @RT(0) @F 
+@AcbCont @RT(7)unnamed @F 3 
+@Acb @RT(14)AResetMotorOff @F @F @RT(1)P @RT(0) @F @F @F @F 
+@Acb @RT(12)AStartMotor1 @F @F @RT(1)N @RT(0) @F @F @F @F 
+@Acb @RT(20)ASetStartingMessage1 @F @T @RT(1)P @RT(0) @F @F @T @TL(3)
+SET_ALARM(Name := erMotorStarting,
+          SubID1 := 1);
+
+@F 
+
+@Trans @RT(20)T_MotorStartFinished @F @T @F @F @T @T @TL(2)
+sv_bMotorStarted
+
+@RT(20)T_MotorStartFinished @F 
+@Step @RT(15)S_CheckFinished @F @F @F @F @RT(0) @F 
+@AcbCont @RT(7)unnamed @F 1 
+@Acb @RT(22)AResetStartingMessage1 @F @T @RT(1)P @RT(0) @F @F @T @TL(3)
+RESET_ALARM(Name := erMotorStarting,
+            SubID1 := 1);
+
+@F 
+
+@AltBranch @RT(3)alt @F 2 
+@TransSeq @RT(4)tseq @F 1 
+@Trans @RT(16)T_CheckUseMotor2 @F @T @F @F @T @T @TL(2)
+sv_bUseMotor2
+
+@RT(16)T_CheckUseMotor2 @F 
+
+@TransSeq @RT(4)tseq @F 2 
+@Trans @RT(19)T_CheckNotUseMotor2 @F @T @F @F @T @T @TL(2)
+NOT sv_bUseMotor2
+
+@RT(19)T_CheckNotUseMotor2 @F 
+@Goto @RT(7)S_Ready @F @F 
+
+
+@Step @RT(13)S_DelayMotor2 @F @F @F @F @RT(0) @F 
+@AcbCont @RT(7)unnamed @F 0 
+
+@Trans @RT(18)T_StartMotor2Delay @F @T @F @F @T @T @TL(2)
+S_DelayMotor2.T >= sv_dDelayStartMotor2
+
+@RT(18)T_StartMotor2Delay @F 
+@Step @RT(13)S_StartMotor2 @F @F @F @F @RT(0) @F 
+@AcbCont @RT(7)unnamed @F 2 
+@Acb @RT(12)AStartMotor2 @F @F @RT(1)N @RT(0) @F @F @T @F 
+@Acb @RT(20)ASetStartingMessage2 @F @T @RT(1)P @RT(0) @F @F @T @TL(3)
+SET_ALARM(Name := erMotorStarting,
+          SubID1 := 2);
+
+@F 
+
+@Trans @RT(14)TMotor2Started @F @T @F @F @T @T @TL(2)
+mbMotor2Started
+
+@RT(14)TMotor2Started @F 
+@Step @RT(14)S_ResetMessage @F @F @F @F @RT(0) @F 
+@AcbCont @RT(7)unnamed @F 1 
+@Acb @RT(22)AResetStartingMessage2 @F @T @RT(1)P @RT(0) @F @F @T @TL(3)
+RESET_ALARM(Name := erMotorStarting,
+          SubID1 := 2);
+
+@F 
+
+@Trans @RT(21)T_Motor2StartFinished @F @T @F @F @T @T @TL(2)
+TRUE
+
+@RT(21)T_Motor2StartFinished @F 
+@Step @RT(7)S_Ready @F @F @T @F @RT(0) @F 
+@AcbCont @RT(7)unnamed @F 1 
+@Acb @RT(6)AReady @F @T @RT(1)P @RT(0) @F @F @T @TL(2)
+STOP_PROCESS_ALGORITHM();
+
+@F 
+
+
+@Trans @RT(5)TTrue @F @T @T @T @T @T @TL(2)
+TRUE
+
+@RT(5)TTrue @F 
+
+@END_SfcData 
+@SaActions 4 
+@SaText @RT(5)AInit 1 @TL(23)
+(**************************************** WARNING ********************************************
+ *** The KEBA Kemro K2 System including software is not intended for safety control tasks! ***
+ ***                       For further information see Comment tab!                        ***
+ *********************************************************************************************)
+
+//check if do_MotorOff is available
+mbMotorOffLinked := IS_LINKED(do_MotorOff);
+
+//check which Motor DOs are available
+mbMotorOnMainLinked := IS_LINKED(do_MotorOnMain);
+mbMotorOnYLinked := IS_LINKED(do_MotorOnY);
+mbMotorOnDeltaLinked := IS_LINKED(do_MotorOnDelta);   
+
+mbMotor2OnMainLinked := IS_LINKED(do_Motor2OnMain);
+mbMotor2OnYLinked := IS_LINKED(do_Motor2OnY);
+mbMotor2OnDeltaLinked := IS_LINKED(do_Motor2OnDelta);
+
+
+
+
+
+
+
+
+@SaText @RT(14)AResetMotorOff 1 @TL(10)
+(**************************************** WARNING ********************************************
+ *** The KEBA Kemro K2 System including software is not intended for safety control tasks! ***
+ ***                       For further information see Comment tab!                        ***
+ *********************************************************************************************)
+
+IF mbMotorOffLinked THEN
+    do_MotorOff := FALSE;
+END_IF;
+
+
+
+@SaText @RT(12)AStartMotor1 1 @TL(24)
+fbMotor(bStart := TRUE,
+        bStop := FALSE,
+        dOnY := sv_dYOnTime,
+        dDelayTri := sv_dDeltaDelayTime);
+
+//set output only if DO is linked
+IF mbMotorOnMainLinked THEN
+   do_MotorOnMain := fbMotor.bOnMain;
+END_IF;
+
+//set output only if DO is linked
+IF mbMotorOnYLinked THEN
+   do_MotorOnY := fbMotor.bOnY;
+END_IF;
+
+//set output only if DO is linked
+IF mbMotorOnDeltaLinked THEN
+   do_MotorOnDelta := fbMotor.bOnTri;
+END_IF;
+
+sv_bMotorStarting := fbMotor.bStarting;
+sv_bMotorStarted := fbMotor.bStarted;
+sv_bMotorRunning := fbMotor.bMotorRun;
+
+
+@SaText @RT(12)AStartMotor2 1 @TL(23)
+fbMotor2(bStart := TRUE,
+         bStop := FALSE,
+         dOnY := sv_dYOnTime,
+         dDelayTri := sv_dDeltaDelayTime);
+
+//set output only if DO is linked
+IF mbMotor2OnMainLinked THEN
+   do_Motor2OnMain := fbMotor2.bOnMain;
+END_IF;
+
+//set output only if DO is linked
+IF mbMotor2OnYLinked THEN
+   do_Motor2OnY := fbMotor2.bOnY;
+END_IF;
+
+//set output only if DO is linked
+IF mbMotor2OnDeltaLinked THEN
+   do_Motor2OnDelta := fbMotor2.bOnTri;
+END_IF;
+
+sv_bMotor2Starting := fbMotor2.bStarting;
+mbMotor2Started := fbMotor2.bStarted;
+
+
+@SaTrans 0 
+@SaExits 1 
+@SaExit @SaText @RT(9)StopMotor 1 @TL(2)
+mbStopMotor = TRUE;
+
+@RT(0) @RT(2)16 @T @F @SaSfc @RT(9)StopMotor 5 @RT(5)DUMMY 
+@BEG_SfcData 2 
+@ExitSeq @RT(4)sseq @F 3 
+@Step @RT(6)Step16 @F @T @F @F @RT(0) @F 
+@AcbCont @RT(7)unnamed @F 1 
+@Acb @RT(8)Action16 @F @T @RT(1)P @RT(0) @F @F @T @TL(2)
+mbStopMotor := FALSE;
+
+@F 
+
+@Trans @RT(7)Trans19 @F @T @F @F @T @F @TL(2)
+TRUE
+
+@RT(7)Trans19 @F 
+@Goto @RT(7)S_Ready @F @F 
+@END_SfcData 
+
+@END_SfcBody 
+
+@@@BEG_Comment@@@ 
+@TL(0)
+
+@@@END_Comment@@@ 
+
+@BEG_SfcBody 
+8 5 6 
+
+@BEG_SfcData 2 
+@StepSeq @RT(4)sseq @F 1 
+@Loop @RT(4)loop @F 2 
+@StepSeq @RT(4)sseq @F 5 
+@Step @RT(6)S_Init @F @T @F @F @RT(0) @F 
+@AcbCont @RT(7)unnamed @F 0 
+
+@Trans @RT(10)TStopMotor @F @T @F @F @T @T @TL(2)
+TRUE
+
+@RT(10)TStopMotor @F 
+@Step @RT(12)S_StopMotor1 @F @F @F @F @RT(0) @F 
+@AcbCont @RT(7)unnamed @F 3 
+@Acb @RT(20)AResetStartingAlarms @F @T @RT(1)P @RT(0) @F @F @T @TL(3)
+RESET_ALARM(Name := erMotorStarting,
+            SubID1 := ANY);
+
+@F 
+@Acb @RT(12)ASetMotorOff @F @F @RT(1)P @RT(0) @F @F @F @F 
+@Acb @RT(11)AStopMotor1 @F @F @RT(1)P @RT(0) @F @F @T @F 
+
+@AltBranch @RT(3)alt @F 2 
+@TransSeq @RT(4)tseq @F 1 
+@Trans @RT(14)TNoSecondMotor @F @T @F @F @T @T @TL(2)
+NOT sv_bUseMotor2
+
+@RT(14)TNoSecondMotor @F 
+
+@TransSeq @RT(4)tseq @F 3 
+@Trans @RT(16)TStopSecondMotor @F @T @F @F @T @T @TL(2)
+sv_bUseMotor2
+
+@RT(16)TStopSecondMotor @F 
+@Step @RT(12)S_StopMotor2 @F @F @F @F @RT(0) @F 
+@AcbCont @RT(7)unnamed @F 1 
+@Acb @RT(11)AStopMotor2 @F @F @RT(1)P @RT(0) @F @F @T @F 
+
+@Trans @RT(14)TMotor2Stopped @F @T @F @F @T @T @TL(2)
+TRUE
+
+@RT(14)TMotor2Stopped @F 
+
+
+@Step @RT(7)S_Ready @F @F @F @F @RT(0) @F 
+@AcbCont @RT(7)unnamed @F 1 
+@Acb @RT(6)AReady @F @T @RT(1)P @RT(0) @F @F @T @TL(2)
+STOP_PROCESS_ALGORITHM();
+
+@F 
+
+
+@Trans @RT(8)TStopped @F @T @T @T @T @T @TL(2)
+TRUE
+
+@RT(8)TStopped @F 
+
+@END_SfcData 
+@SaActions 3 
+@SaText @RT(12)ASetMotorOff 1 @TL(9)
+(**************************************** WARNING ********************************************
+ *** The KEBA Kemro K2 System including software is not intended for safety control tasks! ***
+ ***                       For further information see Comment tab!                        ***
+ *********************************************************************************************)
+
+IF mbMotorOffLinked THEN
+    do_MotorOff := TRUE;
+END_IF;
+
+
+@SaText @RT(11)AStopMotor1 1 @TL(22)
+fbMotor(bStart := FALSE,
+        bStop := TRUE);
+
+//set output only if DO is linked
+IF mbMotorOnMainLinked THEN
+   do_MotorOnMain := fbMotor.bOnMain;
+END_IF;
+
+//set output only if DO is linked
+IF mbMotorOnYLinked THEN
+   do_MotorOnY := fbMotor.bOnY;
+END_IF;
+
+//set output only if DO is linked
+IF mbMotorOnDeltaLinked THEN
+   do_MotorOnDelta := fbMotor.bOnTri;
+END_IF;
+
+sv_bMotorStarting := fbMotor.bStarting;
+sv_bMotorStarted := fbMotor.bStarted;
+sv_bMotorRunning := fbMotor.bMotorRun;
+
+
+@SaText @RT(11)AStopMotor2 1 @TL(21)
+fbMotor2(bStart := FALSE,
+         bStop := TRUE);
+
+//set output only if DO is linked
+IF mbMotor2OnMainLinked THEN
+   do_Motor2OnMain := fbMotor2.bOnMain;
+END_IF;
+
+//set output only if DO is linked
+IF mbMotor2OnYLinked THEN
+   do_Motor2OnY := fbMotor2.bOnY;
+END_IF;
+
+//set output only if DO is linked
+IF mbMotor2OnDeltaLinked THEN
+   do_Motor2OnDelta := fbMotor2.bOnTri;
+END_IF;
+
+sv_bMotor2Starting := fbMotor2.bStarting;
+mbMotor2Started := fbMotor2.bStarted;
+
+
+@SaTrans 0 
+@SaExits 0 
+@END_SfcBody 
+
+@@@BEG_Comment@@@ 
+@TL(0)
+
+@@@END_Comment@@@ 
+
+@BEG_Body 
+@TL(23)
+fbMotor2(bStart := FALSE,
+         bStop := NOT sv_bUseMotor2);
+
+//set output only if DO is linked
+IF mbMotor2OnMainLinked THEN
+   do_Motor2OnMain := fbMotor2.bOnMain;
+END_IF;
+
+//set output only if DO is linked
+IF mbMotor2OnYLinked THEN
+   do_Motor2OnY := fbMotor2.bOnY;
+END_IF;
+
+//set output only if DO is linked
+IF mbMotor2OnDeltaLinked THEN
+   do_Motor2OnDelta := fbMotor2.bOnTri;
+END_IF;
+
+sv_bMotor2Starting := fbMotor2.bStarting;
+mbMotor2Started := fbMotor2.bStarted;
+
+STOP_PROCESS_ALGORITHM();
+
+@END_Body 
+
+@@@BEG_Comment@@@ 
+@TL(0)
+
+@@@END_Comment@@@ 
+
+@BEG_Body 
+@TL(16)
+(**************************************** WARNING ********************************************
+ *** The KEBA Kemro K2 System including software is not intended for safety control tasks! ***
+ ***                       For further information see Comment tab!                        ***
+ *********************************************************************************************)
+
+IF sv_bMotorStarted AND NOT mbMotor2Started THEN
+   IF NOT sv_bUseMotor2 THEN
+      mbStopMotor := TRUE;
+      START_PROCESS_ALGORITHM(paStopMotor2);   
+   END_IF;
+ELSIF mbMotor2Started THEN
+   IF NOT sv_bUseMotor2 THEN
+      START_PROCESS_ALGORITHM(paStopMotor2);
+   END_IF;
+END_IF;
+
+@END_Body 
+
+@@@BEG_Comment@@@ 
+@TL(0)
+
+@@@END_Comment@@@ 
+
+@BEG_Body 
+@TL(34)
+(**************************************** WARNING ********************************************
+ *** The KEBA Kemro K2 System including software is not intended for safety control tasks! ***
+ ***                       For further information see Comment tab!                        ***
+ *********************************************************************************************)
+
+IF NOT mInit THEN
+   sv_bHMILedMotor_ledAttr := 16#1;
+   IF IS_LINKED(sv_bLedMotor) AND IS_LINKED(sv_bLedMotor_ledAttr) THEN
+      bLedLinked := TRUE;
+      sv_bLedMotor_ledAttr := 16#1;
+   END_IF;  
+   mInit := TRUE;
+END_IF;
+
+sv_bHMILedMotor := sv_bMotorRunning;
+IF NOT sv_bUseMotor2 THEN
+   IF sv_bMotorStarting THEN
+      sv_bHMILedMotor_ledAttr := 16#3; 
+   ELSE
+      sv_bHMILedMotor_ledAttr := 16#1; 
+   END_IF;
+ELSE
+   IF (sv_bMotorRunning AND NOT mbMotor2Started) THEN
+      sv_bHMILedMotor_ledAttr := 16#3; 
+   ELSE
+      sv_bHMILedMotor_ledAttr := 16#1;
+   END_IF;
+END_IF;
+
+IF bLedLinked THEN
+   sv_bLedMotor := sv_bHMILedMotor;
+   sv_bLedMotor_ledAttr := sv_bHMILedMotor_ledAttr;
+END_IF;
+
+@END_Body 
+
+@@@BEG_Comment@@@ 
+@TL(0)
+
+@@@END_Comment@@@ 
+
+@BEG_Body 
+@TL(15)
+(**************************************** WARNING ********************************************
+ *** The KEBA Kemro K2 System including software is not intended for safety control tasks! ***
+ ***                       For further information see Comment tab!                        ***
+ *********************************************************************************************)
+
+IF sv_bMotorLocked THEN
+    
+    //set flag that motor stops if it is starting
+    mbStopMotor := TRUE;
+    
+    //Start alog for stop the motor
+    START_PROCESS_ALGORITHM(paStopMotor);
+    
+END_IF;
+
+@END_Body 
+
+@@@BEG_Comment@@@ 
+@TL(0)
+
+@@@END_Comment@@@ 
+
+@BEG_SfcBody 
+7 11 10 
+
+@BEG_SfcData 2 
+@StepSeq @RT(4)sseq @F 9 
+@Step @RT(6)S_Init @F @T @T @F @RT(0) @F 
+@AcbCont @RT(7)unnamed @F 1 
+@Acb @RT(5)AInit @F @T @RT(1)P @RT(0) @F @F @T @TL(2)
+bExit := FALSE;
+
+@F 
+
+@AltBranch @RT(3)alt @F 2 
+@TransSeq @RT(4)tseq @F 1 
+@Trans @RT(7)TButton @F @T @F @F @T @F @TL(2)
+bButtonMotor AND sv_bInitDone
+
+@RT(7)TButton @F 
+
+@TransSeq @RT(4)tseq @F 2 
+@Trans @RT(7)TIgnore @F @T @F @F @T @F @TL(2)
+NOT bButtonMotor OR NOT sv_bInitDone
+
+@RT(7)TIgnore @F 
+@Goto @RT(5)S_End @F @F 
+
+
+@Step @RT(21)S_CheckIfMotorRunning @F @F @F @F @RT(0) @F 
+@AcbCont @RT(7)unnamed @F 1 
+@Acb @RT(6)ACheck @F @T @RT(1)P @RT(0) @F @F @T @TL(3)
+bRunning := sv_bMotorStarted OR mbMotor2Started
+OR sv_bMotorStarting OR sv_bMotor2Starting 
+
+@F 
+
+@AltBranch @RT(3)alt @F 2 
+@TransSeq @RT(4)tseq @F 1 
+@Trans @RT(16)TMotorNotRunning @F @T @F @F @T @F @TL(2)
+NOT bRunning
+
+@RT(16)TMotorNotRunning @F 
+
+@TransSeq @RT(4)tseq @F 4 
+@Trans @RT(23)TMotorRunningOrStarting @F @T @F @F @T @F @TL(2)
+bRunning
+
+@RT(23)TMotorRunningOrStarting @F 
+@Step @RT(11)S_StopMotor @F @F @F @F @RT(0) @F 
+@AcbCont @RT(7)unnamed @F 1 
+@Acb @RT(5)AStop @F @T @RT(1)P @RT(0) @F @F @T @TL(3)
+mbStopMotor := TRUE;
+START_PROCESS_ALGORITHM(paStopMotor);
+
+@F 
+
+@Trans @RT(5)TStop @F @T @F @F @T @F @TL(2)
+TRUE
+
+@RT(5)TStop @F 
+@Goto @RT(5)S_End @F @F 
+
+
+@Step @RT(13)S_CheckOpMode @F @F @F @F @RT(0) @F 
+@AcbCont @RT(7)unnamed @F 0 
+
+@AltBranch @RT(3)alt @F 2 
+@TransSeq @RT(4)tseq @F 1 
+@Trans @RT(7)TManual @F @T @F @F @T @F @TL(2)
+sv_OperationMode <= nManual
+
+@RT(7)TManual @F 
+
+@TransSeq @RT(4)tseq @F 4 
+@Trans @RT(10)TNotManual @F @T @F @F @T @F @TL(2)
+sv_OperationMode > nManual
+
+@RT(10)TNotManual @F 
+@Step @RT(13)S_WrongOpMode @F @F @F @F @RT(0) @F 
+@AcbCont @RT(7)unnamed @F 1 
+@Acb @RT(9)ASetAlarm @F @T @RT(1)P @RT(0) @F @F @T @TL(3)
+STOP_PROCESS_ALGORITHM(paStartMotor);
+SET_ALARM(Name := erSwitchToManual);
+
+@F 
+
+@Trans @RT(9)TAlarmSet @F @T @F @F @T @F @TL(2)
+TRUE
+
+@RT(9)TAlarmSet @F 
+@Goto @RT(5)S_End @F @F 
+
+
+@Step @RT(12)S_StartMotor @F @F @F @F @RT(0) @F 
+@AcbCont @RT(7)unnamed @F 1 
+@Acb @RT(6)AStart @F @T @RT(1)P @RT(0) @F @F @T @TL(6)
+IF NOT sv_bMotorLocked THEN 
+    mbStopMotor := FALSE;
+    STOP_PROCESS_ALGORITHM(paStopMotor);
+    START_PROCESS_ALGORITHM(paStartMotor);
+END_IF;
+
+@F 
+
+@Trans @RT(8)TStarted @F @T @F @F @T @F @TL(2)
+TRUE
+
+@RT(8)TStarted @F 
+@Step @RT(5)S_End @F @F @T @F @RT(0) @F 
+@AcbCont @RT(7)unnamed @F 1 
+@Acb @RT(5)AExit @F @T @RT(1)P @RT(0) @F @F @T @TL(2)
+bExit := TRUE;
+
+@F 
+
+@END_SfcData 
+@SaActions 0 
+@SaTrans 0 
+@SaExits 1 
+@SaExit @SaText @RT(6)S_Exit 1 @TL(2)
+bExit
+
+@RT(6)S_Init @RT(1)1 @F @F @SaSfc @RT(6)S_Exit 5 @RT(5)DUMMY 
+@BEG_SfcData 2 
+@ExitSeq @RT(4)sseq @F 3 
+@Step @RT(8)unnamed1 @F @T @F @F @RT(0) @F 
+@AcbCont @RT(7)unnamed @F 0 
+
+@Trans @RT(8)unnamed3 @F @T @F @F @T @T @TL(2)
+
+
+@RT(8)unnamed3 @F 
+@Goto @RT(9)unlabeled @F @F 
+@END_SfcData 
+
+@END_SfcBody 
+
+@@@BEG_Comment@@@ 
+@TL(0)
+
+@@@END_Comment@@@ 
+
+@BEG_Body 
+@TL(13)
+(**************************************** WARNING ********************************************
+ *** The KEBA Kemro K2 System including software is not intended for safety control tasks! ***
+ ***                       For further information see Comment tab!                        ***
+ *********************************************************************************************)
+
+bButtonMotor := sv_bButtonMotor;
+
+IF mbDIButtonMotorLinked THEN
+    bButtonMotor := bButtonMotor OR di_ButtonMotor;
+END_IF;
+
+aMotorButton(bButtonMotor);
+
+@END_Body 
+
+@@@BEG_Comment@@@ 
+@TL(0)
+
+@@@END_Comment@@@ 
+
+@BEG_Body 
+@TL(15)
+(**************************************** WARNING ********************************************
+ *** The KEBA Kemro K2 System including software is not intended for safety control tasks! ***
+ ***                       For further information see Comment tab!                        ***
+ *********************************************************************************************)
+
+//sv_bIMotorOverloadMode FALSE: normally closed TRUE: normally open
+IF IS_LINKED(di_Overload) AND (di_Overload XOR NOT sv_bMotorOverloadMode) THEN
+   SET_ALARM(Name:= erMotorOverLoad,
+              SubID1 := 1);   
+ELSE
+    RESET_ALARM(Name:= erMotorOverLoad,
+                SubID1 := 1);
+END_IF;
+
+
+@END_Body 
+
+@@@BEG_Comment@@@ 
+@TL(0)
+
+@@@END_Comment@@@ 
+
+@BEG_Body 
+@TL(27)
+(**************************************** WARNING ********************************************
+ *** The KEBA Kemro K2 System including software is not intended for safety control tasks! ***
+ ***                       For further information see Comment tab!                        ***
+ *********************************************************************************************)
+
+IF NOT sv_bInitDone THEN
+   RETURN; //no lock / unlock before sv_bInitDone
+END_IF;
+
+sv_bAllMotorsRunning := sv_bMotorStarted;
+
+IF NOT bInitDone THEN
+   fbLockUnlockGroup.Alarm.AlarmId := erMotorNotRunning;
+   fbLockUnlockGroup.Group := cLockGroupMotor;
+   bInitDone := TRUE;
+END_IF;
+
+IF NOT sv_bMotorStarted THEN
+   //lock all movements which are in the group cLockGroupMotor 
+   fbLockUnlockGroup.Mode := nLockAbort;
+ELSE
+   //unlock all movements which are in the group cLockGroupMotor
+   fbLockUnlockGroup.Mode := nUnlock;
+END_IF;
+
+fbLockUnlockGroup();
+
+@END_Body 
+
+@@@BEG_Comment@@@ 
+@TL(0)
+
+@@@END_Comment@@@ 
+@END_Body 
+
+@END_Contents 

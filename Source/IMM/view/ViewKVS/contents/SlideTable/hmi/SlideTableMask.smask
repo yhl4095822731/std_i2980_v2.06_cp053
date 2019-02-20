@@ -1,0 +1,742 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<base:Mask xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xmlns:base="http://www.keba.at/viewedit.model.base" widgetId="kvs.mask" name="SlideTableMask">
+  <resolution width="714" height="476"/>
+  <position x="1" y="1"/>
+  <attributeValues key="Background" value="30,30,30"/>
+  <attributeValues key="Icon" value="SlideTable/hmi/images/iconSlideIn.gif"/>
+  <attributeValues key="Title" value="Slide table"/>
+  <widgetInstances xsi:type="base:ContainerWidgetInstance" widgetId="keplast.kvs.borderpanelsmall" name="cSlideTableOut" layoutConstraint="null">
+    <resolution width="714" height="234"/>
+    <position/>
+    <attributeValues key="Title" value="Slide Out"/>
+    <attributeValues key="PreferredSize" value="10, 185"/>
+    <widgetInstances xsi:type="base:ContainerWidgetInstance" widgetId="kvs.panel" name="cTitleSlideOut" layoutConstraint="TITLE_RIGHT">
+      <resolution width="144" height="24"/>
+      <position x="567" y="2"/>
+      <dynamicAttributes key="Create">
+        <value function="doesVariableExist : UserFunctions" equal="true" unequal="false">
+          <parameter key="1" value="variableasstring;PlastFunctionUtils.createVariableString(&quot;SlideTable1.ai_Position&quot;)"/>
+        </value>
+      </dynamicAttributes>
+      <widgetInstances widgetId="kvs.varlabel" name="varLabel18" layoutConstraint="WEST">
+        <resolution width="86" height="24"/>
+        <position/>
+        <attributeValues key="Variable" value="SlideTable1.sv_BwdProfVis.Profile.iNoOfPoints"/>
+        <attributeValues key="LabelType" value="Short Variable Label"/>
+        <attributeValues key="PreferredSize" value="86, 24"/>
+      </widgetInstances>
+      <widgetInstances widgetId="keplast.kvs.plausnumfield" name="fNoOfStagesOut" layoutConstraint="CENTER">
+        <resolution width="58" height="24"/>
+        <position x="86"/>
+        <attributeValues key="PreferredSize" value="58, 24"/>
+        <attributeValues key="Variable" value="SlideTable1.sv_BwdProfVis.Profile.iNoOfPoints"/>
+      </widgetInstances>
+      <layout layoutID="kvs.layout.BorderLayout" name="BorderLayout"/>
+    </widgetInstances>
+    <widgetInstances xsi:type="base:ContainerWidgetInstance" widgetId="kvs.panel" name="container1" layoutConstraint="LEFT">
+      <resolution width="347" height="197"/>
+      <position x="6" y="33"/>
+      <attributeValues key="PreferredSize" value="347, 203"/>
+      <widgetInstances xsi:type="base:ContainerWidgetInstance" widgetId="kvs.panel" name="cSlideOutProfile" layoutConstraint="0, 0, 100, 100">
+        <resolution width="347" height="197"/>
+        <position/>
+        <attributeValues key="PreferredSize" value="347, 100"/>
+        <dynamicAttributes key="Create">
+          <value function="doesVariableExist : UserFunctions" equal="true" unequal="false">
+            <parameter key="1" value="variableasstring;PlastFunctionUtils.createVariableString(&quot;SlideTable1.ai_Position&quot;)"/>
+          </value>
+        </dynamicAttributes>
+        <widgetInstances widgetId="keplast.kvs.kprofile.table" name="profileTable1" layoutConstraint="NORTH">
+          <resolution width="347" height="197"/>
+          <position/>
+          <attributeValues key="ProfileName" value="SlideTable1.sv_BwdProfVis"/>
+          <attributeValues key="IsLeftRightIncreasing" value="false"/>
+          <attributeValues key="IsUpDownIncreasing" value="true"/>
+          <attributeValues key="VariableActPosition" value="SlideTable1.sv_rPosition"/>
+          <attributeValues key="VariableMaxPosition" value="SlideTable1.sv_rStroke"/>
+          <attributeValues key="VariableMaxPressure" value="SlideTable1.sv_rMaxPressureBwd"/>
+          <attributeValues key="VariableMaxVelocity" value="SlideTable1.sv_rMaxSpeedBwd"/>
+          <attributeValues key="VisiblePressure" value="false"/>
+          <attributeValues key="VisibleVelocity" value="true"/>
+          <attributeValues key="TextLastStage" value="End"/>
+          <attributeValues key="VisibleLastPosition" value="true"/>
+          <attributeValues key="VisibleOneToLastPressure" value="false"/>
+        </widgetInstances>
+        <layout layoutID="kvs.layout.BorderLayout" name="BorderLayout"/>
+      </widgetInstances>
+      <widgetInstances xsi:type="base:ContainerWidgetInstance" widgetId="kvs.panel" name="cSlideOutLimit" layoutConstraint="0, 1, 100, 99">
+        <resolution width="347" height="195"/>
+        <position y="1"/>
+        <dynamicAttributes key="Create">
+          <value function="doesVariableExist : UserFunctions" equal="false" unequal="true">
+            <parameter key="1" value="variableasstring;PlastFunctionUtils.createVariableString(&quot;SlideTable1.ai_Position&quot;)"/>
+          </value>
+        </dynamicAttributes>
+        <widgetInstances xsi:type="base:ContainerWidgetInstance" widgetId="kvs.panel" name="container27" layoutConstraint="null">
+          <resolution width="347" height="27"/>
+          <position/>
+          <widgetInstances xsi:type="base:ContainerWidgetInstance" widgetId="kvs.panel" name="cHeader1Inner" layoutConstraint="EAST">
+            <resolution width="190" height="27"/>
+            <position x="157"/>
+            <attributeValues key="PreferredSize" value="190, 29"/>
+            <widgetInstances widgetId="kvs.varlabel" name="lblSlideOutPres1" layoutConstraint="null">
+              <resolution width="65" height="29"/>
+              <position/>
+              <attributeValues key="Alignment" value="MIDDLE/CENTER"/>
+              <attributeValues key="Variable" value="SlideTable1.sv_BwdProfVis.Profile.Points[1].rPressure"/>
+              <attributeValues key="LabelType" value="Short Variable Label"/>
+              <attributeValues key="PreferredSize" value="65, 29"/>
+            </widgetInstances>
+            <widgetInstances widgetId="kvs.varlabel" name="lblSlideOutVel1" layoutConstraint="null">
+              <resolution width="65" height="29"/>
+              <position x="65"/>
+              <attributeValues key="PreferredSize" value="65, 29"/>
+              <attributeValues key="Alignment" value="MIDDLE/CENTER"/>
+              <attributeValues key="Variable" value="SlideTable1.sv_BwdProfVis.Profile.Points[1].rVelocity"/>
+              <attributeValues key="LabelType" value="Short Variable Label"/>
+            </widgetInstances>
+            <layout layoutID="kvs.layout.FlowLayout" name="FlowLayout">
+              <attributeValues key="Alignment" value="LEFT"/>
+              <attributeValues key="Hgap" value="0"/>
+              <attributeValues key="Vgap" value="0"/>
+            </layout>
+          </widgetInstances>
+          <layout layoutID="kvs.layout.BorderLayout" name="BorderLayout"/>
+        </widgetInstances>
+        <widgetInstances xsi:type="base:ContainerWidgetInstance" widgetId="kvs.panel" name="container36" layoutConstraint="null">
+          <resolution width="347" height="27"/>
+          <position y="27"/>
+          <border name="EmptyBorder" id="kv.border.EmptyBorder">
+            <attributeValues key="InnerInsets" value="0, 158, 0, 56"/>
+          </border>
+          <widgetInstances widgetId="kvs.varlabel" name="lblSlideOutPresUnit1" layoutConstraint="CENTER">
+            <resolution width="68" height="27"/>
+            <position x="158"/>
+            <attributeValues key="Variable" value="SlideTable1.sv_BwdProfVis.Profile.Points[1].rPressure"/>
+            <attributeValues key="Alignment" value="MIDDLE/CENTER"/>
+          </widgetInstances>
+          <widgetInstances widgetId="kvs.varlabel" name="lblSlideOutVelUnit1" layoutConstraint="EAST">
+            <resolution width="65" height="27"/>
+            <position x="226"/>
+            <attributeValues key="Variable" value="SlideTable1.sv_BwdProfVis.Profile.Points[1].rVelocity"/>
+            <attributeValues key="Alignment" value="MIDDLE/CENTER"/>
+          </widgetInstances>
+          <layout layoutID="kvs.layout.BorderLayout" name="BorderLayout"/>
+        </widgetInstances>
+        <widgetInstances xsi:type="base:ContainerWidgetInstance" widgetId="kvs.panel" name="container33" layoutConstraint="null">
+          <resolution width="347" height="27"/>
+          <position y="54"/>
+          <widgetInstances widgetId="kvs.label" name="lblSlideLimitSwOut1" layoutConstraint="null">
+            <resolution width="158" height="21"/>
+            <position x="3" y="3"/>
+            <attributeValues key="Text" value="Slide Out fast"/>
+            <attributeValues key="Alignment" value="MIDDLE/LEFT"/>
+          </widgetInstances>
+          <widgetInstances widgetId="keplast.kvs.plausnumfield" name="fLimitSwPresOut1" layoutConstraint="null">
+            <resolution width="60" height="28"/>
+            <position x="164"/>
+            <attributeValues key="Variable" value="SlideTable1.sv_ConstBwdFast.Pressure.Output.rOutputValue"/>
+          </widgetInstances>
+          <widgetInstances widgetId="keplast.kvs.plausnumfield" name="fLimitSwVelOut1" layoutConstraint="null">
+            <resolution width="60" height="28"/>
+            <position x="227"/>
+            <attributeValues key="Variable" value="SlideTable1.sv_ConstBwdFast.Velocity.Output.rOutputValue"/>
+          </widgetInstances>
+          <layout layoutID="keplast.kvs.layout.beanlayout" name="BeanLayout">
+            <attributeValues key="UseUnitFieldGap" value="true"/>
+            <attributeValues key="UnitWidth" value="60"/>
+            <attributeValues key="FieldWidth" value="60"/>
+          </layout>
+        </widgetInstances>
+        <widgetInstances xsi:type="base:ContainerWidgetInstance" widgetId="kvs.panel" name="container32" layoutConstraint="null">
+          <resolution width="347" height="27"/>
+          <position y="81"/>
+          <widgetInstances widgetId="kvs.label" name="lblSlideLimitSwOut2" layoutConstraint="null">
+            <resolution width="158" height="21"/>
+            <position x="3" y="3"/>
+            <attributeValues key="Text" value="Slide Out slow"/>
+            <attributeValues key="Alignment" value="MIDDLE/LEFT"/>
+          </widgetInstances>
+          <widgetInstances widgetId="keplast.kvs.plausnumfield" name="fLimitSwPresOut2" layoutConstraint="null">
+            <resolution width="60" height="28"/>
+            <position x="164"/>
+            <attributeValues key="Variable" value="SlideTable1.sv_ConstBwdSlow.Pressure.Output.rOutputValue"/>
+          </widgetInstances>
+          <widgetInstances widgetId="keplast.kvs.plausnumfield" name="fLimitSwVelOut2" layoutConstraint="null">
+            <resolution width="60" height="28"/>
+            <position x="227"/>
+            <attributeValues key="Variable" value="SlideTable1.sv_ConstBwdSlow.Velocity.Output.rOutputValue"/>
+          </widgetInstances>
+          <layout layoutID="keplast.kvs.layout.beanlayout" name="BeanLayout">
+            <attributeValues key="UnitWidth" value="60"/>
+            <attributeValues key="UseUnitFieldGap" value="true"/>
+            <attributeValues key="FieldWidth" value="60"/>
+          </layout>
+        </widgetInstances>
+        <widgetInstances xsi:type="base:ContainerWidgetInstance" widgetId="kvs.panel" name="container34" layoutConstraint="null">
+          <resolution width="347" height="27"/>
+          <position y="108"/>
+          <layout layoutID="kvs.layout.PercentLayout" name="PercentLayout"/>
+        </widgetInstances>
+        <widgetInstances xsi:type="base:ContainerWidgetInstance" widgetId="kvs.panel" name="container35" layoutConstraint="null">
+          <resolution width="347" height="27"/>
+          <position y="135"/>
+          <layout layoutID="kvs.layout.PercentLayout" name="PercentLayout"/>
+        </widgetInstances>
+        <layout layoutID="kvs.layout.GridLayout" name="GridLayout">
+          <attributeValues key="Rows" value="7"/>
+          <attributeValues key="Columns" value="1"/>
+        </layout>
+      </widgetInstances>
+      <layout layoutID="kvs.layout.PercentLayout" name="PercentLayout"/>
+    </widgetInstances>
+    <widgetInstances xsi:type="base:ContainerWidgetInstance" widgetId="kvs.panel" name="cSlideOutSettings" layoutConstraint="RIGHT">
+      <resolution width="347" height="197"/>
+      <position x="361" y="33"/>
+      <attributeValues key="PreferredSize" value="347, 201"/>
+      <widgetInstances xsi:type="base:ContainerWidgetInstance" widgetId="kvs.panel" name="container37" layoutConstraint="null">
+        <resolution width="347" height="28"/>
+        <position/>
+        <widgetInstances xsi:type="base:ContainerWidgetInstance" widgetId="kvs.panel" name="cHeader2Inner" layoutConstraint="EAST">
+          <resolution width="163" height="28"/>
+          <position x="184"/>
+          <attributeValues key="PreferredSize" value="163, 29"/>
+          <widgetInstances widgetId="kvs.varlabel" name="varLabel24" layoutConstraint="null">
+            <resolution width="65" height="29"/>
+            <position/>
+            <attributeValues key="Alignment" value="MIDDLE/CENTER"/>
+            <attributeValues key="Variable" value="SlideTable1.sv_BwdProfVis.Profile.Points[1].rPressure"/>
+            <attributeValues key="LabelType" value="Short Variable Label"/>
+            <attributeValues key="PreferredSize" value="65, 29"/>
+          </widgetInstances>
+          <widgetInstances widgetId="kvs.varlabel" name="varLabel23" layoutConstraint="null">
+            <resolution width="65" height="29"/>
+            <position x="65"/>
+            <attributeValues key="PreferredSize" value="65, 29"/>
+            <attributeValues key="Alignment" value="MIDDLE/CENTER"/>
+            <attributeValues key="Variable" value="SlideTable1.sv_BwdProfVis.Profile.Points[1].rVelocity"/>
+            <attributeValues key="LabelType" value="Short Variable Label"/>
+          </widgetInstances>
+          <layout layoutID="kvs.layout.FlowLayout" name="FlowLayout">
+            <attributeValues key="Alignment" value="LEFT"/>
+            <attributeValues key="Hgap" value="0"/>
+            <attributeValues key="Vgap" value="0"/>
+          </layout>
+        </widgetInstances>
+        <layout layoutID="kvs.layout.BorderLayout" name="BorderLayout">
+          <attributeValues key="Hgap" value="5"/>
+        </layout>
+      </widgetInstances>
+      <widgetInstances xsi:type="base:ContainerWidgetInstance" widgetId="kvs.panel" name="container13" layoutConstraint="null">
+        <resolution width="347" height="28"/>
+        <position y="28"/>
+        <border name="EmptyBorder" id="kv.border.EmptyBorder">
+          <attributeValues key="InnerInsets" value="0, 184, 0, 30"/>
+        </border>
+        <widgetInstances widgetId="kvs.varlabel" name="varLabel5" layoutConstraint="CENTER">
+          <resolution width="68" height="28"/>
+          <position x="184"/>
+          <attributeValues key="Variable" value="SlideTable1.sv_ConstPinIn.Pressure.Output.rOutputValue"/>
+          <attributeValues key="Alignment" value="MIDDLE/CENTER"/>
+        </widgetInstances>
+        <widgetInstances widgetId="kvs.varlabel" name="varLabel4" layoutConstraint="EAST">
+          <resolution width="65" height="28"/>
+          <position x="252"/>
+          <attributeValues key="Variable" value="SlideTable1.sv_ConstPinIn.Velocity.Output.rOutputValue"/>
+          <attributeValues key="Alignment" value="MIDDLE/CENTER"/>
+        </widgetInstances>
+        <layout layoutID="kvs.layout.BorderLayout" name="BorderLayout"/>
+      </widgetInstances>
+      <widgetInstances xsi:type="base:ContainerWidgetInstance" widgetId="kvs.panel" name="container14" layoutConstraint="null">
+        <resolution width="347" height="28"/>
+        <position y="56"/>
+        <widgetInstances xsi:type="base:ContainerWidgetInstance" widgetId="kvs.panel" name="container23" layoutConstraint="null">
+          <resolution width="186" height="29"/>
+          <position x="3"/>
+          <attributeValues key="PreferredSize" value="186, 29"/>
+          <border name="EmptyBorder" id="kv.border.EmptyBorder">
+            <attributeValues key="InnerInsets" value="0, 0, 0, 0"/>
+          </border>
+          <widgetInstances widgetId="kvs.varlabel" name="varLabel6" layoutConstraint="CENTER">
+            <resolution width="186" height="29"/>
+            <position/>
+            <attributeValues key="Variable" value="SlideTable1.sv_ConstPinIn.Pressure.Output.rOutputValue"/>
+            <attributeValues key="LabelType" value="Short Variable Label"/>
+            <attributeValues key="Alignment" value="MIDDLE/LEFT"/>
+          </widgetInstances>
+          <layout layoutID="kvs.layout.BorderLayout" name="BorderLayout"/>
+        </widgetInstances>
+        <widgetInstances widgetId="keplast.kvs.plausnumfield" name="fPresIn" layoutConstraint="null">
+          <resolution width="60" height="29"/>
+          <position x="192"/>
+          <attributeValues key="PreferredSize" value="60, 29"/>
+          <attributeValues key="PreferredColumns" value="2"/>
+          <attributeValues key="Variable" value="SlideTable1.sv_ConstPinIn.Pressure.Output.rOutputValue"/>
+          <dynamicAttributes key="Enabled">
+            <value function="b1_EQ_true : ViewEditFunctions" equal="true" unequal="false">
+              <parameter key="1" value="kvariable;SlideTable1.sv_bUseLockPin"/>
+            </value>
+          </dynamicAttributes>
+        </widgetInstances>
+        <widgetInstances widgetId="keplast.kvs.plausnumfield" name="fVelIn" layoutConstraint="null">
+          <resolution width="60" height="29"/>
+          <position x="255"/>
+          <attributeValues key="PreferredSize" value="60, 29"/>
+          <attributeValues key="Variable" value="SlideTable1.sv_ConstPinIn.Velocity.Output.rOutputValue"/>
+          <dynamicAttributes key="Enabled">
+            <value function="b1_EQ_true : ViewEditFunctions" equal="true" unequal="false">
+              <parameter key="1" value="kvariable;SlideTable1.sv_bUseLockPin"/>
+            </value>
+          </dynamicAttributes>
+        </widgetInstances>
+        <widgetInstances xsi:type="base:ContainerWidgetInstance" widgetId="kvs.panel" name="containerMarkPinIn" layoutConstraint="null">
+          <resolution width="29" height="29"/>
+          <position x="318"/>
+          <widgetInstances widgetId="kvs.mark" name="markPinIn" layoutConstraint="CENTER">
+            <resolution width="29" height="29"/>
+            <position/>
+            <attributeValues key="MarkSize" value="29"/>
+            <attributeValues key="MarkColor" value="MAIN_Elements:94,151,24"/>
+            <attributeValues key="Variable" value="SlideTable1.sv_bPosReachedPinIn"/>
+          </widgetInstances>
+          <layout layoutID="kvs.layout.BorderLayout" name="BorderLayout"/>
+        </widgetInstances>
+        <layout layoutID="keplast.kvs.layout.beanlayout" name="BeanLayout">
+          <attributeValues key="FieldWidth" value="60"/>
+          <attributeValues key="UnitWidth" value="38"/>
+        </layout>
+      </widgetInstances>
+      <widgetInstances xsi:type="base:ContainerWidgetInstance" widgetId="kvs.panel" name="container15" layoutConstraint="null">
+        <resolution width="347" height="28"/>
+        <position y="84"/>
+        <dynamicAttributes key="Enabled">
+          <value function="b1_EQ_true : ViewEditFunctions" equal="true" unequal="false">
+            <parameter key="1" value="kvariable;SlideTable1.sv_bUseLockPin"/>
+          </value>
+        </dynamicAttributes>
+        <widgetInstances xsi:type="base:ContainerWidgetInstance" widgetId="kvs.panel" name="container24" layoutConstraint="null">
+          <resolution width="186" height="29"/>
+          <position x="3"/>
+          <attributeValues key="PreferredSize" value="186, 29"/>
+          <widgetInstances widgetId="kvs.varlabel" name="varLabel7" layoutConstraint="CENTER">
+            <resolution width="186" height="29"/>
+            <position/>
+            <attributeValues key="Variable" value="SlideTable1.sv_ConstPinOut.Velocity.Output.rOutputValue"/>
+            <attributeValues key="LabelType" value="Short Variable Label"/>
+            <attributeValues key="Alignment" value="MIDDLE/LEFT"/>
+          </widgetInstances>
+          <layout layoutID="kvs.layout.BorderLayout" name="BorderLayout"/>
+        </widgetInstances>
+        <widgetInstances widgetId="kvs.plausnumfield" name="fPresOut" layoutConstraint="null">
+          <resolution width="60" height="29"/>
+          <position x="192"/>
+          <attributeValues key="PreferredSize" value="60, 29"/>
+          <attributeValues key="Variable" value="SlideTable1.sv_ConstPinOut.Pressure.Output.rOutputValue"/>
+          <dynamicAttributes key="Enabled">
+            <value function="b1_EQ_true : ViewEditFunctions" equal="true" unequal="false">
+              <parameter key="1" value="kvariable;SlideTable1.sv_bUseLockPin"/>
+            </value>
+          </dynamicAttributes>
+        </widgetInstances>
+        <widgetInstances widgetId="kvs.plausnumfield" name="fVelOut" layoutConstraint="null">
+          <resolution width="60" height="29"/>
+          <position x="255"/>
+          <attributeValues key="PreferredSize" value="60, 29"/>
+          <attributeValues key="Variable" value="SlideTable1.sv_ConstPinOut.Velocity.Output.rOutputValue"/>
+          <dynamicAttributes key="Enabled">
+            <value function="b1_EQ_true : ViewEditFunctions" equal="true" unequal="false">
+              <parameter key="1" value="kvariable;SlideTable1.sv_bUseLockPin"/>
+            </value>
+          </dynamicAttributes>
+        </widgetInstances>
+        <widgetInstances xsi:type="base:ContainerWidgetInstance" widgetId="kvs.panel" name="container4" layoutConstraint="null">
+          <resolution width="29" height="29"/>
+          <position x="318"/>
+          <widgetInstances widgetId="kvs.mark" name="markPinOut" layoutConstraint="CENTER">
+            <resolution width="29" height="29"/>
+            <position/>
+            <attributeValues key="MarkSize" value="29"/>
+            <attributeValues key="MarkColor" value="MAIN_Elements:94,151,24"/>
+            <attributeValues key="Variable" value="SlideTable1.sv_bPosReachedPinOut"/>
+          </widgetInstances>
+          <layout layoutID="kvs.layout.BorderLayout" name="BorderLayout"/>
+        </widgetInstances>
+        <layout layoutID="keplast.kvs.layout.beanlayout" name="BeanLayout">
+          <attributeValues key="UnitWidth" value="38"/>
+          <attributeValues key="FieldWidth" value="60"/>
+        </layout>
+      </widgetInstances>
+      <widgetInstances xsi:type="base:ContainerWidgetInstance" widgetId="kvs.panel" name="cUseLockPin" layoutConstraint="null">
+        <resolution width="347" height="28"/>
+        <position y="112"/>
+        <widgetInstances widgetId="keplast.kvs.comboboxtext" name="cboxTextUseLockPin" layoutConstraint="null">
+          <resolution width="347" height="29"/>
+          <position/>
+          <attributeValues key="Variable" value="SlideTable1.sv_bUseLockPin"/>
+          <attributeValues key="UseUnitFieldGap" value="false"/>
+        </widgetInstances>
+        <layout layoutID="kvs.layout.VerticalFlowLayout" name="VerticalFlowLayout">
+          <attributeValues key="Vgap" value="0"/>
+          <attributeValues key="Hgap" value="0"/>
+        </layout>
+      </widgetInstances>
+      <widgetInstances xsi:type="base:ContainerWidgetInstance" widgetId="kvs.panel" name="cUseHoldLockPinOut" layoutConstraint="null">
+        <resolution width="347" height="28"/>
+        <position y="140"/>
+        <widgetInstances widgetId="keplast.kvs.comboboxtext" name="cboxTextUseHoldLockPinOut" layoutConstraint="null">
+          <resolution width="347" height="29"/>
+          <position/>
+          <attributeValues key="UseUnitFieldGap" value="false"/>
+          <attributeValues key="Variable" value="SlideTable1.sv_bHoldPinOut"/>
+          <dynamicAttributes key="Enabled">
+            <value function="b1_EQ_true : ViewEditFunctions" equal="true" unequal="false">
+              <parameter key="1" value="kvariable;SlideTable1.sv_bUseLockPin"/>
+            </value>
+          </dynamicAttributes>
+        </widgetInstances>
+        <layout layoutID="kvs.layout.VerticalFlowLayout" name="VerticalFlowLayout">
+          <attributeValues key="Vgap" value="0"/>
+          <attributeValues key="Hgap" value="0"/>
+        </layout>
+      </widgetInstances>
+      <layout layoutID="kvs.layout.GridLayout" name="GridLayout">
+        <attributeValues key="Rows" value="7"/>
+        <attributeValues key="Columns" value="0"/>
+      </layout>
+    </widgetInstances>
+    <widgetInstances widgetId="keplast.kvs.separator" name="separator1" layoutConstraint="SEPARATOR">
+      <resolution width="2" height="197"/>
+      <position x="356" y="33"/>
+    </widgetInstances>
+    <layout layoutID="keplast.kvs.layout.multisplitlayout" name="MultiSplitLayout"/>
+  </widgetInstances>
+  <widgetInstances xsi:type="base:ContainerWidgetInstance" widgetId="keplast.kvs.borderpanelsmall" name="cSlideTableIn" layoutConstraint="null">
+    <resolution width="714" height="234"/>
+    <position y="242"/>
+    <attributeValues key="Title" value="Slide In"/>
+    <widgetInstances xsi:type="base:ContainerWidgetInstance" widgetId="kvs.panel" name="cSlideTableSettings" layoutConstraint="RIGHT">
+      <resolution width="347" height="116"/>
+      <position x="361" y="33"/>
+      <widgetInstances widgetId="keplast.kvs.comboboxtext" name="comboboxTextWorkPosMod" layoutConstraint="null">
+        <resolution width="347" height="29"/>
+        <position/>
+        <attributeValues key="Variable" value="SlideTable1.sv_WorkPosMode"/>
+        <attributeValues key="AlignmentText" value="MIDDLE/LEFT"/>
+        <attributeValues key="SequencerControlled" value="true"/>
+        <attributeValues key="ShowInvalidValues" value="false"/>
+        <attributeValues key="UseUnitFieldGap" value="false"/>
+      </widgetInstances>
+      <widgetInstances xsi:type="base:ContainerWidgetInstance" widgetId="kvs.panel" name="cEmpty1" layoutConstraint="null">
+        <resolution width="347" height="29"/>
+        <position y="29"/>
+        <attributeValues key="PreferredSize" value="10, 29"/>
+        <layout layoutID="kvs.layout.PercentLayout" name="PercentLayout"/>
+      </widgetInstances>
+      <widgetInstances xsi:type="base:ContainerWidgetInstance" widgetId="kvs.panel" name="cActPosSlideTable" layoutConstraint="null">
+        <resolution width="347" height="29"/>
+        <position y="58"/>
+        <widgetInstances xsi:type="base:ContainerWidgetInstance" widgetId="kvs.panel" name="container28" layoutConstraint="CENTER">
+          <resolution width="199" height="29"/>
+          <position/>
+          <widgetInstances xsi:type="base:ContainerWidgetInstance" widgetId="kvs.panel" name="cEmpty2" layoutConstraint="WEST">
+            <resolution width="3" height="29"/>
+            <position/>
+            <attributeValues key="PreferredSize" value="3, 29"/>
+            <layout layoutID="kvs.layout.PercentLayout" name="PercentLayout"/>
+          </widgetInstances>
+          <widgetInstances widgetId="kvs.varlabel" name="varLabel3" layoutConstraint="CENTER">
+            <resolution width="196" height="29"/>
+            <position x="3"/>
+            <attributeValues key="Alignment" value="MIDDLE/LEFT"/>
+            <attributeValues key="Variable" value="SlideTable1.sv_rPosition"/>
+            <attributeValues key="LabelType" value="Short Variable Label"/>
+            <dynamicAttributes key="Create">
+              <value function="doesVariableExist : UserFunctions" equal="true" unequal="false">
+                <parameter key="1" value="variableasstring;PlastFunctionUtils.createVariableString(&quot;SlideTable1.ai_Position&quot;)"/>
+              </value>
+            </dynamicAttributes>
+          </widgetInstances>
+          <layout layoutID="kvs.layout.BorderLayout" name="BorderLayout"/>
+        </widgetInstances>
+        <widgetInstances xsi:type="base:ContainerWidgetInstance" widgetId="kvs.panel" name="container2" layoutConstraint="EAST">
+          <resolution width="148" height="29"/>
+          <position x="199"/>
+          <attributeValues key="PreferredSize" value="148, 29"/>
+          <widgetInstances xsi:type="base:ContainerWidgetInstance" widgetId="kvs.panel" name="container48" layoutConstraint="CENTER">
+            <resolution width="57" height="29"/>
+            <position/>
+            <widgetInstances widgetId="kvs.bitmap" name="bitmap3" layoutConstraint="null">
+              <resolution width="28" height="29"/>
+              <position/>
+              <attributeValues key="Image" value="SlideTable/hmi/images/iconSlideOut.gif"/>
+              <attributeValues key="PreferredSize" value="29, 29"/>
+            </widgetInstances>
+            <widgetInstances widgetId="kvs.bitmap" name="bitmap4" layoutConstraint="null">
+              <resolution width="28" height="29"/>
+              <position x="28"/>
+              <attributeValues key="Image" value="SlideTable/hmi/images/iconSlideIn.gif"/>
+              <attributeValues key="PreferredSize" value="29, 29"/>
+            </widgetInstances>
+            <layout layoutID="kvs.layout.GridLayout" name="GridLayout">
+              <attributeValues key="Columns" value="2"/>
+            </layout>
+          </widgetInstances>
+          <widgetInstances xsi:type="base:ContainerWidgetInstance" widgetId="kvs.panel" name="container29" layoutConstraint="EAST">
+            <resolution width="91" height="29"/>
+            <position x="57"/>
+            <attributeValues key="PreferredSize" value="91, 29"/>
+            <widgetInstances widgetId="kvs.numfieldnew" name="numField2" layoutConstraint="WEST">
+              <resolution width="60" height="29"/>
+              <position/>
+              <attributeValues key="Variable" value="SlideTable1.sv_rPosition"/>
+              <attributeValues key="Editable" value="false"/>
+              <attributeValues key="Foreground" value="0,0,0"/>
+              <attributeValues key="PreferredSize" value="60, 29"/>
+              <dynamicAttributes key="Create">
+                <value function="doesVariableExist : UserFunctions" equal="true" unequal="false">
+                  <parameter key="1" value="variableasstring;PlastFunctionUtils.createVariableString(&quot;SlideTable1.ai_Position&quot;)"/>
+                </value>
+              </dynamicAttributes>
+            </widgetInstances>
+            <widgetInstances widgetId="kvs.varlabel" name="varLabel21" layoutConstraint="CENTER">
+              <resolution width="31" height="29"/>
+              <position x="60"/>
+              <attributeValues key="Variable" value="SlideTable1.sv_rPosition"/>
+              <dynamicAttributes key="Create">
+                <value function="doesVariableExist : UserFunctions" equal="true" unequal="false">
+                  <parameter key="1" value="variableasstring;PlastFunctionUtils.createVariableString(&quot;SlideTable1.ai_Position&quot;)"/>
+                </value>
+              </dynamicAttributes>
+            </widgetInstances>
+            <layout layoutID="kvs.layout.BorderLayout" name="BorderLayout"/>
+          </widgetInstances>
+          <layout layoutID="kvs.layout.BorderLayout" name="BorderLayout"/>
+        </widgetInstances>
+        <layout layoutID="kvs.layout.BorderLayout" name="BorderLayout"/>
+      </widgetInstances>
+      <widgetInstances xsi:type="base:ContainerWidgetInstance" widgetId="kvs.panel" name="cPosReached" layoutConstraint="null">
+        <resolution width="347" height="29"/>
+        <position y="87"/>
+        <widgetInstances widgetId="kvs.label" name="labEndPosReached" layoutConstraint="null">
+          <resolution width="195" height="26"/>
+          <position x="3" y="1"/>
+          <attributeValues key="Text" value="Endposition reached"/>
+          <attributeValues key="PreferredSize" value="195, 26"/>
+          <attributeValues key="Alignment" value="MIDDLE/LEFT"/>
+        </widgetInstances>
+        <widgetInstances widgetId="kvs.mark" name="markPosReachedCW" layoutConstraint="null">
+          <resolution width="29" height="29"/>
+          <position x="201"/>
+          <attributeValues key="Variable" value="SlideTable1.sv_bTableBwd"/>
+          <attributeValues key="MarkColor" value="MAIN_Elements:94,151,24"/>
+          <attributeValues key="MarkSize" value="29"/>
+        </widgetInstances>
+        <widgetInstances widgetId="kvs.mark" name="markPosReachedCCW" layoutConstraint="null">
+          <resolution width="29" height="29"/>
+          <position x="230"/>
+          <attributeValues key="Variable" value="SlideTable1.sv_bTableFwd"/>
+          <attributeValues key="MarkColor" value="MAIN_Elements:94,151,24"/>
+          <attributeValues key="MarkSize" value="29"/>
+        </widgetInstances>
+        <layout layoutID="keplast.kvs.layout.beanlayout" name="BeanLayout">
+          <attributeValues key="UnitWidth" value="88"/>
+        </layout>
+      </widgetInstances>
+      <layout layoutID="kvs.layout.GridLayout" name="GridLayout">
+        <attributeValues key="Rows" value="4"/>
+      </layout>
+    </widgetInstances>
+    <widgetInstances xsi:type="base:ContainerWidgetInstance" widgetId="kvs.panel" name="cTitleSlideIn" layoutConstraint="TITLE_RIGHT">
+      <resolution width="144" height="24"/>
+      <position x="567" y="2"/>
+      <attributeValues key="PreferredSize" value="144, 24"/>
+      <dynamicAttributes key="Create">
+        <value function="doesVariableExist : UserFunctions" equal="true" unequal="false">
+          <parameter key="1" value="variableasstring;PlastFunctionUtils.createVariableString(&quot;SlideTable1.ai_Position&quot;)"/>
+        </value>
+      </dynamicAttributes>
+      <widgetInstances widgetId="keplast.kvs.plausnumfield" name="fNoOfStagesIn" layoutConstraint="EAST">
+        <resolution width="58" height="24"/>
+        <position x="86"/>
+        <attributeValues key="Variable" value="SlideTable1.sv_FwdProfVis.Profile.iNoOfPoints"/>
+        <attributeValues key="PreferredSize" value="58, 21"/>
+      </widgetInstances>
+      <widgetInstances widgetId="kvs.varlabel" name="varLabel19" layoutConstraint="WEST">
+        <resolution width="86" height="24"/>
+        <position/>
+        <attributeValues key="Variable" value="SlideTable1.sv_FwdProfVis.Profile.iNoOfPoints"/>
+        <attributeValues key="LabelType" value="Short Variable Label"/>
+        <attributeValues key="PreferredSize" value="86, 24"/>
+      </widgetInstances>
+      <layout layoutID="kvs.layout.BorderLayout" name="BorderLayout"/>
+    </widgetInstances>
+    <widgetInstances xsi:type="base:ContainerWidgetInstance" widgetId="kvs.panel" name="container38" layoutConstraint="LEFT">
+      <resolution width="347" height="197"/>
+      <position x="6" y="33"/>
+      <attributeValues key="PreferredSize" value="10, 197"/>
+      <widgetInstances xsi:type="base:ContainerWidgetInstance" widgetId="kvs.panel" name="cSlideInProfile" layoutConstraint="0, 1, 100, 99">
+        <resolution width="347" height="195"/>
+        <position y="1"/>
+        <attributeValues key="PreferredSize" value="348, 185"/>
+        <dynamicAttributes key="Create">
+          <value function="doesVariableExist : UserFunctions" equal="true" unequal="false">
+            <parameter key="1" value="variableasstring;PlastFunctionUtils.createVariableString(&quot;SlideTable1.ai_Position&quot;)"/>
+          </value>
+        </dynamicAttributes>
+        <widgetInstances widgetId="keplast.kvs.kprofile.table" name="profileTable2" layoutConstraint="null">
+          <resolution width="347" height="195"/>
+          <position/>
+          <attributeValues key="ProfileName" value="SlideTable1.sv_FwdProfVis"/>
+          <attributeValues key="IsLeftRightIncreasing" value="false"/>
+          <attributeValues key="IsUpDownIncreasing" value="false"/>
+          <attributeValues key="VariableActPosition" value="SlideTable1.sv_rPosition"/>
+          <attributeValues key="VariableMaxPosition" value="SlideTable1.sv_rStroke"/>
+          <attributeValues key="VariableMaxPressure" value="SlideTable1.sv_rMaxPressureFwd"/>
+          <attributeValues key="VariableMaxVelocity" value="SlideTable1.sv_rMaxSpeedFwd"/>
+          <attributeValues key="VisiblePressure" value="false"/>
+          <attributeValues key="VisibleVelocity" value="true"/>
+          <attributeValues key="TextLastStage" value="End"/>
+          <attributeValues key="VisibleLastPosition" value="true"/>
+          <attributeValues key="VisibleOneToLastPressure" value="false"/>
+        </widgetInstances>
+        <layout layoutID="kvs.layout.GridLayout" name="GridLayout"/>
+      </widgetInstances>
+      <widgetInstances xsi:type="base:ContainerWidgetInstance" widgetId="kvs.panel" name="cSlideInLimit" layoutConstraint="0, 1, 100, 99">
+        <resolution width="347" height="195"/>
+        <position y="1"/>
+        <dynamicAttributes key="Create">
+          <value function="doesVariableExist : UserFunctions" equal="false" unequal="true">
+            <parameter key="1" value="variableasstring;PlastFunctionUtils.createVariableString(&quot;SlideTable1.ai_Position&quot;)"/>
+          </value>
+        </dynamicAttributes>
+        <widgetInstances xsi:type="base:ContainerWidgetInstance" widgetId="kvs.panel" name="container39" layoutConstraint="null">
+          <resolution width="347" height="27"/>
+          <position/>
+          <widgetInstances xsi:type="base:ContainerWidgetInstance" widgetId="kvs.panel" name="cHeader3Inner" layoutConstraint="EAST">
+            <resolution width="190" height="27"/>
+            <position x="157"/>
+            <attributeValues key="PreferredSize" value="190, 29"/>
+            <widgetInstances widgetId="kvs.varlabel" name="lblSlideInPres1" layoutConstraint="null">
+              <resolution width="65" height="29"/>
+              <position/>
+              <attributeValues key="Alignment" value="MIDDLE/CENTER"/>
+              <attributeValues key="Variable" value="SlideTable1.sv_BwdProfVis.Profile.Points[1].rPressure"/>
+              <attributeValues key="LabelType" value="Short Variable Label"/>
+              <attributeValues key="PreferredSize" value="65, 29"/>
+            </widgetInstances>
+            <widgetInstances widgetId="kvs.varlabel" name="lblSlideInVel1" layoutConstraint="null">
+              <resolution width="65" height="29"/>
+              <position x="65"/>
+              <attributeValues key="PreferredSize" value="65, 29"/>
+              <attributeValues key="Alignment" value="MIDDLE/CENTER"/>
+              <attributeValues key="Variable" value="SlideTable1.sv_BwdProfVis.Profile.Points[1].rVelocity"/>
+              <attributeValues key="LabelType" value="Short Variable Label"/>
+            </widgetInstances>
+            <layout layoutID="kvs.layout.FlowLayout" name="FlowLayout">
+              <attributeValues key="Alignment" value="LEFT"/>
+              <attributeValues key="Hgap" value="0"/>
+              <attributeValues key="Vgap" value="0"/>
+            </layout>
+          </widgetInstances>
+          <layout layoutID="kvs.layout.BorderLayout" name="BorderLayout"/>
+        </widgetInstances>
+        <widgetInstances xsi:type="base:ContainerWidgetInstance" widgetId="kvs.panel" name="container40" layoutConstraint="null">
+          <resolution width="347" height="27"/>
+          <position y="27"/>
+          <border name="EmptyBorder" id="kv.border.EmptyBorder">
+            <attributeValues key="InnerInsets" value="0, 158, 0, 56"/>
+          </border>
+          <widgetInstances widgetId="kvs.varlabel" name="lblSlideInPresUnit1" layoutConstraint="CENTER">
+            <resolution width="68" height="27"/>
+            <position x="158"/>
+            <attributeValues key="Variable" value="SlideTable1.sv_BwdProfVis.Profile.Points[1].rPressure"/>
+            <attributeValues key="Alignment" value="MIDDLE/CENTER"/>
+          </widgetInstances>
+          <widgetInstances widgetId="kvs.varlabel" name="lblSlideInVelUnit1" layoutConstraint="EAST">
+            <resolution width="65" height="27"/>
+            <position x="226"/>
+            <attributeValues key="Variable" value="SlideTable1.sv_BwdProfVis.Profile.Points[1].rVelocity"/>
+            <attributeValues key="Alignment" value="MIDDLE/CENTER"/>
+          </widgetInstances>
+          <layout layoutID="kvs.layout.BorderLayout" name="BorderLayout"/>
+        </widgetInstances>
+        <widgetInstances xsi:type="base:ContainerWidgetInstance" widgetId="kvs.panel" name="container41" layoutConstraint="null">
+          <resolution width="347" height="27"/>
+          <position y="54"/>
+          <widgetInstances widgetId="kvs.label" name="lblSlideLimitSwIn1" layoutConstraint="null">
+            <resolution width="158" height="21"/>
+            <position x="3" y="3"/>
+            <attributeValues key="Text" value="Slide In fast"/>
+            <attributeValues key="Alignment" value="MIDDLE/LEFT"/>
+          </widgetInstances>
+          <widgetInstances widgetId="keplast.kvs.plausnumfield" name="fLimitSwPresOut3" layoutConstraint="null">
+            <resolution width="60" height="28"/>
+            <position x="164"/>
+            <attributeValues key="Variable" value="SlideTable1.sv_ConstFwdFast.Pressure.Output.rOutputValue"/>
+          </widgetInstances>
+          <widgetInstances widgetId="keplast.kvs.plausnumfield" name="fLimitSwVelOut3" layoutConstraint="null">
+            <resolution width="60" height="28"/>
+            <position x="227"/>
+            <attributeValues key="Variable" value="SlideTable1.sv_ConstFwdFast.Velocity.Output.rOutputValue"/>
+          </widgetInstances>
+          <layout layoutID="keplast.kvs.layout.beanlayout" name="BeanLayout">
+            <attributeValues key="UseUnitFieldGap" value="true"/>
+            <attributeValues key="UnitWidth" value="60"/>
+            <attributeValues key="FieldWidth" value="60"/>
+          </layout>
+        </widgetInstances>
+        <widgetInstances xsi:type="base:ContainerWidgetInstance" widgetId="kvs.panel" name="container42" layoutConstraint="null">
+          <resolution width="347" height="27"/>
+          <position y="81"/>
+          <widgetInstances widgetId="kvs.label" name="lblSlideLimitSwIn2" layoutConstraint="null">
+            <resolution width="158" height="21"/>
+            <position x="3" y="3"/>
+            <attributeValues key="Text" value="Slide In slow"/>
+            <attributeValues key="Alignment" value="MIDDLE/LEFT"/>
+          </widgetInstances>
+          <widgetInstances widgetId="keplast.kvs.plausnumfield" name="fLimitSwPresOut4" layoutConstraint="null">
+            <resolution width="60" height="28"/>
+            <position x="164"/>
+            <attributeValues key="Variable" value="SlideTable1.sv_ConstFwdSlow.Pressure.Output.rOutputValue"/>
+          </widgetInstances>
+          <widgetInstances widgetId="keplast.kvs.plausnumfield" name="fLimitSwVelOut4" layoutConstraint="null">
+            <resolution width="60" height="28"/>
+            <position x="227"/>
+            <attributeValues key="Variable" value="SlideTable1.sv_ConstFwdSlow.Velocity.Output.rOutputValue"/>
+          </widgetInstances>
+          <layout layoutID="keplast.kvs.layout.beanlayout" name="BeanLayout">
+            <attributeValues key="UnitWidth" value="60"/>
+            <attributeValues key="UseUnitFieldGap" value="true"/>
+            <attributeValues key="FieldWidth" value="60"/>
+          </layout>
+        </widgetInstances>
+        <widgetInstances xsi:type="base:ContainerWidgetInstance" widgetId="kvs.panel" name="container43" layoutConstraint="null">
+          <resolution width="347" height="27"/>
+          <position y="108"/>
+          <layout layoutID="kvs.layout.PercentLayout" name="PercentLayout"/>
+        </widgetInstances>
+        <widgetInstances xsi:type="base:ContainerWidgetInstance" widgetId="kvs.panel" name="container44" layoutConstraint="null">
+          <resolution width="347" height="27"/>
+          <position y="135"/>
+          <layout layoutID="kvs.layout.PercentLayout" name="PercentLayout"/>
+        </widgetInstances>
+        <layout layoutID="kvs.layout.GridLayout" name="GridLayout">
+          <attributeValues key="Rows" value="7"/>
+          <attributeValues key="Columns" value="1"/>
+        </layout>
+      </widgetInstances>
+      <layout layoutID="kvs.layout.PercentLayout" name="PercentLayout"/>
+    </widgetInstances>
+    <widgetInstances widgetId="keplast.kvs.separator" name="separator2" layoutConstraint="SEPARATOR">
+      <resolution width="2" height="197"/>
+      <position x="356" y="33"/>
+    </widgetInstances>
+    <layout layoutID="keplast.kvs.layout.multisplitlayout" name="MultiSplitLayout"/>
+  </widgetInstances>
+  <layout layoutID="kvs.layout.GridLayout" name="GridLayout">
+    <attributeValues key="Columns" value="1"/>
+    <attributeValues key="Rows" value="2"/>
+    <attributeValues key="Hgap" value="0"/>
+    <attributeValues key="Vgap" value="8"/>
+  </layout>
+</base:Mask>

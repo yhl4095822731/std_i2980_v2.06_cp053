@@ -1,0 +1,3440 @@
+IMPORT_OVER_LISTFILE
+ GET_MY_FU_NAME
+, KSWO_AddVariable
+, GET_SYNC_REFTO
+, FCalcScrewCircumfenceSpeed
+, SET_EVENT
+, WRITE_SVREAL_DIRECT
+, FAddToScopeGroup
+, cCompValveServoInj
+, nKAPPL_IMM_ServoValve
+, cCompShutOffNozzle
+, cCompAccumulator
+, KSYS_Status_OK
+, cMovePlast
+, cMoveIntrusion
+, cMovePlastPurge
+, nElectric
+, cMoveBwd
+, nAnaOutputModeFast
+, cMoveDecompBefPlast
+, cMoveDecompAftPlast
+, cMoveDecompPurge
+, cMoveDecompInterPos
+, cMoveFwd
+, cMovePVCalib
+, cMoveOpen
+, cMoveClose
+, cMoveInject
+, cMoveColdDrop
+, cMoveFwdInterPos
+, cMoveInjectCalib
+, nSetup
+, nStarted
+, KCTRL_Impulse_Param
+, KAPPL_ServoValveControlData
+, tsCylinderData
+, KAPPL_ServoValveControllerMode
+, KAPPL_IMM_Type
+, tnOperationMode
+, tsDeviceId
+, tyNumberOfDevices
+, tnMotorType
+, tsControlParameters
+, tevStart
+, tevStop
+, tevStartedStopped
+, tsMoveCtrl
+, ABMoveInjection
+, ABMoveDecompression
+, ABMovePlast
+, ABMovePVCalib
+, ABOutputRequest
+, ABMeasureImpulse
+, ABScrewVolumeUpdater
+, ABPositionController
+, tsRequiredPumps
+, tsHydrMaxValues
+, KAPPL_LintabData
+, FBInitServoValveControlData
+, KSWO_Status
+, KSYS_Status
+, tOptionId
+, ABCalcHydrMaxValues
+, ABUpdateRelLintabPreInject
+, ABUpdateRelLintabVelInject
+, ABUpdateRelLintabPre
+, ABUpdateRelLintabVel
+, ABUpdateRelLintabVelPlast
+, FBCheckReady
+, tevStopData
+, tevStartData
+, FBCheckPosReached
+, FBStart
+, FBStop
+, tevStartedStoppedData
+
+END_IMPORT
+
+ALGORITHM_BLOCK ABMovementAdmin #DUMMY_EDIT_BLOCK
+
+SYSTEM_VAR
+ sv_bInitStart : BOOL;
+ sv_bDeviceStart : BOOL (* Start Device *);
+ sv_rActScrewRpm : REAL;
+ sv_ImpulseParam : KCTRL_Impulse_Param;
+ sv_iScrewGain : DINT;
+ sv_rActPressureHydr : REAL;
+ sv_rScrewDiameter : REAL;
+ sv_rActScrewCircSpeed : REAL;
+ sv_ServoValveControlData : KAPPL_ServoValveControlData;
+ sv_CylinderData : tsCylinderData;
+ sv_rScrewStroke : REAL;
+ sv_rActSysPressure : REAL;
+ sv_bSysPressureSensorAvailable : BOOL;
+ sv_ServoValveControllerMode : KAPPL_ServoValveControllerMode;
+ sv_rScrewPositionAbs : REAL;
+ sv_rPressure : REAL (* set value for pressure *);
+ sv_IMM_Type : KAPPL_IMM_Type;
+ sv_OperationMode : tnOperationMode;
+ sv_bTransducerError : BOOL;
+ sv_rScrewVelocityEstimateAbs : REAL;
+ sv_rVelocitySet : REAL (* value for velocity *);
+ sv_bValveServoInj1Ready : BOOL;
+ sv_DeviceId : tsDeviceId;
+ sv_NumberOfDevices : tyNumberOfDevices;
+ sv_PlastMotor : tnMotorType (* type of plast motor *);
+ sv_rImpulseFilterLimit : REAL;
+ sv_rMaxSpeedFwdSpec : REAL (* max inject speed with accu [ccm/s] *);
+ sv_bServoValveLimitActive : BOOL;
+ sv_HoldingControlParams : tsControlParameters;
+ sv_BackPressureControlParams : tsControlParameters (* parameters for holding PID *);
+ sv_iActiveStageInject : DINT (* active profile stage inject *);
+ sv_iActiveStagePlast : DINT (* active profile stage plast *);
+ sv_iActiveStage : DINT;
+ sv_bDeviceReady : BOOL;
+ sv_bMoveToServoCalibStartPos : BOOL;
+ sv_InjectionPosControlParam : tsControlParameters;
+ sv_rScrewSetPosition : REAL;
+ sv_dMaxPosCtrlTime : TIME;
+ sv_rPositionTolerance : REAL;
+ sv_rMaxPositionTolerance : REAL;
+ sv_RequiredPumpsInject : tsRequiredPumps;
+ sv_RequiredPumpsDecomp : tsRequiredPumps;
+ sv_RequiredPumpsPlast : tsRequiredPumps;
+ sv_HydrMaxValuesInject : tsHydrMaxValues (* hydraulic max values for inject *);
+ sv_HydrMaxValuesDecomp : tsHydrMaxValues (* hydraulic max values for decompression *);
+ sv_HydrMaxValuesPlast : tsHydrMaxValues (* hydraulic max values for plast *);
+ sv_bInitDone : BOOL;
+ sv_LintabOutFwdP : KAPPL_LintabData;
+ sv_LintabOutBwdP : KAPPL_LintabData;
+ sv_LintabOutBwdV : KAPPL_LintabData;
+ sv_rMaxPressureFwd : REAL;
+ sv_rMaxSpeedFwd : REAL;
+ sv_rMaxPressureBwd : REAL;
+ sv_rMaxSpeedBwd : REAL;
+ sv_LintabOutPlastP : KAPPL_LintabData;
+ sv_rMaxPressurePlast : REAL;
+ sv_rMaxRpm : REAL;
+ sv_rMaxRpmProfile : REAL;
+ sv_ScrewRevVelLintab : KAPPL_LintabData;
+ sv_LintabOutPlastV : KAPPL_LintabData;
+ sv_rMaxRotationPlast : REAL;
+ sv_rMaxSpeedFwdCalc : REAL;
+ sv_rMaxSpeedBwdCalc : REAL;
+ sv_rMaxSpeedFwdCalib : REAL;
+ sv_rMaxSpeedBwdCalib : REAL;
+ sv_rMaxSpeedReducePercent : REAL;
+ sv_rMaxRpmReducePercent : REAL;
+ sv_bFALSE : BOOL;
+END_VAR
+
+SYSTEM_OBJECT
+ PU_Task_7 : TASK;
+ TaskInject : TASK;
+ EV_Task_1 : TASK;
+ evStart : tevStart;
+ evStop : tevStop;
+ PU_Task_3 : TASK;
+ evStartedStopped : tevStartedStopped;
+ EV_Task_7 : TASK;
+END_OBJECT
+
+VAR_EXTERNAL
+ g_MoveCtrl : tsMoveCtrl;
+END_VAR
+
+VAR
+ abMoveInjection : ABMoveInjection;
+ abMoveDecompression : ABMoveDecompression;
+ abMovePlast : ABMovePlast;
+ abMovePVCalib : ABMovePVCalib;
+ abOutputRequest : ABOutputRequest;
+ abRpmMeasure : ABMeasureImpulse;
+ abScrewVolumeUpdater : ABScrewVolumeUpdater;
+ DeviceIdShutOffNozzle : tsDeviceId;
+ mbShutOffNozzleAvailable : BOOL;
+ mpbShutOffNozzleOpen : REFTO BOOL;
+ mpbShutOffNozzleClosed : REFTO BOOL;
+ mbAccuAvailable : BOOL (* TRUE if accumulator function unit is registered *);
+ mpbAccuSwitchedOn : REFTO BOOL (* refto Accumulator1.sv_bUseAccumulator *);
+ abPositionController : ABPositionController;
+ mbShutOffNozzleReady : BOOL;
+ mevStartedStopped : tevStartedStopped;
+ miDigitsToFloor : SINT := 2;
+END_VAR
+
+(*
+Calls the registration-algo of every movementblock after the deviceregistration succeeded(sv_bInitStart->true)
+
+*)
+
+POSTUPDATE_ALGORITHM pInitStart ON PU_Task_7 WITH sv_bInitStart
+
+
+VAR
+ sImpulseInput : STRING(255);
+ fbInitServoValveControlData : FBInitServoValveControlData;
+ pSysPressure : REFTO REAL;
+ fuName : STRING(255);
+ variableName : STRING(255);
+ swoState : KSWO_Status;
+ Status : KSYS_Status;
+ prValveOutput : REFTO REAL;
+ pValveLintab : REFTO KAPPL_LintabData;
+ s : KSYS_Status;
+ pOptions : REFTO tOptionId;
+ abCalcMaxValuesInject : ABCalcHydrMaxValues;
+ abCalcMaxValuesDecomp : ABCalcHydrMaxValues;
+ abCalcMaxValuesPlast : ABCalcHydrMaxValues;
+ b : BOOL;
+END_VAR
+#BEGIN_EDIT_BLOCK
+(**************************************** WARNING ********************************************
+ *** The KEBA Kemro K2 System including software is not intended for safety control tasks! ***
+ ***                       For further information see Comment tab!                        ***
+ *********************************************************************************************)
+
+IF sv_bInitStart THEN
+    //check servo hydraulic inject unit
+    IF sv_NumberOfDevices[cCompValveServoInj] = 1 THEN
+       sv_IMM_Type := nKAPPL_IMM_ServoValve;
+    END_IF;
+    
+    //initialize screw volume updater
+    abScrewVolumeUpdater.aInit();
+   
+    //register and init inject movement    
+    abMoveInjection.aRegister();
+    abMoveInjection.aInit();
+           
+    //register and init decomp movements
+    abMoveDecompression.aRegister();
+    abMoveDecompression.aInit();
+    
+    //register and init plast movement 
+    abMovePlast.aRegister();
+    abMovePlast.aInit();
+   
+    //register and init PVCalib movement
+    abMovePVCalib.aRegister();
+    abMovePVCalib.aInit();
+   
+    //init calc of hydraulic max values inject
+    abCalcMaxValuesInject.aInit(pRequiredPumps := @sv_RequiredPumpsInject,
+                                pHydrMaxValues := @sv_HydrMaxValuesInject);
+   
+    //init calc of hydraulic max values for decompression
+    abCalcMaxValuesDecomp.aInit(pRequiredPumps := @sv_RequiredPumpsDecomp,
+                                pHydrMaxValues := @sv_HydrMaxValuesDecomp);
+   
+    //init calc of hydraulic max values for plast
+    abCalcMaxValuesPlast.aInit(pRequiredPumps := @sv_RequiredPumpsPlast,
+                               pHydrMaxValues := @sv_HydrMaxValuesPlast);
+   
+    //initialize the ScrewRpm Measurement
+    sImpulseInput := CONCAT(GET_MY_FU_NAME(),'.di_ImpulseInput');
+    abRpmMeasure.aInit(sInputVariable := sImpulseInput,
+                       ImpulseParam := @sv_ImpulseParam,
+                       pImpulseFilterLimit := @sv_rImpulseFilterLimit);
+
+    IF sv_bSysPressureSensorAvailable THEN
+        pSysPressure := @sv_rActSysPressure;
+        fuName := GET_MY_FU_NAME();
+        variableName := CONCAT(fuName,'.Inject.SysPressure bar');
+        swoState := KSWO_AddVariable( Task := TaskInject,
+                                    Name := variableName,
+                                    Variable := sv_rActSysPressure);
+        b := FAddToScopeGroup(Task := TaskInject, 
+                              Name := variableName, 
+                              GroupId := cScopeGroupInject);
+    ELSE
+        fuName := GET_MY_FU_NAME();
+        variableName := CONCAT(fuName,'.Inject.SysPressure bar');
+        swoState := KSWO_AddVariable( Task := TaskInject,
+                                    Name := variableName,
+                                    Variable := sv_rPressure);        
+        b := FAddToScopeGroup(Task := TaskInject, 
+                              Name := variableName, 
+                              GroupId := cScopeGroupInject);
+        pSysPressure := @sv_rPressure;
+    END_IF;
+    
+    IF sv_IMM_Type = nKAPPL_IMM_ServoValve THEN
+       sv_HoldingControlParams.bUsePIDControl := TRUE;
+       sv_BackPressureControlParams.bUsePIDControl := TRUE;
+       fbInitServoValveControlData(sServoValveControlData := sv_ServoValveControlData,
+                                pCylinderData := @sv_CylinderData,
+                                pCylinderStroke := @sv_rScrewStroke,
+                                pActPressureA := @sv_rActPressureHydr,
+                                pSysPressure := pSysPressure,
+                                pActPosition := @sv_rScrewPositionAbs,
+                                pActVelocity := @sv_rScrewVelocityEstimateAbs,
+                                pSetVelocity := @sv_rVelocitySet,
+                                pControllerMode := @sv_ServoValveControllerMode,
+                                pTransducerError := @sv_bTransducerError,
+                                pDeviceReady := @sv_bValveServoInj1Ready,
+                                pScrewDiameter := @sv_rScrewDiameter,
+                                pMaxSpeedFwdMachLimit := @sv_rMaxSpeedFwdSpec,
+                                pSetValueLimitActive := @sv_bServoValveLimitActive,
+                                pPressureControlParams := @sv_HoldingControlParams,
+                                pBackPressureControlParams := @sv_BackPressureControlParams,
+                                pbMoveToServoCalibStartPos := @sv_bMoveToServoCalibStartPos);
+       
+       variableName := CONCAT(fuName,'.Inject.ActPressureHydr bar');
+       swoState := KSWO_AddVariable( Task := TaskInject,
+                                    Name := variableName,
+                                    Variable := sv_rActPressureHydr);
+       b := FAddToScopeGroup(Task := TaskInject, 
+                             Name := variableName, 
+                             GroupId := cScopeGroupInject);
+   END_IF;
+    
+   // in case speed pump, hold press controller is deactivated
+   pOptions := GET_SYNC_REFTO('Pump1.sv_Options',T#0s, s);
+   IF  pOptions^ = 16#101 OR pOptions^ = 16#103 OR pOptions^ = 16#105 THEN
+       sv_HoldingControlParams.bUsePIDControl := FALSE;
+   END_IF;       
+    
+   //shut off nozzle
+   mbShutOffNozzleAvailable := sv_NumberOfDevices[cCompShutOffNozzle] = sv_DeviceId.IndexId;
+   
+   //check if accumulator is mounted
+   IF sv_NumberOfDevices[cCompAccumulator] = 1 THEN
+      mbAccuAvailable := TRUE;
+      mpbAccuSwitchedOn := GET_SYNC_REFTO('Accumulator1.sv_bUseAccumulator', T#0s, Status);
+   END_IF;
+
+    // position control
+   IF sv_IMM_Type = nKAPPL_IMM_ServoValve THEN
+      prValveOutput := GET_SYNC_REFTO('ValveServoInj1.ao_Servo', T#0s, Status); 
+      IF Status = KSYS_Status_OK THEN
+         pValveLintab := GET_SYNC_REFTO('ValveServoInj1.sv_ServoValvePAPBLintab', T#0s, Status);
+         IF Status = KSYS_Status_OK THEN
+            abPositionController.aInit(pActPosition:=@sv_rScrewPositionAbs,
+                                       pSetPosition:=@sv_rScrewSetPosition,
+                                       pSetVelocity:=prValveOutput,
+                                       pPositionControlParam := @sv_InjectionPosControlParam,
+                                       pOperationMode := @sv_OperationMode,
+                                       pbDeviceReady := @sv_bDeviceReady,
+                                       pLintabOutV := pValveLintab,
+                                       pdMaxMoveTime := @sv_dMaxPosCtrlTime,
+                                       bFastOutput:= TRUE,
+                                       bIgnoreMoveCtrlData := TRUE,
+                                       pPositionTolerance:=@sv_rPositionTolerance,
+                                       pMaxPositionTolerance:=@sv_rMaxPositionTolerance);
+         END_IF; 
+      END_IF;
+    END_IF;
+    
+END_IF;
+
+
+;#END_EDIT_BLOCK END_ALGORITHM
+
+(*
+Starts the algo paRun when sv_bDeviceStart is set by ABControl.
+*)
+
+POSTUPDATE_ALGORITHM pDeviceStart ON EV_Task_1 WITH sv_bDeviceStart
+
+#BEGIN_EDIT_BLOCK
+(**************************************** WARNING ********************************************
+ *** The KEBA Kemro K2 System including software is not intended for safety control tasks! ***
+ ***                       For further information see Comment tab!                        ***
+ *********************************************************************************************)
+
+IF sv_bDeviceStart THEN
+   //start device
+   START_PROCESS_ALGORITHM(paRun);
+END_IF;
+
+
+;#END_EDIT_BLOCK END_ALGORITHM
+
+POSTUPDATE_ALGORITHM pInitRelLintabUpdater ON PU_Task_7 WITH sv_bInitDone
+
+
+VAR
+ abUpdateRelLintabPreInject : ABUpdateRelLintabPreInject;
+ abUpdateRelLintabVelInject : ABUpdateRelLintabVelInject;
+ abUpdateRelLintabPreDecomp : ABUpdateRelLintabPre;
+ abUpdateRelLintabVelDecomp : ABUpdateRelLintabVel;
+ abUpdateRelLintabPrePlast : ABUpdateRelLintabPre;
+ abUpdateRelLintabVelPlast : ABUpdateRelLintabVelPlast;
+END_VAR
+#BEGIN_EDIT_BLOCK
+(**************************************** WARNING ********************************************
+ *** The KEBA Kemro K2 System including software is not intended for safety control tasks! ***
+ ***                       For further information see Comment tab!                        ***
+ *********************************************************************************************)
+
+
+abUpdateRelLintabPreInject.aInit(pLintabOut := @sv_LintabOutFwdP,
+                                 prMaxPressure := @sv_rMaxPressureFwd,
+                                 prMaxHydrPressure := @sv_HydrMaxValuesInject.rMaxPressure,
+                                 pCylinderData := @sv_CylinderData,
+                                 prScrewDiameter := @sv_rScrewDiameter);
+
+
+abUpdateRelLintabVelInject.aInit(prMaxSpeed := @sv_rMaxSpeedFwd,
+                                 prMaxSpeedCalc := @sv_rMaxSpeedFwdCalc,
+                                 prMaxSpeedCalib := @sv_rMaxSpeedFwdCalib,
+                                 prMaxSpeedReducePercent := @sv_rMaxSpeedReducePercent,
+                                 iMaxSpeedDigitsToFloor := miDigitsToFloor,
+                                 prAbsFlow := @sv_HydrMaxValuesInject.rAbsFlow,
+                                 pCylinderData := @sv_CylinderData);
+
+
+abUpdateRelLintabPreDecomp.aInit(pLintabOut := @sv_LintabOutBwdP,
+                                 prMaxPressure := @sv_rMaxPressureBwd,
+                                 prMaxHydrPressure := @sv_HydrMaxValuesDecomp.rMaxPressure,
+                                 bUseForce := FALSE,
+                                 bFwd := FALSE,
+                                 pCylinderData := @sv_CylinderData);
+
+
+abUpdateRelLintabVelDecomp.aInit(pLintabOut := @sv_LintabOutBwdV,
+                                 prMaxSpeed := @sv_rMaxSpeedBwd,
+                                 prMaxSpeedReducePercent := @sv_rMaxSpeedReducePercent,                                    
+                                 prMaxSpeedCalc := @sv_rMaxSpeedBwdCalc,  
+                                 prMaxSpeedCalib := @sv_rMaxSpeedBwdCalib,  
+                                 iMaxSpeedDigitsToFloor := miDigitsToFloor,                                 
+                                 prAbsFlow := @sv_HydrMaxValuesDecomp.rAbsFlow,
+                                 bFwd := FALSE,
+                                 pCylinderData := @sv_CylinderData);
+
+
+abUpdateRelLintabPrePlast.aInit(pLintabOut := @sv_LintabOutPlastP,
+                                prMaxPressure := @sv_rMaxPressurePlast,
+                                prMaxHydrPressure := @sv_HydrMaxValuesPlast.rMaxPressure,
+                                bUseForce := FALSE);
+
+
+abUpdateRelLintabVelPlast.aInit(prScrewDiameter := @sv_rScrewDiameter,
+                                prMaxRPM := @sv_rMaxRpm,
+                                prMaxRPMProfile := @sv_rMaxRpmProfile,
+                                prMaxRPMReducePercent := @sv_rMaxRpmReducePercent,
+                                iMaxRPMDigitsToFloor := miDigitsToFloor,                                                                 
+                                pLintabInV := @sv_ScrewRevVelLintab,
+                                pLintabOutV := @sv_LintabOutPlastV,
+                                prMaxSpeed := @sv_rMaxRotationPlast);
+
+
+;#END_EDIT_BLOCK END_ALGORITHM
+
+(*
+Calls depending on the MoveId and MoveDir the movementblock. g_MoveCtrl.MoveId/MoveDir are set by the Block ABControl after
+evStart was received. The movement-block has to be called until the it returns abMoveXxx.aRun.bReady.
+In case of hydraulic movements the output-request has to be done before starting the movement.
+*)
+
+PROCESS_ALGORITHM paRun ON TaskInject(5000)
+
+
+VAR_TEMP
+ rActScrewCircSpeed : REAL;
+ b : BOOL;
+END_VAR
+
+VAR
+ fbCheckReady : FBCheckReady;
+ evStopData : tevStopData;
+ evStartData : tevStartData;
+ bInitDone : BOOL;
+ fbCheckPosReached : FBCheckPosReached;
+ bOpenShutOffNozzle : BOOL;
+ bCloseShutOffNozzle : BOOL;
+ bElectricPlast : BOOL;
+ bStopSONozzleOpen : BOOL;
+ bUseAccu : BOOL;
+ pbAccuLoaded : REFTO BOOL;
+ DeviceIdAccu : tsDeviceId := (CompId:=cCompAccumulator,IndexId:=1);
+ fbStart : FBStart;
+ fbStop : FBStop;
+ bCloseAtEnd : BOOL (* close shutoffnozzle at end of the movement  *);
+END_VAR
+
+(* IecGraph-Code *)
+
+(* init step *)
+INITIAL_STEP S_Start:
+AInit (P);
+Action13 (P);
+ACheckAccu (P);
+END_STEP
+
+ACTION Action13: #BEGIN_EDIT_BLOCK
+b := WRITE_SV_DIRECT(sv_bDeviceStart, sv_bFALSE);
+bElectricPlast := (((g_MoveCtrl.pData^.MoveId = cMovePlast) 
+            OR (g_MoveCtrl.pData^.MoveId = cMoveIntrusion)
+            OR (g_MoveCtrl.pData^.MoveId = cMovePlastPurge)) 
+        AND (sv_PlastMotor = nElectric));
+
+;#END_EDIT_BLOCK END_ACTION (*Action13*)
+
+(* steps *)
+STEP S_CheckAccuLoaded:
+END_STEP
+
+STEP S_LoadAccu:
+AStartAccuLoading (P);
+ACheckAccuReady (N);
+END_STEP
+
+ACTION AStartAccuLoading: #BEGIN_EDIT_BLOCK
+fbStart(DeviceId := DeviceIdAccu,
+        MoveDir := cMoveBwd,
+        MoveId := cMoveBwd);
+
+;#END_EDIT_BLOCK END_ACTION (*AStartAccuLoading*)
+ACTION ACheckAccuReady: #BEGIN_EDIT_BLOCK
+fbCheckReady(DeviceId := DeviceIdAccu);
+
+;#END_EDIT_BLOCK END_ACTION (*ACheckAccuReady*)
+STEP S_ShutOffNozzle:
+END_STEP
+
+STEP Step13:
+ACheckShutOffNozzle (P);
+END_STEP
+
+STEP S_OpenShutOffNozzle:
+AStart (P);
+AWaitOpen (N);
+END_STEP
+
+STEP S_Close:
+AStartClose (P);
+END_STEP
+
+STEP S_WaitReady:
+END_STEP
+
+STEP S_CheckElectricPlast:
+END_STEP
+
+STEP S_Output_Request:
+AOutputRequest (P);
+ACheckOutput (N);
+END_STEP
+
+ACTION AOutputRequest: #BEGIN_EDIT_BLOCK
+abOutputRequest.aRequest(pMoveData := g_MoveCtrl.pData,
+                         AnaOutputMode := nAnaOutputModeFast);
+
+
+;#END_EDIT_BLOCK END_ACTION (*AOutputRequest*)
+ACTION ACheckOutput: #BEGIN_EDIT_BLOCK
+abOutputRequest.aCheck();
+
+;#END_EDIT_BLOCK END_ACTION (*ACheckOutput*)
+STEP S_Output:
+END_STEP
+
+STEP S_CheckMoveId:
+END_STEP
+
+STEP S_Decomp:
+aBwd (N);
+END_STEP
+
+STEP S_Plast:
+aPlast (N);
+ACopyMeasureParams (P);
+AMeasureRpm (N);
+AResetRpm (P0);
+END_STEP
+
+ACTION ACopyMeasureParams: #BEGIN_EDIT_BLOCK
+sv_ImpulseParam.rGain := DINT_TO_REAL(sv_iScrewGain);
+abRpmMeasure.aResetRoundsCounter();
+
+;#END_EDIT_BLOCK END_ACTION (*ACopyMeasureParams*)
+ACTION AResetRpm: #BEGIN_EDIT_BLOCK
+sv_rActScrewRpm := 0.0;
+sv_rActScrewCircSpeed := 0.0;
+
+;#END_EDIT_BLOCK END_ACTION (*AResetRpm*)
+STEP S_CheckMoveId2:
+END_STEP
+
+STEP S_Inject:
+AUnloadAccu (P);
+aFwd (N);
+END_STEP
+
+STEP S_PVCalib:
+aPVCalib (N);
+END_STEP
+
+STEP Step14:
+AOutputRelease (P);
+END_STEP
+
+ACTION AOutputRelease: #BEGIN_EDIT_BLOCK
+IF NOT bElectricPlast THEN
+    abOutputRequest.aRelease(pMoveData := g_MoveCtrl.pData);
+END_IF;
+
+;#END_EDIT_BLOCK END_ACTION (*AOutputRelease*)
+STEP S_AccuStop:
+END_STEP
+
+STEP S_StopAccu:
+AStopAccu (P);
+ACheckAccuStopped (N);
+END_STEP
+
+ACTION AStopAccu: #BEGIN_EDIT_BLOCK
+fbStop(DeviceId := DeviceIdAccu);
+
+;#END_EDIT_BLOCK END_ACTION (*AStopAccu*)
+ACTION ACheckAccuStopped: #BEGIN_EDIT_BLOCK
+fbCheckReady(DeviceId := DeviceIdAccu);
+
+;#END_EDIT_BLOCK END_ACTION (*ACheckAccuStopped*)
+STEP Step23:
+END_STEP
+
+STEP S_CloseShutOffNozzle:
+AStartClose (P);
+END_STEP
+
+STEP READY:
+AReady (P);
+END_STEP
+
+ACTION AReady: #BEGIN_EDIT_BLOCK
+g_MoveCtrl.bReady := TRUE;
+IF NOT sv_bDeviceStart THEN
+    STOP_PROCESS_ALGORITHM();
+END_IF;
+
+;#END_EDIT_BLOCK END_ACTION (*AReady*)
+
+(* transitions *)
+GO_ON_TRANSITION TAccuNeeded (* TAccuNeeded *) FROM S_Start TO S_CheckAccuLoaded :=  #BEGIN_EDIT_BLOCK
+bUseAccu
+;#END_EDIT_BLOCK
+END_TRANSITION
+
+GO_ON_TRANSITION TAccuLoaded (* TAccuLoaded *) FROM S_CheckAccuLoaded TO S_ShutOffNozzle :=  #BEGIN_EDIT_BLOCK
+pbAccuLoaded^
+;#END_EDIT_BLOCK
+END_TRANSITION
+
+GO_ON_TRANSITION TAccuNotLoaded (* TAccuNotLoaded *) FROM S_CheckAccuLoaded TO S_LoadAccu :=  #BEGIN_EDIT_BLOCK
+NOT pbAccuLoaded^
+;#END_EDIT_BLOCK
+END_TRANSITION
+
+GO_ON_TRANSITION TAccuLoadedAndReady (* TAccuLoadedAndReady *) FROM S_LoadAccu TO S_ShutOffNozzle :=  #BEGIN_EDIT_BLOCK
+fbCheckReady.bReady AND pbAccuLoaded^
+;#END_EDIT_BLOCK
+END_TRANSITION
+
+GO_ON_TRANSITION TStopAccuLoading (* TStopAccuLoading *) FROM S_LoadAccu TO S_StopAccu :=  #BEGIN_EDIT_BLOCK
+g_MoveCtrl.bStop
+;#END_EDIT_BLOCK
+END_TRANSITION
+
+GO_ON_TRANSITION TAccuNotNeeded (* TAccuNotNeeded *) FROM S_Start TO S_ShutOffNozzle :=  #BEGIN_EDIT_BLOCK
+NOT bUseAccu
+;#END_EDIT_BLOCK
+END_TRANSITION
+
+GO_ON_TRANSITION TShutOffNozzleLinked (* TShutOffNozzleLinked *) FROM S_ShutOffNozzle TO Step13 :=  #BEGIN_EDIT_BLOCK
+mbShutOffNozzleAvailable
+;#END_EDIT_BLOCK
+END_TRANSITION
+
+GO_ON_TRANSITION TNoShutOffNozzle (* TNoShutOffNozzle *) FROM S_ShutOffNozzle TO S_CheckElectricPlast :=  #BEGIN_EDIT_BLOCK
+NOT mbShutOffNozzleAvailable
+;#END_EDIT_BLOCK
+END_TRANSITION
+
+GO_ON_TRANSITION TOpenShutOffNozzle (* TOpenShutOffNozzle *) FROM Step13 TO S_OpenShutOffNozzle :=  #BEGIN_EDIT_BLOCK
+bOpenShutOffNozzle
+;#END_EDIT_BLOCK
+END_TRANSITION
+
+GO_ON_TRANSITION Trans15 (* Trans15 *) FROM S_OpenShutOffNozzle TO S_CheckElectricPlast :=  #BEGIN_EDIT_BLOCK
+mpbShutOffNozzleOpen^ 
+AND fbCheckReady.bReady
+;#END_EDIT_BLOCK
+END_TRANSITION
+
+TRANSITION Trans23 (* Trans23 *) FROM S_OpenShutOffNozzle TO S_CloseShutOffNozzle :=  #BEGIN_EDIT_BLOCK
+g_MoveCtrl.bStop 
+AND fbCheckReady.bReady
+;#END_EDIT_BLOCK
+END_TRANSITION
+
+GO_ON_TRANSITION TCloseShutOffNozzle (* TCloseShutOffNozzle *) FROM Step13 TO S_Close :=  #BEGIN_EDIT_BLOCK
+bCloseShutOffNozzle
+;#END_EDIT_BLOCK
+END_TRANSITION
+
+GO_ON_TRANSITION Trans36 (* Trans36 *) FROM S_Close TO S_CheckElectricPlast :=  #BEGIN_EDIT_BLOCK
+mpbShutOffNozzleClosed^ AND
+mbShutOffNozzleReady
+;#END_EDIT_BLOCK
+END_TRANSITION
+
+TRANSITION TStopDuringSONozzleClose (* TStopDuringSONozzleClose *) FROM S_Close TO S_WaitReady :=  #BEGIN_EDIT_BLOCK
+g_MoveCtrl.bStop
+;#END_EDIT_BLOCK
+END_TRANSITION
+
+GO_ON_TRANSITION TSOCloseReady (* TSOCloseReady *) FROM S_WaitReady TO READY :=  #BEGIN_EDIT_BLOCK
+mbShutOffNozzleReady
+;#END_EDIT_BLOCK
+END_TRANSITION
+
+GO_ON_TRANSITION TShutOffNozzleOk (* TShutOffNozzleOk *) FROM Step13 TO S_CheckElectricPlast :=  #BEGIN_EDIT_BLOCK
+NOT bCloseShutOffNozzle AND
+NOT bOpenShutOffNozzle
+;#END_EDIT_BLOCK
+END_TRANSITION
+
+GO_ON_TRANSITION Trans21 (* Trans21 *) FROM S_CheckElectricPlast TO S_Output_Request :=  #BEGIN_EDIT_BLOCK
+NOT bElectricPlast
+;#END_EDIT_BLOCK
+END_TRANSITION
+
+GO_ON_TRANSITION Trans22 (* Trans22 *) FROM S_CheckElectricPlast TO S_Output :=  #BEGIN_EDIT_BLOCK
+bElectricPlast
+;#END_EDIT_BLOCK
+END_TRANSITION
+
+TRANSITION TStop (* TStop *) FROM S_Output_Request TO Step14 :=  #BEGIN_EDIT_BLOCK
+g_MoveCtrl.bStop
+;#END_EDIT_BLOCK
+END_TRANSITION
+
+GO_ON_TRANSITION TOutputAllowed (* TOutputAllowed *) FROM S_Output_Request TO S_Output :=  #BEGIN_EDIT_BLOCK
+abOutputRequest.aCheck.bReady
+;#END_EDIT_BLOCK
+END_TRANSITION
+
+GO_ON_TRANSITION TMoveBwd (* TMoveBwd *) FROM S_Output TO S_CheckMoveId :=  #BEGIN_EDIT_BLOCK
+g_MoveCtrl.pData^.MoveDir = cMoveBwd 
+;#END_EDIT_BLOCK
+END_TRANSITION
+
+GO_ON_TRANSITION TDecomp (* TDecomp *) FROM S_CheckMoveId TO S_Decomp :=  #BEGIN_EDIT_BLOCK
+g_MoveCtrl.pData^.MoveId = cMoveDecompBefPlast OR 
+g_MoveCtrl.pData^.MoveId = cMoveDecompAftPlast OR
+g_MoveCtrl.pData^.MoveId = cMoveDecompPurge OR
+g_MoveCtrl.pData^.MoveId = cMoveDecompInterPos
+;#END_EDIT_BLOCK
+END_TRANSITION
+
+GO_ON_TRANSITION TDecompReady (* TDecompReady *) FROM S_Decomp TO Step14 :=  #BEGIN_EDIT_BLOCK
+abMoveDecompression.aRun.bReady;
+;#END_EDIT_BLOCK
+END_TRANSITION
+
+GO_ON_TRANSITION TPlast (* TPlast *) FROM S_CheckMoveId TO S_Plast :=  #BEGIN_EDIT_BLOCK
+g_MoveCtrl.pData^.MoveId = cMovePlast OR
+g_MoveCtrl.pData^.MoveId = cMoveIntrusion OR
+g_MoveCtrl.pData^.MoveId = cMovePlastPurge
+;#END_EDIT_BLOCK
+END_TRANSITION
+
+GO_ON_TRANSITION TPlastReady (* TPlastReady *) FROM S_Plast TO Step14 :=  #BEGIN_EDIT_BLOCK
+abMovePlast.aRun.bReady
+;#END_EDIT_BLOCK
+END_TRANSITION
+
+GO_ON_TRANSITION TMoveFwd (* TMoveFwd *) FROM S_Output TO S_CheckMoveId2 :=  #BEGIN_EDIT_BLOCK
+g_MoveCtrl.pData^.MoveDir = cMoveFwd
+;#END_EDIT_BLOCK
+END_TRANSITION
+
+GO_ON_TRANSITION Trans27 (* Trans27 *) FROM S_CheckMoveId2 TO S_Inject :=  #BEGIN_EDIT_BLOCK
+g_MoveCtrl.pData^.MoveId <> cMovePVCalib
+;#END_EDIT_BLOCK
+END_TRANSITION
+
+GO_ON_TRANSITION TInjectReady (* TInjectReady *) FROM S_Inject TO Step14 :=  #BEGIN_EDIT_BLOCK
+abMoveInjection.aRun.bReady
+;#END_EDIT_BLOCK
+END_TRANSITION
+
+GO_ON_TRANSITION Trans28 (* Trans28 *) FROM S_CheckMoveId2 TO S_PVCalib :=  #BEGIN_EDIT_BLOCK
+g_MoveCtrl.pData^.MoveId = cMovePVCalib
+;#END_EDIT_BLOCK
+END_TRANSITION
+
+TRANSITION Trans29 (* Trans29 *) FROM S_PVCalib TO Step14 :=  #BEGIN_EDIT_BLOCK
+abMovePVCalib.aRun.bReady
+;#END_EDIT_BLOCK
+END_TRANSITION
+
+GO_ON_TRANSITION Trans34 (* Trans34 *) FROM Step14 TO S_AccuStop :=  #BEGIN_EDIT_BLOCK
+TRUE
+;#END_EDIT_BLOCK
+END_TRANSITION
+
+GO_ON_TRANSITION TAccuStopNecessary (* TAccuStopNecessary *) FROM S_AccuStop TO S_StopAccu :=  #BEGIN_EDIT_BLOCK
+bUseAccu
+;#END_EDIT_BLOCK
+END_TRANSITION
+
+GO_ON_TRANSITION TAccuStopped (* TAccuStopped *) FROM S_StopAccu TO Step23 :=  #BEGIN_EDIT_BLOCK
+fbCheckReady.bReady
+;#END_EDIT_BLOCK
+END_TRANSITION
+
+GO_ON_TRANSITION TNoAccuStopNecessary (* TNoAccuStopNecessary *) FROM S_AccuStop TO Step23 :=  #BEGIN_EDIT_BLOCK
+NOT bUseAccu
+;#END_EDIT_BLOCK
+END_TRANSITION
+
+GO_ON_TRANSITION Trans19 (* Trans19 *) FROM Step23 TO S_CloseShutOffNozzle :=  #BEGIN_EDIT_BLOCK
+bCloseAtEnd
+;#END_EDIT_BLOCK
+END_TRANSITION
+
+GO_ON_TRANSITION Trans16 (* Trans16 *) FROM S_CloseShutOffNozzle TO READY :=  #BEGIN_EDIT_BLOCK
+mbShutOffNozzleReady
+;#END_EDIT_BLOCK
+END_TRANSITION
+
+GO_ON_TRANSITION Trans20 (* Trans20 *) FROM Step23 TO READY :=  #BEGIN_EDIT_BLOCK
+NOT bCloseAtEnd
+;#END_EDIT_BLOCK
+END_TRANSITION
+
+TRANSITION TReady (* TReady *) FROM READY TO S_Start :=  #BEGIN_EDIT_BLOCK
+TRUE
+;#END_EDIT_BLOCK
+END_TRANSITION
+
+(* end IecGraph-Code *)
+(* sfc-code *)
+
+(* stand alone actions *)
+ACTION aBwd: #BEGIN_EDIT_BLOCK
+(**************************************** WARNING ********************************************
+ *** The KEBA Kemro K2 System including software is not intended for safety control tasks! ***
+ ***                       For further information see Comment tab!                        ***
+ *********************************************************************************************)
+
+abMoveDecompression.aRun(bStop := g_MoveCtrl.bStop);
+
+;#END_EDIT_BLOCK END_ACTION (*aBwd*)
+ACTION aFwd: #BEGIN_EDIT_BLOCK
+abMoveInjection.aRun(bStop := g_MoveCtrl.bStop);
+
+;#END_EDIT_BLOCK END_ACTION (*aFwd*)
+ACTION aPlast: #BEGIN_EDIT_BLOCK
+(**************************************** WARNING ********************************************
+ *** The KEBA Kemro K2 System including software is not intended for safety control tasks! ***
+ ***                       For further information see Comment tab!                        ***
+ *********************************************************************************************)
+
+abMovePlast.aRun(bStop := g_MoveCtrl.bStop);
+
+;#END_EDIT_BLOCK END_ACTION (*aPlast*)
+ACTION aPVCalib: #BEGIN_EDIT_BLOCK
+abMovePVCalib.aRun(bStop := g_MoveCtrl.bStop);
+
+;#END_EDIT_BLOCK END_ACTION (*aPVCalib*)
+ACTION AStart: #BEGIN_EDIT_BLOCK
+bStopSONozzleOpen := FALSE;
+
+evStartData.DeviceId := DeviceIdShutOffNozzle;
+evStartData.MoveDir := cMoveOpen;
+evStartData.MoveId := cMoveOpen;
+
+SET_EVENT(evStart, evStartData);
+
+;#END_EDIT_BLOCK END_ACTION (*AStart*)
+ACTION AStartClose: #BEGIN_EDIT_BLOCK
+(**************************************** WARNING ********************************************
+ *** The KEBA Kemro K2 System including software is not intended for safety control tasks! ***
+ ***                       For further information see Comment tab!                        ***
+ *********************************************************************************************)
+
+mbShutOffNozzleReady := FALSE;
+
+evStartData.DeviceId := DeviceIdShutOffNozzle;
+evStartData.MoveDir := cMoveClose;
+evStartData.MoveId := cMoveClose;
+
+SET_EVENT(evStart, evStartData);
+
+;#END_EDIT_BLOCK END_ACTION (*AStartClose*)
+ACTION ACheckShutOffNozzle: #BEGIN_EDIT_BLOCK
+(**************************************** WARNING ********************************************
+ *** The KEBA Kemro K2 System including software is not intended for safety control tasks! ***
+ ***                       For further information see Comment tab!                        ***
+ *********************************************************************************************)
+
+//find out if opening or closing of shut off nozzle is necessary
+//shut off nozzle must be opened for:
+//inject, intrusion, cold drop, pv calib, decomp before plast
+//inject to pos., inject calib 
+
+//shut off nozzle must be closed for:
+//plast, decomp after plast, decomp to pos. 
+
+//attention: purge movements are handled in AutoPurge1 - fu
+
+bOpenShutOffNozzle := FALSE;
+bCloseShutOffNozzle := FALSE;
+bCloseAtEnd := FALSE;
+
+IF (g_MoveCtrl.pData^.MoveId = cMoveInject OR g_MoveCtrl.pData^.MoveId = cMoveIntrusion OR
+   g_MoveCtrl.pData^.MoveId = cMoveColdDrop OR g_MoveCtrl.pData^.MoveId = cMovePVCalib OR
+   g_MoveCtrl.pData^.MoveId = cMoveDecompBefPlast OR g_MoveCtrl.pData^.MoveId = cMoveFwdInterPos OR
+   g_MoveCtrl.pData^.MoveId = cMoveInjectCalib) THEN
+   
+   //open is only necessary if it is not open yet
+   bOpenShutOffNozzle := NOT mpbShutOffNozzleOpen^;
+   bCloseAtEnd := TRUE;
+
+ELSIF (g_MoveCtrl.pData^.MoveId = cMovePlast OR g_MoveCtrl.pData^.MoveId = cMoveDecompAftPlast OR
+   g_MoveCtrl.pData^.MoveId = cMoveDecompInterPos) THEN
+   
+   //close if not already closed
+   bCloseShutOffNozzle := NOT mpbShutOffNozzleClosed^;
+END_IF;
+
+
+;#END_EDIT_BLOCK END_ACTION (*ACheckShutOffNozzle*)
+ACTION ACheckAccu: #BEGIN_EDIT_BLOCK
+(**************************************** WARNING ********************************************
+ *** The KEBA Kemro K2 System including software is not intended for safety control tasks! ***
+ ***                       For further information see Comment tab!                        ***
+ *********************************************************************************************)
+
+IF sv_OperationMode <> nSetup AND g_MoveCtrl.pData^.MoveId = cMoveInject AND
+   mbAccuAvailable AND mpbAccuSwitchedOn^ THEN 
+   //inject movement in manual or setup mode, accumulator function unit registered and
+   //accu switched on
+   bUseAccu := TRUE;
+ELSE
+   bUseAccu := FALSE;   
+END_IF;
+
+;#END_EDIT_BLOCK END_ACTION (*ACheckAccu*)
+ACTION AInit: #BEGIN_EDIT_BLOCK
+(**************************************** WARNING ********************************************
+ *** The KEBA Kemro K2 System including software is not intended for safety control tasks! ***
+ ***                       For further information see Comment tab!                        ***
+ *********************************************************************************************)
+
+IF mbShutOffNozzleAvailable AND NOT bInitDone THEN
+   DeviceIdShutOffNozzle.CompId := cCompShutOffNozzle;
+   DeviceIdShutOffNozzle.IndexId := sv_DeviceId.IndexId;
+   
+   fbCheckPosReached.DeviceId := DeviceIdShutOffNozzle;
+   fbCheckPosReached.MoveDir := cMoveClose;
+   fbCheckPosReached.MoveId := cMoveClose;
+   fbCheckPosReached();
+   mpbShutOffNozzleClosed := fbCheckPosReached.pbPosReached;
+   
+   fbCheckPosReached.MoveDir := cMoveOpen;
+   fbCheckPosReached.MoveId := cMoveOpen;
+   fbCheckPosReached();
+   mpbShutOffNozzleOpen := fbCheckPosReached.pbPosReached;
+   
+   mevStartedStopped := evStartedStopped;  
+END_IF;
+
+IF mbAccuAvailable AND NOT bInitDone THEN
+   //get reference to accu loaded flag
+   fbCheckPosReached.DeviceId := DeviceIdAccu;
+   fbCheckPosReached.MoveDir := cMoveBwd;
+   fbCheckPosReached.MoveId := cMoveBwd;
+   fbCheckPosReached();
+   pbAccuLoaded := fbCheckPosReached.pbPosReached;
+END_IF;
+
+bInitDone := TRUE;
+
+;#END_EDIT_BLOCK END_ACTION (*AInit*)
+ACTION AUnloadAccu: #BEGIN_EDIT_BLOCK
+(**************************************** WARNING ********************************************
+ *** The KEBA Kemro K2 System including software is not intended for safety control tasks! ***
+ ***                       For further information see Comment tab!                        ***
+ *********************************************************************************************)
+
+IF bUseAccu THEN
+   //start accu unloading
+   fbStart(DeviceId := DeviceIdAccu,
+           MoveDir  := cMoveFwd,
+           MoveId   := cMoveFwd);
+END_IF;
+
+
+;#END_EDIT_BLOCK END_ACTION (*AUnloadAccu*)
+ACTION AWaitOpen: #BEGIN_EDIT_BLOCK
+// if a shutoff nozzle open is active while main movement should be stopped, 
+// stop shutoffnozzle open movement also
+// so it is not necessary to wait until move open is finished before start move close
+evStopData.DeviceId := DeviceIdShutOffNozzle;
+IF g_MoveCtrl.bStop AND (NOT bStopSONozzleOpen) THEN
+   bStopSONozzleOpen := TRUE; 
+   SET_EVENT(evStop, evStopData);  // send stop event only once
+END_IF;
+
+fbCheckReady(DeviceId := DeviceIdShutOffNozzle);
+
+;#END_EDIT_BLOCK END_ACTION (*AWaitOpen*)
+ACTION AMeasureRpm: #BEGIN_EDIT_BLOCK
+(**************************************** WARNING ********************************************
+ *** The KEBA Kemro K2 System including software is not intended for safety control tasks! ***
+ ***                       For further information see Comment tab!                        ***
+ *********************************************************************************************)
+
+abRpmMeasure.aRun();
+b := WRITE_SVREAL_DIRECT(sv_rActScrewRpm, abRpmMeasure.aRun.rRoundsPerTime);
+
+rActScrewCircSpeed := FCalcScrewCircumfenceSpeed(sv_rScrewDiameter, sv_rActScrewRpm);
+b := WRITE_SVREAL_DIRECT(sv_rActScrewCircSpeed, rActScrewCircSpeed);
+
+
+;#END_EDIT_BLOCK END_ACTION (*AMeasureRpm*)
+(* end sfc-code *)
+
+
+END_ALGORITHM
+
+POSTUPDATE_ALGORITHM pActiveProfileStage ON PU_Task_3 WITH sv_iActiveStage,sv_bDeviceReady
+
+#BEGIN_EDIT_BLOCK
+(**************************************** WARNING ********************************************
+ *** The KEBA Kemro K2 System including software is not intended for safety control tasks! ***
+ ***                       For further information see Comment tab!                        ***
+ *********************************************************************************************)
+
+IF NOT sv_bDeviceReady THEN
+   
+   IF sv_OperationMode = nSetup THEN
+      //movement in setup mode active
+      //-> reset active stage information
+      sv_iActiveStageInject := 0;
+      sv_iActiveStagePlast := 0;
+   ELSE      
+      IF g_MoveCtrl.pData^.MoveDir = cMoveFwd THEN
+         
+         sv_iActiveStagePlast := 0;
+         
+         IF g_MoveCtrl.pData^.MoveId = cMoveInject THEN
+            IF sv_iActiveStage > 0 THEN
+               sv_iActiveStageInject := sv_iActiveStage;
+            END_IF;
+         END_IF;
+         
+      ELSIF g_MoveCtrl.pData^.MoveDir = cMoveBwd THEN
+         
+         sv_iActiveStageInject := 0;
+         
+         IF g_MoveCtrl.pData^.MoveId = cMovePlast THEN         
+            IF sv_iActiveStage > 0 THEN
+               sv_iActiveStagePlast := sv_iActiveStage;
+            END_IF;
+         ELSE
+            //any other bwd movement
+            //-> reset active plast stage
+            sv_iActiveStagePlast := 0;
+         END_IF;
+         
+      END_IF;
+  
+   END_IF;
+   
+END_IF;
+
+
+
+
+
+;#END_EDIT_BLOCK END_ALGORITHM
+
+EVENT_ALGORITHM evaStartedStopped ON EV_Task_7 WITH mevStartedStopped
+
+
+VAR_INPUT
+ evStartedStoppedData : tevStartedStoppedData;
+END_VAR
+#BEGIN_EDIT_BLOCK
+(**************************************** WARNING ********************************************
+ *** The KEBA Kemro K2 System including software is not intended for safety control tasks! ***
+ ***                       For further information see Comment tab!                        ***
+ *********************************************************************************************)
+
+IF (evStartedStoppedData.State <> nStarted) AND (evStartedStoppedData.DeviceId = DeviceIdShutOffNozzle) AND 
+   (evStartedStoppedData.MoveId = cMoveClose) AND (evStartedStoppedData.MoveDir = cMoveClose) THEN
+   mbShutOffNozzleReady := TRUE;
+END_IF;
+
+
+;#END_EDIT_BLOCK END_ALGORITHM
+
+
+
+END_ALGORITHM_BLOCK
+
+
+
+#END_OF_IEC_PART
+
+@Puma @IecEditor 6 127 @Pou 25 
+@@@BEG_Comment@@@
+
+@@@END_Comment@@@
+
+@BEG_Contents 
+
+@BEG_Func 
+@RT(17)FuncTreeContainer 
+7 
+@Var @RT(14)GET_MY_FU_NAME @RT(0) @T @T @DERIVED 0 @F @RT(22)KEBA_STANDARD_FUNCTION @F 
+@T 
+@BEG_Attrib 
+0 @RT(0) @RT(0) 
+@END_Attrib 
+1 1 @F @F @F @F 
+
+@Var @RT(16)KSWO_AddVariable @RT(0) @T @T @DERIVED 0 @F @RT(22)KEBA_STANDARD_FUNCTION @F 
+@T 
+@BEG_Attrib 
+0 @RT(0) @RT(0) 
+@END_Attrib 
+1 1 @F @F @F @F 
+
+@Var @RT(14)GET_SYNC_REFTO @RT(0) @T @T @DERIVED 0 @F @RT(22)KEBA_STANDARD_FUNCTION @F 
+@T 
+@BEG_Attrib 
+0 @RT(0) @RT(0) 
+@END_Attrib 
+1 1 @F @F @F @F 
+
+@Var @RT(26)FCalcScrewCircumfenceSpeed @RT(0) @T @T @DERIVED 0 @F @RT(8)FUNCTION @F 
+@T 
+@BEG_Attrib 
+0 @RT(0) @RT(0) 
+@END_Attrib 
+1 1 @F @F @F @F 
+
+@Var @RT(9)SET_EVENT @RT(0) @T @T @DERIVED 0 @F @RT(23)KEBA_STANDARD_PROCEDURE @F 
+@T 
+@BEG_Attrib 
+0 @RT(0) @RT(0) 
+@END_Attrib 
+1 1 @F @F @F @F 
+
+@Var @RT(19)WRITE_SVREAL_DIRECT @RT(0) @T @T @DERIVED 0 @F @RT(22)KEBA_STANDARD_FUNCTION @F 
+@T 
+@BEG_Attrib 
+0 @RT(0) @RT(0) 
+@END_Attrib 
+1 1 @F @F @F @F 
+
+@Var @RT(16)FAddToScopeGroup @RT(0) @T @T @DERIVED 0 @F @RT(8)FUNCTION @F 
+@T 
+@BEG_Attrib 
+0 @RT(0) @RT(0) 
+@END_Attrib 
+1 1 @F @F @F @F 
+
+@END_Func 
+
+@BEG_Const 
+@RT(18)ConstTreeContainer 
+25 
+@Var @RT(18)cCompValveServoInj @RT(0) @T @F @DT @RT(4)DINT @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+0 @RT(3)115 @RT(27)Component Servovalve Inject 
+@END_Attrib 
+1 1 @F @F @F @F 
+
+@Var @RT(21)nKAPPL_IMM_ServoValve @RT(0) @T @T @DERIVED 0 @F @RT(14)KAPPL_IMM_Type @F 
+@T 
+@BEG_Attrib 
+0 @RT(1)2 @RT(0) 
+@END_Attrib 
+1 1 @F @F @F @F 
+
+@Var @RT(18)cCompShutOffNozzle @RT(0) @T @F @DT @RT(4)DINT @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+0 @RT(3)138 @RT(28)Component Shutter for Nozzle 
+@END_Attrib 
+1 1 @F @F @F @F 
+
+@Var @RT(16)cCompAccumulator @RT(0) @T @F @DT @RT(4)DINT @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+0 @RT(3)137 @RT(21)Component Accumulator 
+@END_Attrib 
+1 1 @F @F @F @F 
+
+@Var @RT(14)KSYS_Status_OK @RT(0) @T @T @DERIVED 0 @F @RT(11)KSYS_Status @F 
+@T 
+@BEG_Attrib 
+0 @RT(1)1 @RT(0) 
+@END_Attrib 
+1 1 @F @F @F @F 
+
+@Var @RT(10)cMovePlast @RT(0) @T @F @DT @RT(4)DINT @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+0 @RT(2)13 @RT(23)plast movement (rotate) 
+@END_Attrib 
+1 1 @F @F @F @F 
+
+@Var @RT(14)cMoveIntrusion @RT(0) @T @F @DT @RT(4)DINT @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+0 @RT(2)28 @RT(9)intrusion 
+@END_Attrib 
+1 1 @F @F @F @F 
+
+@Var @RT(15)cMovePlastPurge @RT(0) @T @F @DT @RT(4)DINT @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+0 @RT(2)34 @RT(26)plast movement for purging 
+@END_Attrib 
+1 1 @F @F @F @F 
+
+@Var @RT(9)nElectric @RT(0) @T @T @DERIVED 0 @F @RT(11)tnMotorType @F 
+@T 
+@BEG_Attrib 
+0 @RT(1)1 @RT(14)electric motor 
+@END_Attrib 
+1 1 @F @F @F @F 
+
+@Var @RT(8)cMoveBwd @RT(0) @T @F @DT @RT(4)DINT @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+0 @RT(2)11 @RT(17)movement backward 
+@END_Attrib 
+1 1 @F @F @F @F 
+
+@Var @RT(18)nAnaOutputModeFast @RT(0) @T @T @DERIVED 0 @F @RT(15)tnAnaOutputMode @F 
+@T 
+@BEG_Attrib 
+0 @RT(1)1 @RT(0) 
+@END_Attrib 
+1 1 @F @F @F @F 
+
+@Var @RT(19)cMoveDecompBefPlast @RT(0) @T @F @DT @RT(4)DINT @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+0 @RT(2)26 @RT(26)decompression before plast 
+@END_Attrib 
+1 1 @F @F @F @F 
+
+@Var @RT(19)cMoveDecompAftPlast @RT(0) @T @F @DT @RT(4)DINT @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+0 @RT(2)27 @RT(25)decompression after plast 
+@END_Attrib 
+1 1 @F @F @F @F 
+
+@Var @RT(16)cMoveDecompPurge @RT(0) @T @F @DT @RT(4)DINT @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+0 @RT(2)36 @RT(27)decomp movement for purging 
+@END_Attrib 
+1 1 @F @F @F @F 
+
+@Var @RT(19)cMoveDecompInterPos @RT(0) @T @F @DT @RT(4)DINT @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+0 @RT(2)54 @RT(35)instanceable decompression movement 
+@END_Attrib 
+1 1 @F @F @F @F 
+
+@Var @RT(8)cMoveFwd @RT(0) @T @F @DT @RT(4)DINT @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+0 @RT(2)12 @RT(16)movement forward 
+@END_Attrib 
+1 1 @F @F @F @F 
+
+@Var @RT(12)cMovePVCalib @RT(0) @T @F @DT @RT(4)DINT @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+0 @RT(2)38 @RT(38)injection movement with voltage output 
+@END_Attrib 
+1 1 @F @F @F @F 
+
+@Var @RT(9)cMoveOpen @RT(0) @T @F @DT @RT(4)DINT @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+0 @RT(2)50 @RT(43)open movement (for example shut off nozzle) 
+@END_Attrib 
+1 1 @F @F @F @F 
+
+@Var @RT(10)cMoveClose @RT(0) @T @F @DT @RT(4)DINT @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+0 @RT(2)51 @RT(44)close movement (for example shut off nozzle) 
+@END_Attrib 
+1 1 @F @F @F @F 
+
+@Var @RT(11)cMoveInject @RT(0) @T @F @DT @RT(4)DINT @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+0 @RT(2)14 @RT(15)inject movement 
+@END_Attrib 
+1 1 @F @F @F @F 
+
+@Var @RT(13)cMoveColdDrop @RT(0) @T @F @DT @RT(4)DINT @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+0 @RT(2)49 @RT(42)cold drop (time dependent inject movement) 
+@END_Attrib 
+1 1 @F @F @F @F 
+
+@Var @RT(16)cMoveFwdInterPos @RT(0) @T @F @DT @RT(4)DINT @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+0 @RT(2)17 @RT(37)move forward to intermediate position 
+@END_Attrib 
+1 1 @F @F @F @F 
+
+@Var @RT(16)cMoveInjectCalib @RT(0) @T @F @DT @RT(4)DINT @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+0 @RT(2)70 @RT(48)calibration movement for servo inject controller 
+@END_Attrib 
+1 1 @F @F @F @F 
+
+@Var @RT(6)nSetup @RT(0) @T @T @DERIVED 0 @F @RT(15)tnOperationMode @F 
+@T 
+@BEG_Attrib 
+0 @RT(1)0 @RT(36)Setup mode only for service engineer 
+@END_Attrib 
+1 1 @F @F @F @F 
+
+@Var @RT(8)nStarted @RT(0) @T @T @DERIVED 0 @F @RT(16)tnStartedStopped @F 
+@T 
+@BEG_Attrib 
+0 @RT(1)0 @RT(0) 
+@END_Attrib 
+1 1 @F @F @F @F 
+
+@END_Const 
+
+@BEG_Export 
+
+@BEG_Kind 
+@ALGORITHM_BLOCK @RT(15)ABMovementAdmin @STRUCTURED_TEXT 
+@RT(0) @RT(0) @RT(0) 
+@END_Kind 
+
+@BEG_Dcl 
+@RT(16)DclTreeContainer 
+94 
+@Var @RT(13)sv_bInitStart @RT(0) @T @F @DT @RT(4)BOOL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 8 @F @F @F @F 
+
+@Var @RT(15)sv_bDeviceStart @RT(0) @T @F @DT @RT(4)BOOL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(12)Start Device @RT(0) 
+@END_Attrib 
+1 8 @F @F @F @F 
+
+@Var @RT(15)sv_rActScrewRpm @RT(0) @T @F @DT @RT(4)REAL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 8 @F @F @F @F 
+
+@Var @RT(15)sv_ImpulseParam @RT(0) @T @T @DERIVED 0 @T @T @DT @RT(19)KCTRL_Impulse_Param @RT(0) @T @T @UNKNOWN 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 8 @F @F @F @F 
+
+@Var @RT(13)sv_iScrewGain @RT(0) @T @F @DT @RT(4)DINT @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 8 @F @F @F @F 
+
+@Var @RT(19)sv_rActPressureHydr @RT(0) @T @F @DT @RT(4)REAL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 8 @F @F @F @F 
+
+@Var @RT(17)sv_rScrewDiameter @RT(0) @T @F @DT @RT(4)REAL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 8 @F @F @F @F 
+
+@Var @RT(21)sv_rActScrewCircSpeed @RT(0) @T @F @DT @RT(4)REAL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 8 @F @F @F @F 
+
+@Var @RT(24)sv_ServoValveControlData @RT(0) @T @T @DERIVED 0 @T @T @DT @RT(27)KAPPL_ServoValveControlData @RT(0) @T @T @UNKNOWN 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 8 @F @F @F @F 
+
+@Var @RT(15)sv_CylinderData @RT(0) @T @T @DERIVED 0 @T @T @DT @RT(14)tsCylinderData @RT(0) @T @T @UNKNOWN 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 8 @F @F @F @F 
+
+@Var @RT(15)sv_rScrewStroke @RT(0) @T @F @DT @RT(4)REAL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 8 @F @F @F @F 
+
+@Var @RT(18)sv_rActSysPressure @RT(0) @T @F @DT @RT(4)REAL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 8 @F @F @F @F 
+
+@Var @RT(30)sv_bSysPressureSensorAvailable @RT(0) @T @F @DT @RT(4)BOOL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 8 @F @F @F @F 
+
+@Var @RT(27)sv_ServoValveControllerMode @RT(0) @T @T @DERIVED 0 @T @T @DT @RT(30)KAPPL_ServoValveControllerMode @RT(0) @T @T @UNKNOWN 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 8 @F @F @F @F 
+
+@Var @RT(20)sv_rScrewPositionAbs @RT(0) @T @F @DT @RT(4)REAL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 8 @F @F @F @F 
+
+@Var @RT(12)sv_rPressure @RT(0) @T @F @DT @RT(4)REAL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(22)set value for pressure @RT(0) 
+@END_Attrib 
+1 8 @F @F @F @F 
+
+@Var @RT(11)sv_IMM_Type @RT(0) @T @T @DERIVED 0 @T @T @DT @RT(14)KAPPL_IMM_Type @RT(0) @T @T @UNKNOWN 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 8 @F @F @F @F 
+
+@Var @RT(16)sv_OperationMode @RT(0) @T @T @DERIVED 0 @T @T @DT @RT(15)tnOperationMode @RT(0) @T @T @UNKNOWN 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 8 @F @F @F @F 
+
+@Var @RT(19)sv_bTransducerError @RT(0) @T @F @DT @RT(4)BOOL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 8 @F @F @F @F 
+
+@Var @RT(28)sv_rScrewVelocityEstimateAbs @RT(0) @T @F @DT @RT(4)REAL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 8 @F @F @F @F 
+
+@Var @RT(15)sv_rVelocitySet @RT(0) @T @F @DT @RT(4)REAL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(18)value for velocity @RT(0) 
+@END_Attrib 
+1 8 @F @F @F @F 
+
+@Var @RT(23)sv_bValveServoInj1Ready @RT(0) @T @F @DT @RT(4)BOOL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 8 @F @F @F @F 
+
+@Var @RT(11)sv_DeviceId @RT(0) @T @T @DERIVED 0 @T @T @DT @RT(10)tsDeviceId @RT(0) @T @T @UNKNOWN 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 8 @F @F @F @F 
+
+@Var @RT(18)sv_NumberOfDevices @RT(0) @T @T @DERIVED 0 @T @T @DT @RT(17)tyNumberOfDevices @RT(0) @T @T @UNKNOWN 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 8 @F @F @F @F 
+
+@Var @RT(13)sv_PlastMotor @RT(0) @T @T @DERIVED 0 @T @T @DT @RT(11)tnMotorType @RT(0) @T @T @UNKNOWN 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(19)type of plast motor @RT(0) 
+@END_Attrib 
+1 8 @F @F @F @F 
+
+@Var @RT(22)sv_rImpulseFilterLimit @RT(0) @T @F @DT @RT(4)REAL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 8 @F @F @F @F 
+
+@Var @RT(19)sv_rMaxSpeedFwdSpec @RT(0) @T @F @DT @RT(4)REAL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(34)max inject speed with accu [ccm/s] @RT(0) 
+@END_Attrib 
+1 8 @F @F @F @F 
+
+@Var @RT(25)sv_bServoValveLimitActive @RT(0) @T @F @DT @RT(4)BOOL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 8 @F @F @F @F 
+
+@Var @RT(23)sv_HoldingControlParams @RT(0) @T @T @DERIVED 0 @T @T @DT @RT(19)tsControlParameters @RT(0) @T @T @UNKNOWN 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 8 @F @F @F @F 
+
+@Var @RT(28)sv_BackPressureControlParams @RT(0) @T @T @DERIVED 0 @T @T @DT @RT(19)tsControlParameters @RT(0) @T @T @UNKNOWN 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(26)parameters for holding PID @RT(0) 
+@END_Attrib 
+1 8 @F @F @F @F 
+
+@Var @RT(21)sv_iActiveStageInject @RT(0) @T @F @DT @RT(4)DINT @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(27)active profile stage inject @RT(0) 
+@END_Attrib 
+1 8 @F @F @F @F 
+
+@Var @RT(20)sv_iActiveStagePlast @RT(0) @T @F @DT @RT(4)DINT @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(26)active profile stage plast @RT(0) 
+@END_Attrib 
+1 8 @F @F @F @F 
+
+@Var @RT(15)sv_iActiveStage @RT(0) @T @F @DT @RT(4)DINT @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 8 @F @F @F @F 
+
+@Var @RT(15)sv_bDeviceReady @RT(0) @T @F @DT @RT(4)BOOL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 8 @F @F @F @F 
+
+@Var @RT(28)sv_bMoveToServoCalibStartPos @RT(0) @T @F @DT @RT(4)BOOL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 8 @F @F @F @F 
+
+@Var @RT(27)sv_InjectionPosControlParam @RT(0) @T @T @DERIVED 0 @T @T @DT @RT(19)tsControlParameters @RT(0) @T @T @UNKNOWN 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 8 @F @F @F @F 
+
+@Var @RT(20)sv_rScrewSetPosition @RT(0) @T @F @DT @RT(4)REAL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 8 @F @F @F @F 
+
+@Var @RT(18)sv_dMaxPosCtrlTime @RT(0) @T @F @DT @RT(4)TIME @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 8 @F @F @F @F 
+
+@Var @RT(21)sv_rPositionTolerance @RT(0) @T @F @DT @RT(4)REAL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 8 @F @F @F @F 
+
+@Var @RT(24)sv_rMaxPositionTolerance @RT(0) @T @F @DT @RT(4)REAL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 8 @F @F @F @F 
+
+@Var @RT(9)PU_Task_7 @RT(0) @T @F @DT @RT(4)TASK @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 7 @F @F @F @F 
+
+@Var @RT(10)TaskInject @RT(0) @T @F @DT @RT(4)TASK @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 7 @F @F @F @F 
+
+@Var @RT(9)EV_Task_1 @RT(0) @T @F @DT @RT(4)TASK @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 7 @F @F @F @F 
+
+@Var @RT(7)evStart @RT(0) @T @T @DERIVED 0 @T @T @DT @RT(8)tevStart @RT(0) @T @T @UNKNOWN 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 7 @F @F @F @F 
+
+@Var @RT(6)evStop @RT(0) @T @T @DERIVED 0 @T @T @DT @RT(7)tevStop @RT(0) @T @T @UNKNOWN 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 7 @F @F @F @F 
+
+@Var @RT(9)PU_Task_3 @RT(0) @T @F @DT @RT(4)TASK @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 7 @F @F @F @F 
+
+@Var @RT(16)evStartedStopped @RT(0) @T @T @DERIVED 0 @T @T @DT @RT(17)tevStartedStopped @RT(0) @T @T @UNKNOWN 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 7 @F @F @F @F 
+
+@Var @RT(9)EV_Task_7 @RT(0) @T @F @DT @RT(4)TASK @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 7 @F @F @F @F 
+
+@Var @RT(10)g_MoveCtrl @RT(0) @T @T @DERIVED 0 @T @T @DT @RT(10)tsMoveCtrl @RT(0) @T @T @UNKNOWN 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 6 @F @F @F @F 
+
+@Var @RT(15)abMoveInjection @RT(0) @T @T @DERIVED 0 @T @T @DT @RT(15)ABMoveInjection @RT(0) @T @T @UNKNOWN 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(19)abMoveDecompression @RT(0) @T @T @DERIVED 0 @T @T @DT @RT(19)ABMoveDecompression @RT(0) @T @T @UNKNOWN 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(11)abMovePlast @RT(0) @T @T @DERIVED 0 @T @T @DT @RT(11)ABMovePlast @RT(0) @T @T @UNKNOWN 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(13)abMovePVCalib @RT(0) @T @T @DERIVED 0 @T @T @DT @RT(13)ABMovePVCalib @RT(0) @T @T @UNKNOWN 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(15)abOutputRequest @RT(0) @T @T @DERIVED 0 @T @T @DT @RT(15)ABOutputRequest @RT(0) @T @T @UNKNOWN 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(12)abRpmMeasure @RT(0) @T @T @DERIVED 0 @T @T @DT @RT(16)ABMeasureImpulse @RT(0) @T @T @UNKNOWN 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(20)abScrewVolumeUpdater @RT(0) @T @T @DERIVED 0 @T @T @DT @RT(20)ABScrewVolumeUpdater @RT(0) @T @T @UNKNOWN 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(21)DeviceIdShutOffNozzle @RT(0) @T @T @DERIVED 0 @T @T @DT @RT(10)tsDeviceId @RT(0) @T @T @UNKNOWN 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(24)mbShutOffNozzleAvailable @RT(0) @T @F @DT @RT(4)BOOL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(20)mpbShutOffNozzleOpen @RT(0) @T @T @REFTO 0 @T @DT @RT(4)BOOL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(22)mpbShutOffNozzleClosed @RT(0) @T @T @REFTO 0 @T @DT @RT(4)BOOL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(15)mbAccuAvailable @RT(0) @T @F @DT @RT(4)BOOL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(47)TRUE if accumulator function unit is registered @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(17)mpbAccuSwitchedOn @RT(0) @T @T @REFTO 0 @T @DT @RT(4)BOOL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(37)refto Accumulator1.sv_bUseAccumulator @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(20)abPositionController @RT(0) @T @T @DERIVED 0 @T @T @DT @RT(20)ABPositionController @RT(0) @T @T @UNKNOWN 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(20)mbShutOffNozzleReady @RT(0) @T @F @DT @RT(4)BOOL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(17)mevStartedStopped @RT(0) @T @T @DERIVED 0 @T @T @DT @RT(17)tevStartedStopped @RT(0) @T @T @UNKNOWN 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(22)sv_RequiredPumpsInject @RT(0) @T @T @DERIVED 0 @T @T @DT @RT(15)tsRequiredPumps @RT(0) @T @T @UNKNOWN 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 8 @F @F @F @F 
+
+@Var @RT(22)sv_RequiredPumpsDecomp @RT(0) @T @T @DERIVED 0 @T @T @DT @RT(15)tsRequiredPumps @RT(0) @T @T @UNKNOWN 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 8 @F @F @F @F 
+
+@Var @RT(21)sv_RequiredPumpsPlast @RT(0) @T @T @DERIVED 0 @T @T @DT @RT(15)tsRequiredPumps @RT(0) @T @T @UNKNOWN 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 8 @F @F @F @F 
+
+@Var @RT(22)sv_HydrMaxValuesInject @RT(0) @T @T @DERIVED 0 @T @T @DT @RT(15)tsHydrMaxValues @RT(0) @T @T @UNKNOWN 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(31)hydraulic max values for inject @RT(0) 
+@END_Attrib 
+1 8 @F @F @F @F 
+
+@Var @RT(22)sv_HydrMaxValuesDecomp @RT(0) @T @T @DERIVED 0 @T @T @DT @RT(15)tsHydrMaxValues @RT(0) @T @T @UNKNOWN 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(38)hydraulic max values for decompression @RT(0) 
+@END_Attrib 
+1 8 @F @F @F @F 
+
+@Var @RT(21)sv_HydrMaxValuesPlast @RT(0) @T @T @DERIVED 0 @T @T @DT @RT(15)tsHydrMaxValues @RT(0) @T @T @UNKNOWN 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(30)hydraulic max values for plast @RT(0) 
+@END_Attrib 
+1 8 @F @F @F @F 
+
+@Var @RT(12)sv_bInitDone @RT(0) @T @F @DT @RT(4)BOOL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 8 @F @F @F @F 
+
+@Var @RT(16)sv_LintabOutFwdP @RT(0) @T @T @DERIVED 0 @T @T @DT @RT(16)KAPPL_LintabData @RT(0) @T @T @UNKNOWN 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 8 @F @F @F @F 
+
+@Var @RT(16)sv_LintabOutBwdP @RT(0) @T @T @DERIVED 0 @T @T @DT @RT(16)KAPPL_LintabData @RT(0) @T @T @UNKNOWN 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 8 @F @F @F @F 
+
+@Var @RT(16)sv_LintabOutBwdV @RT(0) @T @T @DERIVED 0 @T @T @DT @RT(16)KAPPL_LintabData @RT(0) @T @T @UNKNOWN 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 8 @F @F @F @F 
+
+@Var @RT(18)sv_rMaxPressureFwd @RT(0) @T @F @DT @RT(4)REAL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 8 @F @F @F @F 
+
+@Var @RT(15)sv_rMaxSpeedFwd @RT(0) @T @F @DT @RT(4)REAL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 8 @F @F @F @F 
+
+@Var @RT(18)sv_rMaxPressureBwd @RT(0) @T @F @DT @RT(4)REAL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 8 @F @F @F @F 
+
+@Var @RT(15)sv_rMaxSpeedBwd @RT(0) @T @F @DT @RT(4)REAL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 8 @F @F @F @F 
+
+@Var @RT(18)sv_LintabOutPlastP @RT(0) @T @T @DERIVED 0 @T @T @DT @RT(16)KAPPL_LintabData @RT(0) @T @T @UNKNOWN 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 8 @F @F @F @F 
+
+@Var @RT(20)sv_rMaxPressurePlast @RT(0) @T @F @DT @RT(4)REAL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 8 @F @F @F @F 
+
+@Var @RT(10)sv_rMaxRpm @RT(0) @T @F @DT @RT(4)REAL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 8 @F @F @F @F 
+
+@Var @RT(17)sv_rMaxRpmProfile @RT(0) @T @F @DT @RT(4)REAL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 8 @F @F @F @F 
+
+@Var @RT(20)sv_ScrewRevVelLintab @RT(0) @T @T @DERIVED 0 @T @T @DT @RT(16)KAPPL_LintabData @RT(0) @T @T @UNKNOWN 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 8 @F @F @F @F 
+
+@Var @RT(18)sv_LintabOutPlastV @RT(0) @T @T @DERIVED 0 @T @T @DT @RT(16)KAPPL_LintabData @RT(0) @T @T @UNKNOWN 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 8 @F @F @F @F 
+
+@Var @RT(20)sv_rMaxRotationPlast @RT(0) @T @F @DT @RT(4)REAL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 8 @F @F @F @F 
+
+@Var @RT(19)sv_rMaxSpeedFwdCalc @RT(0) @T @T @RENAMED 0 @T @T @DT @RT(4)REAL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 8 @F @F @F @F 
+
+@Var @RT(19)sv_rMaxSpeedBwdCalc @RT(0) @T @T @RENAMED 0 @T @T @DT @RT(4)REAL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 8 @F @F @F @F 
+
+@Var @RT(20)sv_rMaxSpeedFwdCalib @RT(0) @T @T @RENAMED 0 @T @T @DT @RT(4)REAL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 8 @F @F @F @F 
+
+@Var @RT(20)sv_rMaxSpeedBwdCalib @RT(0) @T @T @RENAMED 0 @T @T @DT @RT(4)REAL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 8 @F @F @F @F 
+
+@Var @RT(25)sv_rMaxSpeedReducePercent @RT(0) @T @F @DT @RT(4)REAL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 8 @F @F @F @F 
+
+@Var @RT(23)sv_rMaxRpmReducePercent @RT(0) @T @F @DT @RT(4)REAL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 8 @F @F @F @F 
+
+@Var @RT(15)miDigitsToFloor @RT(0) @T @F @DT @RT(4)SINT @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(1)2 @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(9)sv_bFALSE @RT(0) @T @F @DT @RT(4)BOOL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 8 @F @F @F @F 
+
+@END_Dcl 
+
+@END_Export 
+
+@BEG_Body 
+
+6 
+
+@BEG_Export 
+
+@BEG_Algo 
+@POSTUPDATE_ALGORITHM @RT(10)pInitStart @STRUCTURED_TEXT 
+@RT(0) @RT(13)sv_bInitStart @RT(9)PU_Task_7 @F @F 
+@END_Algo 
+
+@BEG_Dcl 
+@RT(16)DclTreeContainer 
+15 
+@Var @RT(13)sImpulseInput @RT(0) @T @F @DT @RT(11)STRING(255) @RT(0) @T @T @STRING 0 @F @RT(3)255 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(27)fbInitServoValveControlData @RT(0) @T @T @DERIVED 0 @T @T @DT @RT(27)FBInitServoValveControlData @RT(0) @T @T @UNKNOWN 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(12)pSysPressure @RT(0) @T @T @REFTO 0 @T @DT @RT(4)REAL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(6)fuName @RT(0) @T @F @DT @RT(11)STRING(255) @RT(0) @T @T @STRING 0 @F @RT(3)255 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(12)variableName @RT(0) @T @F @DT @RT(11)STRING(255) @RT(0) @T @T @STRING 0 @F @RT(3)255 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(8)swoState @RT(0) @T @T @DERIVED 0 @T @T @DT @RT(11)KSWO_Status @RT(0) @T @T @UNKNOWN 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(6)Status @RT(0) @T @T @DERIVED 0 @T @T @DT @RT(11)KSYS_Status @RT(0) @T @T @UNKNOWN 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(13)prValveOutput @RT(0) @T @T @REFTO 0 @T @DT @RT(4)REAL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(12)pValveLintab @RT(0) @T @T @REFTO 0 @F @DERIVED 0 @T @T @DT @RT(16)KAPPL_LintabData @RT(0) @T @T @UNKNOWN 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(1)s @RT(0) @T @T @DERIVED 0 @T @T @DT @RT(11)KSYS_Status @RT(0) @T @T @UNKNOWN 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(8)pOptions @RT(0) @T @T @REFTO 0 @F @DERIVED 0 @T @T @DT @RT(9)tOptionId @RT(0) @T @T @UNKNOWN 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(21)abCalcMaxValuesInject @RT(0) @T @T @DERIVED 0 @T @T @DT @RT(19)ABCalcHydrMaxValues @RT(0) @T @T @UNKNOWN 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(21)abCalcMaxValuesDecomp @RT(0) @T @T @DERIVED 0 @T @T @DT @RT(19)ABCalcHydrMaxValues @RT(0) @T @T @UNKNOWN 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(20)abCalcMaxValuesPlast @RT(0) @T @T @DERIVED 0 @T @T @DT @RT(19)ABCalcHydrMaxValues @RT(0) @T @T @UNKNOWN 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(1)b @RT(0) @T @T @RENAMED 0 @T @T @DT @RT(4)BOOL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@END_Dcl 
+
+@END_Export 
+
+@BEG_Export 
+
+@BEG_Algo 
+@POSTUPDATE_ALGORITHM @RT(12)pDeviceStart @STRUCTURED_TEXT 
+@RT(0) @RT(15)sv_bDeviceStart @RT(9)EV_Task_1 @F @F 
+@END_Algo 
+
+@BEG_Dcl 
+@RT(16)DclTreeContainer 
+0 
+@END_Dcl 
+
+@END_Export 
+
+@BEG_Export 
+
+@BEG_Algo 
+@POSTUPDATE_ALGORITHM @RT(21)pInitRelLintabUpdater @STRUCTURED_TEXT 
+@RT(0) @RT(12)sv_bInitDone @RT(9)PU_Task_7 @F @F 
+@END_Algo 
+
+@BEG_Dcl 
+@RT(16)DclTreeContainer 
+6 
+@Var @RT(26)abUpdateRelLintabPreInject @RT(0) @T @T @DERIVED 0 @T @T @DT @RT(26)ABUpdateRelLintabPreInject @RT(0) @T @T @UNKNOWN 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(26)abUpdateRelLintabVelInject @RT(0) @T @T @DERIVED 0 @T @T @DT @RT(26)ABUpdateRelLintabVelInject @RT(0) @T @T @UNKNOWN 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(26)abUpdateRelLintabPreDecomp @RT(0) @T @T @DERIVED 0 @T @T @DT @RT(20)ABUpdateRelLintabPre @RT(0) @T @T @UNKNOWN 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(26)abUpdateRelLintabVelDecomp @RT(0) @T @T @DERIVED 0 @T @T @DT @RT(20)ABUpdateRelLintabVel @RT(0) @T @T @UNKNOWN 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(25)abUpdateRelLintabPrePlast @RT(0) @T @T @DERIVED 0 @T @T @DT @RT(20)ABUpdateRelLintabPre @RT(0) @T @T @UNKNOWN 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(25)abUpdateRelLintabVelPlast @RT(0) @T @T @DERIVED 0 @T @T @DT @RT(25)ABUpdateRelLintabVelPlast @RT(0) @T @T @UNKNOWN 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@END_Dcl 
+
+@END_Export 
+
+@BEG_Export 
+
+@BEG_Algo 
+@PROCESS_ALGORITHM @RT(5)paRun @SEQUENTIAL_FLOW_CHART 
+@RT(0) @RT(0) @RT(16)TaskInject(5000) @F @F 
+@END_Algo 
+
+@BEG_Dcl 
+@RT(16)DclTreeContainer 
+17 
+@Var @RT(12)fbCheckReady @RT(0) @T @T @DERIVED 0 @T @T @DT @RT(12)FBCheckReady @RT(0) @T @T @UNKNOWN 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(10)evStopData @RT(0) @T @T @DERIVED 0 @T @T @DT @RT(11)tevStopData @RT(0) @T @T @UNKNOWN 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(11)evStartData @RT(0) @T @T @DERIVED 0 @T @T @DT @RT(12)tevStartData @RT(0) @T @T @UNKNOWN 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(9)bInitDone @RT(0) @T @F @DT @RT(4)BOOL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(17)fbCheckPosReached @RT(0) @T @T @DERIVED 0 @T @T @DT @RT(17)FBCheckPosReached @RT(0) @T @T @UNKNOWN 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(18)bOpenShutOffNozzle @RT(0) @T @F @DT @RT(4)BOOL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(19)bCloseShutOffNozzle @RT(0) @T @F @DT @RT(4)BOOL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(14)bElectricPlast @RT(0) @T @F @DT @RT(4)BOOL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(17)bStopSONozzleOpen @RT(0) @T @F @DT @RT(4)BOOL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(8)bUseAccu @RT(0) @T @F @DT @RT(4)BOOL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(12)pbAccuLoaded @RT(0) @T @T @REFTO 0 @T @DT @RT(4)BOOL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(12)DeviceIdAccu @RT(0) @T @T @DERIVED 0 @T @T @DT @RT(10)tsDeviceId @RT(0) @T @T @UNKNOWN 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(37)(CompId:=cCompAccumulator,IndexId:=1) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(7)fbStart @RT(0) @T @T @DERIVED 0 @T @T @DT @RT(7)FBStart @RT(0) @T @T @UNKNOWN 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(6)fbStop @RT(0) @T @T @DERIVED 0 @T @T @DT @RT(6)FBStop @RT(0) @T @T @UNKNOWN 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(11)bCloseAtEnd @RT(0) @T @F @DT @RT(4)BOOL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(43)close shutoffnozzle at end of the movement  @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(18)rActScrewCircSpeed @RT(0) @T @F @DT @RT(4)REAL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 4 @F @F @F @F 
+
+@Var @RT(1)b @RT(0) @T @F @DT @RT(4)BOOL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 4 @F @F @F @F 
+
+@END_Dcl 
+
+@END_Export 
+
+@BEG_Export 
+
+@BEG_Algo 
+@POSTUPDATE_ALGORITHM @RT(19)pActiveProfileStage @STRUCTURED_TEXT 
+@RT(0) @RT(31)sv_iActiveStage,sv_bDeviceReady @RT(9)PU_Task_3 @F @F 
+@END_Algo 
+
+@BEG_Dcl 
+@RT(16)DclTreeContainer 
+0 
+@END_Dcl 
+
+@END_Export 
+
+@BEG_Export 
+
+@BEG_Algo 
+@EVENT_ALGORITHM @RT(17)evaStartedStopped @STRUCTURED_TEXT 
+@RT(0) @RT(17)mevStartedStopped @RT(9)EV_Task_7 @F @F 
+@END_Algo 
+
+@BEG_Dcl 
+@RT(16)DclTreeContainer 
+1 
+@Var @RT(20)evStartedStoppedData @RT(0) @T @T @DERIVED 0 @T @T @DT @RT(21)tevStartedStoppedData @RT(0) @T @T @UNKNOWN 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 1 @F @F @F @F 
+
+@END_Dcl 
+
+@END_Export 
+
+@BEG_Body 
+@TL(139)
+(**************************************** WARNING ********************************************
+ *** The KEBA Kemro K2 System including software is not intended for safety control tasks! ***
+ ***                       For further information see Comment tab!                        ***
+ *********************************************************************************************)
+
+IF sv_bInitStart THEN
+    //check servo hydraulic inject unit
+    IF sv_NumberOfDevices[cCompValveServoInj] = 1 THEN
+       sv_IMM_Type := nKAPPL_IMM_ServoValve;
+    END_IF;
+    
+    //initialize screw volume updater
+    abScrewVolumeUpdater.aInit();
+   
+    //register and init inject movement    
+    abMoveInjection.aRegister();
+    abMoveInjection.aInit();
+           
+    //register and init decomp movements
+    abMoveDecompression.aRegister();
+    abMoveDecompression.aInit();
+    
+    //register and init plast movement 
+    abMovePlast.aRegister();
+    abMovePlast.aInit();
+   
+    //register and init PVCalib movement
+    abMovePVCalib.aRegister();
+    abMovePVCalib.aInit();
+   
+    //init calc of hydraulic max values inject
+    abCalcMaxValuesInject.aInit(pRequiredPumps := @sv_RequiredPumpsInject,
+                                pHydrMaxValues := @sv_HydrMaxValuesInject);
+   
+    //init calc of hydraulic max values for decompression
+    abCalcMaxValuesDecomp.aInit(pRequiredPumps := @sv_RequiredPumpsDecomp,
+                                pHydrMaxValues := @sv_HydrMaxValuesDecomp);
+   
+    //init calc of hydraulic max values for plast
+    abCalcMaxValuesPlast.aInit(pRequiredPumps := @sv_RequiredPumpsPlast,
+                               pHydrMaxValues := @sv_HydrMaxValuesPlast);
+   
+    //initialize the ScrewRpm Measurement
+    sImpulseInput := CONCAT(GET_MY_FU_NAME(),'.di_ImpulseInput');
+    abRpmMeasure.aInit(sInputVariable := sImpulseInput,
+                       ImpulseParam := @sv_ImpulseParam,
+                       pImpulseFilterLimit := @sv_rImpulseFilterLimit);
+
+    IF sv_bSysPressureSensorAvailable THEN
+        pSysPressure := @sv_rActSysPressure;
+        fuName := GET_MY_FU_NAME();
+        variableName := CONCAT(fuName,'.Inject.SysPressure bar');
+        swoState := KSWO_AddVariable( Task := TaskInject,
+                                    Name := variableName,
+                                    Variable := sv_rActSysPressure);
+        b := FAddToScopeGroup(Task := TaskInject, 
+                              Name := variableName, 
+                              GroupId := cScopeGroupInject);
+    ELSE
+        fuName := GET_MY_FU_NAME();
+        variableName := CONCAT(fuName,'.Inject.SysPressure bar');
+        swoState := KSWO_AddVariable( Task := TaskInject,
+                                    Name := variableName,
+                                    Variable := sv_rPressure);        
+        b := FAddToScopeGroup(Task := TaskInject, 
+                              Name := variableName, 
+                              GroupId := cScopeGroupInject);
+        pSysPressure := @sv_rPressure;
+    END_IF;
+    
+    IF sv_IMM_Type = nKAPPL_IMM_ServoValve THEN
+       sv_HoldingControlParams.bUsePIDControl := TRUE;
+       sv_BackPressureControlParams.bUsePIDControl := TRUE;
+       fbInitServoValveControlData(sServoValveControlData := sv_ServoValveControlData,
+                                pCylinderData := @sv_CylinderData,
+                                pCylinderStroke := @sv_rScrewStroke,
+                                pActPressureA := @sv_rActPressureHydr,
+                                pSysPressure := pSysPressure,
+                                pActPosition := @sv_rScrewPositionAbs,
+                                pActVelocity := @sv_rScrewVelocityEstimateAbs,
+                                pSetVelocity := @sv_rVelocitySet,
+                                pControllerMode := @sv_ServoValveControllerMode,
+                                pTransducerError := @sv_bTransducerError,
+                                pDeviceReady := @sv_bValveServoInj1Ready,
+                                pScrewDiameter := @sv_rScrewDiameter,
+                                pMaxSpeedFwdMachLimit := @sv_rMaxSpeedFwdSpec,
+                                pSetValueLimitActive := @sv_bServoValveLimitActive,
+                                pPressureControlParams := @sv_HoldingControlParams,
+                                pBackPressureControlParams := @sv_BackPressureControlParams,
+                                pbMoveToServoCalibStartPos := @sv_bMoveToServoCalibStartPos);
+       
+       variableName := CONCAT(fuName,'.Inject.ActPressureHydr bar');
+       swoState := KSWO_AddVariable( Task := TaskInject,
+                                    Name := variableName,
+                                    Variable := sv_rActPressureHydr);
+       b := FAddToScopeGroup(Task := TaskInject, 
+                             Name := variableName, 
+                             GroupId := cScopeGroupInject);
+   END_IF;
+    
+   // in case speed pump, hold press controller is deactivated
+   pOptions := GET_SYNC_REFTO('Pump1.sv_Options',T#0s, s);
+   IF  pOptions^ = 16#101 OR pOptions^ = 16#103 OR pOptions^ = 16#105 THEN
+       sv_HoldingControlParams.bUsePIDControl := FALSE;
+   END_IF;       
+    
+   //shut off nozzle
+   mbShutOffNozzleAvailable := sv_NumberOfDevices[cCompShutOffNozzle] = sv_DeviceId.IndexId;
+   
+   //check if accumulator is mounted
+   IF sv_NumberOfDevices[cCompAccumulator] = 1 THEN
+      mbAccuAvailable := TRUE;
+      mpbAccuSwitchedOn := GET_SYNC_REFTO('Accumulator1.sv_bUseAccumulator', T#0s, Status);
+   END_IF;
+
+    // position control
+   IF sv_IMM_Type = nKAPPL_IMM_ServoValve THEN
+      prValveOutput := GET_SYNC_REFTO('ValveServoInj1.ao_Servo', T#0s, Status); 
+      IF Status = KSYS_Status_OK THEN
+         pValveLintab := GET_SYNC_REFTO('ValveServoInj1.sv_ServoValvePAPBLintab', T#0s, Status);
+         IF Status = KSYS_Status_OK THEN
+            abPositionController.aInit(pActPosition:=@sv_rScrewPositionAbs,
+                                       pSetPosition:=@sv_rScrewSetPosition,
+                                       pSetVelocity:=prValveOutput,
+                                       pPositionControlParam := @sv_InjectionPosControlParam,
+                                       pOperationMode := @sv_OperationMode,
+                                       pbDeviceReady := @sv_bDeviceReady,
+                                       pLintabOutV := pValveLintab,
+                                       pdMaxMoveTime := @sv_dMaxPosCtrlTime,
+                                       bFastOutput:= TRUE,
+                                       bIgnoreMoveCtrlData := TRUE,
+                                       pPositionTolerance:=@sv_rPositionTolerance,
+                                       pMaxPositionTolerance:=@sv_rMaxPositionTolerance);
+         END_IF; 
+      END_IF;
+    END_IF;
+    
+END_IF;
+
+@END_Body 
+
+@@@BEG_Comment@@@ 
+@TL(2)
+Calls the registration-algo of every movementblock after the deviceregistration succeeded(sv_bInitStart->true)
+
+@@@END_Comment@@@ 
+
+@BEG_Body 
+@TL(10)
+(**************************************** WARNING ********************************************
+ *** The KEBA Kemro K2 System including software is not intended for safety control tasks! ***
+ ***                       For further information see Comment tab!                        ***
+ *********************************************************************************************)
+
+IF sv_bDeviceStart THEN
+   //start device
+   START_PROCESS_ALGORITHM(paRun);
+END_IF;
+
+@END_Body 
+
+@@@BEG_Comment@@@ 
+@TL(1)
+Starts the algo paRun when sv_bDeviceStart is set by ABControl.
+@@@END_Comment@@@ 
+
+@BEG_Body 
+@TL(56)
+(**************************************** WARNING ********************************************
+ *** The KEBA Kemro K2 System including software is not intended for safety control tasks! ***
+ ***                       For further information see Comment tab!                        ***
+ *********************************************************************************************)
+
+
+abUpdateRelLintabPreInject.aInit(pLintabOut := @sv_LintabOutFwdP,
+                                 prMaxPressure := @sv_rMaxPressureFwd,
+                                 prMaxHydrPressure := @sv_HydrMaxValuesInject.rMaxPressure,
+                                 pCylinderData := @sv_CylinderData,
+                                 prScrewDiameter := @sv_rScrewDiameter);
+
+
+abUpdateRelLintabVelInject.aInit(prMaxSpeed := @sv_rMaxSpeedFwd,
+                                 prMaxSpeedCalc := @sv_rMaxSpeedFwdCalc,
+                                 prMaxSpeedCalib := @sv_rMaxSpeedFwdCalib,
+                                 prMaxSpeedReducePercent := @sv_rMaxSpeedReducePercent,
+                                 iMaxSpeedDigitsToFloor := miDigitsToFloor,
+                                 prAbsFlow := @sv_HydrMaxValuesInject.rAbsFlow,
+                                 pCylinderData := @sv_CylinderData);
+
+
+abUpdateRelLintabPreDecomp.aInit(pLintabOut := @sv_LintabOutBwdP,
+                                 prMaxPressure := @sv_rMaxPressureBwd,
+                                 prMaxHydrPressure := @sv_HydrMaxValuesDecomp.rMaxPressure,
+                                 bUseForce := FALSE,
+                                 bFwd := FALSE,
+                                 pCylinderData := @sv_CylinderData);
+
+
+abUpdateRelLintabVelDecomp.aInit(pLintabOut := @sv_LintabOutBwdV,
+                                 prMaxSpeed := @sv_rMaxSpeedBwd,
+                                 prMaxSpeedReducePercent := @sv_rMaxSpeedReducePercent,                                    
+                                 prMaxSpeedCalc := @sv_rMaxSpeedBwdCalc,  
+                                 prMaxSpeedCalib := @sv_rMaxSpeedBwdCalib,  
+                                 iMaxSpeedDigitsToFloor := miDigitsToFloor,                                 
+                                 prAbsFlow := @sv_HydrMaxValuesDecomp.rAbsFlow,
+                                 bFwd := FALSE,
+                                 pCylinderData := @sv_CylinderData);
+
+
+abUpdateRelLintabPrePlast.aInit(pLintabOut := @sv_LintabOutPlastP,
+                                prMaxPressure := @sv_rMaxPressurePlast,
+                                prMaxHydrPressure := @sv_HydrMaxValuesPlast.rMaxPressure,
+                                bUseForce := FALSE);
+
+
+abUpdateRelLintabVelPlast.aInit(prScrewDiameter := @sv_rScrewDiameter,
+                                prMaxRPM := @sv_rMaxRpm,
+                                prMaxRPMProfile := @sv_rMaxRpmProfile,
+                                prMaxRPMReducePercent := @sv_rMaxRpmReducePercent,
+                                iMaxRPMDigitsToFloor := miDigitsToFloor,                                                                 
+                                pLintabInV := @sv_ScrewRevVelLintab,
+                                pLintabOutV := @sv_LintabOutPlastV,
+                                prMaxSpeed := @sv_rMaxRotationPlast);
+
+@END_Body 
+
+@@@BEG_Comment@@@ 
+@TL(0)
+
+@@@END_Comment@@@ 
+
+@BEG_SfcBody 
+25 29 39 
+
+@BEG_SfcData 2 
+@StepSeq @RT(4)sseq @F 1 
+@Loop @RT(4)loop @F 2 
+@StepSeq @RT(4)sseq @F 17 
+@Step @RT(7)S_Start @F @T @F @F @RT(0) @F 
+@AcbCont @RT(7)unnamed @F 3 
+@Acb @RT(5)AInit @F @F @RT(1)P @RT(0) @F @F @F @F 
+@Acb @RT(8)Action13 @F @T @RT(1)P @RT(0) @F @F @T @TL(6)
+b := WRITE_SV_DIRECT(sv_bDeviceStart, sv_bFALSE);
+bElectricPlast := (((g_MoveCtrl.pData^.MoveId = cMovePlast) 
+            OR (g_MoveCtrl.pData^.MoveId = cMoveIntrusion)
+            OR (g_MoveCtrl.pData^.MoveId = cMovePlastPurge)) 
+        AND (sv_PlastMotor = nElectric));
+
+@F 
+@Acb @RT(10)ACheckAccu @F @F @RT(1)P @RT(0) @F @F @F @F 
+
+@AltBranch @RT(3)alt @F 2 
+@TransSeq @RT(4)tseq @F 3 
+@Trans @RT(11)TAccuNeeded @F @T @F @F @T @F @TL(2)
+bUseAccu
+
+@RT(11)TAccuNeeded @F 
+@Step @RT(17)S_CheckAccuLoaded @F @F @F @F @RT(0) @F 
+@AcbCont @RT(7)unnamed @F 0 
+
+@AltBranch @RT(3)alt @F 2 
+@TransSeq @RT(4)tseq @F 1 
+@Trans @RT(11)TAccuLoaded @F @T @F @F @T @F @TL(2)
+pbAccuLoaded^
+
+@RT(11)TAccuLoaded @F 
+
+@TransSeq @RT(4)tseq @F 3 
+@Trans @RT(14)TAccuNotLoaded @F @T @F @F @T @F @TL(2)
+NOT pbAccuLoaded^
+
+@RT(14)TAccuNotLoaded @F 
+@Step @RT(10)S_LoadAccu @F @F @F @F @RT(0) @F 
+@AcbCont @RT(7)unnamed @F 2 
+@Acb @RT(17)AStartAccuLoading @F @T @RT(1)P @RT(0) @F @F @T @TL(4)
+fbStart(DeviceId := DeviceIdAccu,
+        MoveDir := cMoveBwd,
+        MoveId := cMoveBwd);
+
+@F 
+@Acb @RT(15)ACheckAccuReady @F @T @RT(1)N @RT(0) @F @F @T @TL(2)
+fbCheckReady(DeviceId := DeviceIdAccu);
+
+@F 
+
+@AltBranch @RT(3)alt @F 2 
+@TransSeq @RT(4)tseq @F 1 
+@Trans @RT(19)TAccuLoadedAndReady @F @T @F @F @T @F @TL(2)
+fbCheckReady.bReady AND pbAccuLoaded^
+
+@RT(19)TAccuLoadedAndReady @F 
+
+@TransSeq @RT(4)tseq @F 2 
+@Trans @RT(16)TStopAccuLoading @F @T @F @F @T @F @TL(2)
+g_MoveCtrl.bStop
+
+@RT(16)TStopAccuLoading @F 
+@Goto @RT(10)S_StopAccu @F @F 
+
+
+
+
+
+@TransSeq @RT(4)tseq @F 1 
+@Trans @RT(14)TAccuNotNeeded @F @T @T @F @T @F @TL(2)
+NOT bUseAccu
+
+@RT(14)TAccuNotNeeded @F 
+
+
+@Step @RT(15)S_ShutOffNozzle @F @F @F @F @RT(0) @F 
+@AcbCont @RT(7)unnamed @F 0 
+
+@AltBranch @RT(3)alt @F 2 
+@TransSeq @RT(4)tseq @F 1 
+@Trans @RT(20)TShutOffNozzleLinked @F @T @F @F @T @F @TL(2)
+mbShutOffNozzleAvailable
+
+@RT(20)TShutOffNozzleLinked @F 
+
+@TransSeq @RT(4)tseq @F 2 
+@Trans @RT(16)TNoShutOffNozzle @F @T @F @F @T @F @TL(2)
+NOT mbShutOffNozzleAvailable
+
+@RT(16)TNoShutOffNozzle @F 
+@Goto @RT(20)S_CheckElectricPlast @F @F 
+
+
+@Step @RT(6)Step13 @F @F @F @F @RT(0) @F 
+@AcbCont @RT(7)unnamed @F 1 
+@Acb @RT(19)ACheckShutOffNozzle @F @F @RT(1)P @RT(0) @F @F @F @F 
+
+@AltBranch @RT(3)alt @F 3 
+@TransSeq @RT(4)tseq @F 3 
+@Trans @RT(18)TOpenShutOffNozzle @F @T @F @F @T @F @TL(2)
+bOpenShutOffNozzle
+
+@RT(18)TOpenShutOffNozzle @F 
+@Step @RT(19)S_OpenShutOffNozzle @F @F @F @F @RT(0) @F 
+@AcbCont @RT(7)unnamed @F 2 
+@Acb @RT(6)AStart @F @F @RT(1)P @RT(0) @F @F @F @F 
+@Acb @RT(9)AWaitOpen @F @F @RT(1)N @RT(0) @F @F @F @F 
+
+@AltBranch @RT(3)alt @F 2 
+@TransSeq @RT(4)tseq @F 1 
+@Trans @RT(7)Trans15 @F @T @F @F @T @F @TL(3)
+mpbShutOffNozzleOpen^ 
+AND fbCheckReady.bReady
+
+@RT(7)Trans15 @F 
+
+@TransSeq @RT(4)tseq @F 2 
+@Trans @RT(7)Trans23 @F @T @F @F @T @T @TL(3)
+g_MoveCtrl.bStop 
+AND fbCheckReady.bReady
+
+@RT(7)Trans23 @F 
+@Goto @RT(20)S_CloseShutOffNozzle @F @F 
+
+
+
+@TransSeq @RT(4)tseq @F 3 
+@Trans @RT(19)TCloseShutOffNozzle @F @T @F @F @T @F @TL(2)
+bCloseShutOffNozzle
+
+@RT(19)TCloseShutOffNozzle @F 
+@Step @RT(7)S_Close @F @F @F @F @RT(0) @F 
+@AcbCont @RT(7)unnamed @F 1 
+@Acb @RT(11)AStartClose @F @F @RT(1)P @RT(0) @F @F @F @F 
+
+@AltBranch @RT(3)alt @F 2 
+@TransSeq @RT(4)tseq @F 1 
+@Trans @RT(7)Trans36 @F @T @F @F @T @F @TL(3)
+mpbShutOffNozzleClosed^ AND
+mbShutOffNozzleReady
+
+@RT(7)Trans36 @F 
+
+@TransSeq @RT(4)tseq @F 4 
+@Trans @RT(24)TStopDuringSONozzleClose @F @T @F @F @T @T @TL(2)
+g_MoveCtrl.bStop
+
+@RT(24)TStopDuringSONozzleClose @F 
+@Step @RT(11)S_WaitReady @F @F @F @F @RT(0) @F 
+@AcbCont @RT(7)unnamed @F 0 
+
+@Trans @RT(13)TSOCloseReady @F @T @F @F @T @F @TL(2)
+mbShutOffNozzleReady
+
+@RT(13)TSOCloseReady @F 
+@Goto @RT(5)READY @F @F 
+
+
+
+@TransSeq @RT(4)tseq @F 1 
+@Trans @RT(16)TShutOffNozzleOk @F @T @T @F @T @F @TL(3)
+NOT bCloseShutOffNozzle AND
+NOT bOpenShutOffNozzle
+
+@RT(16)TShutOffNozzleOk @F 
+
+
+@Step @RT(20)S_CheckElectricPlast @F @F @T @F @RT(0) @F 
+@AcbCont @RT(7)unnamed @F 0 
+
+@AltBranch @RT(3)alt @F 2 
+@TransSeq @RT(4)tseq @F 1 
+@Trans @RT(7)Trans21 @F @T @F @F @T @F @TL(2)
+NOT bElectricPlast
+
+@RT(7)Trans21 @F 
+
+@TransSeq @RT(4)tseq @F 2 
+@Trans @RT(7)Trans22 @F @T @F @F @T @F @TL(2)
+bElectricPlast
+
+@RT(7)Trans22 @F 
+@Goto @RT(8)S_Output @F @F 
+
+
+@Step @RT(16)S_Output_Request @F @F @F @F @RT(0) @F 
+@AcbCont @RT(7)unnamed @F 2 
+@Acb @RT(14)AOutputRequest @F @T @RT(1)P @RT(0) @F @F @T @TL(4)
+abOutputRequest.aRequest(pMoveData := g_MoveCtrl.pData,
+                         AnaOutputMode := nAnaOutputModeFast);
+
+
+@F 
+@Acb @RT(12)ACheckOutput @F @T @RT(1)N @RT(0) @F @F @T @TL(2)
+abOutputRequest.aCheck();
+
+@F 
+
+@AltBranch @RT(3)alt @F 2 
+@TransSeq @RT(4)tseq @F 1 
+@Trans @RT(5)TStop @F @T @F @F @T @T @TL(2)
+g_MoveCtrl.bStop
+
+@RT(5)TStop @F 
+
+@TransSeq @RT(4)tseq @F 3 
+@Trans @RT(14)TOutputAllowed @F @T @F @F @T @F @TL(2)
+abOutputRequest.aCheck.bReady
+
+@RT(14)TOutputAllowed @F 
+@Step @RT(8)S_Output @F @F @T @F @RT(0) @F 
+@AcbCont @RT(7)unnamed @F 0 
+
+@AltBranch @RT(3)alt @F 2 
+@TransSeq @RT(4)tseq @F 3 
+@Trans @RT(8)TMoveBwd @F @T @F @F @T @F @TL(2)
+g_MoveCtrl.pData^.MoveDir = cMoveBwd 
+
+@RT(8)TMoveBwd @F 
+@Step @RT(13)S_CheckMoveId @F @F @F @F @RT(0) @F 
+@AcbCont @RT(7)unnamed @F 0 
+
+@AltBranch @RT(3)alt @F 2 
+@TransSeq @RT(4)tseq @F 3 
+@Trans @RT(7)TDecomp @F @T @F @F @T @F @TL(5)
+g_MoveCtrl.pData^.MoveId = cMoveDecompBefPlast OR 
+g_MoveCtrl.pData^.MoveId = cMoveDecompAftPlast OR
+g_MoveCtrl.pData^.MoveId = cMoveDecompPurge OR
+g_MoveCtrl.pData^.MoveId = cMoveDecompInterPos
+
+@RT(7)TDecomp @F 
+@Step @RT(8)S_Decomp @F @F @F @F @RT(0) @F 
+@AcbCont @RT(7)unnamed @F 1 
+@Acb @RT(4)aBwd @F @F @RT(1)N @RT(0) @F @F @F @F 
+
+@Trans @RT(12)TDecompReady @F @T @F @F @T @F @TL(2)
+abMoveDecompression.aRun.bReady;
+
+@RT(12)TDecompReady @F 
+
+@TransSeq @RT(4)tseq @F 3 
+@Trans @RT(6)TPlast @F @T @F @F @T @F @TL(4)
+g_MoveCtrl.pData^.MoveId = cMovePlast OR
+g_MoveCtrl.pData^.MoveId = cMoveIntrusion OR
+g_MoveCtrl.pData^.MoveId = cMovePlastPurge
+
+@RT(6)TPlast @F 
+@Step @RT(7)S_Plast @F @F @F @F @RT(0) @F 
+@AcbCont @RT(7)unnamed @F 4 
+@Acb @RT(6)aPlast @F @F @RT(1)N @RT(0) @F @F @F @F 
+@Acb @RT(18)ACopyMeasureParams @F @T @RT(1)P @RT(0) @F @F @T @TL(3)
+sv_ImpulseParam.rGain := DINT_TO_REAL(sv_iScrewGain);
+abRpmMeasure.aResetRoundsCounter();
+
+@F 
+@Acb @RT(11)AMeasureRpm @F @F @RT(1)N @RT(0) @F @F @F @F 
+@Acb @RT(9)AResetRpm @F @T @RT(2)P0 @RT(0) @F @F @T @TL(3)
+sv_rActScrewRpm := 0.0;
+sv_rActScrewCircSpeed := 0.0;
+
+@F 
+
+@Trans @RT(11)TPlastReady @F @T @F @F @T @F @TL(2)
+abMovePlast.aRun.bReady
+
+@RT(11)TPlastReady @F 
+
+
+
+@TransSeq @RT(4)tseq @F 3 
+@Trans @RT(8)TMoveFwd @F @T @F @F @T @F @TL(2)
+g_MoveCtrl.pData^.MoveDir = cMoveFwd
+
+@RT(8)TMoveFwd @F 
+@Step @RT(14)S_CheckMoveId2 @F @F @F @F @RT(0) @F 
+@AcbCont @RT(7)unnamed @F 0 
+
+@AltBranch @RT(3)alt @F 2 
+@TransSeq @RT(4)tseq @F 3 
+@Trans @RT(7)Trans27 @F @T @F @F @T @F @TL(2)
+g_MoveCtrl.pData^.MoveId <> cMovePVCalib
+
+@RT(7)Trans27 @F 
+@Step @RT(8)S_Inject @F @F @F @F @RT(0) @F 
+@AcbCont @RT(7)unnamed @F 2 
+@Acb @RT(11)AUnloadAccu @F @F @RT(1)P @RT(0) @F @F @F @F 
+@Acb @RT(4)aFwd @F @F @RT(1)N @RT(0) @F @F @F @F 
+
+@Trans @RT(12)TInjectReady @F @T @F @F @T @F @TL(2)
+abMoveInjection.aRun.bReady
+
+@RT(12)TInjectReady @F 
+
+@TransSeq @RT(4)tseq @F 3 
+@Trans @RT(7)Trans28 @F @T @F @F @T @F @TL(2)
+g_MoveCtrl.pData^.MoveId = cMovePVCalib
+
+@RT(7)Trans28 @F 
+@Step @RT(9)S_PVCalib @F @F @F @F @RT(0) @F 
+@AcbCont @RT(7)unnamed @F 1 
+@Acb @RT(8)aPVCalib @F @F @RT(1)N @RT(0) @F @F @F @F 
+
+@Trans @RT(7)Trans29 @F @T @F @F @T @T @TL(2)
+abMovePVCalib.aRun.bReady
+
+@RT(7)Trans29 @F 
+
+
+
+
+
+
+@Step @RT(6)Step14 @F @F @F @F @RT(0) @F 
+@AcbCont @RT(7)unnamed @F 1 
+@Acb @RT(14)AOutputRelease @F @T @RT(1)P @RT(0) @F @F @T @TL(4)
+IF NOT bElectricPlast THEN
+    abOutputRequest.aRelease(pMoveData := g_MoveCtrl.pData);
+END_IF;
+
+@F 
+
+@Trans @RT(7)Trans34 @F @T @F @F @T @F @TL(2)
+TRUE
+
+@RT(7)Trans34 @F 
+@Step @RT(10)S_AccuStop @F @F @F @F @RT(0) @F 
+@AcbCont @RT(7)unnamed @F 0 
+
+@AltBranch @RT(3)alt @F 2 
+@TransSeq @RT(4)tseq @F 3 
+@Trans @RT(18)TAccuStopNecessary @F @T @F @F @T @F @TL(2)
+bUseAccu
+
+@RT(18)TAccuStopNecessary @F 
+@Step @RT(10)S_StopAccu @F @F @T @F @RT(0) @F 
+@AcbCont @RT(7)unnamed @F 2 
+@Acb @RT(9)AStopAccu @F @T @RT(1)P @RT(0) @F @F @T @TL(2)
+fbStop(DeviceId := DeviceIdAccu);
+
+@F 
+@Acb @RT(17)ACheckAccuStopped @F @T @RT(1)N @RT(0) @F @F @T @TL(2)
+fbCheckReady(DeviceId := DeviceIdAccu);
+
+@F 
+
+@Trans @RT(12)TAccuStopped @F @T @F @F @T @F @TL(2)
+fbCheckReady.bReady
+
+@RT(12)TAccuStopped @F 
+
+@TransSeq @RT(4)tseq @F 1 
+@Trans @RT(20)TNoAccuStopNecessary @F @T @T @F @T @F @TL(2)
+NOT bUseAccu
+
+@RT(20)TNoAccuStopNecessary @F 
+
+
+@Step @RT(6)Step23 @F @F @F @F @RT(0) @F 
+@AcbCont @RT(7)unnamed @F 0 
+
+@AltBranch @RT(3)alt @F 2 
+@TransSeq @RT(4)tseq @F 3 
+@Trans @RT(7)Trans19 @F @T @F @F @T @F @TL(2)
+bCloseAtEnd
+
+@RT(7)Trans19 @F 
+@Step @RT(20)S_CloseShutOffNozzle @F @F @T @F @RT(0) @F 
+@AcbCont @RT(7)unnamed @F 1 
+@Acb @RT(11)AStartClose @F @F @RT(1)P @RT(0) @F @F @F @F 
+
+@Trans @RT(7)Trans16 @F @T @F @F @T @F @TL(2)
+mbShutOffNozzleReady
+
+@RT(7)Trans16 @F 
+
+@TransSeq @RT(4)tseq @F 1 
+@Trans @RT(7)Trans20 @F @T @T @F @T @F @TL(2)
+NOT bCloseAtEnd
+
+@RT(7)Trans20 @F 
+
+
+@Step @RT(5)READY @F @F @T @F @RT(0) @F 
+@AcbCont @RT(7)unnamed @F 1 
+@Acb @RT(6)AReady @F @T @RT(1)P @RT(0) @F @F @T @TL(5)
+g_MoveCtrl.bReady := TRUE;
+IF NOT sv_bDeviceStart THEN
+    STOP_PROCESS_ALGORITHM();
+END_IF;
+
+@F 
+
+
+@Trans @RT(6)TReady @F @T @T @T @T @T @TL(2)
+TRUE
+
+@RT(6)TReady @F 
+
+@END_SfcData 
+@SaActions 12 
+@SaText @RT(4)aBwd 1 @TL(7)
+(**************************************** WARNING ********************************************
+ *** The KEBA Kemro K2 System including software is not intended for safety control tasks! ***
+ ***                       For further information see Comment tab!                        ***
+ *********************************************************************************************)
+
+abMoveDecompression.aRun(bStop := g_MoveCtrl.bStop);
+
+
+@SaText @RT(4)aFwd 1 @TL(2)
+abMoveInjection.aRun(bStop := g_MoveCtrl.bStop);
+
+
+@SaText @RT(6)aPlast 1 @TL(7)
+(**************************************** WARNING ********************************************
+ *** The KEBA Kemro K2 System including software is not intended for safety control tasks! ***
+ ***                       For further information see Comment tab!                        ***
+ *********************************************************************************************)
+
+abMovePlast.aRun(bStop := g_MoveCtrl.bStop);
+
+
+@SaText @RT(8)aPVCalib 1 @TL(2)
+abMovePVCalib.aRun(bStop := g_MoveCtrl.bStop);
+
+
+@SaText @RT(6)AStart 1 @TL(8)
+bStopSONozzleOpen := FALSE;
+
+evStartData.DeviceId := DeviceIdShutOffNozzle;
+evStartData.MoveDir := cMoveOpen;
+evStartData.MoveId := cMoveOpen;
+
+SET_EVENT(evStart, evStartData);
+
+
+@SaText @RT(11)AStartClose 1 @TL(13)
+(**************************************** WARNING ********************************************
+ *** The KEBA Kemro K2 System including software is not intended for safety control tasks! ***
+ ***                       For further information see Comment tab!                        ***
+ *********************************************************************************************)
+
+mbShutOffNozzleReady := FALSE;
+
+evStartData.DeviceId := DeviceIdShutOffNozzle;
+evStartData.MoveDir := cMoveClose;
+evStartData.MoveId := cMoveClose;
+
+SET_EVENT(evStart, evStartData);
+
+
+@SaText @RT(19)ACheckShutOffNozzle 1 @TL(36)
+(**************************************** WARNING ********************************************
+ *** The KEBA Kemro K2 System including software is not intended for safety control tasks! ***
+ ***                       For further information see Comment tab!                        ***
+ *********************************************************************************************)
+
+//find out if opening or closing of shut off nozzle is necessary
+//shut off nozzle must be opened for:
+//inject, intrusion, cold drop, pv calib, decomp before plast
+//inject to pos., inject calib 
+
+//shut off nozzle must be closed for:
+//plast, decomp after plast, decomp to pos. 
+
+//attention: purge movements are handled in AutoPurge1 - fu
+
+bOpenShutOffNozzle := FALSE;
+bCloseShutOffNozzle := FALSE;
+bCloseAtEnd := FALSE;
+
+IF (g_MoveCtrl.pData^.MoveId = cMoveInject OR g_MoveCtrl.pData^.MoveId = cMoveIntrusion OR
+   g_MoveCtrl.pData^.MoveId = cMoveColdDrop OR g_MoveCtrl.pData^.MoveId = cMovePVCalib OR
+   g_MoveCtrl.pData^.MoveId = cMoveDecompBefPlast OR g_MoveCtrl.pData^.MoveId = cMoveFwdInterPos OR
+   g_MoveCtrl.pData^.MoveId = cMoveInjectCalib) THEN
+   
+   //open is only necessary if it is not open yet
+   bOpenShutOffNozzle := NOT mpbShutOffNozzleOpen^;
+   bCloseAtEnd := TRUE;
+
+ELSIF (g_MoveCtrl.pData^.MoveId = cMovePlast OR g_MoveCtrl.pData^.MoveId = cMoveDecompAftPlast OR
+   g_MoveCtrl.pData^.MoveId = cMoveDecompInterPos) THEN
+   
+   //close if not already closed
+   bCloseShutOffNozzle := NOT mpbShutOffNozzleClosed^;
+END_IF;
+
+
+
+@SaText @RT(10)ACheckAccu 1 @TL(14)
+(**************************************** WARNING ********************************************
+ *** The KEBA Kemro K2 System including software is not intended for safety control tasks! ***
+ ***                       For further information see Comment tab!                        ***
+ *********************************************************************************************)
+
+IF sv_OperationMode <> nSetup AND g_MoveCtrl.pData^.MoveId = cMoveInject AND
+   mbAccuAvailable AND mpbAccuSwitchedOn^ THEN 
+   //inject movement in manual or setup mode, accumulator function unit registered and
+   //accu switched on
+   bUseAccu := TRUE;
+ELSE
+   bUseAccu := FALSE;   
+END_IF;
+
+
+@SaText @RT(5)AInit 1 @TL(34)
+(**************************************** WARNING ********************************************
+ *** The KEBA Kemro K2 System including software is not intended for safety control tasks! ***
+ ***                       For further information see Comment tab!                        ***
+ *********************************************************************************************)
+
+IF mbShutOffNozzleAvailable AND NOT bInitDone THEN
+   DeviceIdShutOffNozzle.CompId := cCompShutOffNozzle;
+   DeviceIdShutOffNozzle.IndexId := sv_DeviceId.IndexId;
+   
+   fbCheckPosReached.DeviceId := DeviceIdShutOffNozzle;
+   fbCheckPosReached.MoveDir := cMoveClose;
+   fbCheckPosReached.MoveId := cMoveClose;
+   fbCheckPosReached();
+   mpbShutOffNozzleClosed := fbCheckPosReached.pbPosReached;
+   
+   fbCheckPosReached.MoveDir := cMoveOpen;
+   fbCheckPosReached.MoveId := cMoveOpen;
+   fbCheckPosReached();
+   mpbShutOffNozzleOpen := fbCheckPosReached.pbPosReached;
+   
+   mevStartedStopped := evStartedStopped;  
+END_IF;
+
+IF mbAccuAvailable AND NOT bInitDone THEN
+   //get reference to accu loaded flag
+   fbCheckPosReached.DeviceId := DeviceIdAccu;
+   fbCheckPosReached.MoveDir := cMoveBwd;
+   fbCheckPosReached.MoveId := cMoveBwd;
+   fbCheckPosReached();
+   pbAccuLoaded := fbCheckPosReached.pbPosReached;
+END_IF;
+
+bInitDone := TRUE;
+
+
+@SaText @RT(11)AUnloadAccu 1 @TL(13)
+(**************************************** WARNING ********************************************
+ *** The KEBA Kemro K2 System including software is not intended for safety control tasks! ***
+ ***                       For further information see Comment tab!                        ***
+ *********************************************************************************************)
+
+IF bUseAccu THEN
+   //start accu unloading
+   fbStart(DeviceId := DeviceIdAccu,
+           MoveDir  := cMoveFwd,
+           MoveId   := cMoveFwd);
+END_IF;
+
+
+
+@SaText @RT(9)AWaitOpen 1 @TL(11)
+// if a shutoff nozzle open is active while main movement should be stopped, 
+// stop shutoffnozzle open movement also
+// so it is not necessary to wait until move open is finished before start move close
+evStopData.DeviceId := DeviceIdShutOffNozzle;
+IF g_MoveCtrl.bStop AND (NOT bStopSONozzleOpen) THEN
+   bStopSONozzleOpen := TRUE; 
+   SET_EVENT(evStop, evStopData);  // send stop event only once
+END_IF;
+
+fbCheckReady(DeviceId := DeviceIdShutOffNozzle);
+
+
+@SaText @RT(11)AMeasureRpm 1 @TL(12)
+(**************************************** WARNING ********************************************
+ *** The KEBA Kemro K2 System including software is not intended for safety control tasks! ***
+ ***                       For further information see Comment tab!                        ***
+ *********************************************************************************************)
+
+abRpmMeasure.aRun();
+b := WRITE_SVREAL_DIRECT(sv_rActScrewRpm, abRpmMeasure.aRun.rRoundsPerTime);
+
+rActScrewCircSpeed := FCalcScrewCircumfenceSpeed(sv_rScrewDiameter, sv_rActScrewRpm);
+b := WRITE_SVREAL_DIRECT(sv_rActScrewCircSpeed, rActScrewCircSpeed);
+
+
+
+@SaTrans 0 
+@SaExits 0 
+@END_SfcBody 
+
+@@@BEG_Comment@@@ 
+@TL(3)
+Calls depending on the MoveId and MoveDir the movementblock. g_MoveCtrl.MoveId/MoveDir are set by the Block ABControl after
+evStart was received. The movement-block has to be called until the it returns abMoveXxx.aRun.bReady.
+In case of hydraulic movements the output-request has to be done before starting the movement.
+@@@END_Comment@@@ 
+
+@BEG_Body 
+@TL(46)
+(**************************************** WARNING ********************************************
+ *** The KEBA Kemro K2 System including software is not intended for safety control tasks! ***
+ ***                       For further information see Comment tab!                        ***
+ *********************************************************************************************)
+
+IF NOT sv_bDeviceReady THEN
+   
+   IF sv_OperationMode = nSetup THEN
+      //movement in setup mode active
+      //-> reset active stage information
+      sv_iActiveStageInject := 0;
+      sv_iActiveStagePlast := 0;
+   ELSE      
+      IF g_MoveCtrl.pData^.MoveDir = cMoveFwd THEN
+         
+         sv_iActiveStagePlast := 0;
+         
+         IF g_MoveCtrl.pData^.MoveId = cMoveInject THEN
+            IF sv_iActiveStage > 0 THEN
+               sv_iActiveStageInject := sv_iActiveStage;
+            END_IF;
+         END_IF;
+         
+      ELSIF g_MoveCtrl.pData^.MoveDir = cMoveBwd THEN
+         
+         sv_iActiveStageInject := 0;
+         
+         IF g_MoveCtrl.pData^.MoveId = cMovePlast THEN         
+            IF sv_iActiveStage > 0 THEN
+               sv_iActiveStagePlast := sv_iActiveStage;
+            END_IF;
+         ELSE
+            //any other bwd movement
+            //-> reset active plast stage
+            sv_iActiveStagePlast := 0;
+         END_IF;
+         
+      END_IF;
+  
+   END_IF;
+   
+END_IF;
+
+
+
+
+@END_Body 
+
+@@@BEG_Comment@@@ 
+@TL(0)
+
+@@@END_Comment@@@ 
+
+@BEG_Body 
+@TL(10)
+(**************************************** WARNING ********************************************
+ *** The KEBA Kemro K2 System including software is not intended for safety control tasks! ***
+ ***                       For further information see Comment tab!                        ***
+ *********************************************************************************************)
+
+IF (evStartedStoppedData.State <> nStarted) AND (evStartedStoppedData.DeviceId = DeviceIdShutOffNozzle) AND 
+   (evStartedStoppedData.MoveId = cMoveClose) AND (evStartedStoppedData.MoveDir = cMoveClose) THEN
+   mbShutOffNozzleReady := TRUE;
+END_IF;
+
+@END_Body 
+
+@@@BEG_Comment@@@ 
+@TL(0)
+
+@@@END_Comment@@@ 
+@END_Body 
+
+@END_Contents 

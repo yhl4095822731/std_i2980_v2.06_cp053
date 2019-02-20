@@ -1,0 +1,265 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<base:Mask xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xmlns:base="http://www.keba.at/viewedit.model.base" widgetId="kvs.mask" name="EnergyMask">
+  <resolution width="684" height="476"/>
+  <position x="1" y="1"/>
+  <attributeValues key="Background" value="30,30,30"/>
+  <attributeValues key="Icon" value="Energy/hmi/images/SPumpEnergyMon.gif"/>
+  <attributeValues key="Title" value="Energy Monitor"/>
+  <layout layoutID="kvs.layout.BorderLayout" name="BorderLayout"/>
+  <widgetInstances xsi:type="base:ContainerWidgetInstance" widgetId="keplast.kvs.borderpanelsmall" name="bpMain" layoutConstraint="CENTER">
+    <resolution width="684" height="476"/>
+    <position/>
+    <attributeValues key="Title" value="Energy Monitor"/>
+    <layout layoutID="keplast.kvs.layout.horizontalsplitlayout" name="HorizontalSplitLayout">
+      <attributeValues key="PercentLeft" value="50"/>
+    </layout>
+    <widgetInstances xsi:type="base:ContainerWidgetInstance" widgetId="kvs.panel" name="cLeft" layoutConstraint="LEFT">
+      <resolution width="332" height="379"/>
+      <position x="6" y="33"/>
+      <layout layoutID="kvs.layout.VerticalFlowLayout" name="VerticalFlowLayout"/>
+      <widgetInstances xsi:type="base:ContainerWidgetInstance" widgetId="keplast.kvs.borderpanelsmall" name="cLeft_bpNorth" layoutConstraint="null">
+        <resolution width="322" height="124"/>
+        <position x="5" y="5"/>
+        <attributeValues key="Title" value="Power"/>
+        <layout layoutID="kvs.layout.VerticalFlowLayout" name="VerticalFlowLayout">
+          <attributeValues key="Vgap" value="0"/>
+          <attributeValues key="Hgap" value="0"/>
+        </layout>
+        <widgetInstances xsi:type="base:ContainerWidgetInstance" widgetId="kvs.panel" name="cMotorPower" layoutConstraint="null">
+          <resolution width="316" height="29"/>
+          <position x="3" y="33"/>
+          <attributeValues key="PreferredSize" value="316, 29"/>
+          <dynamicAttributes key="Create">
+            <value function="hasServoDrives : UserFunctions" equal="true" unequal="false"/>
+          </dynamicAttributes>
+          <layout layoutID="kvs.layout.PercentLayout" name="PercentLayout"/>
+          <widgetInstances widgetId="keplast.kvs.numfieldtext" name="fMotorPower" layoutConstraint="0,0,100,100">
+            <resolution width="316" height="29"/>
+            <position/>
+            <attributeValues key="Editable" value="false"/>
+            <attributeValues key="UnitFieldWidth" value="45"/>
+            <attributeValues key="Variable" value="system.sv_rMotorPower"/>
+          </widgetInstances>
+          <widgetInstances widgetId="kvs.label" name="lblMotorEst" layoutConstraint="0,0,65,100">
+            <resolution width="205" height="29"/>
+            <position/>
+            <attributeValues key="Text" value="Estimated"/>
+            <attributeValues key="Alignment" value="MIDDLE/RIGHT"/>
+          </widgetInstances>
+        </widgetInstances>
+        <widgetInstances xsi:type="base:ContainerWidgetInstance" widgetId="kvs.panel" name="cHeatingPower" layoutConstraint="null">
+          <resolution width="316" height="29"/>
+          <position x="3" y="62"/>
+          <attributeValues key="PreferredSize" value="316, 29"/>
+          <layout layoutID="kvs.layout.PercentLayout" name="PercentLayout"/>
+          <widgetInstances widgetId="keplast.kvs.numfieldtext" name="fHeatingPower" layoutConstraint="0,0,100,100">
+            <resolution width="316" height="29"/>
+            <position/>
+            <attributeValues key="Variable" value="system.sv_rHeatingPower"/>
+            <attributeValues key="Editable" value="false"/>
+            <attributeValues key="UnitFieldWidth" value="45"/>
+          </widgetInstances>
+          <widgetInstances widgetId="kvs.label" name="lblHeatingEst" layoutConstraint="0,0,65,100">
+            <resolution width="205" height="29"/>
+            <position/>
+            <attributeValues key="Text" value="Estimated"/>
+            <attributeValues key="Alignment" value="MIDDLE/RIGHT"/>
+          </widgetInstances>
+        </widgetInstances>
+        <widgetInstances xsi:type="base:ContainerWidgetInstance" widgetId="kvs.panel" name="cTotalPower" layoutConstraint="null">
+          <resolution width="316" height="29"/>
+          <position x="3" y="91"/>
+          <attributeValues key="PreferredSize" value="316, 29"/>
+          <layout layoutID="kvs.layout.PercentLayout" name="PercentLayout"/>
+          <widgetInstances widgetId="keplast.kvs.numfieldtext" name="fTotalPower" layoutConstraint="0,0,100,100">
+            <resolution width="316" height="29"/>
+            <position/>
+            <attributeValues key="Variable" value="system.sv_rTotalPower"/>
+            <attributeValues key="Editable" value="false"/>
+            <attributeValues key="UnitFieldWidth" value="45"/>
+          </widgetInstances>
+          <widgetInstances widgetId="kvs.label" name="lblSumEst" layoutConstraint="0,0,65,100">
+            <resolution width="205" height="29"/>
+            <position/>
+            <attributeValues key="Text" value="Estimated"/>
+            <attributeValues key="Alignment" value="MIDDLE/RIGHT"/>
+            <dynamicAttributes key="Create">
+              <value function="doesDeviceExist : UserFunctions" equal="false" unequal="true">
+                <parameter key="1" value="devicename;PlastFunctionUtils.createDeviceName(&quot;EnergyMeter1&quot;)"/>
+              </value>
+            </dynamicAttributes>
+          </widgetInstances>
+        </widgetInstances>
+      </widgetInstances>
+      <widgetInstances xsi:type="base:ContainerWidgetInstance" widgetId="keplast.kvs.borderpanelsmall" name="cLeft_bpCenter" layoutConstraint="null">
+        <resolution width="322" height="240"/>
+        <position x="5" y="134"/>
+        <dynamicAttributes key="Title">
+          <value function="doesDeviceExist : UserFunctions" equal="Energy" unequal="Energy Estimated">
+            <parameter key="1" value="devicename;PlastFunctionUtils.createDeviceName(&quot;EnergyMeter1&quot;)"/>
+          </value>
+        </dynamicAttributes>
+        <layout layoutID="kvs.layout.GridLayout" name="GridLayout">
+          <attributeValues key="Rows" value="7"/>
+          <attributeValues key="Columns" value="1"/>
+          <attributeValues key="Hgap" value="0"/>
+        </layout>
+        <widgetInstances widgetId="keplast.kvs.numfieldtext" name="sPerShot" layoutConstraint="null">
+          <resolution width="316" height="29"/>
+          <position x="3" y="33"/>
+          <attributeValues key="Variable" value="system.sv_rEnergyShot"/>
+          <attributeValues key="Editable" value="false"/>
+          <attributeValues key="UnitFieldWidth" value="45"/>
+        </widgetInstances>
+        <widgetInstances widgetId="keplast.kvs.numfieldtext" name="fShotVolume" layoutConstraint="null">
+          <resolution width="316" height="29"/>
+          <position x="3" y="62"/>
+          <attributeValues key="Variable" value="system.sv_rEnergyShotVolume"/>
+          <attributeValues key="Editable" value="false"/>
+          <attributeValues key="UnitFieldWidth" value="45"/>
+        </widgetInstances>
+        <widgetInstances widgetId="keplast.kvs.numfieldtext" name="fPartMass" layoutConstraint="null">
+          <resolution width="316" height="29"/>
+          <position x="3" y="91"/>
+          <attributeValues key="Variable" value="system.sv_rEnergyPartMass"/>
+          <attributeValues key="Editable" value="false"/>
+          <attributeValues key="UnitFieldWidth" value="45"/>
+        </widgetInstances>
+        <widgetInstances widgetId="keplast.kvs.numfieldtext" name="fPart" layoutConstraint="null">
+          <resolution width="316" height="29"/>
+          <position x="3" y="120"/>
+          <attributeValues key="Variable" value="system.sv_rEnergyPart"/>
+          <attributeValues key="Editable" value="false"/>
+          <attributeValues key="UnitFieldWidth" value="45"/>
+        </widgetInstances>
+        <widgetInstances widgetId="keplast.kvs.numfieldtext" name="fProduction" layoutConstraint="null">
+          <resolution width="316" height="29"/>
+          <position x="3" y="149"/>
+          <attributeValues key="Variable" value="system.sv_rEnergyProduction"/>
+          <attributeValues key="Editable" value="false"/>
+          <attributeValues key="UnitFieldWidth" value="45"/>
+        </widgetInstances>
+        <widgetInstances xsi:type="base:ContainerWidgetInstance" widgetId="kvs.panel" name="cTotalEnergy" layoutConstraint="null">
+          <resolution width="316" height="29"/>
+          <position x="3" y="178"/>
+          <layout layoutID="kvs.layout.GridLayout" name="GridLayout">
+            <attributeValues key="Columns" value="2"/>
+          </layout>
+          <widgetInstances widgetId="keplast.kvs.checkboxtext" name="cbTotalEnergy" layoutConstraint="null">
+            <resolution width="158" height="29"/>
+            <position/>
+            <attributeValues key="Variable" value="system.sv_bResetTotEnergy"/>
+            <attributeValues key="UnitFieldWidth" value="45"/>
+          </widgetInstances>
+          <widgetInstances widgetId="keplast.kvs.numfieldtext" name="fTotalEnergy" layoutConstraint="null">
+            <resolution width="158" height="29"/>
+            <position x="158"/>
+            <attributeValues key="Variable" value="system.sv_rTotalEnergy"/>
+            <attributeValues key="Editable" value="false"/>
+            <attributeValues key="UnitFieldWidth" value="44"/>
+          </widgetInstances>
+        </widgetInstances>
+        <widgetInstances widgetId="keplast.kvs.numfieldtext" name="fMeasuredEnergyHMI" layoutConstraint="null">
+          <resolution width="316" height="29"/>
+          <position x="3" y="207"/>
+          <attributeValues key="Variable" value="system.sv_rMeasuredEnergyHMI"/>
+          <attributeValues key="Editable" value="false"/>
+          <attributeValues key="UnitFieldWidth" value="45"/>
+          <dynamicAttributes key="Create">
+            <value function="doesDeviceExist : UserFunctions" equal="true" unequal="false">
+              <parameter key="1" value="devicename;PlastFunctionUtils.createDeviceName(&quot;EnergyMeter1&quot;)"/>
+            </value>
+          </dynamicAttributes>
+        </widgetInstances>
+      </widgetInstances>
+    </widgetInstances>
+    <widgetInstances widgetId="keplast.kvs.separator" name="seperator" layoutConstraint="SEPARATOR">
+      <resolution width="2" height="439"/>
+      <position x="341" y="33"/>
+    </widgetInstances>
+    <widgetInstances xsi:type="base:ContainerWidgetInstance" widgetId="kvs.panel" name="cRight" layoutConstraint="RIGHT">
+      <resolution width="332" height="379"/>
+      <position x="346" y="33"/>
+      <layout layoutID="kvs.layout.VerticalFlowLayout" name="VerticalFlowLayout"/>
+      <widgetInstances xsi:type="base:ContainerWidgetInstance" widgetId="keplast.kvs.borderpanelsmall" name="bpSetting" layoutConstraint="null">
+        <resolution width="322" height="124"/>
+        <position x="5" y="5"/>
+        <attributeValues key="Title" value="Setting"/>
+        <dynamicAttributes key="Create">
+          <value function="doesDeviceExist : UserFunctions" equal="true" unequal="false">
+            <parameter key="1" value="devicename;PlastFunctionUtils.createDeviceName(&quot;EnergyMeter1&quot;)"/>
+          </value>
+        </dynamicAttributes>
+        <layout layoutID="kvs.layout.GridLayout" name="GridLayout">
+          <attributeValues key="Rows" value="3"/>
+          <attributeValues key="Columns" value="1"/>
+          <attributeValues key="Hgap" value="0"/>
+        </layout>
+        <widgetInstances widgetId="keplast.kvs.numfieldtext" name="fIdlePower" layoutConstraint="null">
+          <resolution width="316" height="29"/>
+          <position x="3" y="33"/>
+          <attributeValues key="Variable" value="system.sv_rIdlePower"/>
+          <attributeValues key="UnitFieldWidth" value="45"/>
+        </widgetInstances>
+      </widgetInstances>
+      <widgetInstances xsi:type="base:ContainerWidgetInstance" widgetId="keplast.kvs.borderpanelsmall" name="bpSampleEnergy" layoutConstraint="null">
+        <resolution width="322" height="240"/>
+        <position x="5" y="134"/>
+        <attributeValues key="Title" value="Sample Energy Meter"/>
+        <dynamicAttributes key="Create">
+          <value function="doesDeviceExist : UserFunctions" equal="true" unequal="false">
+            <parameter key="1" value="devicename;PlastFunctionUtils.createDeviceName(&quot;EnergyMeter1&quot;)"/>
+          </value>
+        </dynamicAttributes>
+        <layout layoutID="kvs.layout.GridLayout" name="GridLayout">
+          <attributeValues key="Rows" value="7"/>
+          <attributeValues key="Columns" value="1"/>
+          <attributeValues key="Hgap" value="0"/>
+        </layout>
+        <widgetInstances widgetId="keplast.kvs.checkboxtext" name="cbSampleStartStop" layoutConstraint="null">
+          <resolution width="316" height="29"/>
+          <position x="3" y="33"/>
+          <attributeValues key="Variable" value="system.sv_bStartSampleMeasure"/>
+          <attributeValues key="UnitFieldWidth" value="45"/>
+          <attributeValues key="PreferredSize" value="29, 29"/>
+        </widgetInstances>
+        <widgetInstances widgetId="keplast.kvs.numfieldtext" name="fAutoStopDuration" layoutConstraint="null">
+          <resolution width="316" height="29"/>
+          <position x="3" y="62"/>
+          <attributeValues key="Variable" value="system.sv_dSetDuration"/>
+          <attributeValues key="UnitFieldWidth" value="45"/>
+          <dynamicAttributes key="Enabled">
+            <value function="b1_EQ_true : ViewEditFunctions" equal="false" unequal="true">
+              <parameter key="1" value="kvariable;system.sv_bStartSampleMeasure"/>
+            </value>
+          </dynamicAttributes>
+        </widgetInstances>
+        <widgetInstances widgetId="keplast.kvs.numfieldtext" name="fAutoStopShotCount" layoutConstraint="null">
+          <resolution width="316" height="29"/>
+          <position x="3" y="91"/>
+          <attributeValues key="Variable" value="system.sv_iAutoStopShotCounter"/>
+          <attributeValues key="UnitFieldWidth" value="45"/>
+          <dynamicAttributes key="Enabled">
+            <value function="b1_EQ_true : ViewEditFunctions" equal="false" unequal="true">
+              <parameter key="1" value="kvariable;system.sv_bStartSampleMeasure"/>
+            </value>
+          </dynamicAttributes>
+        </widgetInstances>
+        <widgetInstances widgetId="keplast.kvs.numfieldtext" name="fMeasuredEnergy" layoutConstraint="null">
+          <resolution width="316" height="29"/>
+          <position x="3" y="120"/>
+          <attributeValues key="Variable" value="system.sv_rSampleMeasuredEnergy"/>
+          <attributeValues key="Editable" value="false"/>
+          <attributeValues key="UnitFieldWidth" value="45"/>
+        </widgetInstances>
+        <widgetInstances widgetId="keplast.kvs.numfieldtext" name="fMeasuredDuration" layoutConstraint="null">
+          <resolution width="316" height="29"/>
+          <position x="3" y="149"/>
+          <attributeValues key="Variable" value="system.sv_dMeasuredDuration"/>
+          <attributeValues key="Editable" value="false"/>
+          <attributeValues key="UnitFieldWidth" value="45"/>
+        </widgetInstances>
+      </widgetInstances>
+    </widgetInstances>
+  </widgetInstances>
+</base:Mask>

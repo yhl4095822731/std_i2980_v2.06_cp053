@@ -1,0 +1,584 @@
+(*
+@h    ! WARNING !
+@h    The Kemro K2 system (including software) only meets category B according to EN 954-1,
+@h    thus it is not intended for usage in safety-relevant control applications in the field 
+@h    of personal safety (e.g. emergency stop).
+@h    To implement potentially necessary safety-relevant control tasks, always use additional 
+@h    external safety devices that are intended for the particular purpose, and meet the necessary 
+@h    functional safety.
+@h    For further information see EN 954-1 (EN ISO 13849-1) and/or the K2-x00 user manual, chapter 
+@h    "CE conformity, directives and standards".
+
+AB set the refernces for the endposition monitor blocks.
+This refernces denpend on the selected movement mode (position, limit or time)
+In time mode the endposition monitoring is also done by this block.
+*)
+
+IMPORT_OVER_LISTFILE
+ SET_ALARM
+, START_PROCESS_ALGORITHM
+, STOP_PROCESS_ALGORITHM
+, nPositionDependent
+, nMoveTimeDependent
+, tnMovementMode
+, tsEndPosData
+, KAPPL_VisProfile
+, tnNozzleMovementMode
+
+END_IMPORT
+
+ALGORITHM_BLOCK ABCheckSettings #DUMMY_EDIT_BLOCK
+
+SYSTEM_VAR
+ ai_Position : REAL;
+ sv_MovementMode : tnMovementMode (* Nozzle Movement with Limitswitch or with position measurement *);
+ sv_bInitStart : BOOL;
+ sv_NozzleFwdMonData : tsEndPosData;
+ sv_NozzleBwdMonData : tsEndPosData;
+ di_LimitSwitchFwd : BOOL;
+ di_LimitSwitchFwd2 : BOOL;
+ sv_NozzleFwdProfVis : KAPPL_VisProfile;
+ sv_NozzleBwdProfVis : KAPPL_VisProfile;
+ di_LimitSwitchBwd : BOOL;
+ sv_bNozzleFwd : BOOL;
+ sv_bNozzleBwd : BOOL;
+ sv_bFwdTimeReached : BOOL (* nozzle fwd time reached (for time dependent nozzle control) (must be FastRetain: cyclical change in AutoCycle) *);
+ sv_bBwdTimeReached : BOOL (* nozzle bwd time reached (for time dependent nozzle control) (must be FastRetain: cyclical change in AutoCycle) *);
+ sv_NozzleMovementMode : tnNozzleMovementMode;
+END_VAR
+
+SYSTEM_OBJECT
+ PU_Task_3 : TASK;
+END_OBJECT
+
+POSTUPDATE_ALGORITHM pModeChanged ON PU_Task_3 WITH sv_MovementMode,sv_bInitStart
+
+
+VAR_TEMP
+ tmpFwd : tsEndPosData;
+ tmpBwd : tsEndPosData;
+END_VAR
+#BEGIN_EDIT_BLOCK
+(**************************************** WARNING ********************************************
+ *** The KEBA Kemro K2 System including software is not intended for safety control tasks! ***
+ ***                       For further information see Comment tab!                        ***
+ *********************************************************************************************)
+
+// update endposmon data when movement mode changes
+// executed in PU_Task_3 so it is called before ABEndposMon.pParameterChanged
+
+tmpFwd := sv_NozzleFwdMonData;
+tmpBwd := sv_NozzleBwdMonData;
+
+IF sv_MovementMode = nPositionDependent THEN   
+   //position depending
+   tmpBwd.pbDI := EMPTY;
+   tmpFwd.pbDI := EMPTY;
+   tmpBwd.pProfile := @sv_NozzleBwdProfVis;
+   tmpFwd.pProfile := @sv_NozzleFwdProfVis;   
+   
+ELSIF sv_MovementMode = nLimitSwitchDependent THEN   
+   //limit switch depending
+   IF IS_LINKED (di_LimitSwitchFwd) AND NOT IS_LINKED (di_LimitSwitchFwd2) THEN
+      tmpFwd.pbDI := @di_LimitSwitchFwd;
+   END_IF;
+   IF IS_LINKED (di_LimitSwitchFwd2) THEN
+      tmpFwd.pbDI := @di_LimitSwitchFwd2;
+   END_IF;
+   
+   tmpBwd.pbDI := @di_LimitSwitchBwd;
+   tmpBwd.pProfile := EMPTY;
+   tmpFwd.pProfile := EMPTY;
+   
+ELSE
+   //time depending
+   tmpBwd.pbDI := EMPTY;
+   tmpFwd.pbDI := EMPTY;
+   tmpBwd.pProfile := EMPTY;
+   tmpFwd.pProfile := EMPTY;   
+   
+END_IF;
+   
+// update
+sv_NozzleFwdMonData := tmpFwd;
+sv_NozzleBwdMonData := tmpBwd;
+
+
+
+;#END_EDIT_BLOCK END_ALGORITHM
+
+POSTUPDATE_ALGORITHM pSetMovementMode ON PU_Task_3(1) WITH sv_NozzleMovementMode,sv_bInitStart
+
+#BEGIN_EDIT_BLOCK
+(**************************************** WARNING ********************************************
+ *** The KEBA Kemro K2 System including software is not intended for safety control tasks! ***
+ ***                       For further information see Comment tab!                        ***
+ *********************************************************************************************)
+
+//convert selector from HMI (position/time)
+IF sv_NozzleMovementMode = nNozzleMovementModeTime THEN
+   sv_MovementMode := nMoveTimeDependent; 
+ELSE
+   //HMI selector = position
+   IF IS_LINKED(ai_Position) THEN
+      sv_MovementMode := nPositionDependent;
+   ELSIF IS_LINKED(di_LimitSwitchFwd) THEN
+      sv_MovementMode := nLimitSwitchDependent;
+   ELSE
+      //no tansducer or limit switch linked 
+      //(should not happen if project is created with AppCo)
+      //-> set mode to time
+      sv_MovementMode := nMoveTimeDependent;
+   END_IF;
+END_IF;
+
+
+;#END_EDIT_BLOCK END_ALGORITHM
+
+POSTUPDATE_ALGORITHM pFwdTimeReached ON PU_Task_3 WITH sv_bFwdTimeReached,sv_bInitStart
+
+#BEGIN_EDIT_BLOCK
+(**************************************** WARNING ********************************************
+ *** The KEBA Kemro K2 System including software is not intended for safety control tasks! ***
+ ***                       For further information see Comment tab!                        ***
+ *********************************************************************************************)
+
+IF sv_MovementMode = nMoveTimeDependent  THEN
+   sv_bNozzleFwd := sv_bFwdTimeReached;
+END_IF;
+
+
+
+;#END_EDIT_BLOCK END_ALGORITHM
+
+POSTUPDATE_ALGORITHM pBwdTimeReached ON PU_Task_3 WITH sv_bBwdTimeReached,sv_bInitStart
+
+#BEGIN_EDIT_BLOCK
+(**************************************** WARNING ********************************************
+ *** The KEBA Kemro K2 System including software is not intended for safety control tasks! ***
+ ***                       For further information see Comment tab!                        ***
+ *********************************************************************************************)
+
+IF sv_MovementMode <> nPositionDependent  THEN
+   sv_bNozzleBwd := sv_bBwdTimeReached;
+END_IF;
+
+
+
+;#END_EDIT_BLOCK END_ALGORITHM
+
+
+
+END_ALGORITHM_BLOCK
+
+
+
+#END_OF_IEC_PART
+
+@Puma @IecEditor 6 103 @Pou 25 
+@@@BEG_Comment@@@
+@h    ! WARNING !
+@h    The Kemro K2 system (including software) only meets category B according to EN 954-1,
+@h    thus it is not intended for usage in safety-relevant control applications in the field 
+@h    of personal safety (e.g. emergency stop).
+@h    To implement potentially necessary safety-relevant control tasks, always use additional 
+@h    external safety devices that are intended for the particular purpose, and meet the necessary 
+@h    functional safety.
+@h    For further information see EN 954-1 (EN ISO 13849-1) and/or the K2-x00 user manual, chapter 
+@h    "CE conformity, directives and standards".
+
+AB set the refernces for the endposition monitor blocks.
+This refernces denpend on the selected movement mode (position, limit or time)
+In time mode the endposition monitoring is also done by this block.
+@@@END_Comment@@@
+
+@BEG_Contents 
+
+@BEG_Func 
+@RT(17)FuncTreeContainer 
+3 
+@Var @RT(9)SET_ALARM @RT(0) @T @T @DERIVED 0 @F @RT(23)KEBA_STANDARD_PROCEDURE @F 
+@T 
+@BEG_Attrib 
+0 @RT(0) @RT(0) 
+@END_Attrib 
+1 1 @F @F @F @F 
+
+@Var @RT(23)START_PROCESS_ALGORITHM @RT(0) @T @T @DERIVED 0 @F @RT(23)KEBA_STANDARD_PROCEDURE @F 
+@T 
+@BEG_Attrib 
+0 @RT(0) @RT(0) 
+@END_Attrib 
+1 1 @F @F @F @F 
+
+@Var @RT(22)STOP_PROCESS_ALGORITHM @RT(0) @T @T @DERIVED 0 @F @RT(23)KEBA_STANDARD_PROCEDURE @F 
+@T 
+@BEG_Attrib 
+0 @RT(0) @RT(0) 
+@END_Attrib 
+1 1 @F @F @F @F 
+
+@END_Func 
+
+@BEG_Const 
+@RT(18)ConstTreeContainer 
+2 
+@Var @RT(18)nPositionDependent @RT(0) @T @T @DERIVED 0 @F @RT(14)tnMovementMode @F 
+@T 
+@BEG_Attrib 
+0 @RT(1)0 @RT(0) 
+@END_Attrib 
+1 1 @F @F @F @F 
+
+@Var @RT(18)nMoveTimeDependent @RT(0) @T @T @DERIVED 0 @F @RT(14)tnMovementMode @F 
+@T 
+@BEG_Attrib 
+0 @RT(1)2 @RT(0) 
+@END_Attrib 
+1 1 @F @F @F @F 
+
+@END_Const 
+
+@BEG_Export 
+
+@BEG_Kind 
+@ALGORITHM_BLOCK @RT(15)ABCheckSettings @STRUCTURED_TEXT 
+@RT(0) @RT(0) @RT(0) 
+@END_Kind 
+
+@BEG_Dcl 
+@RT(16)DclTreeContainer 
+16 
+@Var @RT(11)ai_Position @RT(0) @T @F @DT @RT(4)REAL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 8 @F @F @F @F 
+
+@Var @RT(15)sv_MovementMode @RT(0) @T @T @DERIVED 0 @T @T @DT @RT(14)tnMovementMode @RT(0) @T @T @UNKNOWN 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(61)Nozzle Movement with Limitswitch or with position measurement @RT(0) 
+@END_Attrib 
+1 8 @F @F @F @F 
+
+@Var @RT(13)sv_bInitStart @RT(0) @T @F @DT @RT(4)BOOL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 8 @F @F @F @F 
+
+@Var @RT(19)sv_NozzleFwdMonData @RT(0) @T @T @DERIVED 0 @T @T @DT @RT(12)tsEndPosData @RT(0) @T @T @UNKNOWN 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 8 @F @F @F @F 
+
+@Var @RT(19)sv_NozzleBwdMonData @RT(0) @T @T @DERIVED 0 @T @T @DT @RT(12)tsEndPosData @RT(0) @T @T @UNKNOWN 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 8 @F @F @F @F 
+
+@Var @RT(17)di_LimitSwitchFwd @RT(0) @T @F @DT @RT(4)BOOL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 8 @F @F @F @F 
+
+@Var @RT(18)di_LimitSwitchFwd2 @RT(0) @T @F @DT @RT(4)BOOL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 8 @F @F @F @F 
+
+@Var @RT(9)PU_Task_3 @RT(0) @T @F @DT @RT(4)TASK @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 7 @F @F @F @F 
+
+@Var @RT(19)sv_NozzleFwdProfVis @RT(0) @T @T @RENAMED 0 @T @T @DT @RT(16)KAPPL_VisProfile @RT(0) @T @T @UNKNOWN 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 8 @F @F @F @F 
+
+@Var @RT(19)sv_NozzleBwdProfVis @RT(0) @T @T @RENAMED 0 @T @T @DT @RT(16)KAPPL_VisProfile @RT(0) @T @T @UNKNOWN 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 8 @F @F @F @F 
+
+@Var @RT(17)di_LimitSwitchBwd @RT(0) @T @T @RENAMED 0 @T @T @DT @RT(4)BOOL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 8 @F @F @F @F 
+
+@Var @RT(13)sv_bNozzleFwd @RT(0) @T @F @DT @RT(4)BOOL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 8 @F @F @F @F 
+
+@Var @RT(13)sv_bNozzleBwd @RT(0) @T @F @DT @RT(4)BOOL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 8 @F @F @F @F 
+
+@Var @RT(18)sv_bFwdTimeReached @RT(0) @T @F @DT @RT(4)BOOL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(110)nozzle fwd time reached (for time dependent nozzle control) (must be FastRetain: cyclical change in AutoCycle) @RT(0) 
+@END_Attrib 
+1 8 @F @F @F @F 
+
+@Var @RT(18)sv_bBwdTimeReached @RT(0) @T @F @DT @RT(4)BOOL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(110)nozzle bwd time reached (for time dependent nozzle control) (must be FastRetain: cyclical change in AutoCycle) @RT(0) 
+@END_Attrib 
+1 8 @F @F @F @F 
+
+@Var @RT(21)sv_NozzleMovementMode @RT(0) @T @T @RENAMED 0 @T @T @DT @RT(20)tnNozzleMovementMode @RT(0) @T @T @UNKNOWN 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 8 @F @F @F @F 
+
+@END_Dcl 
+
+@END_Export 
+
+@BEG_Body 
+
+4 
+
+@BEG_Export 
+
+@BEG_Algo 
+@POSTUPDATE_ALGORITHM @RT(12)pModeChanged @STRUCTURED_TEXT 
+@RT(0) @RT(29)sv_MovementMode,sv_bInitStart @RT(9)PU_Task_3 @F @F 
+@END_Algo 
+
+@BEG_Dcl 
+@RT(16)DclTreeContainer 
+2 
+@Var @RT(6)tmpFwd @RT(0) @T @T @DERIVED 0 @T @T @DT @RT(12)tsEndPosData @RT(0) @T @T @UNKNOWN 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 4 @F @F @F @F 
+
+@Var @RT(6)tmpBwd @RT(0) @T @T @DERIVED 0 @T @T @DT @RT(12)tsEndPosData @RT(0) @T @T @UNKNOWN 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 4 @F @F @F @F 
+
+@END_Dcl 
+
+@END_Export 
+
+@BEG_Export 
+
+@BEG_Algo 
+@POSTUPDATE_ALGORITHM @RT(16)pSetMovementMode @STRUCTURED_TEXT 
+@RT(0) @RT(35)sv_NozzleMovementMode,sv_bInitStart @RT(12)PU_Task_3(1) @F @F 
+@END_Algo 
+
+@BEG_Dcl 
+@RT(16)DclTreeContainer 
+0 
+@END_Dcl 
+
+@END_Export 
+
+@BEG_Export 
+
+@BEG_Algo 
+@POSTUPDATE_ALGORITHM @RT(15)pFwdTimeReached @STRUCTURED_TEXT 
+@RT(0) @RT(32)sv_bFwdTimeReached,sv_bInitStart @RT(9)PU_Task_3 @F @F 
+@END_Algo 
+
+@BEG_Dcl 
+@RT(16)DclTreeContainer 
+0 
+@END_Dcl 
+
+@END_Export 
+
+@BEG_Export 
+
+@BEG_Algo 
+@POSTUPDATE_ALGORITHM @RT(15)pBwdTimeReached @STRUCTURED_TEXT 
+@RT(0) @RT(32)sv_bBwdTimeReached,sv_bInitStart @RT(9)PU_Task_3 @F @F 
+@END_Algo 
+
+@BEG_Dcl 
+@RT(16)DclTreeContainer 
+0 
+@END_Dcl 
+
+@END_Export 
+
+@BEG_Body 
+@TL(45)
+(**************************************** WARNING ********************************************
+ *** The KEBA Kemro K2 System including software is not intended for safety control tasks! ***
+ ***                       For further information see Comment tab!                        ***
+ *********************************************************************************************)
+
+// update endposmon data when movement mode changes
+// executed in PU_Task_3 so it is called before ABEndposMon.pParameterChanged
+
+tmpFwd := sv_NozzleFwdMonData;
+tmpBwd := sv_NozzleBwdMonData;
+
+IF sv_MovementMode = nPositionDependent THEN   
+   //position depending
+   tmpBwd.pbDI := EMPTY;
+   tmpFwd.pbDI := EMPTY;
+   tmpBwd.pProfile := @sv_NozzleBwdProfVis;
+   tmpFwd.pProfile := @sv_NozzleFwdProfVis;   
+   
+ELSIF sv_MovementMode = nLimitSwitchDependent THEN   
+   //limit switch depending
+   IF IS_LINKED (di_LimitSwitchFwd) AND NOT IS_LINKED (di_LimitSwitchFwd2) THEN
+      tmpFwd.pbDI := @di_LimitSwitchFwd;
+   END_IF;
+   IF IS_LINKED (di_LimitSwitchFwd2) THEN
+      tmpFwd.pbDI := @di_LimitSwitchFwd2;
+   END_IF;
+   
+   tmpBwd.pbDI := @di_LimitSwitchBwd;
+   tmpBwd.pProfile := EMPTY;
+   tmpFwd.pProfile := EMPTY;
+   
+ELSE
+   //time depending
+   tmpBwd.pbDI := EMPTY;
+   tmpFwd.pbDI := EMPTY;
+   tmpBwd.pProfile := EMPTY;
+   tmpFwd.pProfile := EMPTY;   
+   
+END_IF;
+   
+// update
+sv_NozzleFwdMonData := tmpFwd;
+sv_NozzleBwdMonData := tmpBwd;
+
+
+@END_Body 
+
+@@@BEG_Comment@@@ 
+@TL(0)
+
+@@@END_Comment@@@ 
+
+@BEG_Body 
+@TL(22)
+(**************************************** WARNING ********************************************
+ *** The KEBA Kemro K2 System including software is not intended for safety control tasks! ***
+ ***                       For further information see Comment tab!                        ***
+ *********************************************************************************************)
+
+//convert selector from HMI (position/time)
+IF sv_NozzleMovementMode = nNozzleMovementModeTime THEN
+   sv_MovementMode := nMoveTimeDependent; 
+ELSE
+   //HMI selector = position
+   IF IS_LINKED(ai_Position) THEN
+      sv_MovementMode := nPositionDependent;
+   ELSIF IS_LINKED(di_LimitSwitchFwd) THEN
+      sv_MovementMode := nLimitSwitchDependent;
+   ELSE
+      //no tansducer or limit switch linked 
+      //(should not happen if project is created with AppCo)
+      //-> set mode to time
+      sv_MovementMode := nMoveTimeDependent;
+   END_IF;
+END_IF;
+
+@END_Body 
+
+@@@BEG_Comment@@@ 
+@TL(0)
+
+@@@END_Comment@@@ 
+
+@BEG_Body 
+@TL(10)
+(**************************************** WARNING ********************************************
+ *** The KEBA Kemro K2 System including software is not intended for safety control tasks! ***
+ ***                       For further information see Comment tab!                        ***
+ *********************************************************************************************)
+
+IF sv_MovementMode = nMoveTimeDependent  THEN
+   sv_bNozzleFwd := sv_bFwdTimeReached;
+END_IF;
+
+
+@END_Body 
+
+@@@BEG_Comment@@@ 
+@TL(0)
+
+@@@END_Comment@@@ 
+
+@BEG_Body 
+@TL(10)
+(**************************************** WARNING ********************************************
+ *** The KEBA Kemro K2 System including software is not intended for safety control tasks! ***
+ ***                       For further information see Comment tab!                        ***
+ *********************************************************************************************)
+
+IF sv_MovementMode <> nPositionDependent  THEN
+   sv_bNozzleBwd := sv_bBwdTimeReached;
+END_IF;
+
+
+@END_Body 
+
+@@@BEG_Comment@@@ 
+@TL(0)
+
+@@@END_Comment@@@ 
+@END_Body 
+
+@END_Contents 

@@ -1,0 +1,941 @@
+(*
+@h    ! WARNING !
+@h    The Kemro K2 system (including software) only meets category B according to EN 954-1,
+@h    thus it is not intended for usage in safety-relevant control applications in the field 
+@h    of personal safety (e.g. emergency stop).
+@h    To implement potentially necessary safety-relevant control tasks, always use additional 
+@h    external safety devices that are intended for the particular purpose, and meet the necessary 
+@h    functional safety.
+@h    For further information see EN 954-1 (EN ISO 13849-1) and/or the K2-x00 user manual, chapter 
+@h    "CE conformity, directives and standards".
+
+This AB listens to the device register events and sets
+the sv_CoreData[X].bAvailable - flag if a core is available (registered).
+Additionally it listens to evCoreTypeChanged events and sets
+sv_bCoresActive if any registered core is switched on.
+After a failed creation of a new sequence (by using program switches), The core priorities are
+checked. If there are some equal priorities, an according alarm is displayed
+*)
+
+IMPORT_OVER_LISTFILE
+ SET_ALARM
+, cCompAirValve
+, cMaxDeviceIndex
+, cMoveIn
+, tyCoreData
+, tevDeviceRegister
+, tevCoreTypeChanged
+, tyDeviceAvailable
+, tyNumberOfDevices
+, KSYS_Status
+, tevDeviceRegisterData
+, tevCoreTypeChangedData
+
+END_IMPORT
+
+ALGORITHM_BLOCK ABAvailableDevices #DUMMY_EDIT_BLOCK
+
+SYSTEM_VAR
+ sv_CoreData : tyCoreData;
+ sv_CoreOff : tyDeviceAvailable;
+ sv_bCoresActive : BOOL (* TRUE: any core is switched on *);
+ sv_bInitStart : BOOL;
+ sv_bUseProgramSwitches : BOOL;
+ sv_bCoresParallelToMold : BOOL;
+ sv_bDeviceRegisterDone : BOOL;
+ sv_NumberOfDevices : tyNumberOfDevices;
+END_VAR
+
+SYSTEM_OBJECT
+ EV_Task_3 : TASK;
+ evDeviceRegister : tevDeviceRegister;
+ EV_Task_7 : TASK;
+ evCoreTypeChanged : tevCoreTypeChanged;
+ PU_Task_7 : TASK;
+ TaskMid : TASK;
+ erEqualCorePriority : ALARM;
+ PU_Task_3 : TASK;
+END_OBJECT
+
+VAR
+ mpiODCSequenceUpdated : REFTO DINT;
+ mpiODCInitOk : REFTO DINT;
+END_VAR
+
+POSTUPDATE_ALGORITHM pInitStart ON PU_Task_7 WITH sv_bInitStart
+
+
+VAR
+ state : KSYS_Status;
+END_VAR
+#BEGIN_EDIT_BLOCK
+(**************************************** WARNING ********************************************
+ *** The KEBA Kemro K2 System including software is not intended for safety control tasks! ***
+ ***                       For further information see Comment tab!                        ***
+ *********************************************************************************************)
+
+//get references
+mpiODCSequenceUpdated := GET_SYNC_REFTO('ODC1.sv_iODCSequenceUpdated', T#0s, state);
+mpiODCInitOk := GET_SYNC_REFTO('ODC1.sv_iInitOK', T#0s, state);
+
+
+
+;#END_EDIT_BLOCK END_ALGORITHM
+
+(*
+listen to register events of cores and airvalves and set according available flags
+if a register event from a core or airvalve is received
+*)
+
+EVENT_ALGORITHM evaDeviceRegister ON EV_Task_3 WITH evDeviceRegister
+
+
+VAR_INPUT
+ evDeviceRegisterData : tevDeviceRegisterData;
+END_VAR
+
+VAR_TEMP
+ i : DINT;
+END_VAR
+
+VAR
+ bInitDone : BOOL;
+END_VAR
+#BEGIN_EDIT_BLOCK
+(**************************************** WARNING ********************************************
+ *** The KEBA Kemro K2 System including software is not intended for safety control tasks! ***
+ ***                       For further information see Comment tab!                        ***
+ *********************************************************************************************)
+
+IF NOT bInitDone THEN
+    //reset available flag for all possible cores because the whole structure sv_CoreData is retain!
+    FOR i := 1 TO cMaxDeviceIndex DO
+        sv_CoreData[i].bAvailable := FALSE;
+    END_FOR;
+    bInitDone := TRUE;
+END_IF;
+
+CASE evDeviceRegisterData.DeviceId.CompId OF
+   cCompCore:
+      //set available flag of according Core FU
+      sv_CoreData[evDeviceRegisterData.DeviceId.IndexId].bAvailable := TRUE;   
+   
+END_CASE;   
+
+
+;#END_EDIT_BLOCK END_ALGORITHM
+
+EVENT_ALGORITHM evaCoreTypeChanged ON EV_Task_7 WITH evCoreTypeChanged
+
+
+VAR_INPUT
+ evCoreTypeChangedData : tevCoreTypeChangedData;
+END_VAR
+
+VAR_TEMP
+ i : DINT;
+END_VAR
+#BEGIN_EDIT_BLOCK
+(**************************************** WARNING ********************************************
+ *** The KEBA Kemro K2 System including software is not intended for safety control tasks! ***
+ ***                       For further information see Comment tab!                        ***
+ *********************************************************************************************)
+
+sv_CoreOff[evCoreTypeChangedData.DeviceId.IndexId] := evCoreTypeChangedData.bCoreOff;
+
+sv_bCoresActive := FALSE;
+FOR i := 1 TO cMaxDeviceIndex DO
+   IF sv_CoreData[i].bAvailable AND NOT sv_CoreOff[i] THEN
+      //Core is available and not switched off
+      sv_bCoresActive := TRUE;
+   END_IF;
+END_FOR;
+
+
+;#END_EDIT_BLOCK END_ALGORITHM
+
+POSTUPDATE_ALGORITHM pNewSequence ON PU_Task_7 WITH mpiODCSequenceUpdated^
+
+#BEGIN_EDIT_BLOCK
+(**************************************** WARNING ********************************************
+ *** The KEBA Kemro K2 System including software is not intended for safety control tasks! ***
+ ***                       For further information see Comment tab!                        ***
+ *********************************************************************************************)
+
+//new sequence created by using program switches -> check if creation was successful
+//if not: check core priorities
+IF sv_bUseProgramSwitches AND mpiODCInitOk^ = 0 THEN
+   //check for equal core priorities
+   START_PROCESS_ALGORITHM(paCheckCorePriorities);
+END_IF;
+
+
+;#END_EDIT_BLOCK END_ALGORITHM
+
+PROCESS_ALGORITHM paCheckCorePriorities ON TaskMid
+
+
+VAR_TEMP
+ i : DINT;
+ k : DINT;
+END_VAR
+
+VAR
+ bSetAlarm : BOOL;
+END_VAR
+#BEGIN_EDIT_BLOCK
+(**************************************** WARNING ********************************************
+ *** The KEBA Kemro K2 System including software is not intended for safety control tasks! ***
+ ***                       For further information see Comment tab!                        ***
+ *********************************************************************************************)
+
+//check core priorites if some of them are equal
+
+FOR i := 1 TO (cMaxDeviceIndex - 1)  DO
+   IF sv_CoreData[i].bAvailable AND NOT sv_CoreOff[i] THEN
+      //core i is available and activated
+      
+      //compare core priorities with all other cores
+      FOR k := (i + 1) TO cMaxDeviceIndex DO
+         IF sv_CoreData[k].bAvailable AND NOT sv_CoreOff[k] THEN
+            //core k is available and activated            
+            //compare core in priority with core in priority of all other cores
+            IF (sv_CoreData[i].InMode = sv_CoreData[k].InMode) THEN
+               //same mode -> check priority
+               
+               bSetAlarm := FALSE;
+               IF sv_CoreData[i].InMode = nDuringMoldClose THEN
+                  //mode "during" -> also consider sv_bCoresParallelToMold and the according position
+                  IF sv_bCoresParallelToMold THEN 
+                     IF (sv_CoreData[i].iCoreInPriority = sv_CoreData[k].iCoreInPriority) THEN 
+                        //cores parallel to mold and same priority -> alarm 
+                        bSetAlarm := TRUE;
+                     END_IF;
+                  ELSE
+                     IF (sv_CoreData[i].rCoreInPosition = sv_CoreData[k].rCoreInPosition) AND 
+                        (sv_CoreData[i].iCoreInPriority = sv_CoreData[k].iCoreInPriority) THEN
+                        //cores not parallel and priority and position equal -> alarm
+                        bSetAlarm := TRUE;
+                     END_IF;                     
+                  END_IF;
+               ELSE
+                  //mode before or after
+                  IF (sv_CoreData[i].iCoreInPriority = sv_CoreData[k].iCoreInPriority) THEN
+                     //same priority -> alarm
+                     bSetAlarm := TRUE;
+                  END_IF;
+               END_IF;
+                              
+               IF bSetAlarm THEN
+                  //same mode and same priority -> alarm
+                     SET_ALARM(Name := erEqualCorePriority, 
+                               SubID1 := i,
+                               SubID2 := cMoveIn,
+                               SubID3 := k,
+                               SubID4 := cMoveIn);
+               END_IF;                     
+            END_IF; //end_if core in priority
+            
+            
+            //compare core out priority with core out priority of all other cores
+            IF (sv_CoreData[i].OutMode = sv_CoreData[k].OutMode) THEN
+               //same mode -> check priority
+               
+               bSetAlarm := FALSE;
+               IF (sv_CoreData[i].OutMode = nDuringMoldOpen) THEN
+                  //mode "during" -> also consider sv_bCoresParallelToMold and the according position
+                  IF sv_bCoresParallelToMold THEN 
+                     IF (sv_CoreData[i].iCoreOutPriority = sv_CoreData[k].iCoreOutPriority) THEN 
+                        //cores parallel to mold and same priority -> alarm 
+                        bSetAlarm := TRUE;
+                     END_IF;
+                  ELSE
+                     IF (sv_CoreData[i].rCoreOutPosition = sv_CoreData[k].rCoreOutPosition) AND
+                        (sv_CoreData[i].iCoreOutPriority = sv_CoreData[k].iCoreOutPriority) THEN
+                        //cores not parallel and priority and position equal -> alarm
+                        bSetAlarm := TRUE;
+                     END_IF;                     
+                  END_IF;
+               ELSE
+                  //mode before or after
+                  IF (sv_CoreData[i].iCoreOutPriority = sv_CoreData[k].iCoreOutPriority) THEN
+                     //same priority -> alarm
+                     bSetAlarm := TRUE;
+                  END_IF;
+               END_IF;
+                              
+               IF bSetAlarm THEN
+                  //same mode and same priority -> alarm
+                     SET_ALARM(Name := erEqualCorePriority, 
+                               SubID1 := i,
+                               SubID2 := cMoveOut,
+                               SubID3 := k,
+                               SubID4 := cMoveOut);
+               END_IF;
+            END_IF; //end_if core out priority
+            
+         END_IF; //end_if core k                  
+      END_FOR;  //end_for core k               
+   END_IF; //end_if core i available and activated
+END_FOR;
+
+STOP_PROCESS_ALGORITHM();
+
+
+;#END_EDIT_BLOCK END_ALGORITHM
+
+POSTUPDATE_ALGORITHM pDeviceRegister ON PU_Task_3 WITH sv_bDeviceRegisterDone
+
+
+VAR_TEMP
+ i : DINT;
+END_VAR
+#BEGIN_EDIT_BLOCK
+(**************************************** WARNING ********************************************
+ *** The KEBA Kemro K2 System including software is not intended for safety control tasks! ***
+ ***                       For further information see Comment tab!                        ***
+ *********************************************************************************************)
+
+//correct init value of core out priority (-1)
+FOR i := 1 TO cMaxDeviceIndex DO
+   IF sv_CoreData[i].bAvailable AND sv_CoreData[i].iCoreOutPriority = -1 THEN
+      IF i = 1 THEN
+         //first core gets highest number (= number of available cores)
+         sv_CoreData[i].iCoreOutPriority := sv_NumberOfDevices[cCompCore];
+      ELSE
+         //other cores get lower number than the predecessor
+         sv_CoreData[i].iCoreOutPriority := sv_CoreData[(i - 1)].iCoreOutPriority - 1;
+      END_IF; 
+   END_IF;   
+END_FOR;
+
+
+;#END_EDIT_BLOCK END_ALGORITHM
+
+
+
+END_ALGORITHM_BLOCK
+
+
+
+#END_OF_IEC_PART
+
+@Puma @IecEditor 6 30 @Pou 25 
+@@@BEG_Comment@@@
+@h    ! WARNING !
+@h    The Kemro K2 system (including software) only meets category B according to EN 954-1,
+@h    thus it is not intended for usage in safety-relevant control applications in the field 
+@h    of personal safety (e.g. emergency stop).
+@h    To implement potentially necessary safety-relevant control tasks, always use additional 
+@h    external safety devices that are intended for the particular purpose, and meet the necessary 
+@h    functional safety.
+@h    For further information see EN 954-1 (EN ISO 13849-1) and/or the K2-x00 user manual, chapter 
+@h    "CE conformity, directives and standards".
+
+This AB listens to the device register events and sets
+the sv_CoreData[X].bAvailable - flag if a core is available (registered).
+Additionally it listens to evCoreTypeChanged events and sets
+sv_bCoresActive if any registered core is switched on.
+After a failed creation of a new sequence (by using program switches), The core priorities are
+checked. If there are some equal priorities, an according alarm is displayed
+@@@END_Comment@@@
+
+@BEG_Contents 
+
+@BEG_Func 
+@RT(17)FuncTreeContainer 
+1 
+@Var @RT(9)SET_ALARM @RT(0) @T @T @DERIVED 0 @F @RT(23)KEBA_STANDARD_PROCEDURE @F 
+@T 
+@BEG_Attrib 
+0 @RT(0) @RT(0) 
+@END_Attrib 
+1 1 @F @F @F @F 
+
+@END_Func 
+
+@BEG_Const 
+@RT(18)ConstTreeContainer 
+3 
+@Var @RT(13)cCompAirValve @RT(0) @T @F @DT @RT(4)DINT @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+0 @RT(3)118 @RT(19)Component Air Valve 
+@END_Attrib 
+1 1 @F @F @F @F 
+
+@Var @RT(15)cMaxDeviceIndex @RT(0) @T @F @DT @RT(4)DINT @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+0 @RT(2)10 @RT(39)maximum number of devices per component 
+@END_Attrib 
+1 1 @F @F @F @F 
+
+@Var @RT(7)cMoveIn @RT(0) @T @F @DT @RT(4)DINT @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+0 @RT(2)21 @RT(26)move in (for example core) 
+@END_Attrib 
+1 1 @F @F @F @F 
+
+@END_Const 
+
+@BEG_Export 
+
+@BEG_Kind 
+@ALGORITHM_BLOCK @RT(18)ABAvailableDevices @STRUCTURED_TEXT 
+@RT(0) @RT(0) @RT(0) 
+@END_Kind 
+
+@BEG_Dcl 
+@RT(16)DclTreeContainer 
+18 
+@Var @RT(11)sv_CoreData @RT(0) @T @T @DERIVED 0 @F @RT(10)tyCoreData @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 8 @F @F @F @F 
+
+@Var @RT(9)EV_Task_3 @RT(0) @T @T @RENAMED 0 @T @T @DT @RT(4)TASK @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 7 @F @F @F @F 
+
+@Var @RT(16)evDeviceRegister @RT(0) @T @T @RENAMED 0 @T @T @DT @RT(17)tevDeviceRegister @RT(0) @T @T @UNKNOWN 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 7 @F @F @F @F 
+
+@Var @RT(9)EV_Task_7 @RT(0) @T @T @RENAMED 0 @T @T @DT @RT(4)TASK @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 7 @F @F @F @F 
+
+@Var @RT(17)evCoreTypeChanged @RT(0) @T @T @RENAMED 0 @T @T @DT @RT(18)tevCoreTypeChanged @RT(0) @T @T @UNKNOWN 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 7 @F @F @F @F 
+
+@Var @RT(10)sv_CoreOff @RT(0) @T @T @DERIVED 0 @T @T @DT @RT(17)tyDeviceAvailable @RT(0) @T @T @UNKNOWN 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 8 @F @F @F @F 
+
+@Var @RT(15)sv_bCoresActive @RT(0) @T @F @DT @RT(4)BOOL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(29)TRUE: any core is switched on @RT(0) 
+@END_Attrib 
+1 8 @F @F @F @F 
+
+@Var @RT(21)mpiODCSequenceUpdated @RT(0) @T @T @REFTO 0 @T @DT @RT(4)DINT @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(12)mpiODCInitOk @RT(0) @T @T @REFTO 0 @T @DT @RT(4)DINT @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(9)PU_Task_7 @RT(0) @T @T @RENAMED 0 @T @T @DT @RT(4)TASK @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 7 @F @F @F @F 
+
+@Var @RT(7)TaskMid @RT(0) @T @T @RENAMED 0 @T @T @DT @RT(4)TASK @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 7 @F @F @F @F 
+
+@Var @RT(13)sv_bInitStart @RT(0) @T @F @DT @RT(4)BOOL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 8 @F @F @F @F 
+
+@Var @RT(19)erEqualCorePriority @RT(0) @T @F @DT @RT(5)ALARM @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 7 @F @F @F @F 
+
+@Var @RT(22)sv_bUseProgramSwitches @RT(0) @T @F @DT @RT(4)BOOL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 8 @F @F @F @F 
+
+@Var @RT(23)sv_bCoresParallelToMold @RT(0) @T @F @DT @RT(4)BOOL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 8 @F @F @F @F 
+
+@Var @RT(9)PU_Task_3 @RT(0) @T @T @RENAMED 0 @T @T @DT @RT(4)TASK @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 7 @F @F @F @F 
+
+@Var @RT(22)sv_bDeviceRegisterDone @RT(0) @T @T @RENAMED 0 @T @T @DT @RT(4)BOOL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 8 @F @F @F @F 
+
+@Var @RT(18)sv_NumberOfDevices @RT(0) @T @T @DERIVED 0 @F @RT(17)tyNumberOfDevices @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 8 @F @F @F @F 
+
+@END_Dcl 
+
+@END_Export 
+
+@BEG_Body 
+
+6 
+
+@BEG_Export 
+
+@BEG_Algo 
+@POSTUPDATE_ALGORITHM @RT(10)pInitStart @STRUCTURED_TEXT 
+@RT(0) @RT(13)sv_bInitStart @RT(9)PU_Task_7 @F @F 
+@END_Algo 
+
+@BEG_Dcl 
+@RT(16)DclTreeContainer 
+1 
+@Var @RT(5)state @RT(0) @T @T @DERIVED 0 @T @T @DT @RT(11)KSYS_Status @RT(0) @T @T @UNKNOWN 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@END_Dcl 
+
+@END_Export 
+
+@BEG_Export 
+
+@BEG_Algo 
+@EVENT_ALGORITHM @RT(17)evaDeviceRegister @STRUCTURED_TEXT 
+@RT(0) @RT(16)evDeviceRegister @RT(9)EV_Task_3 @F @F 
+@END_Algo 
+
+@BEG_Dcl 
+@RT(16)DclTreeContainer 
+3 
+@Var @RT(20)evDeviceRegisterData @RT(0) @T @T @DERIVED 0 @T @T @DT @RT(21)tevDeviceRegisterData @RT(0) @T @T @UNKNOWN 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 1 @F @F @F @F 
+
+@Var @RT(9)bInitDone @RT(0) @T @F @DT @RT(4)BOOL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(1)i @RT(0) @T @F @DT @RT(4)DINT @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 4 @F @F @F @F 
+
+@END_Dcl 
+
+@END_Export 
+
+@BEG_Export 
+
+@BEG_Algo 
+@EVENT_ALGORITHM @RT(18)evaCoreTypeChanged @STRUCTURED_TEXT 
+@RT(0) @RT(17)evCoreTypeChanged @RT(9)EV_Task_7 @F @F 
+@END_Algo 
+
+@BEG_Dcl 
+@RT(16)DclTreeContainer 
+2 
+@Var @RT(21)evCoreTypeChangedData @RT(0) @T @T @DERIVED 0 @T @T @DT @RT(22)tevCoreTypeChangedData @RT(0) @T @T @UNKNOWN 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 1 @F @F @F @F 
+
+@Var @RT(1)i @RT(0) @T @F @DT @RT(4)DINT @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 4 @F @F @F @F 
+
+@END_Dcl 
+
+@END_Export 
+
+@BEG_Export 
+
+@BEG_Algo 
+@POSTUPDATE_ALGORITHM @RT(12)pNewSequence @STRUCTURED_TEXT 
+@RT(0) @RT(22)mpiODCSequenceUpdated^ @RT(9)PU_Task_7 @F @F 
+@END_Algo 
+
+@BEG_Dcl 
+@RT(16)DclTreeContainer 
+0 
+@END_Dcl 
+
+@END_Export 
+
+@BEG_Export 
+
+@BEG_Algo 
+@PROCESS_ALGORITHM @RT(21)paCheckCorePriorities @STRUCTURED_TEXT 
+@RT(0) @RT(0) @RT(7)TaskMid @F @F 
+@END_Algo 
+
+@BEG_Dcl 
+@RT(16)DclTreeContainer 
+3 
+@Var @RT(1)i @RT(0) @T @F @DT @RT(4)DINT @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 4 @F @F @F @F 
+
+@Var @RT(1)k @RT(0) @T @T @RENAMED 0 @T @T @DT @RT(4)DINT @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 4 @F @F @F @F 
+
+@Var @RT(9)bSetAlarm @RT(0) @T @F @DT @RT(4)BOOL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@END_Dcl 
+
+@END_Export 
+
+@BEG_Export 
+
+@BEG_Algo 
+@POSTUPDATE_ALGORITHM @RT(15)pDeviceRegister @STRUCTURED_TEXT 
+@RT(0) @RT(22)sv_bDeviceRegisterDone @RT(9)PU_Task_3 @F @F 
+@END_Algo 
+
+@BEG_Dcl 
+@RT(16)DclTreeContainer 
+1 
+@Var @RT(1)i @RT(0) @T @F @DT @RT(4)DINT @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 4 @F @F @F @F 
+
+@END_Dcl 
+
+@END_Export 
+
+@BEG_Body 
+@TL(10)
+(**************************************** WARNING ********************************************
+ *** The KEBA Kemro K2 System including software is not intended for safety control tasks! ***
+ ***                       For further information see Comment tab!                        ***
+ *********************************************************************************************)
+
+//get references
+mpiODCSequenceUpdated := GET_SYNC_REFTO('ODC1.sv_iODCSequenceUpdated', T#0s, state);
+mpiODCInitOk := GET_SYNC_REFTO('ODC1.sv_iInitOK', T#0s, state);
+
+
+@END_Body 
+
+@@@BEG_Comment@@@ 
+@TL(0)
+
+@@@END_Comment@@@ 
+
+@BEG_Body 
+@TL(20)
+(**************************************** WARNING ********************************************
+ *** The KEBA Kemro K2 System including software is not intended for safety control tasks! ***
+ ***                       For further information see Comment tab!                        ***
+ *********************************************************************************************)
+
+IF NOT bInitDone THEN
+    //reset available flag for all possible cores because the whole structure sv_CoreData is retain!
+    FOR i := 1 TO cMaxDeviceIndex DO
+        sv_CoreData[i].bAvailable := FALSE;
+    END_FOR;
+    bInitDone := TRUE;
+END_IF;
+
+CASE evDeviceRegisterData.DeviceId.CompId OF
+   cCompCore:
+      //set available flag of according Core FU
+      sv_CoreData[evDeviceRegisterData.DeviceId.IndexId].bAvailable := TRUE;   
+   
+END_CASE;   
+
+@END_Body 
+
+@@@BEG_Comment@@@ 
+@TL(2)
+listen to register events of cores and airvalves and set according available flags
+if a register event from a core or airvalve is received
+@@@END_Comment@@@ 
+
+@BEG_Body 
+@TL(15)
+(**************************************** WARNING ********************************************
+ *** The KEBA Kemro K2 System including software is not intended for safety control tasks! ***
+ ***                       For further information see Comment tab!                        ***
+ *********************************************************************************************)
+
+sv_CoreOff[evCoreTypeChangedData.DeviceId.IndexId] := evCoreTypeChangedData.bCoreOff;
+
+sv_bCoresActive := FALSE;
+FOR i := 1 TO cMaxDeviceIndex DO
+   IF sv_CoreData[i].bAvailable AND NOT sv_CoreOff[i] THEN
+      //Core is available and not switched off
+      sv_bCoresActive := TRUE;
+   END_IF;
+END_FOR;
+
+@END_Body 
+
+@@@BEG_Comment@@@ 
+@TL(0)
+
+@@@END_Comment@@@ 
+
+@BEG_Body 
+@TL(12)
+(**************************************** WARNING ********************************************
+ *** The KEBA Kemro K2 System including software is not intended for safety control tasks! ***
+ ***                       For further information see Comment tab!                        ***
+ *********************************************************************************************)
+
+//new sequence created by using program switches -> check if creation was successful
+//if not: check core priorities
+IF sv_bUseProgramSwitches AND mpiODCInitOk^ = 0 THEN
+   //check for equal core priorities
+   START_PROCESS_ALGORITHM(paCheckCorePriorities);
+END_IF;
+
+@END_Body 
+
+@@@BEG_Comment@@@ 
+@TL(0)
+
+@@@END_Comment@@@ 
+
+@BEG_Body 
+@TL(97)
+(**************************************** WARNING ********************************************
+ *** The KEBA Kemro K2 System including software is not intended for safety control tasks! ***
+ ***                       For further information see Comment tab!                        ***
+ *********************************************************************************************)
+
+//check core priorites if some of them are equal
+
+FOR i := 1 TO (cMaxDeviceIndex - 1)  DO
+   IF sv_CoreData[i].bAvailable AND NOT sv_CoreOff[i] THEN
+      //core i is available and activated
+      
+      //compare core priorities with all other cores
+      FOR k := (i + 1) TO cMaxDeviceIndex DO
+         IF sv_CoreData[k].bAvailable AND NOT sv_CoreOff[k] THEN
+            //core k is available and activated            
+            //compare core in priority with core in priority of all other cores
+            IF (sv_CoreData[i].InMode = sv_CoreData[k].InMode) THEN
+               //same mode -> check priority
+               
+               bSetAlarm := FALSE;
+               IF sv_CoreData[i].InMode = nDuringMoldClose THEN
+                  //mode "during" -> also consider sv_bCoresParallelToMold and the according position
+                  IF sv_bCoresParallelToMold THEN 
+                     IF (sv_CoreData[i].iCoreInPriority = sv_CoreData[k].iCoreInPriority) THEN 
+                        //cores parallel to mold and same priority -> alarm 
+                        bSetAlarm := TRUE;
+                     END_IF;
+                  ELSE
+                     IF (sv_CoreData[i].rCoreInPosition = sv_CoreData[k].rCoreInPosition) AND 
+                        (sv_CoreData[i].iCoreInPriority = sv_CoreData[k].iCoreInPriority) THEN
+                        //cores not parallel and priority and position equal -> alarm
+                        bSetAlarm := TRUE;
+                     END_IF;                     
+                  END_IF;
+               ELSE
+                  //mode before or after
+                  IF (sv_CoreData[i].iCoreInPriority = sv_CoreData[k].iCoreInPriority) THEN
+                     //same priority -> alarm
+                     bSetAlarm := TRUE;
+                  END_IF;
+               END_IF;
+                              
+               IF bSetAlarm THEN
+                  //same mode and same priority -> alarm
+                     SET_ALARM(Name := erEqualCorePriority, 
+                               SubID1 := i,
+                               SubID2 := cMoveIn,
+                               SubID3 := k,
+                               SubID4 := cMoveIn);
+               END_IF;                     
+            END_IF; //end_if core in priority
+            
+            
+            //compare core out priority with core out priority of all other cores
+            IF (sv_CoreData[i].OutMode = sv_CoreData[k].OutMode) THEN
+               //same mode -> check priority
+               
+               bSetAlarm := FALSE;
+               IF (sv_CoreData[i].OutMode = nDuringMoldOpen) THEN
+                  //mode "during" -> also consider sv_bCoresParallelToMold and the according position
+                  IF sv_bCoresParallelToMold THEN 
+                     IF (sv_CoreData[i].iCoreOutPriority = sv_CoreData[k].iCoreOutPriority) THEN 
+                        //cores parallel to mold and same priority -> alarm 
+                        bSetAlarm := TRUE;
+                     END_IF;
+                  ELSE
+                     IF (sv_CoreData[i].rCoreOutPosition = sv_CoreData[k].rCoreOutPosition) AND
+                        (sv_CoreData[i].iCoreOutPriority = sv_CoreData[k].iCoreOutPriority) THEN
+                        //cores not parallel and priority and position equal -> alarm
+                        bSetAlarm := TRUE;
+                     END_IF;                     
+                  END_IF;
+               ELSE
+                  //mode before or after
+                  IF (sv_CoreData[i].iCoreOutPriority = sv_CoreData[k].iCoreOutPriority) THEN
+                     //same priority -> alarm
+                     bSetAlarm := TRUE;
+                  END_IF;
+               END_IF;
+                              
+               IF bSetAlarm THEN
+                  //same mode and same priority -> alarm
+                     SET_ALARM(Name := erEqualCorePriority, 
+                               SubID1 := i,
+                               SubID2 := cMoveOut,
+                               SubID3 := k,
+                               SubID4 := cMoveOut);
+               END_IF;
+            END_IF; //end_if core out priority
+            
+         END_IF; //end_if core k                  
+      END_FOR;  //end_for core k               
+   END_IF; //end_if core i available and activated
+END_FOR;
+
+STOP_PROCESS_ALGORITHM();
+
+@END_Body 
+
+@@@BEG_Comment@@@ 
+@TL(0)
+
+@@@END_Comment@@@ 
+
+@BEG_Body 
+@TL(18)
+(**************************************** WARNING ********************************************
+ *** The KEBA Kemro K2 System including software is not intended for safety control tasks! ***
+ ***                       For further information see Comment tab!                        ***
+ *********************************************************************************************)
+
+//correct init value of core out priority (-1)
+FOR i := 1 TO cMaxDeviceIndex DO
+   IF sv_CoreData[i].bAvailable AND sv_CoreData[i].iCoreOutPriority = -1 THEN
+      IF i = 1 THEN
+         //first core gets highest number (= number of available cores)
+         sv_CoreData[i].iCoreOutPriority := sv_NumberOfDevices[cCompCore];
+      ELSE
+         //other cores get lower number than the predecessor
+         sv_CoreData[i].iCoreOutPriority := sv_CoreData[(i - 1)].iCoreOutPriority - 1;
+      END_IF; 
+   END_IF;   
+END_FOR;
+
+@END_Body 
+
+@@@BEG_Comment@@@ 
+@TL(0)
+
+@@@END_Comment@@@ 
+@END_Body 
+
+@END_Contents 
+@@@BEG_Password@@@
+M2hzZmhrMw==
+@@@END_Password@@@

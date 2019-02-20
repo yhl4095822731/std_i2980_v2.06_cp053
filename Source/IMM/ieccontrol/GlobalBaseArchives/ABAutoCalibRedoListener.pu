@@ -1,0 +1,310 @@
+(*
+@h    ! WARNING !
+@h    The Kemro K2 system (including software) only meets category B according to EN 954-1,
+@h    thus it is not intended for usage in safety-relevant control applications in the field 
+@h    of personal safety (e.g. emergency stop).
+@h    To implement potentially necessary safety-relevant control tasks, always use additional 
+@h    external safety devices that are intended for the particular purpose, and meet the necessary 
+@h    functional safety.
+@h    For further information see EN 954-1 (EN ISO 13849-1) and/or the K2-x00 user manual, chapter 
+@h    "CE conformity, directives and standards".
+
+wait for a change in the sv_CalibState bRedo or Status fields
+If bRedo is set check for Setup mode then send a evRedoStart event
+if Status changes away from tnCalibState_Running the bRedo flag is reset
+*)
+
+IMPORT_OVER_LISTFILE
+ SET_ALARM
+, tsCalibMovement
+, tevRedoEvent
+, tnOperationMode
+, tevRedoEventData
+
+END_IMPORT
+
+ALGORITHM_BLOCK ABAutoCalibRedoListener #DUMMY_EDIT_BLOCK
+
+SYSTEM_VAR
+ sv_CalibState : tsCalibMovement;
+ sv_OperationMode : tnOperationMode;
+END_VAR
+
+SYSTEM_OBJECT
+ PU_Task_7 : TASK;
+ evRedoStart : tevRedoEvent;
+ erSetupModeRequiredForCalib : ALARM;
+END_OBJECT
+
+(*
+@h    ! WARNING !
+@h    The Kemro K2 system (including software) only meets category B according to EN 954-1,
+@h    thus it is not intended for usage in safety-relevant control applications in the field 
+@h    of personal safety (e.g. emergency stop).
+@h    To implement potentially necessary safety-relevant control tasks, always use additional 
+@h    external safety devices that are intended for the particular purpose, and meet the necessary 
+@h    functional safety.
+@h    For further information see EN 954-1 (EN ISO 13849-1) and/or the K2-x00 user manual, chapter 
+@h    "CE conformity, directives and standards".
+
+sets a evRedoStart event, which notifies the autocalibration FU to start this calibration movement
+*)
+
+POSTUPDATE_ALGORITHM pUpdateRedo ON PU_Task_7 WITH sv_CalibState.bRedo
+
+
+VAR_TEMP
+ RedoStartData : tevRedoEventData;
+END_VAR
+#BEGIN_EDIT_BLOCK
+(**************************************** WARNING ********************************************
+ *** The KEBA Kemro K2 System including software is not intended for safety control tasks! ***
+ ***                       For further information see Comment tab!                        ***
+ *********************************************************************************************)
+
+IF sv_CalibState.bRedo THEN
+    IF sv_OperationMode <> nSetup THEN
+       SET_ALARM(erSetupModeRequiredForCalib);
+       sv_CalibState.bRedo := FALSE;
+       RETURN;
+    END_IF;
+    RedoStartData.pMovement := @sv_CalibState;
+    SET_EVENT(evRedoStart, RedoStartData);
+END_IF;
+
+
+;#END_EDIT_BLOCK END_ALGORITHM
+
+(*
+@h    ! WARNING !
+@h    The Kemro K2 system (including software) only meets category B according to EN 954-1,
+@h    thus it is not intended for usage in safety-relevant control applications in the field 
+@h    of personal safety (e.g. emergency stop).
+@h    To implement potentially necessary safety-relevant control tasks, always use additional 
+@h    external safety devices that are intended for the particular purpose, and meet the necessary 
+@h    functional safety.
+@h    For further information see EN 954-1 (EN ISO 13849-1) and/or the K2-x00 user manual, chapter 
+@h    "CE conformity, directives and standards".
+
+sets a evRedoStart event, which notifies the autocalibration FU to start this calibration movement
+*)
+
+POSTUPDATE_ALGORITHM pUpdateStatus ON PU_Task_7 WITH sv_CalibState.Status
+
+#BEGIN_EDIT_BLOCK
+(**************************************** WARNING ********************************************
+ *** The KEBA Kemro K2 System including software is not intended for safety control tasks! ***
+ ***                       For further information see Comment tab!                        ***
+ *********************************************************************************************)
+
+(* reset bRedo flag, when calibration is finished or aborted *)
+IF sv_CalibState.Status <> tnCalibState_Running AND sv_CalibState.bRedo THEN
+    sv_CalibState.bRedo := FALSE;
+END_IF;
+
+
+;#END_EDIT_BLOCK END_ALGORITHM
+
+
+
+END_ALGORITHM_BLOCK
+
+
+
+#END_OF_IEC_PART
+
+@Puma @IecEditor 6 30 @Pou 25 
+@@@BEG_Comment@@@
+@h    ! WARNING !
+@h    The Kemro K2 system (including software) only meets category B according to EN 954-1,
+@h    thus it is not intended for usage in safety-relevant control applications in the field 
+@h    of personal safety (e.g. emergency stop).
+@h    To implement potentially necessary safety-relevant control tasks, always use additional 
+@h    external safety devices that are intended for the particular purpose, and meet the necessary 
+@h    functional safety.
+@h    For further information see EN 954-1 (EN ISO 13849-1) and/or the K2-x00 user manual, chapter 
+@h    "CE conformity, directives and standards".
+
+wait for a change in the sv_CalibState bRedo or Status fields
+If bRedo is set check for Setup mode then send a evRedoStart event
+if Status changes away from tnCalibState_Running the bRedo flag is reset
+@@@END_Comment@@@
+
+@BEG_Contents 
+
+@BEG_Func 
+@RT(17)FuncTreeContainer 
+1 
+@Var @RT(9)SET_ALARM @RT(0) @T @T @DERIVED 0 @F @RT(23)KEBA_STANDARD_PROCEDURE @F 
+@T 
+@BEG_Attrib 
+0 @RT(0) @RT(0) 
+@END_Attrib 
+1 1 @F @F @F @F 
+
+@END_Func 
+
+@BEG_Const 
+@RT(18)ConstTreeContainer 
+0 
+@END_Const 
+
+@BEG_Export 
+
+@BEG_Kind 
+@ALGORITHM_BLOCK @RT(23)ABAutoCalibRedoListener @STRUCTURED_TEXT 
+@RT(0) @RT(0) @RT(0) 
+@END_Kind 
+
+@BEG_Dcl 
+@RT(16)DclTreeContainer 
+5 
+@Var @RT(13)sv_CalibState @RT(0) @T @T @DERIVED 0 @T @T @DT @RT(15)tsCalibMovement @RT(0) @T @T @UNKNOWN 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 8 @F @F @F @F 
+
+@Var @RT(9)PU_Task_7 @RT(0) @T @T @RENAMED 0 @T @T @DT @RT(4)TASK @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 7 @F @F @F @F 
+
+@Var @RT(11)evRedoStart @RT(0) @T @T @RENAMED 0 @T @T @DT @RT(12)tevRedoEvent @RT(0) @T @T @UNKNOWN 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 7 @F @F @F @F 
+
+@Var @RT(27)erSetupModeRequiredForCalib @RT(0) @T @T @RENAMED 0 @T @T @DT @RT(5)ALARM @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 7 @F @F @F @F 
+
+@Var @RT(16)sv_OperationMode @RT(0) @T @T @RENAMED 0 @T @T @DT @RT(15)tnOperationMode @RT(0) @T @T @UNKNOWN 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 8 @F @F @F @F 
+
+@END_Dcl 
+
+@END_Export 
+
+@BEG_Body 
+
+2 
+
+@BEG_Export 
+
+@BEG_Algo 
+@POSTUPDATE_ALGORITHM @RT(11)pUpdateRedo @STRUCTURED_TEXT 
+@RT(0) @RT(19)sv_CalibState.bRedo @RT(9)PU_Task_7 @F @F 
+@END_Algo 
+
+@BEG_Dcl 
+@RT(16)DclTreeContainer 
+1 
+@Var @RT(13)RedoStartData @RT(0) @T @T @DERIVED 0 @T @T @DT @RT(16)tevRedoEventData @RT(0) @T @T @UNKNOWN 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 4 @F @F @F @F 
+
+@END_Dcl 
+
+@END_Export 
+
+@BEG_Export 
+
+@BEG_Algo 
+@POSTUPDATE_ALGORITHM @RT(13)pUpdateStatus @STRUCTURED_TEXT 
+@RT(0) @RT(20)sv_CalibState.Status @RT(9)PU_Task_7 @F @F 
+@END_Algo 
+
+@BEG_Dcl 
+@RT(16)DclTreeContainer 
+0 
+@END_Dcl 
+
+@END_Export 
+
+@BEG_Body 
+@TL(15)
+(**************************************** WARNING ********************************************
+ *** The KEBA Kemro K2 System including software is not intended for safety control tasks! ***
+ ***                       For further information see Comment tab!                        ***
+ *********************************************************************************************)
+
+IF sv_CalibState.bRedo THEN
+    IF sv_OperationMode <> nSetup THEN
+       SET_ALARM(erSetupModeRequiredForCalib);
+       sv_CalibState.bRedo := FALSE;
+       RETURN;
+    END_IF;
+    RedoStartData.pMovement := @sv_CalibState;
+    SET_EVENT(evRedoStart, RedoStartData);
+END_IF;
+
+@END_Body 
+
+@@@BEG_Comment@@@ 
+@TL(11)
+@h    ! WARNING !
+@h    The Kemro K2 system (including software) only meets category B according to EN 954-1,
+@h    thus it is not intended for usage in safety-relevant control applications in the field 
+@h    of personal safety (e.g. emergency stop).
+@h    To implement potentially necessary safety-relevant control tasks, always use additional 
+@h    external safety devices that are intended for the particular purpose, and meet the necessary 
+@h    functional safety.
+@h    For further information see EN 954-1 (EN ISO 13849-1) and/or the K2-x00 user manual, chapter 
+@h    "CE conformity, directives and standards".
+
+sets a evRedoStart event, which notifies the autocalibration FU to start this calibration movement
+@@@END_Comment@@@ 
+
+@BEG_Body 
+@TL(10)
+(**************************************** WARNING ********************************************
+ *** The KEBA Kemro K2 System including software is not intended for safety control tasks! ***
+ ***                       For further information see Comment tab!                        ***
+ *********************************************************************************************)
+
+(* reset bRedo flag, when calibration is finished or aborted *)
+IF sv_CalibState.Status <> tnCalibState_Running AND sv_CalibState.bRedo THEN
+    sv_CalibState.bRedo := FALSE;
+END_IF;
+
+@END_Body 
+
+@@@BEG_Comment@@@ 
+@TL(11)
+@h    ! WARNING !
+@h    The Kemro K2 system (including software) only meets category B according to EN 954-1,
+@h    thus it is not intended for usage in safety-relevant control applications in the field 
+@h    of personal safety (e.g. emergency stop).
+@h    To implement potentially necessary safety-relevant control tasks, always use additional 
+@h    external safety devices that are intended for the particular purpose, and meet the necessary 
+@h    functional safety.
+@h    For further information see EN 954-1 (EN ISO 13849-1) and/or the K2-x00 user manual, chapter 
+@h    "CE conformity, directives and standards".
+
+sets a evRedoStart event, which notifies the autocalibration FU to start this calibration movement
+@@@END_Comment@@@ 
+@END_Body 
+
+@END_Contents 

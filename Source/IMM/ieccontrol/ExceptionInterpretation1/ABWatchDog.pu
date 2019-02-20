@@ -1,0 +1,990 @@
+IMPORT_OVER_LISTFILE
+ GET_WATCHDOG_TERMINAL
+, CLOSE_WATCHDOG_TERMINAL
+, OPEN_WATCHDOG_TERMINAL
+, IS_LINKED
+, FREEZE_IOSYSTEM
+, SET_ALARM
+, RESET_ALARM
+, SAVE_TRACE_BUFFER
+, SET_TRACE_EVENT_MASK
+, WRITE_STAREP
+, FGetCatConfigValueString
+, GET_STAREP_STATUS
+, STOP_PROCESS_ALGORITHM
+, START_PROCESS_ALGORITHM
+, tsTraceLevel
+, KCAT_HandleData
+, KSYS_TraceStatus
+, KSYS_SysTraceHandleData
+, KSYS_Status
+
+END_IMPORT
+
+ALGORITHM_BLOCK ABWatchDog #DUMMY_EDIT_BLOCK
+
+SYSTEM_VAR
+ do_Watchdog : BOOL;
+ sv_TraceLevel : tsTraceLevel;
+END_VAR
+
+SYSTEM_OBJECT
+ erWatchdog : ALARM;
+ erStarepWriting : ALARM;
+ erStarepFinished : ALARM;
+ TaskVisLow : TASK;
+END_OBJECT
+
+VAR_EXTERNAL
+ g_bLinux : BOOL;
+END_VAR
+
+VAR
+ m_bIOSysFrozen : BOOL := TRUE;
+ mbStarepActive : BOOL;
+ miStarepState : DINT;
+END_VAR
+
+ALGORITHM aSaveTraceBuffer
+
+
+VAR
+ CatHandleUosSystem : KCAT_HandleData;
+ CatHandleIecRt : KCAT_HandleData;
+ sKpmFileUosSystem : STRING(255) := '/protocol/log/Trace_UOS-System.kpm';
+ sKpmFileIecRt : STRING(255) := '/protocol/log/Trace_IecRt.kpm';
+ TraceStatus : KSYS_TraceStatus;
+ iActUosSystemTraceMask : DWORD;
+ iActIecRtTraceMask : DWORD;
+ sWorkPath : STRING(255);
+ sFTraceFile : STRING(255);
+ FTraceHandle : KSYS_SysTraceHandleData (* handle to FTrace *);
+END_VAR
+#BEGIN_EDIT_BLOCK
+(**************************************** WARNING ********************************************
+ *** The KEBA Kemro K2 System including software is not intended for safety control tasks! ***
+ ***                       For further information see Comment tab!                        ***
+ *********************************************************************************************)
+
+CatHandleUosSystem := KCAT_GetHandle('UOS.TRACE.UOS-System-Trace');
+IF g_bLinux THEN
+   CatHandleIecRt := KCAT_GetHandle('UOS.TRACE.IecRt-CycleTrace0');
+ELSE
+   CatHandleIecRt := KCAT_GetHandle('UOS.TRACE.IecRt-Trace');
+END_IF;
+
+
+// set event trace masks to 0
+iActUosSystemTraceMask := 0;
+IF (CatHandleUosSystem.Status = KCAT_Status_OK) THEN
+   TraceStatus := GET_TRACE_EVENT_MASK(CatHandleUosSystem.Handle, iActUosSystemTraceMask);
+   IF ((TraceStatus = KSYS_TraceStatus_OK) AND (iActUosSystemTraceMask > 0)) THEN
+       TraceStatus := SET_TRACE_EVENT_MASK(CatHandleUosSystem.Handle, 0);    
+   END_IF;
+END_IF;
+
+iActIecRtTraceMask := 0;
+IF (CatHandleIecRt.Status = KCAT_Status_OK) THEN
+   TraceStatus := GET_TRACE_EVENT_MASK(CatHandleIecRt.Handle, iActIecRtTraceMask);
+   IF ((TraceStatus = KSYS_TraceStatus_OK) AND (iActIecRtTraceMask > 0)) THEN
+       TraceStatus := SET_TRACE_EVENT_MASK(CatHandleIecRt.Handle, 0);
+   END_IF;
+END_IF;
+
+IF g_bLinux THEN
+   FTraceHandle := GET_SYSTEM_TRACE_HANDLE();
+   IF (FTraceHandle.Status = KSYS_Status_OK) THEN
+      TraceStatus := SET_TRACE_EVENT_MASK(FTraceHandle.Handle, 0);
+   END_IF;
+END_IF;
+
+
+// save tracer buffers
+sWorkPath := FGetCatConfigValueString('System.workPath', '/harddisk0/');
+sKpmFileUosSystem := CONCAT(sWorkPath, sKpmFileUosSystem);
+sKpmFileIecRt := CONCAT(sWorkPath, sKpmFileIecRt);
+
+IF g_bLinux THEN
+   //save FTrace on linux systems 
+   sFTraceFile := CONCAT(sWorkPath, '/protocol/log/ftrace.kpm');
+   TraceStatus := SAVE_FTRACE_COMPRESSED(TRUE, sFTraceFile);
+END_IF;
+
+IF (iActUosSystemTraceMask > 0) THEN
+   TraceStatus := SAVE_TRACE_BUFFER(CatHandleUosSystem.Handle, TRUE, sKpmFileUosSystem);
+END_IF;
+
+IF (iActIecRtTraceMask > 0) THEN
+   TraceStatus := SAVE_TRACE_BUFFER(CatHandleIecRt.Handle, TRUE, sKpmFileIecRt);
+END_IF;
+
+
+
+;#END_EDIT_BLOCK END_ALGORITHM
+
+ALGORITHM aWriteStarep
+
+
+VAR
+ dummy : DINT;
+END_VAR
+#BEGIN_EDIT_BLOCK
+(**************************************** WARNING ********************************************
+ *** The KEBA Kemro K2 System including software is not intended for safety control tasks! ***
+ ***                       For further information see Comment tab!                        ***
+ *********************************************************************************************)
+
+IF NOT mbStarepActive THEN
+    mbStarepActive := TRUE;
+    START_PROCESS_ALGORITHM(paCheckStarep); 
+ELSE
+    IF sv_TraceLevel.bExceptionInterpretation THEN
+      dummy := Print('ABWatchdog: starep already active - skipping');
+    END_IF;
+END_IF;
+
+
+
+
+;#END_EDIT_BLOCK END_ALGORITHM
+
+ALGORITHM aOpen
+
+#BEGIN_EDIT_BLOCK
+(**************************************** WARNING ********************************************
+ *** The KEBA Kemro K2 System including software is not intended for safety control tasks! ***
+ ***                       For further information see Comment tab!                        ***
+ *********************************************************************************************)
+
+// disable all outputs 
+FREEZE_IOSYSTEM(Action := TRUE);
+m_bIOSysFrozen := TRUE;
+
+IF IS_LINKED(do_Watchdog) THEN
+    // external Watchdog Output used 
+    do_Watchdog := FALSE;
+END_IF;
+    
+SET_ALARM(Name := erWatchdog);
+aSaveTraceBuffer();
+aWriteStarep();
+
+
+;#END_EDIT_BLOCK END_ALGORITHM
+
+ALGORITHM aClose
+
+#BEGIN_EDIT_BLOCK
+(**************************************** WARNING ********************************************
+ *** The KEBA Kemro K2 System including software is not intended for safety control tasks! ***
+ ***                       For further information see Comment tab!                        ***
+ *********************************************************************************************)
+
+// allow outputs 
+FREEZE_IOSYSTEM(Action := FALSE);
+
+IF IS_LINKED(do_Watchdog) THEN
+    // external Watchdog Output used 
+    do_Watchdog := TRUE;
+END_IF;
+
+IF m_bIOSysFrozen THEN
+    RESET_ALARM(Name := erWatchdog);
+END_IF;
+
+m_bIOSysFrozen := FALSE;
+    
+
+
+
+;#END_EDIT_BLOCK END_ALGORITHM
+
+ALGORITHM aGet
+
+
+VAR_OUTPUT
+ bState : BOOL;
+END_VAR
+#BEGIN_EDIT_BLOCK
+(**************************************** WARNING ********************************************
+ *** The KEBA Kemro K2 System including software is not intended for safety control tasks! ***
+ ***                       For further information see Comment tab!                        ***
+ *********************************************************************************************)
+
+// getting Watchdog State
+
+IF IS_LINKED(do_Watchdog) THEN
+    // external Watchdog Output used 
+    bState := do_Watchdog;
+ELSE
+    // no Watchdog Output used
+    bState := NOT m_bIOSysFrozen;
+END_IF;
+    
+
+
+;#END_EDIT_BLOCK END_ALGORITHM
+
+PROCESS_ALGORITHM paCheckStarep ON TaskVisLow
+
+
+VAR
+ status : KSYS_Status;
+ progress : DWORD;
+ starepStatus : DWORD;
+ cnt : INT;
+ dummy : DINT;
+END_VAR
+#BEGIN_EDIT_BLOCK
+(**************************************** WARNING ********************************************
+ *** The KEBA Kemro K2 System including software is not intended for safety control tasks! ***
+ ***                       For further information see Comment tab!                        ***
+ *********************************************************************************************)
+
+CASE miStarepState OF
+
+    0:  // initiate writing of starep
+        status := WRITE_STAREP(); // potentially blocking on Linux
+          
+        IF (status = KSYS_Status_OK) THEN
+            SET_ALARM(Name := erStarepWriting);
+            miStarepState := 1;
+        ELSE
+            IF sv_TraceLevel.bExceptionInterpretation THEN
+                dummy := Print('ABWatchdog: WRITE_STAREP failed - exiting');
+            END_IF;      
+            mbStarepActive := FALSE;            
+            STOP_PROCESS_ALGORITHM();
+        END_IF;
+    
+    1: // check starep writing status
+        cnt := cnt + 1; 
+        IF cnt = 10 THEN
+            cnt := 0; 
+        ELSE 
+            RETURN; 
+        END_IF;
+        
+        status := GET_STAREP_STATUS(starepStatus, progress);
+        IF (status = KSYS_Status_OK) THEN
+            IF (starepStatus = 0) THEN
+                // finished
+                RESET_ALARM(Name := erStarepWriting);
+                SET_ALARM(Name := erStarepFinished);
+                mbStarepActive := FALSE;
+                miStarepState := 0;
+                STOP_PROCESS_ALGORITHM();                
+            END_IF;
+        ELSE
+            // error
+            IF sv_TraceLevel.bExceptionInterpretation THEN
+                dummy := Print('ABWatchdog: GET_STAREP_STATUS failed - exiting');
+            END_IF;      
+            mbStarepActive := FALSE;
+            miStarepState := 0;
+            STOP_PROCESS_ALGORITHM();            
+        END_IF;                         
+ELSE
+    IF sv_TraceLevel.bExceptionInterpretation THEN
+        dummy := Print('ABWatchdog: invalid starep state machine state %d - exiting', miStarepState);
+    END_IF;   
+    mbStarepActive := FALSE;
+    miStarepState := 0;
+    STOP_PROCESS_ALGORITHM();            
+END_CASE;
+
+
+
+
+
+
+
+;#END_EDIT_BLOCK END_ALGORITHM
+
+
+
+END_ALGORITHM_BLOCK
+
+
+
+#END_OF_IEC_PART
+
+@Puma @IecEditor 6 68 @Pou 25 
+@@@BEG_Comment@@@
+
+@@@END_Comment@@@
+
+@BEG_Contents 
+
+@BEG_Func 
+@RT(17)FuncTreeContainer 
+14 
+@Var @RT(21)GET_WATCHDOG_TERMINAL @RT(0) @T @T @DERIVED 0 @F @RT(22)KEBA_STANDARD_FUNCTION @F 
+@T 
+@BEG_Attrib 
+0 @RT(0) @RT(0) 
+@END_Attrib 
+1 1 @F @F @F @F 
+
+@Var @RT(23)CLOSE_WATCHDOG_TERMINAL @RT(0) @T @T @DERIVED 0 @F @RT(23)KEBA_STANDARD_PROCEDURE @F 
+@T 
+@BEG_Attrib 
+0 @RT(0) @RT(0) 
+@END_Attrib 
+1 1 @F @F @F @F 
+
+@Var @RT(22)OPEN_WATCHDOG_TERMINAL @RT(0) @T @T @DERIVED 0 @F @RT(23)KEBA_STANDARD_PROCEDURE @F 
+@T 
+@BEG_Attrib 
+0 @RT(0) @RT(0) 
+@END_Attrib 
+1 1 @F @F @F @F 
+
+@Var @RT(9)IS_LINKED @RT(0) @T @T @DERIVED 0 @F @RT(22)KEBA_STANDARD_FUNCTION @F 
+@T 
+@BEG_Attrib 
+0 @RT(0) @RT(0) 
+@END_Attrib 
+1 1 @F @F @F @F 
+
+@Var @RT(15)FREEZE_IOSYSTEM @RT(0) @T @T @DERIVED 0 @F @RT(23)KEBA_STANDARD_PROCEDURE @F 
+@T 
+@BEG_Attrib 
+0 @RT(0) @RT(0) 
+@END_Attrib 
+1 1 @F @F @F @F 
+
+@Var @RT(9)SET_ALARM @RT(0) @T @T @DERIVED 0 @F @RT(23)KEBA_STANDARD_PROCEDURE @F 
+@T 
+@BEG_Attrib 
+0 @RT(0) @RT(0) 
+@END_Attrib 
+1 1 @F @F @F @F 
+
+@Var @RT(11)RESET_ALARM @RT(0) @T @T @DERIVED 0 @F @RT(23)KEBA_STANDARD_PROCEDURE @F 
+@T 
+@BEG_Attrib 
+0 @RT(0) @RT(0) 
+@END_Attrib 
+1 1 @F @F @F @F 
+
+@Var @RT(17)SAVE_TRACE_BUFFER @RT(0) @T @T @DERIVED 0 @F @RT(22)KEBA_STANDARD_FUNCTION @F 
+@T 
+@BEG_Attrib 
+0 @RT(0) @RT(0) 
+@END_Attrib 
+1 1 @F @F @F @F 
+
+@Var @RT(20)SET_TRACE_EVENT_MASK @RT(0) @T @T @DERIVED 0 @F @RT(22)KEBA_STANDARD_FUNCTION @F 
+@T 
+@BEG_Attrib 
+0 @RT(0) @RT(0) 
+@END_Attrib 
+1 1 @F @F @F @F 
+
+@Var @RT(12)WRITE_STAREP @RT(0) @T @T @DERIVED 0 @F @RT(22)KEBA_STANDARD_FUNCTION @F 
+@T 
+@BEG_Attrib 
+0 @RT(0) @RT(0) 
+@END_Attrib 
+1 1 @F @F @F @F 
+
+@Var @RT(24)FGetCatConfigValueString @RT(0) @T @T @DERIVED 0 @F @RT(8)FUNCTION @F 
+@T 
+@BEG_Attrib 
+0 @RT(0) @RT(0) 
+@END_Attrib 
+1 1 @F @F @F @F 
+
+@Var @RT(17)GET_STAREP_STATUS @RT(0) @T @T @DERIVED 0 @F @RT(22)KEBA_STANDARD_FUNCTION @F 
+@T 
+@BEG_Attrib 
+0 @RT(0) @RT(0) 
+@END_Attrib 
+1 1 @F @F @F @F 
+
+@Var @RT(22)STOP_PROCESS_ALGORITHM @RT(0) @T @T @DERIVED 0 @F @RT(23)KEBA_STANDARD_PROCEDURE @F 
+@T 
+@BEG_Attrib 
+0 @RT(0) @RT(0) 
+@END_Attrib 
+1 1 @F @F @F @F 
+
+@Var @RT(23)START_PROCESS_ALGORITHM @RT(0) @T @T @DERIVED 0 @F @RT(23)KEBA_STANDARD_PROCEDURE @F 
+@T 
+@BEG_Attrib 
+0 @RT(0) @RT(0) 
+@END_Attrib 
+1 1 @F @F @F @F 
+
+@END_Func 
+
+@BEG_Const 
+@RT(18)ConstTreeContainer 
+0 
+@END_Const 
+
+@BEG_Export 
+
+@BEG_Kind 
+@ALGORITHM_BLOCK @RT(10)ABWatchDog @STRUCTURED_TEXT 
+@RT(0) @RT(0) @RT(0) 
+@END_Kind 
+
+@BEG_Dcl 
+@RT(16)DclTreeContainer 
+10 
+@Var @RT(10)erWatchdog @RT(0) @T @F @DT @RT(5)ALARM @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 7 @F @F @F @F 
+
+@Var @RT(11)do_Watchdog @RT(0) @T @F @DT @RT(4)BOOL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 8 @F @F @F @F 
+
+@Var @RT(14)m_bIOSysFrozen @RT(0) @T @F @DT @RT(4)BOOL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(4)TRUE @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(15)erStarepWriting @RT(0) @T @F @DT @RT(5)ALARM @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 7 @F @F @F @F 
+
+@Var @RT(16)erStarepFinished @RT(0) @T @F @DT @RT(5)ALARM @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 7 @F @F @F @F 
+
+@Var @RT(10)TaskVisLow @RT(0) @T @T @RENAMED 0 @T @T @DT @RT(4)TASK @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 7 @F @F @F @F 
+
+@Var @RT(13)sv_TraceLevel @RT(0) @T @T @DERIVED 0 @T @T @DT @RT(12)tsTraceLevel @RT(0) @T @T @UNKNOWN 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 8 @F @F @F @F 
+
+@Var @RT(8)g_bLinux @RT(0) @T @F @DT @RT(4)BOOL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 6 @F @F @F @F 
+
+@Var @RT(14)mbStarepActive @RT(0) @T @F @DT @RT(4)BOOL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(13)miStarepState @RT(0) @T @F @DT @RT(4)DINT @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@END_Dcl 
+
+@END_Export 
+
+@BEG_Body 
+
+6 
+
+@BEG_Export 
+
+@BEG_Algo 
+@ALGORITHM @RT(16)aSaveTraceBuffer @STRUCTURED_TEXT 
+@RT(0) @RT(0) @RT(0) @F @F 
+@END_Algo 
+
+@BEG_Dcl 
+@RT(16)DclTreeContainer 
+10 
+@Var @RT(18)CatHandleUosSystem @RT(0) @T @T @DERIVED 0 @T @T @DT @RT(15)KCAT_HandleData @RT(0) @T @T @UNKNOWN 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(14)CatHandleIecRt @RT(0) @T @T @DERIVED 0 @F @RT(15)KCAT_HandleData @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(17)sKpmFileUosSystem @RT(0) @T @F @DT @RT(11)STRING(255) @RT(0) @T @T @STRING 0 @F @RT(3)255 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(36)'/protocol/log/Trace_UOS-System.kpm' @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(13)sKpmFileIecRt @RT(0) @T @F @DT @RT(11)STRING(255) @RT(0) @T @T @STRING 0 @F @RT(3)255 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(31)'/protocol/log/Trace_IecRt.kpm' @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(11)TraceStatus @RT(0) @T @T @DERIVED 0 @T @T @DT @RT(16)KSYS_TraceStatus @RT(0) @T @T @UNKNOWN 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(22)iActUosSystemTraceMask @RT(0) @T @F @DT @RT(5)DWORD @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(18)iActIecRtTraceMask @RT(0) @T @F @DT @RT(5)DWORD @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(9)sWorkPath @RT(0) @T @F @DT @RT(11)STRING(255) @RT(0) @T @T @STRING 0 @F @RT(3)255 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(11)sFTraceFile @RT(0) @T @F @DT @RT(11)STRING(255) @RT(0) @T @T @STRING 0 @F @RT(3)255 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(12)FTraceHandle @RT(0) @T @T @DERIVED 0 @T @T @DT @RT(23)KSYS_SysTraceHandleData @RT(0) @T @T @UNKNOWN 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(16)handle to FTrace @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@END_Dcl 
+
+@END_Export 
+
+@BEG_Export 
+
+@BEG_Algo 
+@ALGORITHM @RT(12)aWriteStarep @STRUCTURED_TEXT 
+@RT(0) @RT(0) @RT(0) @F @F 
+@END_Algo 
+
+@BEG_Dcl 
+@RT(16)DclTreeContainer 
+1 
+@Var @RT(5)dummy @RT(0) @T @F @DT @RT(4)DINT @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@END_Dcl 
+
+@END_Export 
+
+@BEG_Export 
+
+@BEG_Algo 
+@ALGORITHM @RT(5)aOpen @STRUCTURED_TEXT 
+@RT(0) @RT(0) @RT(0) @F @F 
+@END_Algo 
+
+@BEG_Dcl 
+@RT(16)DclTreeContainer 
+0 
+@END_Dcl 
+
+@END_Export 
+
+@BEG_Export 
+
+@BEG_Algo 
+@ALGORITHM @RT(6)aClose @STRUCTURED_TEXT 
+@RT(0) @RT(0) @RT(0) @F @F 
+@END_Algo 
+
+@BEG_Dcl 
+@RT(16)DclTreeContainer 
+0 
+@END_Dcl 
+
+@END_Export 
+
+@BEG_Export 
+
+@BEG_Algo 
+@ALGORITHM @RT(4)aGet @STRUCTURED_TEXT 
+@RT(6)bState @RT(0) @RT(0) @F @F 
+@END_Algo 
+
+@BEG_Dcl 
+@RT(16)DclTreeContainer 
+1 
+@Var @RT(6)bState @RT(0) @T @F @DT @RT(4)BOOL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 3 @F @F @F @F 
+
+@END_Dcl 
+
+@END_Export 
+
+@BEG_Export 
+
+@BEG_Algo 
+@PROCESS_ALGORITHM @RT(13)paCheckStarep @STRUCTURED_TEXT 
+@RT(0) @RT(0) @RT(10)TaskVisLow @F @F 
+@END_Algo 
+
+@BEG_Dcl 
+@RT(16)DclTreeContainer 
+5 
+@Var @RT(6)status @RT(0) @T @T @DERIVED 0 @T @T @DT @RT(11)KSYS_Status @RT(0) @T @T @UNKNOWN 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(8)progress @RT(0) @T @F @DT @RT(5)DWORD @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(12)starepStatus @RT(0) @T @F @DT @RT(5)DWORD @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(3)cnt @RT(0) @T @F @DT @RT(3)INT @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(5)dummy @RT(0) @T @F @DT @RT(4)DINT @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@END_Dcl 
+
+@END_Export 
+
+@BEG_Body 
+@TL(58)
+(**************************************** WARNING ********************************************
+ *** The KEBA Kemro K2 System including software is not intended for safety control tasks! ***
+ ***                       For further information see Comment tab!                        ***
+ *********************************************************************************************)
+
+CatHandleUosSystem := KCAT_GetHandle('UOS.TRACE.UOS-System-Trace');
+IF g_bLinux THEN
+   CatHandleIecRt := KCAT_GetHandle('UOS.TRACE.IecRt-CycleTrace0');
+ELSE
+   CatHandleIecRt := KCAT_GetHandle('UOS.TRACE.IecRt-Trace');
+END_IF;
+
+
+// set event trace masks to 0
+iActUosSystemTraceMask := 0;
+IF (CatHandleUosSystem.Status = KCAT_Status_OK) THEN
+   TraceStatus := GET_TRACE_EVENT_MASK(CatHandleUosSystem.Handle, iActUosSystemTraceMask);
+   IF ((TraceStatus = KSYS_TraceStatus_OK) AND (iActUosSystemTraceMask > 0)) THEN
+       TraceStatus := SET_TRACE_EVENT_MASK(CatHandleUosSystem.Handle, 0);    
+   END_IF;
+END_IF;
+
+iActIecRtTraceMask := 0;
+IF (CatHandleIecRt.Status = KCAT_Status_OK) THEN
+   TraceStatus := GET_TRACE_EVENT_MASK(CatHandleIecRt.Handle, iActIecRtTraceMask);
+   IF ((TraceStatus = KSYS_TraceStatus_OK) AND (iActIecRtTraceMask > 0)) THEN
+       TraceStatus := SET_TRACE_EVENT_MASK(CatHandleIecRt.Handle, 0);
+   END_IF;
+END_IF;
+
+IF g_bLinux THEN
+   FTraceHandle := GET_SYSTEM_TRACE_HANDLE();
+   IF (FTraceHandle.Status = KSYS_Status_OK) THEN
+      TraceStatus := SET_TRACE_EVENT_MASK(FTraceHandle.Handle, 0);
+   END_IF;
+END_IF;
+
+
+// save tracer buffers
+sWorkPath := FGetCatConfigValueString('System.workPath', '/harddisk0/');
+sKpmFileUosSystem := CONCAT(sWorkPath, sKpmFileUosSystem);
+sKpmFileIecRt := CONCAT(sWorkPath, sKpmFileIecRt);
+
+IF g_bLinux THEN
+   //save FTrace on linux systems 
+   sFTraceFile := CONCAT(sWorkPath, '/protocol/log/ftrace.kpm');
+   TraceStatus := SAVE_FTRACE_COMPRESSED(TRUE, sFTraceFile);
+END_IF;
+
+IF (iActUosSystemTraceMask > 0) THEN
+   TraceStatus := SAVE_TRACE_BUFFER(CatHandleUosSystem.Handle, TRUE, sKpmFileUosSystem);
+END_IF;
+
+IF (iActIecRtTraceMask > 0) THEN
+   TraceStatus := SAVE_TRACE_BUFFER(CatHandleIecRt.Handle, TRUE, sKpmFileIecRt);
+END_IF;
+
+
+@END_Body 
+
+@@@BEG_Comment@@@ 
+@TL(0)
+
+@@@END_Comment@@@ 
+
+@BEG_Body 
+@TL(16)
+(**************************************** WARNING ********************************************
+ *** The KEBA Kemro K2 System including software is not intended for safety control tasks! ***
+ ***                       For further information see Comment tab!                        ***
+ *********************************************************************************************)
+
+IF NOT mbStarepActive THEN
+    mbStarepActive := TRUE;
+    START_PROCESS_ALGORITHM(paCheckStarep); 
+ELSE
+    IF sv_TraceLevel.bExceptionInterpretation THEN
+      dummy := Print('ABWatchdog: starep already active - skipping');
+    END_IF;
+END_IF;
+
+
+
+@END_Body 
+
+@@@BEG_Comment@@@ 
+@TL(0)
+
+@@@END_Comment@@@ 
+
+@BEG_Body 
+@TL(18)
+(**************************************** WARNING ********************************************
+ *** The KEBA Kemro K2 System including software is not intended for safety control tasks! ***
+ ***                       For further information see Comment tab!                        ***
+ *********************************************************************************************)
+
+// disable all outputs 
+FREEZE_IOSYSTEM(Action := TRUE);
+m_bIOSysFrozen := TRUE;
+
+IF IS_LINKED(do_Watchdog) THEN
+    // external Watchdog Output used 
+    do_Watchdog := FALSE;
+END_IF;
+    
+SET_ALARM(Name := erWatchdog);
+aSaveTraceBuffer();
+aWriteStarep();
+
+@END_Body 
+
+@@@BEG_Comment@@@ 
+@TL(0)
+
+@@@END_Comment@@@ 
+
+@BEG_Body 
+@TL(21)
+(**************************************** WARNING ********************************************
+ *** The KEBA Kemro K2 System including software is not intended for safety control tasks! ***
+ ***                       For further information see Comment tab!                        ***
+ *********************************************************************************************)
+
+// allow outputs 
+FREEZE_IOSYSTEM(Action := FALSE);
+
+IF IS_LINKED(do_Watchdog) THEN
+    // external Watchdog Output used 
+    do_Watchdog := TRUE;
+END_IF;
+
+IF m_bIOSysFrozen THEN
+    RESET_ALARM(Name := erWatchdog);
+END_IF;
+
+m_bIOSysFrozen := FALSE;
+    
+
+
+@END_Body 
+
+@@@BEG_Comment@@@ 
+@TL(0)
+
+@@@END_Comment@@@ 
+
+@BEG_Body 
+@TL(16)
+(**************************************** WARNING ********************************************
+ *** The KEBA Kemro K2 System including software is not intended for safety control tasks! ***
+ ***                       For further information see Comment tab!                        ***
+ *********************************************************************************************)
+
+// getting Watchdog State
+
+IF IS_LINKED(do_Watchdog) THEN
+    // external Watchdog Output used 
+    bState := do_Watchdog;
+ELSE
+    // no Watchdog Output used
+    bState := NOT m_bIOSysFrozen;
+END_IF;
+    
+
+@END_Body 
+
+@@@BEG_Comment@@@ 
+@TL(0)
+
+@@@END_Comment@@@ 
+
+@BEG_Body 
+@TL(62)
+(**************************************** WARNING ********************************************
+ *** The KEBA Kemro K2 System including software is not intended for safety control tasks! ***
+ ***                       For further information see Comment tab!                        ***
+ *********************************************************************************************)
+
+CASE miStarepState OF
+
+    0:  // initiate writing of starep
+        status := WRITE_STAREP(); // potentially blocking on Linux
+          
+        IF (status = KSYS_Status_OK) THEN
+            SET_ALARM(Name := erStarepWriting);
+            miStarepState := 1;
+        ELSE
+            IF sv_TraceLevel.bExceptionInterpretation THEN
+                dummy := Print('ABWatchdog: WRITE_STAREP failed - exiting');
+            END_IF;      
+            mbStarepActive := FALSE;            
+            STOP_PROCESS_ALGORITHM();
+        END_IF;
+    
+    1: // check starep writing status
+        cnt := cnt + 1; 
+        IF cnt = 10 THEN
+            cnt := 0; 
+        ELSE 
+            RETURN; 
+        END_IF;
+        
+        status := GET_STAREP_STATUS(starepStatus, progress);
+        IF (status = KSYS_Status_OK) THEN
+            IF (starepStatus = 0) THEN
+                // finished
+                RESET_ALARM(Name := erStarepWriting);
+                SET_ALARM(Name := erStarepFinished);
+                mbStarepActive := FALSE;
+                miStarepState := 0;
+                STOP_PROCESS_ALGORITHM();                
+            END_IF;
+        ELSE
+            // error
+            IF sv_TraceLevel.bExceptionInterpretation THEN
+                dummy := Print('ABWatchdog: GET_STAREP_STATUS failed - exiting');
+            END_IF;      
+            mbStarepActive := FALSE;
+            miStarepState := 0;
+            STOP_PROCESS_ALGORITHM();            
+        END_IF;                         
+ELSE
+    IF sv_TraceLevel.bExceptionInterpretation THEN
+        dummy := Print('ABWatchdog: invalid starep state machine state %d - exiting', miStarepState);
+    END_IF;   
+    mbStarepActive := FALSE;
+    miStarepState := 0;
+    STOP_PROCESS_ALGORITHM();            
+END_CASE;
+
+
+
+
+
+
+@END_Body 
+
+@@@BEG_Comment@@@ 
+@TL(0)
+
+@@@END_Comment@@@ 
+@END_Body 
+
+@END_Contents 

@@ -1,0 +1,1815 @@
+IMPORT_OVER_LISTFILE
+ CHECK_REF
+, START_PROCESS_ALGORITHM
+, cMaxMoveDevicesRegistered
+, cMinCompId
+, cMaxMoveRegistered
+, cCompMold
+, cCompEjector
+, cCompNozzle
+, cCompInjection
+, cCompCore
+, cCompAirValve
+, cCompCoolingTime
+, cMoveHold
+, cMoveBwd
+, cMoveBwdInterPos
+, cMoveFwdInterPos
+, cMoveFwd
+, cMovePlastPurge
+, cMoveInjectPurge
+, cMoveDecompPurge
+, cMovePVCalib
+, tsCycleTimeDataArray
+, tevMovementState
+, tsActiveMovements
+, tyMovementRegisterList
+, tnOperationMode
+, TON
+, tsDeviceId
+, tMoveIdent
+, tevMovementStateData
+
+END_IMPORT
+
+ALGORITHM_BLOCK ABCycleTimeAnalysis #DUMMY_EDIT_BLOCK
+
+SYSTEM_VAR
+ sv_bSelectionSorted : BOOL;
+ sv_bNewReference : BOOL;
+ sv_AvailableMovements : tsCycleTimeDataArray;
+ sv_AvailableMovementsRetain : tsCycleTimeDataArray;
+ sv_dCycleTime : TIME;
+ sv_dLastCycleTime : TIME;
+ sv_dRefCycleTime : TIME;
+ sv_ActiveMovements : tsActiveMovements;
+ sv_bInitDone : BOOL;
+ sv_MovementsAvailable : tyMovementRegisterList;
+ sv_iShotCounterRetain : UDINT;
+ sv_OperationMode : tnOperationMode;
+ sv_dTimeLimit : TIME;
+ sv_rBwdInterruptPosition : REAL;
+END_VAR
+
+SYSTEM_OBJECT
+ TaskVis : TASK;
+ PU_Task_3 : TASK;
+ evMovementState : tevMovementState;
+END_OBJECT
+
+VAR
+ AvailableMovements : tsCycleTimeDataArray;
+ bEntry : BOOL;
+ MoldTimer : TON;
+ bMoldActive : BOOL := FALSE;
+ bShakeActive : BOOL := FALSE;
+ uIndexMoldOpen : DINT;
+ uIndexMoldClose : DINT;
+ uIndexShake : DINT;
+END_VAR
+
+ALGORITHM aDecideAddingToList
+
+
+VAR_INPUT
+ DeviceId : tsDeviceId;
+ MoveId : tMoveIdent;
+END_VAR
+
+VAR_OUTPUT
+ bAdd : BOOL;
+END_VAR
+#BEGIN_EDIT_BLOCK
+(**************************************** WARNING ********************************************
+ *** The KEBA Kemro K2 System including software is not intended for safety control tasks! ***
+ ***                       For further information see Comment tab!                        ***
+ *********************************************************************************************)
+
+//only movements of the following function units should be selectable in CycleTime mask :
+//Mold, Ejector, Nozzle, Injection, Core, AirValve, CoolingTime
+
+CASE DeviceId.CompId OF
+   
+   cCompMold:
+      //ignore all except mold close and mold open
+      IF MoveId = cMoveFwd OR MoveId = cMoveBwd THEN
+         bAdd := TRUE;
+      ELSE
+         bAdd := FALSE;
+      END_IF;
+   
+   cCompInjection:
+      CASE MoveId OF
+         //ignore following movements of injection unit
+         cMovePlastPurge, cMoveInjectPurge, cMoveDecompPurge, cMovePVCalib, cMoveInjectCalib,
+         cMoveBeginSequence, cMoveEndSequence, cMoveCombinedPlast:
+         bAdd := FALSE;
+      ELSE
+         //all other movements of injection function unit should be avialable
+         bAdd := TRUE;
+      END_CASE;
+        
+   cCompEjector, cCompNozzle, cCompCore, cCompCoolingTime:
+      bAdd := TRUE;
+
+   cCompAirValve:
+      IF MoveId = cMoveStart OR MoveId = cMoveStop THEN
+         bAdd := TRUE;
+      ELSE
+         bAdd := FALSE;
+      END_IF;
+    
+ELSE
+   bAdd := FALSE;
+END_CASE;
+
+
+
+
+;#END_EDIT_BLOCK END_ALGORITHM
+
+POSTUPDATE_ALGORITHM pStoreRetainData ON TaskVis WITH sv_bSelectionSorted
+
+
+VAR
+ uIndex : DINT;
+END_VAR
+#BEGIN_EDIT_BLOCK
+(**************************************** WARNING ********************************************
+ *** The KEBA Kemro K2 System including software is not intended for safety control tasks! ***
+ ***                       For further information see Comment tab!                        ***
+ *********************************************************************************************)
+
+IF sv_bSelectionSorted THEN
+   // ToDo: copy sv_AvailableMovements to sv_AvailableMovementsRetain
+   uIndex := 1;
+   WHILE uIndex < cMaxMoveRegistered+1 DO
+      IF sv_AvailableMovements[uIndex].uPosition > 0 THEN
+         sv_AvailableMovementsRetain[uIndex].dStartTime := T#0s;
+         sv_AvailableMovementsRetain[uIndex].dLastStartTime := T#0s;
+         sv_AvailableMovementsRetain[uIndex].dDuration      := T#0s;
+         sv_AvailableMovementsRetain[uIndex].dLastDuration  := T#0s;
+         sv_AvailableMovementsRetain[uIndex].DeviceId := sv_AvailableMovements[uIndex].DeviceId;
+         sv_AvailableMovementsRetain[uIndex].dRefDuration := sv_AvailableMovements[uIndex].dRefDuration;
+         sv_AvailableMovementsRetain[uIndex].dRefStartTime := sv_AvailableMovements[uIndex].dRefStartTime;
+         sv_AvailableMovementsRetain[uIndex].MoveDir := sv_AvailableMovements[uIndex].MoveDir;
+         sv_AvailableMovementsRetain[uIndex].MoveId := sv_AvailableMovements[uIndex].MoveId;
+         sv_AvailableMovementsRetain[uIndex].pdLimit := sv_AvailableMovements[uIndex].pdLimit;
+         sv_AvailableMovementsRetain[uIndex].pMoveData := sv_AvailableMovements[uIndex].pMoveData;
+         sv_AvailableMovementsRetain[uIndex].uPosition := sv_AvailableMovements[uIndex].uPosition;
+      ELSE
+         // delete invalid entries
+         sv_AvailableMovementsRetain[uIndex].DeviceId.CompId := cMinCompId;
+         sv_AvailableMovementsRetain[uIndex].DeviceId.IndexId := 1;
+         sv_AvailableMovementsRetain[uIndex].dStartTime := T#0s;
+         sv_AvailableMovementsRetain[uIndex].dLastStartTime := T#0s;
+         sv_AvailableMovementsRetain[uIndex].dDuration      := T#0s;
+         sv_AvailableMovementsRetain[uIndex].dLastDuration  := T#0s;
+         sv_AvailableMovementsRetain[uIndex].dRefDuration := T#0s;
+         sv_AvailableMovementsRetain[uIndex].dRefStartTime := T#0s;
+         sv_AvailableMovementsRetain[uIndex].uPosition := 0;
+      END_IF;
+      uIndex := uIndex + 1;
+      IF uIndex > cMaxMoveRegistered THEN
+         EXIT;
+      END_IF;
+   END_WHILE;
+   
+   sv_bSelectionSorted := FALSE;
+END_IF;
+
+
+;#END_EDIT_BLOCK END_ALGORITHM
+
+POSTUPDATE_ALGORITHM pStoreRefData ON TaskVis WITH sv_bNewReference
+
+
+VAR
+ uIndex : DINT;
+ uIndexRetain : DINT;
+END_VAR
+#BEGIN_EDIT_BLOCK
+(**************************************** WARNING ********************************************
+ *** The KEBA Kemro K2 System including software is not intended for safety control tasks! ***
+ ***                       For further information see Comment tab!                        ***
+ *********************************************************************************************)
+
+IF sv_bNewReference THEN
+   // ToDo: copy last fill cycle to RefValues
+   sv_dRefCycleTime := sv_dLastCycleTime;
+   uIndex := 1;
+   WHILE sv_AvailableMovements[uIndex].DeviceId.CompId > cMinCompId DO
+      uIndexRetain := 1;
+      bEntry := FALSE;
+      WHILE sv_AvailableMovementsRetain[uIndexRetain].DeviceId.CompId > cMinCompId DO
+         IF (sv_AvailableMovements[uIndex].DeviceId = sv_AvailableMovementsRetain[uIndexRetain].DeviceId) AND
+            (sv_AvailableMovements[uIndex].MoveId   = sv_AvailableMovementsRetain[uIndexRetain].MoveId)   THEN
+            bEntry := TRUE;
+            EXIT;
+         END_IF;
+         uIndexRetain := uIndexRetain + 1;
+      END_WHILE;
+
+      IF sv_AvailableMovements[uIndex].uPosition > 0 THEN
+         sv_AvailableMovements[uIndex].dRefDuration  := AvailableMovements[uIndex].dDuration;
+         sv_AvailableMovements[uIndex].dRefStartTime := AvailableMovements[uIndex].dStartTime;
+
+         IF bEntry THEN // ad item to retain list
+            sv_AvailableMovementsRetain[uIndexRetain].dRefDuration  := sv_AvailableMovements[uIndex].dRefDuration;
+            sv_AvailableMovementsRetain[uIndexRetain].dRefStartTime := sv_AvailableMovements[uIndex].dRefStartTime;
+            sv_AvailableMovementsRetain[uIndexRetain].uPosition := sv_AvailableMovements[uIndex].uPosition;
+         ELSE
+            sv_AvailableMovementsRetain[uIndexRetain].DeviceId := sv_AvailableMovements[uIndex].DeviceId;
+            sv_AvailableMovementsRetain[uIndexRetain].MoveId   := sv_AvailableMovements[uIndex].MoveId;
+            sv_AvailableMovementsRetain[uIndexRetain].MoveDir  := sv_AvailableMovements[uIndex].MoveDir;
+            sv_AvailableMovementsRetain[uIndexRetain].dRefDuration  := sv_AvailableMovements[uIndex].dRefDuration;
+            sv_AvailableMovementsRetain[uIndexRetain].dRefStartTime := sv_AvailableMovements[uIndex].dRefStartTime;
+            sv_AvailableMovementsRetain[uIndexRetain].uPosition := sv_AvailableMovements[uIndex].uPosition;
+         END_IF;
+      ELSE    // deactivate/remove item for retain list
+         IF bEntry THEN
+            sv_AvailableMovementsRetain[uIndexRetain].uPosition := sv_AvailableMovements[uIndex].uPosition;
+         END_IF;
+      END_IF;
+      uIndex := uIndex + 1;
+   END_WHILE;
+   sv_bNewReference := FALSE;
+END_IF;
+
+
+;#END_EDIT_BLOCK END_ALGORITHM
+
+EVENT_ALGORITHM evaStartTimeRecording ON TaskVis WITH evMovementState
+
+
+VAR_INPUT
+ evMovementStateData : tevMovementStateData;
+END_VAR
+
+VAR
+ dActTime : TIME;
+ MovementStateData : tevMovementStateData;
+ uIndex : DINT;
+ uIndexAvailable : DINT;
+ bActive : BOOL;
+ bHoldActive : BOOL;
+ bMoldInterPosActive : BOOL;
+ bHoldIndexFound : BOOL;
+ uIndexHold : DINT;
+ uIndexAvailableHold : DINT;
+END_VAR
+#BEGIN_EDIT_BLOCK
+(**************************************** WARNING ********************************************
+ *** The KEBA Kemro K2 System including software is not intended for safety control tasks! ***
+ ***                       For further information see Comment tab!                        ***
+ *********************************************************************************************)
+
+dActTime := sv_dCycleTime;
+MovementStateData := evMovementStateData;
+
+IF sv_OperationMode < nHalfAutomatic THEN // only with cyclic movement
+   RETURN;
+END_IF;
+
+bActive := (MovementStateData.State = nActive);
+
+IF bActive THEN
+   // only whole movement should be activated
+   IF (MovementStateData.DeviceId.CompId = cCompMold) AND 
+       (MovementStateData.MoveId = cMoveBwdInterPos) THEN
+       MovementStateData.MoveId := cMoveBwd;
+       bMoldInterPosActive := TRUE;     //interpos movement active --> use MoldTimer
+   ELSIF (MovementStateData.DeviceId.CompId = cCompMold) AND 
+       (MovementStateData.MoveId = cMoveFwdInterPos) THEN
+        MovementStateData.MoveId := cMoveFwd;
+        bMoldInterPosActive := TRUE;    //interpos movement active --> use MoldTimer           
+   ELSIF (MovementStateData.DeviceId.CompId = cCompEjector) THEN
+      IF (MovementStateData.MoveId = cMoveBwd) THEN
+         IF (sv_rBwdInterruptPosition>0.0) THEN
+            MovementStateData.MoveId := cMoveShake;
+         ELSE
+            bShakeActive := FALSE;              
+         END_IF;
+      ELSE
+         IF bShakeActive THEN
+            MovementStateData.MoveId := cMoveShake;
+         END_IF;
+      END_IF;
+   END_IF;   
+END_IF;
+
+uIndex := 1;
+WHILE uIndex< cMaxMoveRegistered+1 DO // search if movement activated     
+   IF (MovementStateData.DeviceId = sv_AvailableMovements[uIndex].DeviceId) AND
+      (MovementStateData.MoveId   = sv_AvailableMovements[uIndex].MoveId)   THEN // device activated
+      IF bActive THEN
+         IF (MovementStateData.DeviceId.CompId = cCompMold) THEN // reset timer
+            IF (NOT bMoldActive)  THEN
+               MoldTimer(IN:=FALSE, PT:=T#999s);
+               MoldTimer(IN:=TRUE);
+               bMoldActive := TRUE;            
+               IF ((sv_AvailableMovements[uIndex].MoveId = cMoveBwd) OR
+                   (sv_AvailableMovements[uIndex].MoveId = cMoveBwdInterPos)) THEN
+                  uIndexMoldOpen := uIndex;
+               ELSE
+                  uIndexMoldClose := uIndex;
+               END_IF;
+               sv_AvailableMovements[uIndex].dLastStartTime := sv_AvailableMovements[uIndex].dStartTime;
+               sv_AvailableMovements[uIndex].dStartTime := dActTime;            
+            END_IF;
+         ELSIF MovementStateData.DeviceId.CompId = cCompEjector THEN // reset timer
+            IF MovementStateData.MoveId = cMoveShake THEN
+               IF NOT bShakeActive THEN
+                  bShakeActive := TRUE;
+                  uIndexShake := uIndex;
+                  sv_AvailableMovements[uIndex].dLastStartTime := sv_AvailableMovements[uIndex].dStartTime;
+                  sv_AvailableMovements[uIndex].dStartTime := dActTime;            
+               END_IF;
+            ELSIF (MovementStateData.MoveId = cMoveBwd) THEN // bwd after shake stop shake
+               IF uIndexShake>0 THEN
+                  sv_AvailableMovements[uIndexShake].dDuration := sv_AvailableMovements[uIndexShake].pMoveData^.pdActiveTimeAct^;
+               END_IF;
+               sv_AvailableMovements[uIndex].dLastStartTime := sv_AvailableMovements[uIndex].dStartTime;
+               sv_AvailableMovements[uIndex].dStartTime := dActTime;
+            ELSE
+               sv_AvailableMovements[uIndex].dLastStartTime := sv_AvailableMovements[uIndex].dStartTime;
+               sv_AvailableMovements[uIndex].dStartTime := dActTime;            
+            END_IF;
+         ELSIF (MovementStateData.DeviceId.CompId = cCompInjection AND 
+                MovementStateData.MoveId = cMoveHold) THEN
+             //hold active, save indexes
+             IF NOT bHoldIndexFound THEN
+                 uIndexHold := uIndex;      
+                 uIndexAvailableHold := 1;
+                 WHILE uIndexAvailableHold < cMaxMoveRegistered+1 DO
+                     IF sv_AvailableMovements[uIndexHold].DeviceId = sv_MovementsAvailable[uIndexAvailableHold].DeviceId AND
+                         sv_AvailableMovements[uIndexHold].MoveId   = sv_MovementsAvailable[uIndexAvailableHold].pMovementData^.MoveId AND
+                         sv_AvailableMovements[uIndexHold].MoveDir   = sv_MovementsAvailable[uIndexAvailableHold].pMovementData^.MoveDir THEN
+                         bHoldIndexFound := TRUE;
+                         EXIT;
+                     END_IF;
+                     uIndexAvailableHold := uIndexAvailableHold + 1;
+                 END_WHILE;                
+             END_IF; 
+             bHoldActive := TRUE;
+             sv_AvailableMovements[uIndex].dLastStartTime := sv_AvailableMovements[uIndex].dStartTime;
+             sv_AvailableMovements[uIndex].dStartTime := dActTime;
+         ELSE
+            sv_AvailableMovements[uIndex].dLastStartTime := sv_AvailableMovements[uIndex].dStartTime;
+            sv_AvailableMovements[uIndex].dStartTime := dActTime;            
+         END_IF;
+         
+         START_PROCESS_ALGORITHM(paTimeRecording);
+      ELSE // movement stopped - transfer last time
+         uIndexAvailable := 1;
+         WHILE uIndexAvailable < cMaxMoveRegistered+1 DO
+            IF sv_AvailableMovements[uIndex].DeviceId = sv_MovementsAvailable[uIndexAvailable].DeviceId AND
+               sv_AvailableMovements[uIndex].MoveId   = sv_MovementsAvailable[uIndexAvailable].pMovementData^.MoveId AND
+               sv_AvailableMovements[uIndex].MoveDir   = sv_MovementsAvailable[uIndexAvailable].pMovementData^.MoveDir THEN
+               EXIT;
+            END_IF;
+            uIndexAvailable := uIndexAvailable + 1;
+         END_WHILE;            
+         IF CHECK_REF(sv_MovementsAvailable[uIndexAvailable].pMovementData^.pdActiveTimeAct^) THEN
+            IF (sv_AvailableMovements[uIndex].DeviceId.CompId = cCompMold) THEN
+               IF ((sv_AvailableMovements[uIndex].MoveId = cMoveFwd) OR
+                   (sv_AvailableMovements[uIndex].MoveId = cMoveBwd)) THEN
+                  MoldTimer(IN:=TRUE);
+                  sv_AvailableMovements[uIndex].dDuration := MoldTimer.ET;
+                  IF bMoldInterPosActive THEN
+                      sv_AvailableMovements[uIndex].dDuration := MoldTimer.ET;
+                      bMoldInterPosActive := FALSE;
+                  ELSE
+                      sv_AvailableMovements[uIndex].dDuration := sv_MovementsAvailable[uIndexAvailable].pMovementData^.pdActiveTimeAct^;
+                  END_IF;                   
+                  bMoldActive := FALSE;
+                  uIndexMoldOpen  := 0;
+                  uIndexMoldClose := 0;
+                  MoldTimer(IN:=FALSE);
+               END_IF;            
+            ELSIF ((sv_AvailableMovements[uIndex].DeviceId.CompId = cCompInjection AND bHoldActive)) THEN
+                   //inject inactive + hold inactive --> transfer also hold time
+                   sv_AvailableMovements[uIndex].dDuration := sv_MovementsAvailable[uIndexAvailable].pMovementData^.pdActiveTimeAct^;
+                   IF bHoldIndexFound THEN
+                       sv_AvailableMovements[uIndexHold].dDuration := sv_MovementsAvailable[uIndexAvailableHold].pMovementData^.pdActiveTimeAct^;                   
+                   END_IF;      
+                   bHoldActive := FALSE;
+            ELSIF NOT((sv_AvailableMovements[uIndex].DeviceId.CompId = cCompEjector) AND bShakeActive) THEN         
+               sv_AvailableMovements[uIndex].dDuration := sv_MovementsAvailable[uIndexAvailable].pMovementData^.pdActiveTimeAct^;
+            END_IF;
+         ELSE
+            sv_AvailableMovements[uIndex].dDuration := T#0s;
+         END_IF;
+      END_IF;      
+      EXIT;
+   END_IF;
+   uIndex := uIndex +1;
+END_WHILE;
+
+
+;#END_EDIT_BLOCK END_ALGORITHM
+
+POSTUPDATE_ALGORITHM pLoadRegisteredRetain ON TaskVis WITH sv_bInitDone
+
+
+VAR
+ uIndex : DINT;
+ uIndexInsert : DINT;
+ uIndexRetain : DINT;
+END_VAR
+#BEGIN_EDIT_BLOCK
+(**************************************** WARNING ********************************************
+ *** The KEBA Kemro K2 System including software is not intended for safety control tasks! ***
+ ***                       For further information see Comment tab!                        ***
+ *********************************************************************************************)
+
+// all available movements
+uIndex := 1;
+uIndexInsert:=1;
+WHILE sv_MovementsAvailable[uIndex].DeviceId.CompId > cMinCompId DO
+
+   //check if movement should be available in cycle time list
+   //because some movements are excluded
+   aDecideAddingToList(DeviceId := sv_MovementsAvailable[uIndex].DeviceId,
+                       MoveId := sv_MovementsAvailable[uIndex].pMovementData^.MoveId);
+   
+   IF aDecideAddingToList.bAdd THEN
+      //add movement         
+      sv_AvailableMovements[uIndexInsert].DeviceId := sv_MovementsAvailable[uIndex].DeviceId;
+      sv_AvailableMovements[uIndexInsert].MoveId   := sv_MovementsAvailable[uIndex].pMovementData^.MoveId;
+      sv_AvailableMovements[uIndexInsert].MoveDir  := sv_MovementsAvailable[uIndex].pMovementData^.MoveDir;
+      sv_AvailableMovements[uIndexInsert].pMoveData := sv_MovementsAvailable[uIndex].pMovementData;      
+      AvailableMovements[uIndexInsert].DeviceId := sv_MovementsAvailable[uIndex].DeviceId;
+      AvailableMovements[uIndexInsert].MoveId   := sv_MovementsAvailable[uIndex].pMovementData^.MoveId;
+      AvailableMovements[uIndexInsert].MoveDir  := sv_MovementsAvailable[uIndex].pMovementData^.MoveDir;
+      AvailableMovements[uIndexInsert].pMoveData := sv_MovementsAvailable[uIndex].pMovementData;      
+      sv_AvailableMovements[uIndexInsert].pMoveData := sv_MovementsAvailable[uIndex].pMovementData;
+      AvailableMovements[uIndexInsert].pMoveData := sv_MovementsAvailable[uIndex].pMovementData;
+      IF CHECK_REF(sv_MovementsAvailable[uIndex].pMovementData^.pdTimeLimit) THEN
+         sv_AvailableMovements[uIndexInsert].pdLimit := sv_MovementsAvailable[uIndex].pMovementData^.pdTimeLimit;
+         AvailableMovements[uIndexInsert].pdLimit := sv_MovementsAvailable[uIndex].pMovementData^.pdTimeLimit;
+      ELSE // use default with zero
+         sv_AvailableMovements[uIndexInsert].pdLimit := @sv_dTimeLimit;
+         AvailableMovements[uIndexInsert].pdLimit := @sv_dTimeLimit;
+      END_IF;
+      uIndexInsert := uIndexInsert + 1;                    
+   END_IF;
+   
+   uIndex := uIndex + 1;
+   IF uIndex > cMaxMoveRegistered THEN
+      EXIT;
+   END_IF;
+END_WHILE;
+
+
+
+// ToDo: copy sv_AvailableMovementsRetain to sv_AvailableMovements
+uIndexRetain := 1;
+//WHILE sv_AvailableMovementsRetain[uIndexRetain].uPosition > 0 DO
+//WHILE sv_AvailableMovementsRetain[uIndexRetain].DeviceId.CompId > cMinCompId DO
+WHILE uIndexRetain < cMaxMoveRegistered+1 DO
+   IF sv_AvailableMovementsRetain[uIndexRetain].uPosition > 0 THEN
+      uIndex := 1;
+      WHILE sv_AvailableMovements[uIndex].DeviceId.CompId > cMinCompId DO
+         IF (sv_AvailableMovements[uIndex].DeviceId = sv_AvailableMovementsRetain[uIndexRetain].DeviceId) AND
+            (sv_AvailableMovements[uIndex].MoveId   = sv_AvailableMovementsRetain[uIndexRetain].MoveId) AND
+            (sv_AvailableMovements[uIndex].MoveDir  = sv_AvailableMovementsRetain[uIndexRetain].MoveDir) THEN
+            sv_AvailableMovements[uIndex].dRefDuration  := sv_AvailableMovementsRetain[uIndexRetain].dRefDuration;
+            sv_AvailableMovements[uIndex].dRefStartTime := sv_AvailableMovementsRetain[uIndexRetain].dRefStartTime;
+            sv_AvailableMovements[uIndex].uPosition     := sv_AvailableMovementsRetain[uIndexRetain].uPosition;         
+            sv_AvailableMovements[uIndex].dLastDuration := T#0s;
+            sv_AvailableMovements[uIndex].dDuration := T#0s;
+            AvailableMovements[uIndex].dRefDuration  := sv_AvailableMovementsRetain[uIndexRetain].dRefDuration;
+            AvailableMovements[uIndex].dRefStartTime := sv_AvailableMovementsRetain[uIndexRetain].dRefStartTime;
+            AvailableMovements[uIndex].uPosition     := sv_AvailableMovementsRetain[uIndexRetain].uPosition;         
+            AvailableMovements[uIndex].dLastDuration := T#0s;
+            AvailableMovements[uIndex].dDuration := T#0s;
+            //sv_AvailableMovements[uIndex] := sv_AvailableMovementsRetain[uIndexRetain];
+            EXIT;
+         END_IF;
+         uIndex := uIndex + 1;
+      END_WHILE;
+   END_IF;
+   uIndexRetain := uIndexRetain + 1;
+END_WHILE;
+
+
+
+
+;#END_EDIT_BLOCK END_ALGORITHM
+
+PROCESS_ALGORITHM paTimeRecording ON TaskVis
+
+
+VAR_TEMP
+ uIndex : DINT;
+END_VAR
+
+VAR
+ dActDuration : TIME;
+ uIndexAvailable : DINT;
+ mActiveMovements : tsActiveMovements;
+END_VAR
+#BEGIN_EDIT_BLOCK
+(**************************************** WARNING ********************************************
+ *** The KEBA Kemro K2 System including software is not intended for safety control tasks! ***
+ ***                       For further information see Comment tab!                        ***
+ *********************************************************************************************)
+
+IF sv_OperationMode < nHalfAutomatic THEN // only with cyclic movement
+   STOP_PROCESS_ALGORITHM();
+END_IF;
+
+mActiveMovements := sv_ActiveMovements;
+
+IF (mActiveMovements.iNumberOfActiveMovements = 0) AND
+   (NOT bMoldActive) AND
+   (NOT bShakeActive) THEN
+   STOP_PROCESS_ALGORITHM();
+ELSE
+   IF bMoldActive THEN
+      MoldTimer(IN:=TRUE);
+      IF uIndexMoldOpen>0 THEN
+         sv_AvailableMovements[uIndexMoldOpen].dDuration := MoldTimer.ET;
+      ELSIF uIndexMoldClose>0 THEN
+         sv_AvailableMovements[uIndexMoldClose].dDuration := MoldTimer.ET;
+      END_IF;
+   ELSIF bShakeActive THEN
+      IF uIndexShake>0 THEN
+         sv_AvailableMovements[uIndexShake].dDuration := sv_AvailableMovements[uIndexShake].pMoveData^.pdActiveTimeAct^;
+      END_IF;
+   END_IF;
+   FOR uIndex:=1 TO mActiveMovements.iNumberOfActiveMovements DO      
+       IF mActiveMovements.ActiveMovements[uIndex] <> 0 THEN
+           uIndexAvailable :=1;
+           WHILE uIndexAvailable < cMaxMoveRegistered+1 DO          
+               IF (sv_AvailableMovements[uIndexAvailable].DeviceId = sv_MovementsAvailable[mActiveMovements.ActiveMovements[uIndex]].DeviceId) AND
+                   (sv_AvailableMovements[uIndexAvailable].MoveId   = sv_MovementsAvailable[mActiveMovements.ActiveMovements[uIndex]].pMovementData^.MoveId) AND
+                   (sv_AvailableMovements[uIndexAvailable].MoveDir  = sv_MovementsAvailable[mActiveMovements.ActiveMovements[uIndex]].pMovementData^.MoveDir) THEN
+                   EXIT;
+               END_IF;
+               uIndexAvailable := uIndexAvailable + 1;
+           END_WHILE;
+           
+           IF (uIndexAvailable < cMaxMoveRegistered+1) AND
+               (sv_AvailableMovements[uIndexAvailable].uPosition > 0) THEN
+               IF NOT (sv_AvailableMovements[uIndexAvailable].DeviceId.CompId = cCompMold) AND
+                  NOT ((sv_AvailableMovements[uIndexAvailable].DeviceId.CompId = cCompEjector) AND bShakeActive) THEN
+               
+                   IF CHECK_REF(sv_MovementsAvailable[mActiveMovements.ActiveMovements[uIndex]].pMovementData^.pdActiveTimeAct^) THEN                 
+                       dActDuration := sv_MovementsAvailable[mActiveMovements.ActiveMovements[uIndex]].pMovementData^.pdActiveTimeAct^;
+                   ELSE
+                       dActDuration := T#0s;
+                   END_IF;         
+                         
+                  sv_AvailableMovements[uIndexAvailable].dDuration := dActDuration; // write duration to sv_AvailableMovements
+               END_IF;
+           END_IF;    
+       END_IF;     
+   END_FOR;
+END_IF;
+
+
+;#END_EDIT_BLOCK END_ALGORITHM
+
+(*
+This algorithm is necessary for registering the available movements
+and the according parameters (Lockgroups, icon path, delay time, ....)
+*)
+
+POSTUPDATE_ALGORITHM pEndCycle ON PU_Task_3 WITH sv_iShotCounterRetain
+
+
+VAR
+ uIndex : DINT;
+END_VAR
+#BEGIN_EDIT_BLOCK
+(**************************************** WARNING ********************************************
+ *** The KEBA Kemro K2 System including software is not intended for safety control tasks! ***
+ ***                       For further information see Comment tab!                        ***
+ *********************************************************************************************)
+
+// copy values of last cycle
+uIndex := 1;
+WHILE uIndex < cMaxMoveRegistered+1 DO
+   AvailableMovements[uIndex].dDuration  := sv_AvailableMovements[uIndex].dDuration;
+   AvailableMovements[uIndex].dStartTime := sv_AvailableMovements[uIndex].dStartTime;
+   sv_AvailableMovements[uIndex].dLastDuration  := sv_AvailableMovements[uIndex].dDuration;
+   sv_AvailableMovements[uIndex].dLastStartTime := sv_AvailableMovements[uIndex].dStartTime;
+   
+   //reset durations
+   sv_AvailableMovements[uIndex].dDuration := T#0s;
+   uIndex := uIndex + 1;
+END_WHILE;
+
+
+;#END_EDIT_BLOCK END_ALGORITHM
+
+
+
+END_ALGORITHM_BLOCK
+
+
+
+#END_OF_IEC_PART
+
+@Puma @IecEditor 6 56 @Pou 25 
+@@@BEG_Comment@@@
+
+@@@END_Comment@@@
+
+@BEG_Contents 
+
+@BEG_Func 
+@RT(17)FuncTreeContainer 
+2 
+@Var @RT(9)CHECK_REF @RT(0) @T @T @DERIVED 0 @F @RT(23)KEBA_STANDARD_PROCEDURE @F 
+@T 
+@BEG_Attrib 
+0 @RT(0) @RT(0) 
+@END_Attrib 
+1 1 @F @F @F @F 
+
+@Var @RT(23)START_PROCESS_ALGORITHM @RT(0) @T @T @DERIVED 0 @F @RT(23)KEBA_STANDARD_PROCEDURE @F 
+@T 
+@BEG_Attrib 
+0 @RT(0) @RT(0) 
+@END_Attrib 
+1 1 @F @F @F @F 
+
+@END_Func 
+
+@BEG_Const 
+@RT(18)ConstTreeContainer 
+19 
+@Var @RT(25)cMaxMoveDevicesRegistered @RT(0) @T @F @DT @RT(4)DINT @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+0 @RT(2)50 @RT(49)max number of devices which are serving movements 
+@END_Attrib 
+1 1 @F @F @F @F 
+
+@Var @RT(10)cMinCompId @RT(0) @T @F @DT @RT(4)DINT @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+0 @RT(3)100 @RT(21)minimum Component ID  
+@END_Attrib 
+1 1 @F @F @F @F 
+
+@Var @RT(18)cMaxMoveRegistered @RT(0) @T @F @DT @RT(4)DINT @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+0 @RT(3)150 @RT(38)maximum number of registered movements 
+@END_Attrib 
+1 1 @F @F @F @F 
+
+@Var @RT(9)cCompMold @RT(0) @T @F @DT @RT(4)DINT @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+0 @RT(3)101 @RT(14)Component Mold 
+@END_Attrib 
+1 1 @F @F @F @F 
+
+@Var @RT(12)cCompEjector @RT(0) @T @F @DT @RT(4)DINT @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+0 @RT(3)102 @RT(17)Component Ejector 
+@END_Attrib 
+1 1 @F @F @F @F 
+
+@Var @RT(11)cCompNozzle @RT(0) @T @F @DT @RT(4)DINT @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+0 @RT(3)103 @RT(16)Component Nozzle 
+@END_Attrib 
+1 1 @F @F @F @F 
+
+@Var @RT(14)cCompInjection @RT(0) @T @F @DT @RT(4)DINT @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+0 @RT(3)104 @RT(19)Component Injection 
+@END_Attrib 
+1 1 @F @F @F @F 
+
+@Var @RT(9)cCompCore @RT(0) @T @F @DT @RT(4)DINT @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+0 @RT(3)109 @RT(14)Component Core 
+@END_Attrib 
+1 1 @F @F @F @F 
+
+@Var @RT(13)cCompAirValve @RT(0) @T @F @DT @RT(4)DINT @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+0 @RT(3)118 @RT(19)Component Air Valve 
+@END_Attrib 
+1 1 @F @F @F @F 
+
+@Var @RT(16)cCompCoolingTime @RT(0) @T @F @DT @RT(4)DINT @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+0 @RT(3)110 @RT(22)Component Cooling Time 
+@END_Attrib 
+1 1 @F @F @F @F 
+
+@Var @RT(9)cMoveHold @RT(0) @T @F @DT @RT(4)DINT @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+0 @RT(2)15 @RT(10)hold phase 
+@END_Attrib 
+1 1 @F @F @F @F 
+
+@Var @RT(8)cMoveBwd @RT(0) @T @F @DT @RT(4)DINT @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+0 @RT(2)11 @RT(17)movement backward 
+@END_Attrib 
+1 1 @F @F @F @F 
+
+@Var @RT(16)cMoveBwdInterPos @RT(0) @T @F @DT @RT(4)DINT @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+0 @RT(2)16 @RT(38)move backward to intermediate position 
+@END_Attrib 
+1 1 @F @F @F @F 
+
+@Var @RT(16)cMoveFwdInterPos @RT(0) @T @F @DT @RT(4)DINT @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+0 @RT(2)17 @RT(37)move forward to intermediate position 
+@END_Attrib 
+1 1 @F @F @F @F 
+
+@Var @RT(8)cMoveFwd @RT(0) @T @F @DT @RT(4)DINT @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+0 @RT(2)12 @RT(16)movement forward 
+@END_Attrib 
+1 1 @F @F @F @F 
+
+@Var @RT(15)cMovePlastPurge @RT(0) @T @F @DT @RT(4)DINT @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+0 @RT(2)34 @RT(26)plast movement for purging 
+@END_Attrib 
+1 1 @F @F @F @F 
+
+@Var @RT(16)cMoveInjectPurge @RT(0) @T @F @DT @RT(4)DINT @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+0 @RT(2)35 @RT(27)inject movement for purging 
+@END_Attrib 
+1 1 @F @F @F @F 
+
+@Var @RT(16)cMoveDecompPurge @RT(0) @T @F @DT @RT(4)DINT @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+0 @RT(2)36 @RT(27)decomp movement for purging 
+@END_Attrib 
+1 1 @F @F @F @F 
+
+@Var @RT(12)cMovePVCalib @RT(0) @T @F @DT @RT(4)DINT @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+0 @RT(2)38 @RT(38)injection movement with voltage output 
+@END_Attrib 
+1 1 @F @F @F @F 
+
+@END_Const 
+
+@BEG_Export 
+
+@BEG_Kind 
+@ALGORITHM_BLOCK @RT(19)ABCycleTimeAnalysis @STRUCTURED_TEXT 
+@RT(0) @RT(0) @RT(0) 
+@END_Kind 
+
+@BEG_Dcl 
+@RT(16)DclTreeContainer 
+25 
+@Var @RT(7)TaskVis @RT(0) @T @F @DT @RT(4)TASK @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 7 @F @F @F @F 
+
+@Var @RT(9)PU_Task_3 @RT(0) @T @F @DT @RT(4)TASK @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 7 @F @F @F @F 
+
+@Var @RT(19)sv_bSelectionSorted @RT(0) @T @F @DT @RT(4)BOOL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 8 @F @F @F @F 
+
+@Var @RT(16)sv_bNewReference @RT(0) @T @F @DT @RT(4)BOOL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 8 @F @F @F @F 
+
+@Var @RT(21)sv_AvailableMovements @RT(0) @T @T @DERIVED 0 @T @T @DT @RT(20)tsCycleTimeDataArray @RT(0) @T @T @UNKNOWN 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 8 @F @F @F @F 
+
+@Var @RT(18)AvailableMovements @RT(0) @T @T @DERIVED 0 @T @T @DT @RT(20)tsCycleTimeDataArray @RT(0) @T @T @UNKNOWN 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(27)sv_AvailableMovementsRetain @RT(0) @T @T @DERIVED 0 @T @T @DT @RT(20)tsCycleTimeDataArray @RT(0) @T @T @UNKNOWN 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 8 @F @F @F @F 
+
+@Var @RT(13)sv_dCycleTime @RT(0) @T @F @DT @RT(4)TIME @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 8 @F @F @F @F 
+
+@Var @RT(17)sv_dLastCycleTime @RT(0) @T @F @DT @RT(4)TIME @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 8 @F @F @F @F 
+
+@Var @RT(16)sv_dRefCycleTime @RT(0) @T @F @DT @RT(4)TIME @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 8 @F @F @F @F 
+
+@Var @RT(15)evMovementState @RT(0) @T @T @DERIVED 0 @T @T @DT @RT(16)tevMovementState @RT(0) @T @T @UNKNOWN 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 7 @F @F @F @F 
+
+@Var @RT(18)sv_ActiveMovements @RT(0) @T @T @DERIVED 0 @T @T @DT @RT(17)tsActiveMovements @RT(0) @T @T @UNKNOWN 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 8 @F @F @F @F 
+
+@Var @RT(12)sv_bInitDone @RT(0) @T @F @DT @RT(4)BOOL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 8 @F @F @F @F 
+
+@Var @RT(21)sv_MovementsAvailable @RT(0) @T @T @DERIVED 0 @T @T @DT @RT(22)tyMovementRegisterList @RT(0) @T @T @UNKNOWN 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 8 @F @F @F @F 
+
+@Var @RT(21)sv_iShotCounterRetain @RT(0) @T @F @DT @RT(5)UDINT @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 8 @F @F @F @F 
+
+@Var @RT(6)bEntry @RT(0) @T @F @DT @RT(4)BOOL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(16)sv_OperationMode @RT(0) @T @T @DERIVED 0 @T @T @DT @RT(15)tnOperationMode @RT(0) @T @T @UNKNOWN 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 8 @F @F @F @F 
+
+@Var @RT(13)sv_dTimeLimit @RT(0) @T @F @DT @RT(4)TIME @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 8 @F @F @F @F 
+
+@Var @RT(9)MoldTimer @RT(0) @T @T @DERIVED 0 @T @T @DT @RT(3)TON @RT(0) @T @T @UNKNOWN 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(11)bMoldActive @RT(0) @T @F @DT @RT(4)BOOL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(5)FALSE @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(12)bShakeActive @RT(0) @T @F @DT @RT(4)BOOL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(5)FALSE @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(14)uIndexMoldOpen @RT(0) @T @F @DT @RT(4)DINT @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(15)uIndexMoldClose @RT(0) @T @F @DT @RT(4)DINT @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(11)uIndexShake @RT(0) @T @F @DT @RT(4)DINT @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(24)sv_rBwdInterruptPosition @RT(0) @T @F @DT @RT(4)REAL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 8 @F @F @F @F 
+
+@END_Dcl 
+
+@END_Export 
+
+@BEG_Body 
+
+7 
+
+@BEG_Export 
+
+@BEG_Algo 
+@ALGORITHM @RT(19)aDecideAddingToList @STRUCTURED_TEXT 
+@RT(0) @RT(0) @RT(0) @F @F 
+@END_Algo 
+
+@BEG_Dcl 
+@RT(16)DclTreeContainer 
+3 
+@Var @RT(8)DeviceId @RT(0) @T @T @DERIVED 0 @T @T @DT @RT(10)tsDeviceId @RT(0) @T @T @UNKNOWN 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 1 @F @F @F @F 
+
+@Var @RT(6)MoveId @RT(0) @T @T @DERIVED 0 @T @T @DT @RT(10)tMoveIdent @RT(0) @T @T @UNKNOWN 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 1 @F @F @F @F 
+
+@Var @RT(4)bAdd @RT(0) @T @F @DT @RT(4)BOOL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 3 @F @F @F @F 
+
+@END_Dcl 
+
+@END_Export 
+
+@BEG_Export 
+
+@BEG_Algo 
+@POSTUPDATE_ALGORITHM @RT(16)pStoreRetainData @STRUCTURED_TEXT 
+@RT(0) @RT(19)sv_bSelectionSorted @RT(7)TaskVis @F @F 
+@END_Algo 
+
+@BEG_Dcl 
+@RT(16)DclTreeContainer 
+1 
+@Var @RT(6)uIndex @RT(0) @T @F @DT @RT(4)DINT @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@END_Dcl 
+
+@END_Export 
+
+@BEG_Export 
+
+@BEG_Algo 
+@POSTUPDATE_ALGORITHM @RT(13)pStoreRefData @STRUCTURED_TEXT 
+@RT(0) @RT(16)sv_bNewReference @RT(7)TaskVis @F @F 
+@END_Algo 
+
+@BEG_Dcl 
+@RT(16)DclTreeContainer 
+2 
+@Var @RT(6)uIndex @RT(0) @T @F @DT @RT(4)DINT @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(12)uIndexRetain @RT(0) @T @F @DT @RT(4)DINT @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@END_Dcl 
+
+@END_Export 
+
+@BEG_Export 
+
+@BEG_Algo 
+@EVENT_ALGORITHM @RT(21)evaStartTimeRecording @STRUCTURED_TEXT 
+@RT(0) @RT(15)evMovementState @RT(7)TaskVis @F @F 
+@END_Algo 
+
+@BEG_Dcl 
+@RT(16)DclTreeContainer 
+11 
+@Var @RT(8)dActTime @RT(0) @T @F @DT @RT(4)TIME @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(17)MovementStateData @RT(0) @T @T @DERIVED 0 @T @T @DT @RT(20)tevMovementStateData @RT(0) @T @T @UNKNOWN 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(19)evMovementStateData @RT(0) @T @T @DERIVED 0 @T @T @DT @RT(20)tevMovementStateData @RT(0) @T @T @UNKNOWN 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 1 @F @F @F @F 
+
+@Var @RT(6)uIndex @RT(0) @T @F @DT @RT(4)DINT @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(15)uIndexAvailable @RT(0) @T @F @DT @RT(4)DINT @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(7)bActive @RT(0) @T @F @DT @RT(4)BOOL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(11)bHoldActive @RT(0) @T @F @DT @RT(4)BOOL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(19)bMoldInterPosActive @RT(0) @T @F @DT @RT(4)BOOL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(15)bHoldIndexFound @RT(0) @T @F @DT @RT(4)BOOL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(10)uIndexHold @RT(0) @T @F @DT @RT(4)DINT @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(19)uIndexAvailableHold @RT(0) @T @F @DT @RT(4)DINT @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@END_Dcl 
+
+@END_Export 
+
+@BEG_Export 
+
+@BEG_Algo 
+@POSTUPDATE_ALGORITHM @RT(21)pLoadRegisteredRetain @STRUCTURED_TEXT 
+@RT(0) @RT(12)sv_bInitDone @RT(7)TaskVis @F @F 
+@END_Algo 
+
+@BEG_Dcl 
+@RT(16)DclTreeContainer 
+3 
+@Var @RT(6)uIndex @RT(0) @T @F @DT @RT(4)DINT @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(12)uIndexInsert @RT(0) @T @F @DT @RT(4)DINT @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(12)uIndexRetain @RT(0) @T @F @DT @RT(4)DINT @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@END_Dcl 
+
+@END_Export 
+
+@BEG_Export 
+
+@BEG_Algo 
+@PROCESS_ALGORITHM @RT(15)paTimeRecording @STRUCTURED_TEXT 
+@RT(0) @RT(0) @RT(7)TaskVis @F @F 
+@END_Algo 
+
+@BEG_Dcl 
+@RT(16)DclTreeContainer 
+4 
+@Var @RT(12)dActDuration @RT(0) @T @F @DT @RT(4)TIME @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(6)uIndex @RT(0) @T @F @DT @RT(4)DINT @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 4 @F @F @F @F 
+
+@Var @RT(15)uIndexAvailable @RT(0) @T @F @DT @RT(4)DINT @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(16)mActiveMovements @RT(0) @T @T @DERIVED 0 @T @T @DT @RT(17)tsActiveMovements @RT(0) @T @T @UNKNOWN 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@END_Dcl 
+
+@END_Export 
+
+@BEG_Export 
+
+@BEG_Algo 
+@POSTUPDATE_ALGORITHM @RT(9)pEndCycle @STRUCTURED_TEXT 
+@RT(0) @RT(21)sv_iShotCounterRetain @RT(9)PU_Task_3 @F @F 
+@END_Algo 
+
+@BEG_Dcl 
+@RT(16)DclTreeContainer 
+1 
+@Var @RT(6)uIndex @RT(0) @T @F @DT @RT(4)DINT @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@END_Dcl 
+
+@END_Export 
+
+@BEG_Body 
+@TL(45)
+(**************************************** WARNING ********************************************
+ *** The KEBA Kemro K2 System including software is not intended for safety control tasks! ***
+ ***                       For further information see Comment tab!                        ***
+ *********************************************************************************************)
+
+//only movements of the following function units should be selectable in CycleTime mask :
+//Mold, Ejector, Nozzle, Injection, Core, AirValve, CoolingTime
+
+CASE DeviceId.CompId OF
+   
+   cCompMold:
+      //ignore all except mold close and mold open
+      IF MoveId = cMoveFwd OR MoveId = cMoveBwd THEN
+         bAdd := TRUE;
+      ELSE
+         bAdd := FALSE;
+      END_IF;
+   
+   cCompInjection:
+      CASE MoveId OF
+         //ignore following movements of injection unit
+         cMovePlastPurge, cMoveInjectPurge, cMoveDecompPurge, cMovePVCalib, cMoveInjectCalib,
+         cMoveBeginSequence, cMoveEndSequence, cMoveCombinedPlast:
+         bAdd := FALSE;
+      ELSE
+         //all other movements of injection function unit should be avialable
+         bAdd := TRUE;
+      END_CASE;
+        
+   cCompEjector, cCompNozzle, cCompCore, cCompCoolingTime:
+      bAdd := TRUE;
+
+   cCompAirValve:
+      IF MoveId = cMoveStart OR MoveId = cMoveStop THEN
+         bAdd := TRUE;
+      ELSE
+         bAdd := FALSE;
+      END_IF;
+    
+ELSE
+   bAdd := FALSE;
+END_CASE;
+
+
+
+@END_Body 
+
+@@@BEG_Comment@@@ 
+@TL(0)
+
+@@@END_Comment@@@ 
+
+@BEG_Body 
+@TL(43)
+(**************************************** WARNING ********************************************
+ *** The KEBA Kemro K2 System including software is not intended for safety control tasks! ***
+ ***                       For further information see Comment tab!                        ***
+ *********************************************************************************************)
+
+IF sv_bSelectionSorted THEN
+   // ToDo: copy sv_AvailableMovements to sv_AvailableMovementsRetain
+   uIndex := 1;
+   WHILE uIndex < cMaxMoveRegistered+1 DO
+      IF sv_AvailableMovements[uIndex].uPosition > 0 THEN
+         sv_AvailableMovementsRetain[uIndex].dStartTime := T#0s;
+         sv_AvailableMovementsRetain[uIndex].dLastStartTime := T#0s;
+         sv_AvailableMovementsRetain[uIndex].dDuration      := T#0s;
+         sv_AvailableMovementsRetain[uIndex].dLastDuration  := T#0s;
+         sv_AvailableMovementsRetain[uIndex].DeviceId := sv_AvailableMovements[uIndex].DeviceId;
+         sv_AvailableMovementsRetain[uIndex].dRefDuration := sv_AvailableMovements[uIndex].dRefDuration;
+         sv_AvailableMovementsRetain[uIndex].dRefStartTime := sv_AvailableMovements[uIndex].dRefStartTime;
+         sv_AvailableMovementsRetain[uIndex].MoveDir := sv_AvailableMovements[uIndex].MoveDir;
+         sv_AvailableMovementsRetain[uIndex].MoveId := sv_AvailableMovements[uIndex].MoveId;
+         sv_AvailableMovementsRetain[uIndex].pdLimit := sv_AvailableMovements[uIndex].pdLimit;
+         sv_AvailableMovementsRetain[uIndex].pMoveData := sv_AvailableMovements[uIndex].pMoveData;
+         sv_AvailableMovementsRetain[uIndex].uPosition := sv_AvailableMovements[uIndex].uPosition;
+      ELSE
+         // delete invalid entries
+         sv_AvailableMovementsRetain[uIndex].DeviceId.CompId := cMinCompId;
+         sv_AvailableMovementsRetain[uIndex].DeviceId.IndexId := 1;
+         sv_AvailableMovementsRetain[uIndex].dStartTime := T#0s;
+         sv_AvailableMovementsRetain[uIndex].dLastStartTime := T#0s;
+         sv_AvailableMovementsRetain[uIndex].dDuration      := T#0s;
+         sv_AvailableMovementsRetain[uIndex].dLastDuration  := T#0s;
+         sv_AvailableMovementsRetain[uIndex].dRefDuration := T#0s;
+         sv_AvailableMovementsRetain[uIndex].dRefStartTime := T#0s;
+         sv_AvailableMovementsRetain[uIndex].uPosition := 0;
+      END_IF;
+      uIndex := uIndex + 1;
+      IF uIndex > cMaxMoveRegistered THEN
+         EXIT;
+      END_IF;
+   END_WHILE;
+   
+   sv_bSelectionSorted := FALSE;
+END_IF;
+
+@END_Body 
+
+@@@BEG_Comment@@@ 
+@TL(0)
+
+@@@END_Comment@@@ 
+
+@BEG_Body 
+@TL(47)
+(**************************************** WARNING ********************************************
+ *** The KEBA Kemro K2 System including software is not intended for safety control tasks! ***
+ ***                       For further information see Comment tab!                        ***
+ *********************************************************************************************)
+
+IF sv_bNewReference THEN
+   // ToDo: copy last fill cycle to RefValues
+   sv_dRefCycleTime := sv_dLastCycleTime;
+   uIndex := 1;
+   WHILE sv_AvailableMovements[uIndex].DeviceId.CompId > cMinCompId DO
+      uIndexRetain := 1;
+      bEntry := FALSE;
+      WHILE sv_AvailableMovementsRetain[uIndexRetain].DeviceId.CompId > cMinCompId DO
+         IF (sv_AvailableMovements[uIndex].DeviceId = sv_AvailableMovementsRetain[uIndexRetain].DeviceId) AND
+            (sv_AvailableMovements[uIndex].MoveId   = sv_AvailableMovementsRetain[uIndexRetain].MoveId)   THEN
+            bEntry := TRUE;
+            EXIT;
+         END_IF;
+         uIndexRetain := uIndexRetain + 1;
+      END_WHILE;
+
+      IF sv_AvailableMovements[uIndex].uPosition > 0 THEN
+         sv_AvailableMovements[uIndex].dRefDuration  := AvailableMovements[uIndex].dDuration;
+         sv_AvailableMovements[uIndex].dRefStartTime := AvailableMovements[uIndex].dStartTime;
+
+         IF bEntry THEN // ad item to retain list
+            sv_AvailableMovementsRetain[uIndexRetain].dRefDuration  := sv_AvailableMovements[uIndex].dRefDuration;
+            sv_AvailableMovementsRetain[uIndexRetain].dRefStartTime := sv_AvailableMovements[uIndex].dRefStartTime;
+            sv_AvailableMovementsRetain[uIndexRetain].uPosition := sv_AvailableMovements[uIndex].uPosition;
+         ELSE
+            sv_AvailableMovementsRetain[uIndexRetain].DeviceId := sv_AvailableMovements[uIndex].DeviceId;
+            sv_AvailableMovementsRetain[uIndexRetain].MoveId   := sv_AvailableMovements[uIndex].MoveId;
+            sv_AvailableMovementsRetain[uIndexRetain].MoveDir  := sv_AvailableMovements[uIndex].MoveDir;
+            sv_AvailableMovementsRetain[uIndexRetain].dRefDuration  := sv_AvailableMovements[uIndex].dRefDuration;
+            sv_AvailableMovementsRetain[uIndexRetain].dRefStartTime := sv_AvailableMovements[uIndex].dRefStartTime;
+            sv_AvailableMovementsRetain[uIndexRetain].uPosition := sv_AvailableMovements[uIndex].uPosition;
+         END_IF;
+      ELSE    // deactivate/remove item for retain list
+         IF bEntry THEN
+            sv_AvailableMovementsRetain[uIndexRetain].uPosition := sv_AvailableMovements[uIndex].uPosition;
+         END_IF;
+      END_IF;
+      uIndex := uIndex + 1;
+   END_WHILE;
+   sv_bNewReference := FALSE;
+END_IF;
+
+@END_Body 
+
+@@@BEG_Comment@@@ 
+@TL(0)
+
+@@@END_Comment@@@ 
+
+@BEG_Body 
+@TL(147)
+(**************************************** WARNING ********************************************
+ *** The KEBA Kemro K2 System including software is not intended for safety control tasks! ***
+ ***                       For further information see Comment tab!                        ***
+ *********************************************************************************************)
+
+dActTime := sv_dCycleTime;
+MovementStateData := evMovementStateData;
+
+IF sv_OperationMode < nHalfAutomatic THEN // only with cyclic movement
+   RETURN;
+END_IF;
+
+bActive := (MovementStateData.State = nActive);
+
+IF bActive THEN
+   // only whole movement should be activated
+   IF (MovementStateData.DeviceId.CompId = cCompMold) AND 
+       (MovementStateData.MoveId = cMoveBwdInterPos) THEN
+       MovementStateData.MoveId := cMoveBwd;
+       bMoldInterPosActive := TRUE;     //interpos movement active --> use MoldTimer
+   ELSIF (MovementStateData.DeviceId.CompId = cCompMold) AND 
+       (MovementStateData.MoveId = cMoveFwdInterPos) THEN
+        MovementStateData.MoveId := cMoveFwd;
+        bMoldInterPosActive := TRUE;    //interpos movement active --> use MoldTimer           
+   ELSIF (MovementStateData.DeviceId.CompId = cCompEjector) THEN
+      IF (MovementStateData.MoveId = cMoveBwd) THEN
+         IF (sv_rBwdInterruptPosition>0.0) THEN
+            MovementStateData.MoveId := cMoveShake;
+         ELSE
+            bShakeActive := FALSE;              
+         END_IF;
+      ELSE
+         IF bShakeActive THEN
+            MovementStateData.MoveId := cMoveShake;
+         END_IF;
+      END_IF;
+   END_IF;   
+END_IF;
+
+uIndex := 1;
+WHILE uIndex< cMaxMoveRegistered+1 DO // search if movement activated     
+   IF (MovementStateData.DeviceId = sv_AvailableMovements[uIndex].DeviceId) AND
+      (MovementStateData.MoveId   = sv_AvailableMovements[uIndex].MoveId)   THEN // device activated
+      IF bActive THEN
+         IF (MovementStateData.DeviceId.CompId = cCompMold) THEN // reset timer
+            IF (NOT bMoldActive)  THEN
+               MoldTimer(IN:=FALSE, PT:=T#999s);
+               MoldTimer(IN:=TRUE);
+               bMoldActive := TRUE;            
+               IF ((sv_AvailableMovements[uIndex].MoveId = cMoveBwd) OR
+                   (sv_AvailableMovements[uIndex].MoveId = cMoveBwdInterPos)) THEN
+                  uIndexMoldOpen := uIndex;
+               ELSE
+                  uIndexMoldClose := uIndex;
+               END_IF;
+               sv_AvailableMovements[uIndex].dLastStartTime := sv_AvailableMovements[uIndex].dStartTime;
+               sv_AvailableMovements[uIndex].dStartTime := dActTime;            
+            END_IF;
+         ELSIF MovementStateData.DeviceId.CompId = cCompEjector THEN // reset timer
+            IF MovementStateData.MoveId = cMoveShake THEN
+               IF NOT bShakeActive THEN
+                  bShakeActive := TRUE;
+                  uIndexShake := uIndex;
+                  sv_AvailableMovements[uIndex].dLastStartTime := sv_AvailableMovements[uIndex].dStartTime;
+                  sv_AvailableMovements[uIndex].dStartTime := dActTime;            
+               END_IF;
+            ELSIF (MovementStateData.MoveId = cMoveBwd) THEN // bwd after shake stop shake
+               IF uIndexShake>0 THEN
+                  sv_AvailableMovements[uIndexShake].dDuration := sv_AvailableMovements[uIndexShake].pMoveData^.pdActiveTimeAct^;
+               END_IF;
+               sv_AvailableMovements[uIndex].dLastStartTime := sv_AvailableMovements[uIndex].dStartTime;
+               sv_AvailableMovements[uIndex].dStartTime := dActTime;
+            ELSE
+               sv_AvailableMovements[uIndex].dLastStartTime := sv_AvailableMovements[uIndex].dStartTime;
+               sv_AvailableMovements[uIndex].dStartTime := dActTime;            
+            END_IF;
+         ELSIF (MovementStateData.DeviceId.CompId = cCompInjection AND 
+                MovementStateData.MoveId = cMoveHold) THEN
+             //hold active, save indexes
+             IF NOT bHoldIndexFound THEN
+                 uIndexHold := uIndex;      
+                 uIndexAvailableHold := 1;
+                 WHILE uIndexAvailableHold < cMaxMoveRegistered+1 DO
+                     IF sv_AvailableMovements[uIndexHold].DeviceId = sv_MovementsAvailable[uIndexAvailableHold].DeviceId AND
+                         sv_AvailableMovements[uIndexHold].MoveId   = sv_MovementsAvailable[uIndexAvailableHold].pMovementData^.MoveId AND
+                         sv_AvailableMovements[uIndexHold].MoveDir   = sv_MovementsAvailable[uIndexAvailableHold].pMovementData^.MoveDir THEN
+                         bHoldIndexFound := TRUE;
+                         EXIT;
+                     END_IF;
+                     uIndexAvailableHold := uIndexAvailableHold + 1;
+                 END_WHILE;                
+             END_IF; 
+             bHoldActive := TRUE;
+             sv_AvailableMovements[uIndex].dLastStartTime := sv_AvailableMovements[uIndex].dStartTime;
+             sv_AvailableMovements[uIndex].dStartTime := dActTime;
+         ELSE
+            sv_AvailableMovements[uIndex].dLastStartTime := sv_AvailableMovements[uIndex].dStartTime;
+            sv_AvailableMovements[uIndex].dStartTime := dActTime;            
+         END_IF;
+         
+         START_PROCESS_ALGORITHM(paTimeRecording);
+      ELSE // movement stopped - transfer last time
+         uIndexAvailable := 1;
+         WHILE uIndexAvailable < cMaxMoveRegistered+1 DO
+            IF sv_AvailableMovements[uIndex].DeviceId = sv_MovementsAvailable[uIndexAvailable].DeviceId AND
+               sv_AvailableMovements[uIndex].MoveId   = sv_MovementsAvailable[uIndexAvailable].pMovementData^.MoveId AND
+               sv_AvailableMovements[uIndex].MoveDir   = sv_MovementsAvailable[uIndexAvailable].pMovementData^.MoveDir THEN
+               EXIT;
+            END_IF;
+            uIndexAvailable := uIndexAvailable + 1;
+         END_WHILE;            
+         IF CHECK_REF(sv_MovementsAvailable[uIndexAvailable].pMovementData^.pdActiveTimeAct^) THEN
+            IF (sv_AvailableMovements[uIndex].DeviceId.CompId = cCompMold) THEN
+               IF ((sv_AvailableMovements[uIndex].MoveId = cMoveFwd) OR
+                   (sv_AvailableMovements[uIndex].MoveId = cMoveBwd)) THEN
+                  MoldTimer(IN:=TRUE);
+                  sv_AvailableMovements[uIndex].dDuration := MoldTimer.ET;
+                  IF bMoldInterPosActive THEN
+                      sv_AvailableMovements[uIndex].dDuration := MoldTimer.ET;
+                      bMoldInterPosActive := FALSE;
+                  ELSE
+                      sv_AvailableMovements[uIndex].dDuration := sv_MovementsAvailable[uIndexAvailable].pMovementData^.pdActiveTimeAct^;
+                  END_IF;                   
+                  bMoldActive := FALSE;
+                  uIndexMoldOpen  := 0;
+                  uIndexMoldClose := 0;
+                  MoldTimer(IN:=FALSE);
+               END_IF;            
+            ELSIF ((sv_AvailableMovements[uIndex].DeviceId.CompId = cCompInjection AND bHoldActive)) THEN
+                   //inject inactive + hold inactive --> transfer also hold time
+                   sv_AvailableMovements[uIndex].dDuration := sv_MovementsAvailable[uIndexAvailable].pMovementData^.pdActiveTimeAct^;
+                   IF bHoldIndexFound THEN
+                       sv_AvailableMovements[uIndexHold].dDuration := sv_MovementsAvailable[uIndexAvailableHold].pMovementData^.pdActiveTimeAct^;                   
+                   END_IF;      
+                   bHoldActive := FALSE;
+            ELSIF NOT((sv_AvailableMovements[uIndex].DeviceId.CompId = cCompEjector) AND bShakeActive) THEN         
+               sv_AvailableMovements[uIndex].dDuration := sv_MovementsAvailable[uIndexAvailable].pMovementData^.pdActiveTimeAct^;
+            END_IF;
+         ELSE
+            sv_AvailableMovements[uIndex].dDuration := T#0s;
+         END_IF;
+      END_IF;      
+      EXIT;
+   END_IF;
+   uIndex := uIndex +1;
+END_WHILE;
+
+@END_Body 
+
+@@@BEG_Comment@@@ 
+@TL(0)
+
+@@@END_Comment@@@ 
+
+@BEG_Body 
+@TL(77)
+(**************************************** WARNING ********************************************
+ *** The KEBA Kemro K2 System including software is not intended for safety control tasks! ***
+ ***                       For further information see Comment tab!                        ***
+ *********************************************************************************************)
+
+// all available movements
+uIndex := 1;
+uIndexInsert:=1;
+WHILE sv_MovementsAvailable[uIndex].DeviceId.CompId > cMinCompId DO
+
+   //check if movement should be available in cycle time list
+   //because some movements are excluded
+   aDecideAddingToList(DeviceId := sv_MovementsAvailable[uIndex].DeviceId,
+                       MoveId := sv_MovementsAvailable[uIndex].pMovementData^.MoveId);
+   
+   IF aDecideAddingToList.bAdd THEN
+      //add movement         
+      sv_AvailableMovements[uIndexInsert].DeviceId := sv_MovementsAvailable[uIndex].DeviceId;
+      sv_AvailableMovements[uIndexInsert].MoveId   := sv_MovementsAvailable[uIndex].pMovementData^.MoveId;
+      sv_AvailableMovements[uIndexInsert].MoveDir  := sv_MovementsAvailable[uIndex].pMovementData^.MoveDir;
+      sv_AvailableMovements[uIndexInsert].pMoveData := sv_MovementsAvailable[uIndex].pMovementData;      
+      AvailableMovements[uIndexInsert].DeviceId := sv_MovementsAvailable[uIndex].DeviceId;
+      AvailableMovements[uIndexInsert].MoveId   := sv_MovementsAvailable[uIndex].pMovementData^.MoveId;
+      AvailableMovements[uIndexInsert].MoveDir  := sv_MovementsAvailable[uIndex].pMovementData^.MoveDir;
+      AvailableMovements[uIndexInsert].pMoveData := sv_MovementsAvailable[uIndex].pMovementData;      
+      sv_AvailableMovements[uIndexInsert].pMoveData := sv_MovementsAvailable[uIndex].pMovementData;
+      AvailableMovements[uIndexInsert].pMoveData := sv_MovementsAvailable[uIndex].pMovementData;
+      IF CHECK_REF(sv_MovementsAvailable[uIndex].pMovementData^.pdTimeLimit) THEN
+         sv_AvailableMovements[uIndexInsert].pdLimit := sv_MovementsAvailable[uIndex].pMovementData^.pdTimeLimit;
+         AvailableMovements[uIndexInsert].pdLimit := sv_MovementsAvailable[uIndex].pMovementData^.pdTimeLimit;
+      ELSE // use default with zero
+         sv_AvailableMovements[uIndexInsert].pdLimit := @sv_dTimeLimit;
+         AvailableMovements[uIndexInsert].pdLimit := @sv_dTimeLimit;
+      END_IF;
+      uIndexInsert := uIndexInsert + 1;                    
+   END_IF;
+   
+   uIndex := uIndex + 1;
+   IF uIndex > cMaxMoveRegistered THEN
+      EXIT;
+   END_IF;
+END_WHILE;
+
+
+
+// ToDo: copy sv_AvailableMovementsRetain to sv_AvailableMovements
+uIndexRetain := 1;
+//WHILE sv_AvailableMovementsRetain[uIndexRetain].uPosition > 0 DO
+//WHILE sv_AvailableMovementsRetain[uIndexRetain].DeviceId.CompId > cMinCompId DO
+WHILE uIndexRetain < cMaxMoveRegistered+1 DO
+   IF sv_AvailableMovementsRetain[uIndexRetain].uPosition > 0 THEN
+      uIndex := 1;
+      WHILE sv_AvailableMovements[uIndex].DeviceId.CompId > cMinCompId DO
+         IF (sv_AvailableMovements[uIndex].DeviceId = sv_AvailableMovementsRetain[uIndexRetain].DeviceId) AND
+            (sv_AvailableMovements[uIndex].MoveId   = sv_AvailableMovementsRetain[uIndexRetain].MoveId) AND
+            (sv_AvailableMovements[uIndex].MoveDir  = sv_AvailableMovementsRetain[uIndexRetain].MoveDir) THEN
+            sv_AvailableMovements[uIndex].dRefDuration  := sv_AvailableMovementsRetain[uIndexRetain].dRefDuration;
+            sv_AvailableMovements[uIndex].dRefStartTime := sv_AvailableMovementsRetain[uIndexRetain].dRefStartTime;
+            sv_AvailableMovements[uIndex].uPosition     := sv_AvailableMovementsRetain[uIndexRetain].uPosition;         
+            sv_AvailableMovements[uIndex].dLastDuration := T#0s;
+            sv_AvailableMovements[uIndex].dDuration := T#0s;
+            AvailableMovements[uIndex].dRefDuration  := sv_AvailableMovementsRetain[uIndexRetain].dRefDuration;
+            AvailableMovements[uIndex].dRefStartTime := sv_AvailableMovementsRetain[uIndexRetain].dRefStartTime;
+            AvailableMovements[uIndex].uPosition     := sv_AvailableMovementsRetain[uIndexRetain].uPosition;         
+            AvailableMovements[uIndex].dLastDuration := T#0s;
+            AvailableMovements[uIndex].dDuration := T#0s;
+            //sv_AvailableMovements[uIndex] := sv_AvailableMovementsRetain[uIndexRetain];
+            EXIT;
+         END_IF;
+         uIndex := uIndex + 1;
+      END_WHILE;
+   END_IF;
+   uIndexRetain := uIndexRetain + 1;
+END_WHILE;
+
+
+
+@END_Body 
+
+@@@BEG_Comment@@@ 
+@TL(0)
+
+@@@END_Comment@@@ 
+
+@BEG_Body 
+@TL(58)
+(**************************************** WARNING ********************************************
+ *** The KEBA Kemro K2 System including software is not intended for safety control tasks! ***
+ ***                       For further information see Comment tab!                        ***
+ *********************************************************************************************)
+
+IF sv_OperationMode < nHalfAutomatic THEN // only with cyclic movement
+   STOP_PROCESS_ALGORITHM();
+END_IF;
+
+mActiveMovements := sv_ActiveMovements;
+
+IF (mActiveMovements.iNumberOfActiveMovements = 0) AND
+   (NOT bMoldActive) AND
+   (NOT bShakeActive) THEN
+   STOP_PROCESS_ALGORITHM();
+ELSE
+   IF bMoldActive THEN
+      MoldTimer(IN:=TRUE);
+      IF uIndexMoldOpen>0 THEN
+         sv_AvailableMovements[uIndexMoldOpen].dDuration := MoldTimer.ET;
+      ELSIF uIndexMoldClose>0 THEN
+         sv_AvailableMovements[uIndexMoldClose].dDuration := MoldTimer.ET;
+      END_IF;
+   ELSIF bShakeActive THEN
+      IF uIndexShake>0 THEN
+         sv_AvailableMovements[uIndexShake].dDuration := sv_AvailableMovements[uIndexShake].pMoveData^.pdActiveTimeAct^;
+      END_IF;
+   END_IF;
+   FOR uIndex:=1 TO mActiveMovements.iNumberOfActiveMovements DO      
+       IF mActiveMovements.ActiveMovements[uIndex] <> 0 THEN
+           uIndexAvailable :=1;
+           WHILE uIndexAvailable < cMaxMoveRegistered+1 DO          
+               IF (sv_AvailableMovements[uIndexAvailable].DeviceId = sv_MovementsAvailable[mActiveMovements.ActiveMovements[uIndex]].DeviceId) AND
+                   (sv_AvailableMovements[uIndexAvailable].MoveId   = sv_MovementsAvailable[mActiveMovements.ActiveMovements[uIndex]].pMovementData^.MoveId) AND
+                   (sv_AvailableMovements[uIndexAvailable].MoveDir  = sv_MovementsAvailable[mActiveMovements.ActiveMovements[uIndex]].pMovementData^.MoveDir) THEN
+                   EXIT;
+               END_IF;
+               uIndexAvailable := uIndexAvailable + 1;
+           END_WHILE;
+           
+           IF (uIndexAvailable < cMaxMoveRegistered+1) AND
+               (sv_AvailableMovements[uIndexAvailable].uPosition > 0) THEN
+               IF NOT (sv_AvailableMovements[uIndexAvailable].DeviceId.CompId = cCompMold) AND
+                  NOT ((sv_AvailableMovements[uIndexAvailable].DeviceId.CompId = cCompEjector) AND bShakeActive) THEN
+               
+                   IF CHECK_REF(sv_MovementsAvailable[mActiveMovements.ActiveMovements[uIndex]].pMovementData^.pdActiveTimeAct^) THEN                 
+                       dActDuration := sv_MovementsAvailable[mActiveMovements.ActiveMovements[uIndex]].pMovementData^.pdActiveTimeAct^;
+                   ELSE
+                       dActDuration := T#0s;
+                   END_IF;         
+                         
+                  sv_AvailableMovements[uIndexAvailable].dDuration := dActDuration; // write duration to sv_AvailableMovements
+               END_IF;
+           END_IF;    
+       END_IF;     
+   END_FOR;
+END_IF;
+
+@END_Body 
+
+@@@BEG_Comment@@@ 
+@TL(0)
+
+@@@END_Comment@@@ 
+
+@BEG_Body 
+@TL(18)
+(**************************************** WARNING ********************************************
+ *** The KEBA Kemro K2 System including software is not intended for safety control tasks! ***
+ ***                       For further information see Comment tab!                        ***
+ *********************************************************************************************)
+
+// copy values of last cycle
+uIndex := 1;
+WHILE uIndex < cMaxMoveRegistered+1 DO
+   AvailableMovements[uIndex].dDuration  := sv_AvailableMovements[uIndex].dDuration;
+   AvailableMovements[uIndex].dStartTime := sv_AvailableMovements[uIndex].dStartTime;
+   sv_AvailableMovements[uIndex].dLastDuration  := sv_AvailableMovements[uIndex].dDuration;
+   sv_AvailableMovements[uIndex].dLastStartTime := sv_AvailableMovements[uIndex].dStartTime;
+   
+   //reset durations
+   sv_AvailableMovements[uIndex].dDuration := T#0s;
+   uIndex := uIndex + 1;
+END_WHILE;
+
+@END_Body 
+
+@@@BEG_Comment@@@ 
+@TL(2)
+This algorithm is necessary for registering the available movements
+and the according parameters (Lockgroups, icon path, delay time, ....)
+@@@END_Comment@@@ 
+@END_Body 
+
+@END_Contents 

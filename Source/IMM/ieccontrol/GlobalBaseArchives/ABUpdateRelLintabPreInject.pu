@@ -1,0 +1,605 @@
+IMPORT_OVER_LISTFILE
+ FFixCylinderData
+, FCalculateCylinderSize
+, FCalcScrewSize
+, KAPPL_LintabData
+, tsCylinderData
+, FBDebugTrace
+
+END_IMPORT
+
+ALGORITHM_BLOCK ABUpdateRelLintabPreInject #DUMMY_EDIT_BLOCK
+
+SYSTEM_VAR
+ sv_bCalcMaxValuesFromCylData : BOOL (* TRUE: calculate max speed and max pressure values by using cylinder data;  FALSE: max values must be entered manually *);
+END_VAR
+
+SYSTEM_OBJECT
+ PU_Task_7 : TASK;
+END_OBJECT
+
+VAR
+ mpLintabOut : REFTO KAPPL_LintabData;
+ mpCylinderData : REFTO tsCylinderData;
+ mprMaxPressure : REFTO REAL;
+ mprMaxHydrPressure : REFTO REAL;
+ mbInitDone : BOOL;
+ mprScrewDiameter : REFTO REAL;
+END_VAR
+
+ALGORITHM aUpdateLintabOut
+
+#BEGIN_EDIT_BLOCK
+(**************************************** WARNING ********************************************
+ *** The KEBA Kemro K2 System including software is not intended for safety control tasks! ***
+ ***                       For further information see Comment tab!                        ***
+ *********************************************************************************************)
+
+// save data to Pre lintab
+// normally a 1:1 lintab
+mpLintabOut^.LintabPoints.uNoOfPoints := 2;
+mpLintabOut^.LintabPoints.Point[1].rX := 0.0;
+mpLintabOut^.LintabPoints.Point[1].rY := 0.0;
+mpLintabOut^.LintabPoints.Point[2].rX := mprMaxPressure^;
+mpLintabOut^.LintabPoints.Point[2].rY := mprMaxHydrPressure^;
+
+
+;#END_EDIT_BLOCK END_ALGORITHM
+
+ALGORITHM aCalcMaxPressure
+
+
+VAR_TEMP
+ rCylinderSize : REAL (* size of cylinder im mm� *);
+ rScrewSize : REAL (* size of screw in mm� *);
+ tmp : BOOL;
+END_VAR
+#BEGIN_EDIT_BLOCK
+(**************************************** WARNING ********************************************
+ *** The KEBA Kemro K2 System including software is not intended for safety control tasks! ***
+ ***                       For further information see Comment tab!                        ***
+ *********************************************************************************************)
+
+IF NOT sv_bCalcMaxValuesFromCylData THEN
+   // no calculation necessary
+   RETURN;
+END_IF;
+
+tmp := FFixCylinderData(mpCylinderData);
+
+// sanity check
+IF mprScrewDiameter^ <= 0.0 THEN
+   mprScrewDiameter^ := 34.0;
+END_IF;
+
+
+rCylinderSize := FCalculateCylinderSize(CylinderData := mpCylinderData^, bSmallSize := mpCylinderData^.bUseSmallSize,bCalcHighPressSize := FALSE);
+
+rScrewSize := FCalcScrewSize(mprScrewDiameter^);
+
+// calculate pressure for screw
+mprMaxPressure^ := mprMaxHydrPressure^ * rCylinderSize / rScrewSize;
+
+
+;#END_EDIT_BLOCK END_ALGORITHM
+
+ALGORITHM aInit
+
+
+VAR_INPUT
+ pLintabOut : REFTO KAPPL_LintabData;
+ prMaxPressure : REFTO REAL (* reference to calculated max. pressure *);
+ prMaxHydrPressure : REFTO REAL (* reference to max. possible hydraulic pressure (depends on used pumps(s)) *);
+ pCylinderData : REFTO tsCylinderData;
+ prScrewDiameter : REFTO REAL (* diameter of screw in mm *);
+END_VAR
+
+VAR
+ fbDebugTrace : FBDebugTrace;
+END_VAR
+#BEGIN_EDIT_BLOCK
+(**************************************** WARNING ********************************************
+ *** The KEBA Kemro K2 System including software is not intended for safety control tasks! ***
+ ***                       For further information see Comment tab!                        ***
+ *********************************************************************************************)
+
+mbInitDone := FALSE;
+mpCylinderData := pCylinderData;
+mpLintabOut := pLintabOut;
+mprMaxPressure := prMaxPressure;
+mprMaxHydrPressure := prMaxHydrPressure;
+mprScrewDiameter := prScrewDiameter;
+
+IF NOT CHECK_REF(pCylinderData^) THEN
+   fbDebugTrace('pCylinderData not valid');
+   RETURN;
+END_IF;
+
+IF (NOT CHECK_REF(prScrewDiameter^)) THEN
+   fbDebugTrace('prScrewDiameter not valid');
+   RETURN;    
+END_IF;
+
+IF (NOT CHECK_REF(pLintabOut^)) THEN
+   fbDebugTrace('pLintabOut not valid');
+   RETURN;    
+END_IF;
+
+IF (NOT CHECK_REF(prMaxPressure^)) THEN
+   fbDebugTrace('prMaxPressure not valid');
+   RETURN;    
+END_IF;
+
+IF (NOT CHECK_REF(prMaxHydrPressure^)) THEN
+   fbDebugTrace('prMaxHydrPressure not valid');
+   RETURN;    
+END_IF;
+
+
+// init successful
+mbInitDone := TRUE;
+
+aCalcMaxPressure();
+
+aUpdateLintabOut();
+
+
+;#END_EDIT_BLOCK END_ALGORITHM
+
+POSTUPDATE_ALGORITHM pUpdatePressure ON PU_Task_7 WITH mprMaxHydrPressure^,mpCylinderData^,mprScrewDiameter^
+
+#BEGIN_EDIT_BLOCK
+(**************************************** WARNING ********************************************
+ *** The KEBA Kemro K2 System including software is not intended for safety control tasks! ***
+ ***                       For further information see Comment tab!                        ***
+ *********************************************************************************************)
+         
+IF NOT mbInitDone THEN
+    RETURN;
+END_IF;
+
+aCalcMaxPressure();
+
+
+;#END_EDIT_BLOCK END_ALGORITHM
+
+POSTUPDATE_ALGORITHM pUpdatePressureLintab ON PU_Task_7 WITH mprMaxHydrPressure^,mprMaxPressure^
+
+#BEGIN_EDIT_BLOCK
+(**************************************** WARNING ********************************************
+ *** The KEBA Kemro K2 System including software is not intended for safety control tasks! ***
+ ***                       For further information see Comment tab!                        ***
+ *********************************************************************************************)
+         
+IF NOT mbInitDone THEN
+    RETURN;
+END_IF;
+
+// update lintab
+aUpdateLintabOut();
+
+
+;#END_EDIT_BLOCK END_ALGORITHM
+
+
+
+END_ALGORITHM_BLOCK
+
+
+
+#END_OF_IEC_PART
+
+@Puma @IecEditor 6 114 @Pou 25 
+@@@BEG_Comment@@@
+
+@@@END_Comment@@@
+
+@BEG_Contents 
+
+@BEG_Func 
+@RT(17)FuncTreeContainer 
+3 
+@Var @RT(16)FFixCylinderData @RT(0) @T @T @DERIVED 0 @F @RT(8)FUNCTION @F 
+@T 
+@BEG_Attrib 
+0 @RT(0) @RT(0) 
+@END_Attrib 
+1 1 @F @F @F @F 
+
+@Var @RT(22)FCalculateCylinderSize @RT(0) @T @T @DERIVED 0 @F @RT(8)FUNCTION @F 
+@T 
+@BEG_Attrib 
+0 @RT(0) @RT(0) 
+@END_Attrib 
+1 1 @F @F @F @F 
+
+@Var @RT(14)FCalcScrewSize @RT(0) @T @T @DERIVED 0 @F @RT(8)FUNCTION @F 
+@T 
+@BEG_Attrib 
+0 @RT(0) @RT(0) 
+@END_Attrib 
+1 1 @F @F @F @F 
+
+@END_Func 
+
+@BEG_Const 
+@RT(18)ConstTreeContainer 
+0 
+@END_Const 
+
+@BEG_Export 
+
+@BEG_Kind 
+@ALGORITHM_BLOCK @RT(26)ABUpdateRelLintabPreInject @STRUCTURED_TEXT 
+@RT(0) @RT(0) @RT(0) 
+@END_Kind 
+
+@BEG_Dcl 
+@RT(16)DclTreeContainer 
+8 
+@Var @RT(28)sv_bCalcMaxValuesFromCylData @RT(0) @T @F @DT @RT(4)BOOL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(117)TRUE: calculate max speed and max pressure values by using cylinder data;  FALSE: max values must be entered manually @RT(0) 
+@END_Attrib 
+1 8 @F @F @F @F 
+
+@Var @RT(9)PU_Task_7 @RT(0) @T @F @DT @RT(4)TASK @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 7 @F @F @F @F 
+
+@Var @RT(11)mpLintabOut @RT(0) @T @T @REFTO 0 @F @DERIVED 0 @T @T @DT @RT(16)KAPPL_LintabData @RT(0) @T @T @UNKNOWN 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(14)mpCylinderData @RT(0) @T @T @REFTO 0 @F @DERIVED 0 @T @T @DT @RT(14)tsCylinderData @RT(0) @T @T @UNKNOWN 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(14)mprMaxPressure @RT(0) @T @T @REFTO 0 @T @DT @RT(4)REAL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(18)mprMaxHydrPressure @RT(0) @T @T @REFTO 0 @T @DT @RT(4)REAL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(10)mbInitDone @RT(0) @T @F @DT @RT(4)BOOL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(16)mprScrewDiameter @RT(0) @T @T @REFTO 0 @T @DT @RT(4)REAL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@END_Dcl 
+
+@END_Export 
+
+@BEG_Body 
+
+5 
+
+@BEG_Export 
+
+@BEG_Algo 
+@ALGORITHM @RT(16)aUpdateLintabOut @STRUCTURED_TEXT 
+@RT(0) @RT(0) @RT(0) @F @F 
+@END_Algo 
+
+@BEG_Dcl 
+@RT(16)DclTreeContainer 
+0 
+@END_Dcl 
+
+@END_Export 
+
+@BEG_Export 
+
+@BEG_Algo 
+@ALGORITHM @RT(16)aCalcMaxPressure @STRUCTURED_TEXT 
+@RT(0) @RT(0) @RT(0) @F @F 
+@END_Algo 
+
+@BEG_Dcl 
+@RT(16)DclTreeContainer 
+3 
+@Var @RT(13)rCylinderSize @RT(0) @T @F @DT @RT(4)REAL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(23)size of cylinder im mm� @RT(0) 
+@END_Attrib 
+1 4 @F @F @F @F 
+
+@Var @RT(10)rScrewSize @RT(0) @T @F @DT @RT(4)REAL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(20)size of screw in mm� @RT(0) 
+@END_Attrib 
+1 4 @F @F @F @F 
+
+@Var @RT(3)tmp @RT(0) @T @F @DT @RT(4)BOOL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 4 @F @F @F @F 
+
+@END_Dcl 
+
+@END_Export 
+
+@BEG_Export 
+
+@BEG_Algo 
+@ALGORITHM @RT(5)aInit @STRUCTURED_TEXT 
+@RT(0) @RT(0) @RT(0) @F @F 
+@END_Algo 
+
+@BEG_Dcl 
+@RT(16)DclTreeContainer 
+6 
+@Var @RT(10)pLintabOut @RT(0) @T @T @REFTO 0 @F @DERIVED 0 @T @T @DT @RT(16)KAPPL_LintabData @RT(0) @T @T @UNKNOWN 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 1 @F @F @F @F 
+
+@Var @RT(13)prMaxPressure @RT(0) @T @T @REFTO 0 @T @DT @RT(4)REAL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(37)reference to calculated max. pressure @RT(0) 
+@END_Attrib 
+1 1 @F @F @F @F 
+
+@Var @RT(17)prMaxHydrPressure @RT(0) @T @T @REFTO 0 @T @DT @RT(4)REAL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(72)reference to max. possible hydraulic pressure (depends on used pumps(s)) @RT(0) 
+@END_Attrib 
+1 1 @F @F @F @F 
+
+@Var @RT(13)pCylinderData @RT(0) @T @T @REFTO 0 @F @DERIVED 0 @T @T @DT @RT(14)tsCylinderData @RT(0) @T @T @UNKNOWN 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 1 @F @F @F @F 
+
+@Var @RT(15)prScrewDiameter @RT(0) @T @T @REFTO 0 @T @DT @RT(4)REAL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(23)diameter of screw in mm @RT(0) 
+@END_Attrib 
+1 1 @F @F @F @F 
+
+@Var @RT(12)fbDebugTrace @RT(0) @T @T @DERIVED 0 @F @RT(12)FBDebugTrace @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@END_Dcl 
+
+@END_Export 
+
+@BEG_Export 
+
+@BEG_Algo 
+@POSTUPDATE_ALGORITHM @RT(15)pUpdatePressure @STRUCTURED_TEXT 
+@RT(0) @RT(53)mprMaxHydrPressure^,mpCylinderData^,mprScrewDiameter^ @RT(9)PU_Task_7 @F @F 
+@END_Algo 
+
+@BEG_Dcl 
+@RT(16)DclTreeContainer 
+0 
+@END_Dcl 
+
+@END_Export 
+
+@BEG_Export 
+
+@BEG_Algo 
+@POSTUPDATE_ALGORITHM @RT(21)pUpdatePressureLintab @STRUCTURED_TEXT 
+@RT(0) @RT(35)mprMaxHydrPressure^,mprMaxPressure^ @RT(9)PU_Task_7 @F @F 
+@END_Algo 
+
+@BEG_Dcl 
+@RT(16)DclTreeContainer 
+0 
+@END_Dcl 
+
+@END_Export 
+
+@BEG_Body 
+@TL(13)
+(**************************************** WARNING ********************************************
+ *** The KEBA Kemro K2 System including software is not intended for safety control tasks! ***
+ ***                       For further information see Comment tab!                        ***
+ *********************************************************************************************)
+
+// save data to Pre lintab
+// normally a 1:1 lintab
+mpLintabOut^.LintabPoints.uNoOfPoints := 2;
+mpLintabOut^.LintabPoints.Point[1].rX := 0.0;
+mpLintabOut^.LintabPoints.Point[1].rY := 0.0;
+mpLintabOut^.LintabPoints.Point[2].rX := mprMaxPressure^;
+mpLintabOut^.LintabPoints.Point[2].rY := mprMaxHydrPressure^;
+
+@END_Body 
+
+@@@BEG_Comment@@@ 
+@TL(0)
+
+@@@END_Comment@@@ 
+
+@BEG_Body 
+@TL(25)
+(**************************************** WARNING ********************************************
+ *** The KEBA Kemro K2 System including software is not intended for safety control tasks! ***
+ ***                       For further information see Comment tab!                        ***
+ *********************************************************************************************)
+
+IF NOT sv_bCalcMaxValuesFromCylData THEN
+   // no calculation necessary
+   RETURN;
+END_IF;
+
+tmp := FFixCylinderData(mpCylinderData);
+
+// sanity check
+IF mprScrewDiameter^ <= 0.0 THEN
+   mprScrewDiameter^ := 34.0;
+END_IF;
+
+
+rCylinderSize := FCalculateCylinderSize(CylinderData := mpCylinderData^, bSmallSize := mpCylinderData^.bUseSmallSize,bCalcHighPressSize := FALSE);
+
+rScrewSize := FCalcScrewSize(mprScrewDiameter^);
+
+// calculate pressure for screw
+mprMaxPressure^ := mprMaxHydrPressure^ * rCylinderSize / rScrewSize;
+
+@END_Body 
+
+@@@BEG_Comment@@@ 
+@TL(0)
+
+@@@END_Comment@@@ 
+
+@BEG_Body 
+@TL(45)
+(**************************************** WARNING ********************************************
+ *** The KEBA Kemro K2 System including software is not intended for safety control tasks! ***
+ ***                       For further information see Comment tab!                        ***
+ *********************************************************************************************)
+
+mbInitDone := FALSE;
+mpCylinderData := pCylinderData;
+mpLintabOut := pLintabOut;
+mprMaxPressure := prMaxPressure;
+mprMaxHydrPressure := prMaxHydrPressure;
+mprScrewDiameter := prScrewDiameter;
+
+IF NOT CHECK_REF(pCylinderData^) THEN
+   fbDebugTrace('pCylinderData not valid');
+   RETURN;
+END_IF;
+
+IF (NOT CHECK_REF(prScrewDiameter^)) THEN
+   fbDebugTrace('prScrewDiameter not valid');
+   RETURN;    
+END_IF;
+
+IF (NOT CHECK_REF(pLintabOut^)) THEN
+   fbDebugTrace('pLintabOut not valid');
+   RETURN;    
+END_IF;
+
+IF (NOT CHECK_REF(prMaxPressure^)) THEN
+   fbDebugTrace('prMaxPressure not valid');
+   RETURN;    
+END_IF;
+
+IF (NOT CHECK_REF(prMaxHydrPressure^)) THEN
+   fbDebugTrace('prMaxHydrPressure not valid');
+   RETURN;    
+END_IF;
+
+
+// init successful
+mbInitDone := TRUE;
+
+aCalcMaxPressure();
+
+aUpdateLintabOut();
+
+@END_Body 
+
+@@@BEG_Comment@@@ 
+@TL(0)
+
+@@@END_Comment@@@ 
+
+@BEG_Body 
+@TL(11)
+(**************************************** WARNING ********************************************
+ *** The KEBA Kemro K2 System including software is not intended for safety control tasks! ***
+ ***                       For further information see Comment tab!                        ***
+ *********************************************************************************************)
+         
+IF NOT mbInitDone THEN
+    RETURN;
+END_IF;
+
+aCalcMaxPressure();
+
+@END_Body 
+
+@@@BEG_Comment@@@ 
+@TL(0)
+
+@@@END_Comment@@@ 
+
+@BEG_Body 
+@TL(12)
+(**************************************** WARNING ********************************************
+ *** The KEBA Kemro K2 System including software is not intended for safety control tasks! ***
+ ***                       For further information see Comment tab!                        ***
+ *********************************************************************************************)
+         
+IF NOT mbInitDone THEN
+    RETURN;
+END_IF;
+
+// update lintab
+aUpdateLintabOut();
+
+@END_Body 
+
+@@@BEG_Comment@@@ 
+@TL(0)
+
+@@@END_Comment@@@ 
+@END_Body 
+
+@END_Contents 

@@ -1,0 +1,249 @@
+IMPORT_OVER_LISTFILE
+ GET_SYNC_REFTO
+, IS_LINKED
+, tsLimitDataReal
+, KSYS_Status
+, KAPPL_LintabData
+, tOptionId
+, KAPPL_LintabData_2P
+
+END_IMPORT
+
+PLAUSIBILITY_FUNCTION FPlausMaxInjectPressure : tsLimitDataReal
+
+VAR_INPUT
+ DeviceClass : INT;
+ Userlevel : INT;
+END_VAR
+
+VAR
+ Status : KSYS_Status;
+ prPress : REFTO REAL;
+ pPressureLintab : REFTO KAPPL_LintabData;
+ bNoPlaus : BOOL;
+ pInjectOption : REFTO tOptionId;
+ pPressureLintab2P : REFTO KAPPL_LintabData_2P;
+ bHydraulic : BOOL;
+ bExtPressControl : BOOL;
+ bAIPressureLinked : BOOL;
+END_VAR
+#BEGIN_EDIT_BLOCK
+// set lower limit 0.0 (no negative pressure allowed)
+FPlausMaxInjectPressure.rLowerLimit := 0.0;
+
+prPress := GET_SYNC_REFTO("Injection1.ai_Pressure", T#0s, Status);
+bAIPressureLinked := (Status = KSYS_Status_OK);
+
+//check if inject options (electric / hydraulic, external pressure control)
+pInjectOption := GET_SYNC_REFTO('Injection1.sv_Options', T#0s, Status);
+IF Status = KSYS_Status_OK THEN
+   bHydraulic := (pInjectOption^ AND cOptionHydraulic) = cOptionHydraulic; 
+   bExtPressControl := (pInjectOption^ AND cSubOpExtPressControl) = cSubOpExtPressControl;
+END_IF;
+
+IF bAIPressureLinked OR bExtPressControl THEN
+   IF bHydraulic THEN
+      pPressureLintab2P := GET_SYNC_REFTO("Injection1.sv_PressureLintab", T#0s, Status);
+      IF Status = KSYS_Status_OK THEN
+         FPlausMaxInjectPressure.rUpperLimit := pPressureLintab2P^.LintabPoints.Point[2].rY;
+      ELSE
+         bNoPlaus := TRUE;
+      END_IF;
+   ELSE
+      pPressureLintab := GET_SYNC_REFTO("Injection1.sv_PressureLintab", T#0s, Status);
+      IF (Status = KSYS_Status_OK) AND (pPressureLintab^.LintabPoints.uNoOfPoints > 0) THEN
+         FPlausMaxInjectPressure.rUpperLimit := pPressureLintab^.LintabPoints.Point[pPressureLintab^.LintabPoints.uNoOfPoints].rY;
+      ELSE
+         bNoPlaus := TRUE;
+      END_IF;
+   END_IF;
+ELSE   
+   bNoPlaus := TRUE;
+END_IF;
+
+IF bNoPlaus THEN
+   // set usefull limit, pressure higher 1000 bar problem with hydraulic hose, ...
+   FPlausMaxInjectPressure.rUpperLimit := 999.0;
+END_IF;
+
+
+;#END_EDIT_BLOCK END_FUNCTION
+
+
+
+#END_OF_IEC_PART
+
+@Puma @IecEditor 6 131 @Pou 25 
+@@@BEG_Comment@@@
+
+@@@END_Comment@@@
+
+@BEG_Contents 
+
+@BEG_Func 
+@RT(17)FuncTreeContainer 
+2 
+@Var @RT(14)GET_SYNC_REFTO @RT(0) @T @T @DERIVED 0 @F @RT(22)KEBA_STANDARD_FUNCTION @F 
+@T 
+@BEG_Attrib 
+0 @RT(0) @RT(0) 
+@END_Attrib 
+1 1 @F @F @F @F 
+
+@Var @RT(9)IS_LINKED @RT(0) @T @T @DERIVED 0 @F @RT(22)KEBA_STANDARD_FUNCTION @F 
+@T 
+@BEG_Attrib 
+0 @RT(0) @RT(0) 
+@END_Attrib 
+1 1 @F @F @F @F 
+
+@END_Func 
+
+@BEG_Const 
+@RT(18)ConstTreeContainer 
+0 
+@END_Const 
+
+@BEG_Export 
+
+@BEG_Kind 
+@PLAUSIBILITY_FUNCTION @RT(23)FPlausMaxInjectPressure @STRUCTURED_TEXT 
+@RT(15)tsLimitDataReal @RT(0) @RT(0) 
+@END_Kind 
+
+@BEG_Dcl 
+@RT(16)DclTreeContainer 
+11 
+@Var @RT(11)DeviceClass @RT(0) @T @F @DT @RT(3)INT @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+0 1 @F @F @F @F 
+
+@Var @RT(9)Userlevel @RT(0) @T @F @DT @RT(3)INT @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+0 1 @F @F @F @F 
+
+@Var @RT(6)Status @RT(0) @T @T @DERIVED 0 @T @T @DT @RT(11)KSYS_Status @RT(0) @T @T @UNKNOWN 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(7)prPress @RT(0) @T @T @REFTO 0 @T @DT @RT(4)REAL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(15)pPressureLintab @RT(0) @T @T @REFTO 0 @F @DERIVED 0 @F @RT(16)KAPPL_LintabData @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(8)bNoPlaus @RT(0) @T @F @DT @RT(4)BOOL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(13)pInjectOption @RT(0) @T @T @REFTO 0 @F @DERIVED 0 @T @T @DT @RT(9)tOptionId @RT(0) @T @T @UNKNOWN 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(17)pPressureLintab2P @RT(0) @T @T @REFTO 0 @F @DERIVED 0 @F @RT(19)KAPPL_LintabData_2P @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(10)bHydraulic @RT(0) @T @F @DT @RT(4)BOOL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(16)bExtPressControl @RT(0) @T @F @DT @RT(4)BOOL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(17)bAIPressureLinked @RT(0) @T @F @DT @RT(4)BOOL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@END_Dcl 
+
+@END_Export 
+
+@BEG_Body 
+@TL(38)
+// set lower limit 0.0 (no negative pressure allowed)
+FPlausMaxInjectPressure.rLowerLimit := 0.0;
+
+prPress := GET_SYNC_REFTO("Injection1.ai_Pressure", T#0s, Status);
+bAIPressureLinked := (Status = KSYS_Status_OK);
+
+//check if inject options (electric / hydraulic, external pressure control)
+pInjectOption := GET_SYNC_REFTO('Injection1.sv_Options', T#0s, Status);
+IF Status = KSYS_Status_OK THEN
+   bHydraulic := (pInjectOption^ AND cOptionHydraulic) = cOptionHydraulic; 
+   bExtPressControl := (pInjectOption^ AND cSubOpExtPressControl) = cSubOpExtPressControl;
+END_IF;
+
+IF bAIPressureLinked OR bExtPressControl THEN
+   IF bHydraulic THEN
+      pPressureLintab2P := GET_SYNC_REFTO("Injection1.sv_PressureLintab", T#0s, Status);
+      IF Status = KSYS_Status_OK THEN
+         FPlausMaxInjectPressure.rUpperLimit := pPressureLintab2P^.LintabPoints.Point[2].rY;
+      ELSE
+         bNoPlaus := TRUE;
+      END_IF;
+   ELSE
+      pPressureLintab := GET_SYNC_REFTO("Injection1.sv_PressureLintab", T#0s, Status);
+      IF (Status = KSYS_Status_OK) AND (pPressureLintab^.LintabPoints.uNoOfPoints > 0) THEN
+         FPlausMaxInjectPressure.rUpperLimit := pPressureLintab^.LintabPoints.Point[pPressureLintab^.LintabPoints.uNoOfPoints].rY;
+      ELSE
+         bNoPlaus := TRUE;
+      END_IF;
+   END_IF;
+ELSE   
+   bNoPlaus := TRUE;
+END_IF;
+
+IF bNoPlaus THEN
+   // set usefull limit, pressure higher 1000 bar problem with hydraulic hose, ...
+   FPlausMaxInjectPressure.rUpperLimit := 999.0;
+END_IF;
+
+@END_Body 
+
+@END_Contents 

@@ -1,0 +1,854 @@
+(*
+@h    ! WARNING !
+@h    The Kemro K2 system (including software) only meets category B according to EN 954-1,
+@h    thus it is not intended for usage in safety-relevant control applications in the field 
+@h    of personal safety (e.g. emergency stop).
+@h    To implement potentially necessary safety-relevant control tasks, always use additional 
+@h    external safety devices that are intended for the particular purpose, and meet the necessary 
+@h    functional safety.
+@h    For further information see EN 954-1 (EN ISO 13849-1) and/or the K2-x00 user manual, chapter 
+@h    "CE conformity, directives and standards".
+
+Algorithm block for thermo compensation depending on hardwaretype, wire lenght and wire diameter.
+*)
+
+IMPORT_OVER_LISTFILE
+ KCAT_GetHandle
+, KCAT_GetValue
+, KCAT_SetValue
+, GET_SYNC_REFTO
+, KCAT_RemoveCatRetain
+, cApplPlasticsPI
+, tyThermoWireData
+, KCAT_HandleData
+, KCAT_Status
+
+END_IMPORT
+
+ALGORITHM_BLOCK ABThermoWireControl #DUMMY_EDIT_BLOCK
+
+SYSTEM_VAR
+ sv_ThermoData : tyThermoWireData;
+ sv_bAnyTempSensorTypeChanged : BOOL;
+END_VAR
+
+SYSTEM_OBJECT
+ TaskVis : TASK;
+END_OBJECT
+
+VAR
+ mtemp_ThermoData : tyThermoWireData;
+ mrMeasurement : REAL (* measurement current *);
+ mbInitDone : BOOL := FALSE;
+ Dummy : DINT;
+END_VAR
+
+PROCESS_ALGORITHM paInit ON TaskVis AUTOSTART
+
+
+VAR
+ HandleData : KCAT_HandleData;
+ Status : KCAT_Status;
+ sDeviceName : STRING(99);
+END_VAR
+#BEGIN_EDIT_BLOCK
+(**************************************** WARNING ********************************************
+ *** The KEBA Kemro K2 System including software is not intended for safety control tasks! ***
+ ***                       For further information see Comment tab!                        ***
+ *********************************************************************************************)
+
+// Calculation of measurement
+HandleData := KCAT_GetHandle(Name := 'IO.ONBOARD.deviceName');
+IF (HandleData.Status = KCAT_Status_OK) THEN
+   // The check whether the temperatureinput is on a TM (TM220 or TM240) isn't yet implemented.
+   // This feature was left out intentionally. If the feature is necessary, then you have to change
+   // the inputparameters.
+   
+   sDeviceName := 'unknown';
+   Status := KCAT_GetValue(Handle := HandleData.Handle, Buffer := sDeviceName);
+   IF (FIND(sDeviceName, 'CP 031/T') > 0) THEN   // found CP 031/T
+      mrMeasurement := -0.25;
+   ELSIF (FIND(sDeviceName, 'CP 033/T') > 0) THEN  // found CP 033/T
+      mrMeasurement := -0.25;
+   ELSIF (FIND(sDeviceName, 'CP 05') > 0) THEN  // found CP 05x
+      mrMeasurement := -0.25;
+   ELSIF (FIND(sDeviceName, 'CP 034') > 0) THEN  // found CP 034
+      mrMeasurement := -0.25;   
+   ELSIF (FIND(sDeviceName, 'CP 03') > 0) THEN  // found CP 03x
+      mrMeasurement := 7.5;
+   ELSIF (FIND(sDeviceName, 'CP 25') > 0) THEN  // found CP 25x
+      mrMeasurement := 7.5;
+   ELSIF (FIND(sDeviceName, 'CP 26') > 0) THEN  // found CP 26x
+      mrMeasurement := 7.5;    
+   ELSE
+      mrMeasurement := 7.5;     // nothing found -> default-value
+      Dummy := Print("--------------------------------------------");
+      Dummy := Print("--------------------------------------------");
+      Dummy := Print("ABThermoWireControl.paInit: Cannot define measurement for thermo compensation! Contact your vendor!");
+      Dummy := Print("   deviceName = %1s", sDeviceName);
+      Dummy := Print("--------------------------------------------");
+   END_IF;
+ELSE
+   // no catalog-entry found -> possible to run on simulation (i.e. Windows)
+   Dummy := Print("ABThermoWireControl.paInit: Catalogentry 'IO.ONBOARD.deviceName' not found. System is running in simulation mode (i.e. Windows).");
+   mrMeasurement := 7.5;
+END_IF;
+
+mtemp_ThermoData := sv_ThermoData;
+
+mbInitDone := TRUE;
+STOP_PROCESS_ALGORITHM(paInit);
+
+
+;#END_EDIT_BLOCK END_ALGORITHM
+
+FUNCTION fCalculateAndSetNewOffset : BOOL
+ #DUMMY_EDIT_BLOCK
+
+VAR_INPUT
+ iIndex : INT;
+END_VAR
+
+VAR
+ rOffset : REAL (* calculated measurement error *);
+ rResistance : REAL (* spec. resistance per m [Ohm mm2/m] *);
+ rSeebeckCoefficient : REAL (* Seebeck Coeffizient *);
+ sCatPath : STRING(255);
+ HandleData : KCAT_HandleData;
+ Status : KCAT_Status;
+ iSensorType : DINT;
+ measurement : REAL;
+ lOffset : LREAL (* wird nur zum Speichern im Katalog verwendet (mit REAL funktioniert es nicht) *);
+END_VAR
+#BEGIN_EDIT_BLOCK
+(**************************************** WARNING ********************************************
+ *** The KEBA Kemro K2 System including software is not intended for safety control tasks! ***
+ ***                       For further information see Comment tab!                        ***
+ *********************************************************************************************)
+
+// Calculation of seebeck-coefficient
+sCatPath := CONCAT('IO.ONBOARD.TI:', INT_TO_STRING(iIndex), '.sensorType');
+HandleData := KCAT_GetHandle(Name := sCatPath);
+IF (HandleData.Status = KCAT_Status_OK) THEN
+   iSensorType := -1;
+   Status := KCAT_GetValue(Handle := HandleData.Handle, Buffer := iSensorType);
+   IF (iSensorType = 1) THEN    // J-Type
+      rSeebeckCoefficient := 40.0;
+      rResistance := 0.61153;
+   ELSIF (iSensorType = 2) THEN // K-Type
+      rSeebeckCoefficient := 50.0;
+      rResistance := 0.9987;
+   ELSIF (iSensorType = 3) THEN // L-Type
+      rSeebeckCoefficient := 40.0;
+      rResistance := 0.61153;
+   ELSE
+      Dummy := Print("fCalculateAndSetNewOffset: cannot recognize type");
+      rSeebeckCoefficient := 1.0;
+      rResistance := 0.0;
+   END_IF;
+ELSE
+   Dummy := Print("fCalculateAndSetNewOffset: cannot find io-node %1s", sCatPath);
+   rSeebeckCoefficient := 1.0;
+   rResistance := 0.0;
+END_IF;
+
+measurement := mrMeasurement;
+IF (iIndex = 7) THEN  // offset for TI7 was requested, TI7 is a special TI, so a special value is used.
+   measurement := -0.75;
+END_IF;
+
+IF sv_ThermoData[iIndex].bIsUsed THEN    
+   //calculate rOffset if cross section <> 0.0
+   IF sv_ThermoData[iIndex].rWireCrossSection = 0.0 THEN            
+      sv_ThermoData[iIndex].bIsUsed := FALSE;
+      rOffset := 0.0;
+   ELSE  
+      rOffset := (sv_ThermoData[iIndex].rCableLength * rResistance / sv_ThermoData[iIndex].rWireCrossSection) * measurement / rSeebeckCoefficient;
+   END_IF;
+ELSE
+   rOffset := 0.0;
+END_IF;
+
+sCatPath := CONCAT('IO.ONBOARD.TI:', INT_TO_STRING(iIndex), '.offset');
+HandleData := KCAT_GetHandle(Name := sCatPath);
+IF (HandleData.Status = KCAT_Status_OK) THEN
+   //set value
+   lOffset := REAL_TO_LREAL(rOffset);
+   Status := KCAT_SetValue(Handle := HandleData.Handle, Buffer := lOffset);
+   IF (Status = KCAT_Status_NOTOK) THEN
+      Dummy := Print("ABThermoWireControl.fCalculateAndSetNewOffset: Cannot write offset to TI:%1i", iIndex);
+   END_IF;
+   
+   IF rOffset <> 0.0 THEN
+      //add to catalog retain      
+      Status := KCAT_AddCatRetain(HandleData.Handle);
+      IF (Status = KCAT_Status_NOTOK) THEN
+         Dummy := Print("ABThermoWireControl.fCalculateAndSetNewOffset: AddCatRetain failed of '%1s'", sCatPath);
+      END_IF;
+   ELSE
+      //remove from catalog retain
+      Status := KCAT_RemoveCatRetain(HandleData.Handle);
+      IF (Status = KCAT_Status_NOTOK) THEN
+         Dummy := Print("ABThermoWireControl.fCalculateAndSetNewOffset: RemoveCatRetain failed of '%1s'", sCatPath);
+      END_IF;
+   END_IF;   
+ELSE
+   Dummy := Print("ABThermoWireControl.fCalculateAndSetNewOffset: Cannot find catalog entry '%1s'", sCatPath);
+END_IF;
+
+fCalculateAndSetNewOffset := TRUE;
+
+
+;#END_EDIT_BLOCK END_FUNCTION
+
+POSTUPDATE_ALGORITHM pWireDiameterChanged ON TaskVis WITH sv_ThermoData
+
+
+VAR_TEMP
+ i : INT;
+END_VAR
+
+VAR
+ bSomethingChanged : BOOL;
+ success : BOOL;
+END_VAR
+#BEGIN_EDIT_BLOCK
+(**************************************** WARNING ********************************************
+ *** The KEBA Kemro K2 System including software is not intended for safety control tasks! ***
+ ***                       For further information see Comment tab!                        ***
+ *********************************************************************************************)
+
+FOR i:=0 TO 7 DO            // check all temperature inputs from ONBOARD
+   bSomethingChanged := FALSE;
+   IF (sv_ThermoData[i].bIsUsed <> mtemp_ThermoData[i].bIsUsed) THEN
+      mtemp_ThermoData[i].bIsUsed := sv_ThermoData[i].bIsUsed; 
+      bSomethingChanged := TRUE;
+   END_IF;
+   IF (sv_ThermoData[i].rCableLength <> mtemp_ThermoData[i].rCableLength) THEN
+      mtemp_ThermoData[i].rCableLength := sv_ThermoData[i].rCableLength; 
+      bSomethingChanged := TRUE;
+   END_IF;
+   IF (sv_ThermoData[i].rWireDiameter <> mtemp_ThermoData[i].rWireDiameter) THEN
+      mtemp_ThermoData[i].rWireDiameter := sv_ThermoData[i].rWireDiameter; 
+      mtemp_ThermoData[i].rWireCrossSection := sv_ThermoData[i].rWireDiameter * sv_ThermoData[i].rWireDiameter * cApplPlasticsPI / 4.0;
+      sv_ThermoData[i].rWireCrossSection := mtemp_ThermoData[i].rWireCrossSection;
+      bSomethingChanged := TRUE;
+   END_IF;
+   IF (sv_ThermoData[i].rWireCrossSection <> mtemp_ThermoData[i].rWireCrossSection) THEN
+      mtemp_ThermoData[i].rWireCrossSection := sv_ThermoData[i].rWireCrossSection; 
+      mtemp_ThermoData[i].rWireDiameter := SQRT(4.0 * sv_ThermoData[i].rWireCrossSection / cApplPlasticsPI);
+      sv_ThermoData[i].rWireDiameter := mtemp_ThermoData[i].rWireDiameter;
+      bSomethingChanged := TRUE;
+   END_IF;
+   
+   IF bSomethingChanged THEN
+      // calculate new offset
+      success := fCalculateAndSetNewOffset(i);
+   END_IF;
+END_FOR
+
+
+;#END_EDIT_BLOCK END_ALGORITHM
+
+POSTUPDATE_ALGORITHM pSensorTypeChanged ON TaskVis WITH sv_bAnyTempSensorTypeChanged
+
+
+VAR_TEMP
+ i : INT;
+END_VAR
+
+VAR
+ success : BOOL;
+END_VAR
+#BEGIN_EDIT_BLOCK
+(**************************************** WARNING ********************************************
+ *** The KEBA Kemro K2 System including software is not intended for safety control tasks! ***
+ ***                       For further information see Comment tab!                        ***
+ *********************************************************************************************)
+
+// I was informed, that any temperature sensor type in the system changed (also a sensor type of a TM is possible). 
+// Now I recalculate all offsets for the 8 TI's which are ONBOARD.
+IF NOT sv_bAnyTempSensorTypeChanged THEN
+   RETURN;
+END_IF;
+sv_bAnyTempSensorTypeChanged := FALSE;
+
+IF NOT mbInitDone THEN
+   RETURN;
+END_IF;
+
+FOR i := 0 TO 7 DO
+   success := fCalculateAndSetNewOffset(i);
+END_FOR;
+
+
+;#END_EDIT_BLOCK END_ALGORITHM
+
+
+
+END_ALGORITHM_BLOCK
+
+
+
+#END_OF_IEC_PART
+
+@Puma @IecEditor 6 127 @Pou 25 
+@@@BEG_Comment@@@
+@h    ! WARNING !
+@h    The Kemro K2 system (including software) only meets category B according to EN 954-1,
+@h    thus it is not intended for usage in safety-relevant control applications in the field 
+@h    of personal safety (e.g. emergency stop).
+@h    To implement potentially necessary safety-relevant control tasks, always use additional 
+@h    external safety devices that are intended for the particular purpose, and meet the necessary 
+@h    functional safety.
+@h    For further information see EN 954-1 (EN ISO 13849-1) and/or the K2-x00 user manual, chapter 
+@h    "CE conformity, directives and standards".
+
+Algorithm block for thermo compensation depending on hardwaretype, wire lenght and wire diameter.
+@@@END_Comment@@@
+
+@BEG_Contents 
+
+@BEG_Func 
+@RT(17)FuncTreeContainer 
+5 
+@Var @RT(14)KCAT_GetHandle @RT(0) @T @T @DERIVED 0 @F @RT(22)KEBA_STANDARD_FUNCTION @F 
+@T 
+@BEG_Attrib 
+0 @RT(0) @RT(0) 
+@END_Attrib 
+1 1 @F @F @F @F 
+
+@Var @RT(13)KCAT_GetValue @RT(0) @T @T @DERIVED 0 @F @RT(22)KEBA_STANDARD_FUNCTION @F 
+@T 
+@BEG_Attrib 
+0 @RT(0) @RT(0) 
+@END_Attrib 
+1 1 @F @F @F @F 
+
+@Var @RT(13)KCAT_SetValue @RT(0) @T @T @DERIVED 0 @F @RT(22)KEBA_STANDARD_FUNCTION @F 
+@T 
+@BEG_Attrib 
+0 @RT(0) @RT(0) 
+@END_Attrib 
+1 1 @F @F @F @F 
+
+@Var @RT(14)GET_SYNC_REFTO @RT(0) @T @T @DERIVED 0 @F @RT(22)KEBA_STANDARD_FUNCTION @F 
+@T 
+@BEG_Attrib 
+0 @RT(0) @RT(0) 
+@END_Attrib 
+1 1 @F @F @F @F 
+
+@Var @RT(20)KCAT_RemoveCatRetain @RT(0) @T @T @DERIVED 0 @F @RT(22)KEBA_STANDARD_FUNCTION @F 
+@T 
+@BEG_Attrib 
+0 @RT(0) @RT(0) 
+@END_Attrib 
+1 1 @F @F @F @F 
+
+@END_Func 
+
+@BEG_Const 
+@RT(18)ConstTreeContainer 
+1 
+@Var @RT(15)cApplPlasticsPI @RT(0) @T @F @DT @RT(4)REAL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+0 @RT(10)3.14159265 @RT(13)pi=3.14159265 
+@END_Attrib 
+1 1 @F @F @F @F 
+
+@END_Const 
+
+@BEG_Export 
+
+@BEG_Kind 
+@ALGORITHM_BLOCK @RT(19)ABThermoWireControl @STRUCTURED_TEXT 
+@RT(0) @RT(0) @RT(0) 
+@END_Kind 
+
+@BEG_Dcl 
+@RT(16)DclTreeContainer 
+7 
+@Var @RT(7)TaskVis @RT(0) @T @T @RENAMED 0 @T @T @DT @RT(4)TASK @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 7 @F @F @F @F 
+
+@Var @RT(13)sv_ThermoData @RT(0) @T @T @DERIVED 0 @T @T @DT @RT(16)tyThermoWireData @RT(0) @T @T @UNKNOWN 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 8 @F @F @F @F 
+
+@Var @RT(16)mtemp_ThermoData @RT(0) @T @T @RENAMED 0 @T @T @DT @RT(16)tyThermoWireData @RT(0) @T @T @UNKNOWN 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(13)mrMeasurement @RT(0) @T @F @DT @RT(4)REAL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(19)measurement current @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(28)sv_bAnyTempSensorTypeChanged @RT(0) @T @T @RENAMED 0 @T @T @DT @RT(4)BOOL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 8 @F @F @F @F 
+
+@Var @RT(10)mbInitDone @RT(0) @T @T @RENAMED 0 @T @T @DT @RT(4)BOOL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(5)FALSE @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(5)Dummy @RT(0) @T @F @DT @RT(4)DINT @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@END_Dcl 
+
+@END_Export 
+
+@BEG_Body 
+
+4 
+
+@BEG_Export 
+
+@BEG_Algo 
+@PROCESS_ALGORITHM @RT(6)paInit @STRUCTURED_TEXT 
+@RT(0) @RT(0) @RT(7)TaskVis @T @F 
+@END_Algo 
+
+@BEG_Dcl 
+@RT(16)DclTreeContainer 
+3 
+@Var @RT(10)HandleData @RT(0) @T @T @RENAMED 0 @T @T @DT @RT(15)KCAT_HandleData @RT(0) @T @T @UNKNOWN 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(6)Status @RT(0) @T @T @RENAMED 0 @T @T @DT @RT(11)KCAT_Status @RT(0) @T @T @UNKNOWN 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(11)sDeviceName @RT(0) @T @F @DT @RT(10)STRING(99) @RT(0) @T @T @STRING 0 @F @RT(2)99 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@END_Dcl 
+
+@END_Export 
+
+@BEG_Export 
+
+@BEG_Algo 
+@FUNCTION @RT(25)fCalculateAndSetNewOffset @STRUCTURED_TEXT 
+@RT(4)BOOL @RT(0) @RT(0) @F @F 
+@END_Algo 
+
+@BEG_Dcl 
+@RT(16)DclTreeContainer 
+10 
+@Var @RT(6)iIndex @RT(0) @T @F @DT @RT(3)INT @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 1 @F @F @F @F 
+
+@Var @RT(7)rOffset @RT(0) @T @F @DT @RT(4)REAL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(28)calculated measurement error @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(11)rResistance @RT(0) @T @F @DT @RT(4)REAL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(34)spec. resistance per m [Ohm mm2/m] @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(19)rSeebeckCoefficient @RT(0) @T @F @DT @RT(4)REAL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(19)Seebeck Coeffizient @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(8)sCatPath @RT(0) @T @T @RENAMED 0 @T @T @DT @RT(11)STRING(255) @RT(0) @T @T @STRING 0 @F @RT(3)255 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(10)HandleData @RT(0) @T @T @DERIVED 0 @T @T @DT @RT(15)KCAT_HandleData @RT(0) @T @T @UNKNOWN 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(6)Status @RT(0) @T @T @RENAMED 0 @T @T @DT @RT(11)KCAT_Status @RT(0) @T @T @UNKNOWN 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(11)iSensorType @RT(0) @T @T @RENAMED 0 @T @T @DT @RT(4)DINT @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(11)measurement @RT(0) @T @T @RENAMED 0 @T @T @DT @RT(4)REAL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(7)lOffset @RT(0) @T @F @DT @RT(5)LREAL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(76)wird nur zum Speichern im Katalog verwendet (mit REAL funktioniert es nicht) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@END_Dcl 
+
+@END_Export 
+
+@BEG_Export 
+
+@BEG_Algo 
+@POSTUPDATE_ALGORITHM @RT(20)pWireDiameterChanged @STRUCTURED_TEXT 
+@RT(0) @RT(13)sv_ThermoData @RT(7)TaskVis @F @F 
+@END_Algo 
+
+@BEG_Dcl 
+@RT(16)DclTreeContainer 
+3 
+@Var @RT(1)i @RT(0) @T @T @RENAMED 0 @T @T @DT @RT(3)INT @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 4 @F @F @F @F 
+
+@Var @RT(17)bSomethingChanged @RT(0) @T @T @RENAMED 0 @T @T @DT @RT(4)BOOL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(7)success @RT(0) @T @T @RENAMED 0 @T @T @DT @RT(4)BOOL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@END_Dcl 
+
+@END_Export 
+
+@BEG_Export 
+
+@BEG_Algo 
+@POSTUPDATE_ALGORITHM @RT(18)pSensorTypeChanged @STRUCTURED_TEXT 
+@RT(0) @RT(28)sv_bAnyTempSensorTypeChanged @RT(7)TaskVis @F @F 
+@END_Algo 
+
+@BEG_Dcl 
+@RT(16)DclTreeContainer 
+2 
+@Var @RT(1)i @RT(0) @T @F @DT @RT(3)INT @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 4 @F @F @F @F 
+
+@Var @RT(7)success @RT(0) @T @T @RENAMED 0 @T @T @DT @RT(4)BOOL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@END_Dcl 
+
+@END_Export 
+
+@BEG_Body 
+@TL(47)
+(**************************************** WARNING ********************************************
+ *** The KEBA Kemro K2 System including software is not intended for safety control tasks! ***
+ ***                       For further information see Comment tab!                        ***
+ *********************************************************************************************)
+
+// Calculation of measurement
+HandleData := KCAT_GetHandle(Name := 'IO.ONBOARD.deviceName');
+IF (HandleData.Status = KCAT_Status_OK) THEN
+   // The check whether the temperatureinput is on a TM (TM220 or TM240) isn't yet implemented.
+   // This feature was left out intentionally. If the feature is necessary, then you have to change
+   // the inputparameters.
+   
+   sDeviceName := 'unknown';
+   Status := KCAT_GetValue(Handle := HandleData.Handle, Buffer := sDeviceName);
+   IF (FIND(sDeviceName, 'CP 031/T') > 0) THEN   // found CP 031/T
+      mrMeasurement := -0.25;
+   ELSIF (FIND(sDeviceName, 'CP 033/T') > 0) THEN  // found CP 033/T
+      mrMeasurement := -0.25;
+   ELSIF (FIND(sDeviceName, 'CP 05') > 0) THEN  // found CP 05x
+      mrMeasurement := -0.25;
+   ELSIF (FIND(sDeviceName, 'CP 034') > 0) THEN  // found CP 034
+      mrMeasurement := -0.25;   
+   ELSIF (FIND(sDeviceName, 'CP 03') > 0) THEN  // found CP 03x
+      mrMeasurement := 7.5;
+   ELSIF (FIND(sDeviceName, 'CP 25') > 0) THEN  // found CP 25x
+      mrMeasurement := 7.5;
+   ELSIF (FIND(sDeviceName, 'CP 26') > 0) THEN  // found CP 26x
+      mrMeasurement := 7.5;    
+   ELSE
+      mrMeasurement := 7.5;     // nothing found -> default-value
+      Dummy := Print("--------------------------------------------");
+      Dummy := Print("--------------------------------------------");
+      Dummy := Print("ABThermoWireControl.paInit: Cannot define measurement for thermo compensation! Contact your vendor!");
+      Dummy := Print("   deviceName = %1s", sDeviceName);
+      Dummy := Print("--------------------------------------------");
+   END_IF;
+ELSE
+   // no catalog-entry found -> possible to run on simulation (i.e. Windows)
+   Dummy := Print("ABThermoWireControl.paInit: Catalogentry 'IO.ONBOARD.deviceName' not found. System is running in simulation mode (i.e. Windows).");
+   mrMeasurement := 7.5;
+END_IF;
+
+mtemp_ThermoData := sv_ThermoData;
+
+mbInitDone := TRUE;
+STOP_PROCESS_ALGORITHM(paInit);
+
+@END_Body 
+
+@@@BEG_Comment@@@ 
+@TL(0)
+
+@@@END_Comment@@@ 
+
+@BEG_Body 
+@TL(77)
+(**************************************** WARNING ********************************************
+ *** The KEBA Kemro K2 System including software is not intended for safety control tasks! ***
+ ***                       For further information see Comment tab!                        ***
+ *********************************************************************************************)
+
+// Calculation of seebeck-coefficient
+sCatPath := CONCAT('IO.ONBOARD.TI:', INT_TO_STRING(iIndex), '.sensorType');
+HandleData := KCAT_GetHandle(Name := sCatPath);
+IF (HandleData.Status = KCAT_Status_OK) THEN
+   iSensorType := -1;
+   Status := KCAT_GetValue(Handle := HandleData.Handle, Buffer := iSensorType);
+   IF (iSensorType = 1) THEN    // J-Type
+      rSeebeckCoefficient := 40.0;
+      rResistance := 0.61153;
+   ELSIF (iSensorType = 2) THEN // K-Type
+      rSeebeckCoefficient := 50.0;
+      rResistance := 0.9987;
+   ELSIF (iSensorType = 3) THEN // L-Type
+      rSeebeckCoefficient := 40.0;
+      rResistance := 0.61153;
+   ELSE
+      Dummy := Print("fCalculateAndSetNewOffset: cannot recognize type");
+      rSeebeckCoefficient := 1.0;
+      rResistance := 0.0;
+   END_IF;
+ELSE
+   Dummy := Print("fCalculateAndSetNewOffset: cannot find io-node %1s", sCatPath);
+   rSeebeckCoefficient := 1.0;
+   rResistance := 0.0;
+END_IF;
+
+measurement := mrMeasurement;
+IF (iIndex = 7) THEN  // offset for TI7 was requested, TI7 is a special TI, so a special value is used.
+   measurement := -0.75;
+END_IF;
+
+IF sv_ThermoData[iIndex].bIsUsed THEN    
+   //calculate rOffset if cross section <> 0.0
+   IF sv_ThermoData[iIndex].rWireCrossSection = 0.0 THEN            
+      sv_ThermoData[iIndex].bIsUsed := FALSE;
+      rOffset := 0.0;
+   ELSE  
+      rOffset := (sv_ThermoData[iIndex].rCableLength * rResistance / sv_ThermoData[iIndex].rWireCrossSection) * measurement / rSeebeckCoefficient;
+   END_IF;
+ELSE
+   rOffset := 0.0;
+END_IF;
+
+sCatPath := CONCAT('IO.ONBOARD.TI:', INT_TO_STRING(iIndex), '.offset');
+HandleData := KCAT_GetHandle(Name := sCatPath);
+IF (HandleData.Status = KCAT_Status_OK) THEN
+   //set value
+   lOffset := REAL_TO_LREAL(rOffset);
+   Status := KCAT_SetValue(Handle := HandleData.Handle, Buffer := lOffset);
+   IF (Status = KCAT_Status_NOTOK) THEN
+      Dummy := Print("ABThermoWireControl.fCalculateAndSetNewOffset: Cannot write offset to TI:%1i", iIndex);
+   END_IF;
+   
+   IF rOffset <> 0.0 THEN
+      //add to catalog retain      
+      Status := KCAT_AddCatRetain(HandleData.Handle);
+      IF (Status = KCAT_Status_NOTOK) THEN
+         Dummy := Print("ABThermoWireControl.fCalculateAndSetNewOffset: AddCatRetain failed of '%1s'", sCatPath);
+      END_IF;
+   ELSE
+      //remove from catalog retain
+      Status := KCAT_RemoveCatRetain(HandleData.Handle);
+      IF (Status = KCAT_Status_NOTOK) THEN
+         Dummy := Print("ABThermoWireControl.fCalculateAndSetNewOffset: RemoveCatRetain failed of '%1s'", sCatPath);
+      END_IF;
+   END_IF;   
+ELSE
+   Dummy := Print("ABThermoWireControl.fCalculateAndSetNewOffset: Cannot find catalog entry '%1s'", sCatPath);
+END_IF;
+
+fCalculateAndSetNewOffset := TRUE;
+
+@END_Body 
+
+@@@BEG_Comment@@@ 
+@TL(0)
+
+@@@END_Comment@@@ 
+
+@BEG_Body 
+@TL(34)
+(**************************************** WARNING ********************************************
+ *** The KEBA Kemro K2 System including software is not intended for safety control tasks! ***
+ ***                       For further information see Comment tab!                        ***
+ *********************************************************************************************)
+
+FOR i:=0 TO 7 DO            // check all temperature inputs from ONBOARD
+   bSomethingChanged := FALSE;
+   IF (sv_ThermoData[i].bIsUsed <> mtemp_ThermoData[i].bIsUsed) THEN
+      mtemp_ThermoData[i].bIsUsed := sv_ThermoData[i].bIsUsed; 
+      bSomethingChanged := TRUE;
+   END_IF;
+   IF (sv_ThermoData[i].rCableLength <> mtemp_ThermoData[i].rCableLength) THEN
+      mtemp_ThermoData[i].rCableLength := sv_ThermoData[i].rCableLength; 
+      bSomethingChanged := TRUE;
+   END_IF;
+   IF (sv_ThermoData[i].rWireDiameter <> mtemp_ThermoData[i].rWireDiameter) THEN
+      mtemp_ThermoData[i].rWireDiameter := sv_ThermoData[i].rWireDiameter; 
+      mtemp_ThermoData[i].rWireCrossSection := sv_ThermoData[i].rWireDiameter * sv_ThermoData[i].rWireDiameter * cApplPlasticsPI / 4.0;
+      sv_ThermoData[i].rWireCrossSection := mtemp_ThermoData[i].rWireCrossSection;
+      bSomethingChanged := TRUE;
+   END_IF;
+   IF (sv_ThermoData[i].rWireCrossSection <> mtemp_ThermoData[i].rWireCrossSection) THEN
+      mtemp_ThermoData[i].rWireCrossSection := sv_ThermoData[i].rWireCrossSection; 
+      mtemp_ThermoData[i].rWireDiameter := SQRT(4.0 * sv_ThermoData[i].rWireCrossSection / cApplPlasticsPI);
+      sv_ThermoData[i].rWireDiameter := mtemp_ThermoData[i].rWireDiameter;
+      bSomethingChanged := TRUE;
+   END_IF;
+   
+   IF bSomethingChanged THEN
+      // calculate new offset
+      success := fCalculateAndSetNewOffset(i);
+   END_IF;
+END_FOR
+
+@END_Body 
+
+@@@BEG_Comment@@@ 
+@TL(0)
+
+@@@END_Comment@@@ 
+
+@BEG_Body 
+@TL(20)
+(**************************************** WARNING ********************************************
+ *** The KEBA Kemro K2 System including software is not intended for safety control tasks! ***
+ ***                       For further information see Comment tab!                        ***
+ *********************************************************************************************)
+
+// I was informed, that any temperature sensor type in the system changed (also a sensor type of a TM is possible). 
+// Now I recalculate all offsets for the 8 TI's which are ONBOARD.
+IF NOT sv_bAnyTempSensorTypeChanged THEN
+   RETURN;
+END_IF;
+sv_bAnyTempSensorTypeChanged := FALSE;
+
+IF NOT mbInitDone THEN
+   RETURN;
+END_IF;
+
+FOR i := 0 TO 7 DO
+   success := fCalculateAndSetNewOffset(i);
+END_FOR;
+
+@END_Body 
+
+@@@BEG_Comment@@@ 
+@TL(0)
+
+@@@END_Comment@@@ 
+@END_Body 
+
+@END_Contents 

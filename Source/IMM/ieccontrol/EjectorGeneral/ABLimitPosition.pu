@@ -1,0 +1,1338 @@
+(*
+@h    ! WARNING !
+@h    The Kemro K2 system (including software) only meets category B according to EN 954-1,
+@h    thus it is not intended for usage in safety-relevant control applications in the field 
+@h    of personal safety (e.g. emergency stop).
+@h    To implement potentially necessary safety-relevant control tasks, always use additional 
+@h    external safety devices that are intended for the particular purpose, and meet the necessary 
+@h    functional safety.
+@h    For further information see EN 954-1 (EN ISO 13849-1) and/or the K2-x00 user manual, chapter 
+@h    "CE conformity, directives and standards".
+
+converts "relative" lintabs edited by the user into "absolute" linetabs used by the profile block.
+converts the "absolute" position provided by the measure block into an "relative" position for displaying on hmi (profile bean)
+does the calculation of plausibility ranges for ejector stroke, limit offset and limit distance
+
+difference between "absolute" and "relative" positions are limit offset and limit distance.
+
+@FunctionID: S_KPIEC_PREJEC_EL_01
+@FunctionID: A-ALLG-3
+
+*)
+
+IMPORT_OVER_LISTFILE
+ SET_ALARM
+, RESET_ALARM
+, WRITE_SVLREAL_DIRECT
+, nReady
+, nSetup
+, KAPPL_VisProfile
+, tnOperationMode
+, tnDataState
+, tCalculatedProfiles
+, FBConvertLintab
+
+END_IMPORT
+
+ALGORITHM_BLOCK ABLimitPosition #DUMMY_EDIT_BLOCK
+
+SYSTEM_VAR
+ sv_rEjectorStroke : REAL;
+ sv_EjectorFwdVisRel : KAPPL_VisProfile;
+ sv_OperationMode : tnOperationMode;
+ sv_EjectorBwdVisRel : KAPPL_VisProfile;
+ sv_rEjectorPlausOfs : REAL;
+ sv_rEjectorPlausDist : REAL;
+ sv_rEjectorPosition : REAL;
+ sv_rEjectorPositionRel : REAL;
+ sv_rEjectorLimDist : REAL;
+ sv_rEjectorLimOfs : REAL;
+ sv_EjectorFwdVis : KAPPL_VisProfile;
+ sv_EjectorBwdVis : KAPPL_VisProfile;
+ sv_bInitStart : BOOL (* Device registration finished - custom IEC initialisation can be started *);
+ sv_bUseStartPosProfiles : BOOL;
+ sv_DataState : tnDataState;
+ sv_bSetEjectorZeroPos : BOOL (* hmi trigger to set actual ejector position as ejector offset *);
+ sv_rMinPlausShakeTargetPos : REAL (* minimum plaus for shake target position *);
+ sv_rMaxPlausShakeTargetPos : REAL (* maximum plaus for shake target position *);
+ sv_CalculatedProfileBwd : tCalculatedProfiles;
+ sv_CalculatedProfileFwd : tCalculatedProfiles;
+ sv_CalculatedProfileBwdRel : tCalculatedProfiles;
+ sv_CalculatedProfileFwdRel : tCalculatedProfiles;
+END_VAR
+
+SYSTEM_OBJECT
+ erSetupModeRequired : ALARM;
+ TaskAnalog : TASK;
+ PU_Task_7 : TASK;
+ erStrokeTooSmall : ALARM;
+END_OBJECT
+
+(*
+@h    ! WARNING !
+@h    The Kemro K2 system (including software) only meets category B according to EN 954-1,
+@h    thus it is not intended for usage in safety-relevant control applications in the field 
+@h    of personal safety (e.g. emergency stop).
+@h    To implement potentially necessary safety-relevant control tasks, always use additional 
+@h    external safety devices that are intended for the particular purpose, and meet the necessary 
+@h    functional safety.
+@h    For further information see EN 954-1 (EN ISO 13849-1) and/or the K2-x00 user manual, chapter 
+@h    "CE conformity, directives and standards".
+
+converts "relative" lintab edited by the user into "absolute" linetab used by the profile block.
+
+@FunctionID: S_KPIEC_PREJEC_EL_01
+@FunctionID: A-ALLG-3
+
+*)
+
+POSTUPDATE_ALGORITHM pLintabFwd ON PU_Task_7 WITH sv_bInitStart,sv_rEjectorLimOfs,sv_rEjectorLimDist,sv_EjectorFwdVisRel.Profile.Points,sv_EjectorFwdVisRel.Profile.iNoOfPoints
+
+
+VAR
+ fbConvertLintabFwd : FBConvertLintab;
+END_VAR
+#BEGIN_EDIT_BLOCK
+(**************************************** WARNING ********************************************
+ *** The KEBA Kemro K2 System including software is not intended for safety control tasks! ***
+ ***                       For further information see Comment tab!                        ***
+ *********************************************************************************************)
+
+fbConvertLintabFwd(bForward := TRUE, 
+                   LintabVis := sv_EjectorFwdVisRel.Profile, 
+                   LintabVisAbs := sv_EjectorFwdVis.Profile, 
+                   rEjectorOfs := sv_rEjectorLimOfs, 
+                   rEjectorDist := sv_rEjectorLimDist,
+                   bOpenEndProfile := sv_EjectorFwdVisRel.bOpenEndProfile,
+                   bUseStartPosProfiles := sv_bUseStartPosProfiles,
+                   bDataStateIsReady := (sv_DataState = nReady));
+
+
+
+;#END_EDIT_BLOCK END_ALGORITHM
+
+(*
+@h    ! WARNING !
+@h    The Kemro K2 system (including software) only meets category B according to EN 954-1,
+@h    thus it is not intended for usage in safety-relevant control applications in the field 
+@h    of personal safety (e.g. emergency stop).
+@h    To implement potentially necessary safety-relevant control tasks, always use additional 
+@h    external safety devices that are intended for the particular purpose, and meet the necessary 
+@h    functional safety.
+@h    For further information see EN 954-1 (EN ISO 13849-1) and/or the K2-x00 user manual, chapter 
+@h    "CE conformity, directives and standards".
+
+converts "relative" lintab edited by the user into "absolute" linetab used by the profile block.
+
+@FunctionID: S_KPIEC_PREJEC_EL_01
+@FunctionID: A-ALLG-3
+
+*)
+
+POSTUPDATE_ALGORITHM pLintabBwd ON PU_Task_7 WITH sv_bInitStart,sv_rEjectorLimOfs,sv_rEjectorLimDist,sv_EjectorBwdVisRel.Profile.Points,sv_EjectorBwdVisRel.Profile.iNoOfPoints
+
+
+VAR
+ fbConvertLintabBwd : FBConvertLintab;
+END_VAR
+#BEGIN_EDIT_BLOCK
+(**************************************** WARNING ********************************************
+ *** The KEBA Kemro K2 System including software is not intended for safety control tasks! ***
+ ***                       For further information see Comment tab!                        ***
+ *********************************************************************************************)
+
+fbConvertLintabBwd(bForward := FALSE,
+                   LintabVis := sv_EjectorBwdVisRel.Profile, 
+                   LintabVisAbs := sv_EjectorBwdVis.Profile, 
+                   rEjectorOfs := sv_rEjectorLimOfs, 
+                   rEjectorDist := sv_rEjectorLimDist,
+                   bOpenEndProfile := sv_EjectorBwdVisRel.bOpenEndProfile,
+                   bUseStartPosProfiles := sv_bUseStartPosProfiles,
+                   bDataStateIsReady := (sv_DataState = nReady));
+
+//set minimum and maximum plaus for shake target position
+//(shake target position can be set in movement properties if machine sequencer is used)
+sv_rMinPlausShakeTargetPos := sv_EjectorBwdVisRel.Profile.Points[(sv_EjectorBwdVisRel.Profile.iNoOfPoints+1)].rStartPos;
+sv_rMaxPlausShakeTargetPos := sv_EjectorBwdVisRel.Profile.Points[sv_EjectorBwdVisRel.Profile.iNoOfPoints].rStartPos;
+
+
+;#END_EDIT_BLOCK END_ALGORITHM
+
+(*
+@h    ! WARNING !
+@h    The Kemro K2 system (including software) only meets category B according to EN 954-1,
+@h    thus it is not intended for usage in safety-relevant control applications in the field 
+@h    of personal safety (e.g. emergency stop).
+@h    To implement potentially necessary safety-relevant control tasks, always use additional 
+@h    external safety devices that are intended for the particular purpose, and meet the necessary 
+@h    functional safety.
+@h    For further information see EN 954-1 (EN ISO 13849-1) and/or the K2-x00 user manual, chapter 
+@h    "CE conformity, directives and standards".
+
+converts the "absolute" position provided by the measure block into an "relative" position for displaying on hmi (profile bean)
+
+@FunctionID: S_KPIEC_PREJEC_EL_01
+@FunctionID: A-ALLG-3
+
+*)
+
+PROCESS_ALGORITHM paPosition ON TaskAnalog AUTOSTART
+
+
+VAR_TEMP
+ rEjectorPositionRel : REAL;
+ b : BOOL;
+END_VAR
+#BEGIN_EDIT_BLOCK
+(**************************************** WARNING ********************************************
+ *** The KEBA Kemro K2 System including software is not intended for safety control tasks! ***
+ ***                       For further information see Comment tab!                        ***
+ *********************************************************************************************)
+
+rEjectorPositionRel := sv_rEjectorPosition - sv_rEjectorLimOfs;
+b := WRITE_SVREAL_DIRECT(sv_rEjectorPositionRel, rEjectorPositionRel);
+
+
+;#END_EDIT_BLOCK END_ALGORITHM
+
+(*
+@h    ! WARNING !
+@h    The Kemro K2 system (including software) only meets category B according to EN 954-1,
+@h    thus it is not intended for usage in safety-relevant control applications in the field 
+@h    of personal safety (e.g. emergency stop).
+@h    To implement potentially necessary safety-relevant control tasks, always use additional 
+@h    external safety devices that are intended for the particular purpose, and meet the necessary 
+@h    functional safety.
+@h    For further information see EN 954-1 (EN ISO 13849-1) and/or the K2-x00 user manual, chapter 
+@h    "CE conformity, directives and standards".
+
+calulates plausibility range for ejector limit distance
+
+@FunctionID: S_KPIEC_PREJEC_EL_01
+@FunctionID: A-ALLG-3
+*)
+
+POSTUPDATE_ALGORITHM pPlausDist ON PU_Task_7 WITH sv_bInitStart,sv_rEjectorStroke,sv_rEjectorLimOfs
+
+#BEGIN_EDIT_BLOCK
+(**************************************** WARNING ********************************************
+ *** The KEBA Kemro K2 System including software is not intended for safety control tasks! ***
+ ***                       For further information see Comment tab!                        ***
+ *********************************************************************************************)
+
+sv_rEjectorPlausDist:=sv_rEjectorStroke-sv_rEjectorLimOfs;
+
+
+;#END_EDIT_BLOCK END_ALGORITHM
+
+(*
+@h    ! WARNING !
+@h    The Kemro K2 system (including software) only meets category B according to EN 954-1,
+@h    thus it is not intended for usage in safety-relevant control applications in the field 
+@h    of personal safety (e.g. emergency stop).
+@h    To implement potentially necessary safety-relevant control tasks, always use additional 
+@h    external safety devices that are intended for the particular purpose, and meet the necessary 
+@h    functional safety.
+@h    For further information see EN 954-1 (EN ISO 13849-1) and/or the K2-x00 user manual, chapter 
+@h    "CE conformity, directives and standards".
+
+calulates plausibility range for ejector limit offset
+
+@FunctionID: S_KPIEC_PREJEC_EL_01
+@FunctionID: A-ALLG-3
+*)
+
+POSTUPDATE_ALGORITHM pPlausOfs ON PU_Task_7 WITH sv_bInitStart,sv_rEjectorStroke,sv_rEjectorLimDist
+
+#BEGIN_EDIT_BLOCK
+(**************************************** WARNING ********************************************
+ *** The KEBA Kemro K2 System including software is not intended for safety control tasks! ***
+ ***                       For further information see Comment tab!                        ***
+ *********************************************************************************************)
+
+sv_rEjectorPlausOfs:=sv_rEjectorStroke-sv_rEjectorLimDist;
+
+
+;#END_EDIT_BLOCK END_ALGORITHM
+
+(*
+@h    ! WARNING !
+@h    The Kemro K2 system (including software) only meets category B according to EN 954-1,
+@h    thus it is not intended for usage in safety-relevant control applications in the field 
+@h    of personal safety (e.g. emergency stop).
+@h    To implement potentially necessary safety-relevant control tasks, always use additional 
+@h    external safety devices that are intended for the particular purpose, and meet the necessary 
+@h    functional safety.
+@h    For further information see EN 954-1 (EN ISO 13849-1) and/or the K2-x00 user manual, chapter 
+@h    "CE conformity, directives and standards".
+
+set actual ejector position as ejector offset so actual positon is zero.
+
+@FunctionID: CR_37588 Ejector offset calibration
+*)
+
+POSTUPDATE_ALGORITHM pSetEjectorZeroPos ON PU_Task_7 WITH sv_bSetEjectorZeroPos
+
+#BEGIN_EDIT_BLOCK
+(**************************************** WARNING ********************************************
+ *** The KEBA Kemro K2 System including software is not intended for safety control tasks! ***
+ ***                       For further information see Comment tab!                        ***
+ *********************************************************************************************)
+
+IF (sv_bSetEjectorZeroPos) THEN
+   IF (sv_OperationMode = nSetup) THEN
+       sv_rEjectorLimDist := sv_rEjectorStroke - sv_rEjectorPosition; 
+       sv_rEjectorLimOfs := sv_rEjectorPosition;
+   ELSE
+       SET_ALARM(erSetupModeRequired);
+   END_IF;
+   sv_bSetEjectorZeroPos := FALSE;  
+END_IF;
+
+
+;#END_EDIT_BLOCK END_ALGORITHM
+
+POSTUPDATE_ALGORITHM pCalculatedPresProfileBwd ON PU_Task_7 WITH sv_CalculatedProfileBwd.PressureProfile.iProfileChangedCounter
+
+
+VAR_TEMP
+ i : UDINT;
+END_VAR
+#BEGIN_EDIT_BLOCK
+(**************************************** WARNING ********************************************
+ *** The KEBA Kemro K2 System including software is not intended for safety control tasks! ***
+ ***                       For further information see Comment tab!                        ***
+ *********************************************************************************************)
+
+// pressure profile
+sv_CalculatedProfileBwdRel.PressureProfile.CalculatedProfile := sv_CalculatedProfileBwd.PressureProfile.CalculatedProfile;
+FOR i := 1 TO sv_CalculatedProfileBwd.PressureProfile.CalculatedProfile.uNoOfPoints DO
+   sv_CalculatedProfileBwdRel.PressureProfile.CalculatedProfile.Point[i].rX := sv_CalculatedProfileBwd.PressureProfile.CalculatedProfile.Point[i].rX + sv_rEjectorLimOfs;
+END_FOR;
+sv_CalculatedProfileBwdRel.PressureProfile.iProfileChangedCounter := sv_CalculatedProfileBwd.PressureProfile.iProfileChangedCounter;
+
+
+;#END_EDIT_BLOCK END_ALGORITHM
+
+POSTUPDATE_ALGORITHM pCalculatedVelProfileBwd ON PU_Task_7 WITH sv_CalculatedProfileBwd.VelocityProfile.iProfileChangedCounter
+
+
+VAR_TEMP
+ i : UDINT;
+END_VAR
+#BEGIN_EDIT_BLOCK
+(**************************************** WARNING ********************************************
+ *** The KEBA Kemro K2 System including software is not intended for safety control tasks! ***
+ ***                       For further information see Comment tab!                        ***
+ *********************************************************************************************)
+
+// velocity profile
+sv_CalculatedProfileBwdRel.VelocityProfile.CalculatedProfile := sv_CalculatedProfileBwd.VelocityProfile.CalculatedProfile;
+FOR i := 1 TO sv_CalculatedProfileBwd.VelocityProfile.CalculatedProfile.uNoOfPoints DO
+   sv_CalculatedProfileBwdRel.VelocityProfile.CalculatedProfile.Point[i].rX := sv_CalculatedProfileBwd.VelocityProfile.CalculatedProfile.Point[i].rX + sv_rEjectorLimOfs;
+END_FOR;
+sv_CalculatedProfileBwdRel.VelocityProfile.iProfileChangedCounter := sv_CalculatedProfileBwd.VelocityProfile.iProfileChangedCounter;
+
+
+;#END_EDIT_BLOCK END_ALGORITHM
+
+POSTUPDATE_ALGORITHM pCalculatedPresProfileFwd ON PU_Task_7 WITH sv_CalculatedProfileFwd.PressureProfile.iProfileChangedCounter
+
+
+VAR_TEMP
+ i : UDINT;
+END_VAR
+#BEGIN_EDIT_BLOCK
+(**************************************** WARNING ********************************************
+ *** The KEBA Kemro K2 System including software is not intended for safety control tasks! ***
+ ***                       For further information see Comment tab!                        ***
+ *********************************************************************************************)
+
+// pressure profile
+sv_CalculatedProfileFwdRel.PressureProfile.CalculatedProfile := sv_CalculatedProfileFwd.PressureProfile.CalculatedProfile;
+FOR i := 1 TO sv_CalculatedProfileFwd.PressureProfile.CalculatedProfile.uNoOfPoints DO
+   sv_CalculatedProfileFwdRel.PressureProfile.CalculatedProfile.Point[i].rX := sv_CalculatedProfileFwd.PressureProfile.CalculatedProfile.Point[i].rX - sv_rEjectorLimOfs;
+END_FOR;
+sv_CalculatedProfileFwdRel.PressureProfile.iProfileChangedCounter := sv_CalculatedProfileFwd.PressureProfile.iProfileChangedCounter;
+
+
+
+;#END_EDIT_BLOCK END_ALGORITHM
+
+POSTUPDATE_ALGORITHM pCalculatedVelProfileFwd ON PU_Task_7 WITH sv_CalculatedProfileFwd.VelocityProfile.iProfileChangedCounter
+
+
+VAR_TEMP
+ i : UDINT;
+END_VAR
+#BEGIN_EDIT_BLOCK
+(**************************************** WARNING ********************************************
+ *** The KEBA Kemro K2 System including software is not intended for safety control tasks! ***
+ ***                       For further information see Comment tab!                        ***
+ *********************************************************************************************)
+
+// velocity profile
+sv_CalculatedProfileFwdRel.VelocityProfile.CalculatedProfile := sv_CalculatedProfileFwd.VelocityProfile.CalculatedProfile;
+FOR i := 1 TO sv_CalculatedProfileFwd.VelocityProfile.CalculatedProfile.uNoOfPoints DO
+   sv_CalculatedProfileFwdRel.VelocityProfile.CalculatedProfile.Point[i].rX := sv_CalculatedProfileFwd.VelocityProfile.CalculatedProfile.Point[i].rX - sv_rEjectorLimOfs;
+END_FOR;
+sv_CalculatedProfileFwdRel.VelocityProfile.iProfileChangedCounter := sv_CalculatedProfileFwd.VelocityProfile.iProfileChangedCounter;
+
+
+
+;#END_EDIT_BLOCK END_ALGORITHM
+
+POSTUPDATE_ALGORITHM pCpyAccelerationsBwd ON PU_Task_7 WITH sv_EjectorBwdVisRel.Profile.Points[2].rVelRamp
+
+
+VAR_TEMP
+ i : UDINT;
+END_VAR
+#BEGIN_EDIT_BLOCK
+FOR i:= 3 TO 20 DO
+    sv_EjectorBwdVisRel.Profile.Points[i].rVelRamp := sv_EjectorBwdVisRel.Profile.Points[2].rVelRamp;
+END_FOR;
+
+
+
+;#END_EDIT_BLOCK END_ALGORITHM
+
+POSTUPDATE_ALGORITHM pCpyAccelerationsFwd ON PU_Task_7 WITH sv_EjectorFwdVisRel.Profile.Points[2].rVelRamp
+
+
+VAR_TEMP
+ i : UDINT;
+END_VAR
+#BEGIN_EDIT_BLOCK
+FOR i:= 3 TO 20 DO
+    sv_EjectorFwdVisRel.Profile.Points[i].rVelRamp := sv_EjectorFwdVisRel.Profile.Points[2].rVelRamp;
+END_FOR;
+
+
+
+;#END_EDIT_BLOCK END_ALGORITHM
+
+POSTUPDATE_ALGORITHM pEjectorStroke ON PU_Task_7 WITH sv_bInitStart,sv_rEjectorStroke, sv_rEjectorLimDist, sv_rEjectorLimOfs
+
+#BEGIN_EDIT_BLOCK
+(**************************************** WARNING ********************************************
+ *** The KEBA Kemro K2 System including software is not intended for safety control tasks! ***
+ ***                       For further information see Comment tab!                        ***
+ *********************************************************************************************)
+
+IF sv_rEjectorStroke < (sv_rEjectorLimDist + sv_rEjectorLimOfs) THEN
+   SET_ALARM(erStrokeTooSmall);
+ELSE
+   RESET_ALARM(erStrokeTooSmall);
+END_IF;
+
+
+;#END_EDIT_BLOCK END_ALGORITHM
+
+
+
+END_ALGORITHM_BLOCK
+
+
+
+#END_OF_IEC_PART
+
+@Puma @IecEditor 6 120 @Pou 25 
+@@@BEG_Comment@@@
+@h    ! WARNING !
+@h    The Kemro K2 system (including software) only meets category B according to EN 954-1,
+@h    thus it is not intended for usage in safety-relevant control applications in the field 
+@h    of personal safety (e.g. emergency stop).
+@h    To implement potentially necessary safety-relevant control tasks, always use additional 
+@h    external safety devices that are intended for the particular purpose, and meet the necessary 
+@h    functional safety.
+@h    For further information see EN 954-1 (EN ISO 13849-1) and/or the K2-x00 user manual, chapter 
+@h    "CE conformity, directives and standards".
+
+converts "relative" lintabs edited by the user into "absolute" linetabs used by the profile block.
+converts the "absolute" position provided by the measure block into an "relative" position for displaying on hmi (profile bean)
+does the calculation of plausibility ranges for ejector stroke, limit offset and limit distance
+
+difference between "absolute" and "relative" positions are limit offset and limit distance.
+
+@FunctionID: S_KPIEC_PREJEC_EL_01
+@FunctionID: A-ALLG-3
+
+@@@END_Comment@@@
+
+@BEG_Contents 
+
+@BEG_Func 
+@RT(17)FuncTreeContainer 
+3 
+@Var @RT(9)SET_ALARM @RT(0) @T @T @DERIVED 0 @F @RT(23)KEBA_STANDARD_PROCEDURE @F 
+@T 
+@BEG_Attrib 
+0 @RT(0) @RT(0) 
+@END_Attrib 
+1 1 @F @F @F @F 
+
+@Var @RT(11)RESET_ALARM @RT(0) @T @T @DERIVED 0 @F @RT(23)KEBA_STANDARD_PROCEDURE @F 
+@T 
+@BEG_Attrib 
+0 @RT(0) @RT(0) 
+@END_Attrib 
+1 1 @F @F @F @F 
+
+@Var @RT(20)WRITE_SVLREAL_DIRECT @RT(0) @T @T @DERIVED 0 @F @RT(22)KEBA_STANDARD_FUNCTION @F 
+@T 
+@BEG_Attrib 
+0 @RT(0) @RT(0) 
+@END_Attrib 
+1 1 @F @F @F @F 
+
+@END_Func 
+
+@BEG_Const 
+@RT(18)ConstTreeContainer 
+2 
+@Var @RT(6)nReady @RT(0) @T @T @DERIVED 0 @F @RT(11)tnDataState @F 
+@T 
+@BEG_Attrib 
+0 @RT(1)0 @RT(0) 
+@END_Attrib 
+1 1 @F @F @F @F 
+
+@Var @RT(6)nSetup @RT(0) @T @T @DERIVED 0 @F @RT(15)tnOperationMode @F 
+@T 
+@BEG_Attrib 
+0 @RT(1)0 @RT(36)Setup mode only for service engineer 
+@END_Attrib 
+1 1 @F @F @F @F 
+
+@END_Const 
+
+@BEG_Export 
+
+@BEG_Kind 
+@ALGORITHM_BLOCK @RT(15)ABLimitPosition @STRUCTURED_TEXT 
+@RT(0) @RT(0) @RT(0) 
+@END_Kind 
+
+@BEG_Dcl 
+@RT(16)DclTreeContainer 
+26 
+@Var @RT(17)sv_rEjectorStroke @RT(0) @T @F @DT @RT(4)REAL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 8 @F @F @F @F 
+
+@Var @RT(19)sv_EjectorFwdVisRel @RT(0) @T @T @DERIVED 0 @T @T @DT @RT(16)KAPPL_VisProfile @RT(0) @T @T @UNKNOWN 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 8 @F @F @F @F 
+
+@Var @RT(16)sv_OperationMode @RT(0) @T @T @DERIVED 0 @T @T @DT @RT(15)tnOperationMode @RT(0) @T @T @UNKNOWN 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 8 @F @F @F @F 
+
+@Var @RT(19)sv_EjectorBwdVisRel @RT(0) @T @T @DERIVED 0 @T @T @DT @RT(16)KAPPL_VisProfile @RT(0) @T @T @UNKNOWN 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 8 @F @F @F @F 
+
+@Var @RT(19)sv_rEjectorPlausOfs @RT(0) @T @F @DT @RT(4)REAL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 8 @F @F @F @F 
+
+@Var @RT(20)sv_rEjectorPlausDist @RT(0) @T @F @DT @RT(4)REAL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 8 @F @F @F @F 
+
+@Var @RT(19)sv_rEjectorPosition @RT(0) @T @F @DT @RT(4)REAL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 8 @F @F @F @F 
+
+@Var @RT(22)sv_rEjectorPositionRel @RT(0) @T @F @DT @RT(4)REAL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 8 @F @F @F @F 
+
+@Var @RT(18)sv_rEjectorLimDist @RT(0) @T @F @DT @RT(4)REAL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 8 @F @F @F @F 
+
+@Var @RT(17)sv_rEjectorLimOfs @RT(0) @T @F @DT @RT(4)REAL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 8 @F @F @F @F 
+
+@Var @RT(16)sv_EjectorFwdVis @RT(0) @T @T @DERIVED 0 @T @T @DT @RT(16)KAPPL_VisProfile @RT(0) @T @T @UNKNOWN 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 8 @F @F @F @F 
+
+@Var @RT(16)sv_EjectorBwdVis @RT(0) @T @T @DERIVED 0 @T @T @DT @RT(16)KAPPL_VisProfile @RT(0) @T @T @UNKNOWN 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 8 @F @F @F @F 
+
+@Var @RT(13)sv_bInitStart @RT(0) @T @F @DT @RT(4)BOOL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(71)Device registration finished - custom IEC initialisation can be started @RT(0) 
+@END_Attrib 
+1 8 @F @F @F @F 
+
+@Var @RT(23)sv_bUseStartPosProfiles @RT(0) @T @F @DT @RT(4)BOOL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 8 @F @F @F @F 
+
+@Var @RT(12)sv_DataState @RT(0) @T @T @DERIVED 0 @T @T @DT @RT(11)tnDataState @RT(0) @T @T @UNKNOWN 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 8 @F @F @F @F 
+
+@Var @RT(21)sv_bSetEjectorZeroPos @RT(0) @T @F @DT @RT(4)BOOL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(60)hmi trigger to set actual ejector position as ejector offset @RT(0) 
+@END_Attrib 
+1 8 @F @F @F @F 
+
+@Var @RT(19)erSetupModeRequired @RT(0) @T @F @DT @RT(5)ALARM @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 7 @F @F @F @F 
+
+@Var @RT(10)TaskAnalog @RT(0) @T @F @DT @RT(4)TASK @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 7 @F @F @F @F 
+
+@Var @RT(9)PU_Task_7 @RT(0) @T @F @DT @RT(4)TASK @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 7 @F @F @F @F 
+
+@Var @RT(16)erStrokeTooSmall @RT(0) @T @F @DT @RT(5)ALARM @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 7 @F @F @F @F 
+
+@Var @RT(26)sv_rMinPlausShakeTargetPos @RT(0) @T @F @DT @RT(4)REAL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(39)minimum plaus for shake target position @RT(0) 
+@END_Attrib 
+1 8 @F @F @F @F 
+
+@Var @RT(26)sv_rMaxPlausShakeTargetPos @RT(0) @T @F @DT @RT(4)REAL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(39)maximum plaus for shake target position @RT(0) 
+@END_Attrib 
+1 8 @F @F @F @F 
+
+@Var @RT(23)sv_CalculatedProfileBwd @RT(0) @T @T @DERIVED 0 @T @T @DT @RT(19)tCalculatedProfiles @RT(0) @T @T @UNKNOWN 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 8 @F @F @F @F 
+
+@Var @RT(23)sv_CalculatedProfileFwd @RT(0) @T @T @DERIVED 0 @T @T @DT @RT(19)tCalculatedProfiles @RT(0) @T @T @UNKNOWN 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 8 @F @F @F @F 
+
+@Var @RT(26)sv_CalculatedProfileBwdRel @RT(0) @T @T @DERIVED 0 @T @T @DT @RT(19)tCalculatedProfiles @RT(0) @T @T @UNKNOWN 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 8 @F @F @F @F 
+
+@Var @RT(26)sv_CalculatedProfileFwdRel @RT(0) @T @T @DERIVED 0 @T @T @DT @RT(19)tCalculatedProfiles @RT(0) @T @T @UNKNOWN 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 8 @F @F @F @F 
+
+@END_Dcl 
+
+@END_Export 
+
+@BEG_Body 
+
+13 
+
+@BEG_Export 
+
+@BEG_Algo 
+@POSTUPDATE_ALGORITHM @RT(10)pLintabFwd @STRUCTURED_TEXT 
+@RT(0) @RT(125)sv_bInitStart,sv_rEjectorLimOfs,sv_rEjectorLimDist,sv_EjectorFwdVisRel.Profile.Points,sv_EjectorFwdVisRel.Profile.iNoOfPoints @RT(9)PU_Task_7 @F @F 
+@END_Algo 
+
+@BEG_Dcl 
+@RT(16)DclTreeContainer 
+1 
+@Var @RT(18)fbConvertLintabFwd @RT(0) @T @T @DERIVED 0 @T @T @DT @RT(15)FBConvertLintab @RT(0) @T @T @UNKNOWN 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@END_Dcl 
+
+@END_Export 
+
+@BEG_Export 
+
+@BEG_Algo 
+@POSTUPDATE_ALGORITHM @RT(10)pLintabBwd @STRUCTURED_TEXT 
+@RT(0) @RT(125)sv_bInitStart,sv_rEjectorLimOfs,sv_rEjectorLimDist,sv_EjectorBwdVisRel.Profile.Points,sv_EjectorBwdVisRel.Profile.iNoOfPoints @RT(9)PU_Task_7 @F @F 
+@END_Algo 
+
+@BEG_Dcl 
+@RT(16)DclTreeContainer 
+1 
+@Var @RT(18)fbConvertLintabBwd @RT(0) @T @T @DERIVED 0 @T @T @DT @RT(15)FBConvertLintab @RT(0) @T @T @UNKNOWN 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@END_Dcl 
+
+@END_Export 
+
+@BEG_Export 
+
+@BEG_Algo 
+@PROCESS_ALGORITHM @RT(10)paPosition @STRUCTURED_TEXT 
+@RT(0) @RT(0) @RT(10)TaskAnalog @T @F 
+@END_Algo 
+
+@BEG_Dcl 
+@RT(16)DclTreeContainer 
+2 
+@Var @RT(19)rEjectorPositionRel @RT(0) @T @F @DT @RT(4)REAL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 4 @F @F @F @F 
+
+@Var @RT(1)b @RT(0) @T @F @DT @RT(4)BOOL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 4 @F @F @F @F 
+
+@END_Dcl 
+
+@END_Export 
+
+@BEG_Export 
+
+@BEG_Algo 
+@POSTUPDATE_ALGORITHM @RT(10)pPlausDist @STRUCTURED_TEXT 
+@RT(0) @RT(49)sv_bInitStart,sv_rEjectorStroke,sv_rEjectorLimOfs @RT(9)PU_Task_7 @F @F 
+@END_Algo 
+
+@BEG_Dcl 
+@RT(16)DclTreeContainer 
+0 
+@END_Dcl 
+
+@END_Export 
+
+@BEG_Export 
+
+@BEG_Algo 
+@POSTUPDATE_ALGORITHM @RT(9)pPlausOfs @STRUCTURED_TEXT 
+@RT(0) @RT(50)sv_bInitStart,sv_rEjectorStroke,sv_rEjectorLimDist @RT(9)PU_Task_7 @F @F 
+@END_Algo 
+
+@BEG_Dcl 
+@RT(16)DclTreeContainer 
+0 
+@END_Dcl 
+
+@END_Export 
+
+@BEG_Export 
+
+@BEG_Algo 
+@POSTUPDATE_ALGORITHM @RT(18)pSetEjectorZeroPos @STRUCTURED_TEXT 
+@RT(0) @RT(21)sv_bSetEjectorZeroPos @RT(9)PU_Task_7 @F @F 
+@END_Algo 
+
+@BEG_Dcl 
+@RT(16)DclTreeContainer 
+0 
+@END_Dcl 
+
+@END_Export 
+
+@BEG_Export 
+
+@BEG_Algo 
+@POSTUPDATE_ALGORITHM @RT(25)pCalculatedPresProfileBwd @STRUCTURED_TEXT 
+@RT(0) @RT(62)sv_CalculatedProfileBwd.PressureProfile.iProfileChangedCounter @RT(9)PU_Task_7 @F @F 
+@END_Algo 
+
+@BEG_Dcl 
+@RT(16)DclTreeContainer 
+1 
+@Var @RT(1)i @RT(0) @T @F @DT @RT(5)UDINT @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 4 @F @F @F @F 
+
+@END_Dcl 
+
+@END_Export 
+
+@BEG_Export 
+
+@BEG_Algo 
+@POSTUPDATE_ALGORITHM @RT(24)pCalculatedVelProfileBwd @STRUCTURED_TEXT 
+@RT(0) @RT(62)sv_CalculatedProfileBwd.VelocityProfile.iProfileChangedCounter @RT(9)PU_Task_7 @F @F 
+@END_Algo 
+
+@BEG_Dcl 
+@RT(16)DclTreeContainer 
+1 
+@Var @RT(1)i @RT(0) @T @F @DT @RT(5)UDINT @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 4 @F @F @F @F 
+
+@END_Dcl 
+
+@END_Export 
+
+@BEG_Export 
+
+@BEG_Algo 
+@POSTUPDATE_ALGORITHM @RT(25)pCalculatedPresProfileFwd @STRUCTURED_TEXT 
+@RT(0) @RT(62)sv_CalculatedProfileFwd.PressureProfile.iProfileChangedCounter @RT(9)PU_Task_7 @F @F 
+@END_Algo 
+
+@BEG_Dcl 
+@RT(16)DclTreeContainer 
+1 
+@Var @RT(1)i @RT(0) @T @F @DT @RT(5)UDINT @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 4 @F @F @F @F 
+
+@END_Dcl 
+
+@END_Export 
+
+@BEG_Export 
+
+@BEG_Algo 
+@POSTUPDATE_ALGORITHM @RT(24)pCalculatedVelProfileFwd @STRUCTURED_TEXT 
+@RT(0) @RT(62)sv_CalculatedProfileFwd.VelocityProfile.iProfileChangedCounter @RT(9)PU_Task_7 @F @F 
+@END_Algo 
+
+@BEG_Dcl 
+@RT(16)DclTreeContainer 
+1 
+@Var @RT(1)i @RT(0) @T @F @DT @RT(5)UDINT @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 4 @F @F @F @F 
+
+@END_Dcl 
+
+@END_Export 
+
+@BEG_Export 
+
+@BEG_Algo 
+@POSTUPDATE_ALGORITHM @RT(20)pCpyAccelerationsBwd @STRUCTURED_TEXT 
+@RT(0) @RT(46)sv_EjectorBwdVisRel.Profile.Points[2].rVelRamp @RT(9)PU_Task_7 @F @F 
+@END_Algo 
+
+@BEG_Dcl 
+@RT(16)DclTreeContainer 
+1 
+@Var @RT(1)i @RT(0) @T @F @DT @RT(5)UDINT @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 4 @F @F @F @F 
+
+@END_Dcl 
+
+@END_Export 
+
+@BEG_Export 
+
+@BEG_Algo 
+@POSTUPDATE_ALGORITHM @RT(20)pCpyAccelerationsFwd @STRUCTURED_TEXT 
+@RT(0) @RT(46)sv_EjectorFwdVisRel.Profile.Points[2].rVelRamp @RT(9)PU_Task_7 @F @F 
+@END_Algo 
+
+@BEG_Dcl 
+@RT(16)DclTreeContainer 
+1 
+@Var @RT(1)i @RT(0) @T @F @DT @RT(5)UDINT @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 4 @F @F @F @F 
+
+@END_Dcl 
+
+@END_Export 
+
+@BEG_Export 
+
+@BEG_Algo 
+@POSTUPDATE_ALGORITHM @RT(14)pEjectorStroke @STRUCTURED_TEXT 
+@RT(0) @RT(70)sv_bInitStart,sv_rEjectorStroke, sv_rEjectorLimDist, sv_rEjectorLimOfs @RT(9)PU_Task_7 @F @F 
+@END_Algo 
+
+@BEG_Dcl 
+@RT(16)DclTreeContainer 
+0 
+@END_Dcl 
+
+@END_Export 
+
+@BEG_Body 
+@TL(15)
+(**************************************** WARNING ********************************************
+ *** The KEBA Kemro K2 System including software is not intended for safety control tasks! ***
+ ***                       For further information see Comment tab!                        ***
+ *********************************************************************************************)
+
+fbConvertLintabFwd(bForward := TRUE, 
+                   LintabVis := sv_EjectorFwdVisRel.Profile, 
+                   LintabVisAbs := sv_EjectorFwdVis.Profile, 
+                   rEjectorOfs := sv_rEjectorLimOfs, 
+                   rEjectorDist := sv_rEjectorLimDist,
+                   bOpenEndProfile := sv_EjectorFwdVisRel.bOpenEndProfile,
+                   bUseStartPosProfiles := sv_bUseStartPosProfiles,
+                   bDataStateIsReady := (sv_DataState = nReady));
+
+
+@END_Body 
+
+@@@BEG_Comment@@@ 
+@TL(15)
+@h    ! WARNING !
+@h    The Kemro K2 system (including software) only meets category B according to EN 954-1,
+@h    thus it is not intended for usage in safety-relevant control applications in the field 
+@h    of personal safety (e.g. emergency stop).
+@h    To implement potentially necessary safety-relevant control tasks, always use additional 
+@h    external safety devices that are intended for the particular purpose, and meet the necessary 
+@h    functional safety.
+@h    For further information see EN 954-1 (EN ISO 13849-1) and/or the K2-x00 user manual, chapter 
+@h    "CE conformity, directives and standards".
+
+converts "relative" lintab edited by the user into "absolute" linetab used by the profile block.
+
+@FunctionID: S_KPIEC_PREJEC_EL_01
+@FunctionID: A-ALLG-3
+
+@@@END_Comment@@@ 
+
+@BEG_Body 
+@TL(19)
+(**************************************** WARNING ********************************************
+ *** The KEBA Kemro K2 System including software is not intended for safety control tasks! ***
+ ***                       For further information see Comment tab!                        ***
+ *********************************************************************************************)
+
+fbConvertLintabBwd(bForward := FALSE,
+                   LintabVis := sv_EjectorBwdVisRel.Profile, 
+                   LintabVisAbs := sv_EjectorBwdVis.Profile, 
+                   rEjectorOfs := sv_rEjectorLimOfs, 
+                   rEjectorDist := sv_rEjectorLimDist,
+                   bOpenEndProfile := sv_EjectorBwdVisRel.bOpenEndProfile,
+                   bUseStartPosProfiles := sv_bUseStartPosProfiles,
+                   bDataStateIsReady := (sv_DataState = nReady));
+
+//set minimum and maximum plaus for shake target position
+//(shake target position can be set in movement properties if machine sequencer is used)
+sv_rMinPlausShakeTargetPos := sv_EjectorBwdVisRel.Profile.Points[(sv_EjectorBwdVisRel.Profile.iNoOfPoints+1)].rStartPos;
+sv_rMaxPlausShakeTargetPos := sv_EjectorBwdVisRel.Profile.Points[sv_EjectorBwdVisRel.Profile.iNoOfPoints].rStartPos;
+
+@END_Body 
+
+@@@BEG_Comment@@@ 
+@TL(15)
+@h    ! WARNING !
+@h    The Kemro K2 system (including software) only meets category B according to EN 954-1,
+@h    thus it is not intended for usage in safety-relevant control applications in the field 
+@h    of personal safety (e.g. emergency stop).
+@h    To implement potentially necessary safety-relevant control tasks, always use additional 
+@h    external safety devices that are intended for the particular purpose, and meet the necessary 
+@h    functional safety.
+@h    For further information see EN 954-1 (EN ISO 13849-1) and/or the K2-x00 user manual, chapter 
+@h    "CE conformity, directives and standards".
+
+converts "relative" lintab edited by the user into "absolute" linetab used by the profile block.
+
+@FunctionID: S_KPIEC_PREJEC_EL_01
+@FunctionID: A-ALLG-3
+
+@@@END_Comment@@@ 
+
+@BEG_Body 
+@TL(8)
+(**************************************** WARNING ********************************************
+ *** The KEBA Kemro K2 System including software is not intended for safety control tasks! ***
+ ***                       For further information see Comment tab!                        ***
+ *********************************************************************************************)
+
+rEjectorPositionRel := sv_rEjectorPosition - sv_rEjectorLimOfs;
+b := WRITE_SVREAL_DIRECT(sv_rEjectorPositionRel, rEjectorPositionRel);
+
+@END_Body 
+
+@@@BEG_Comment@@@ 
+@TL(15)
+@h    ! WARNING !
+@h    The Kemro K2 system (including software) only meets category B according to EN 954-1,
+@h    thus it is not intended for usage in safety-relevant control applications in the field 
+@h    of personal safety (e.g. emergency stop).
+@h    To implement potentially necessary safety-relevant control tasks, always use additional 
+@h    external safety devices that are intended for the particular purpose, and meet the necessary 
+@h    functional safety.
+@h    For further information see EN 954-1 (EN ISO 13849-1) and/or the K2-x00 user manual, chapter 
+@h    "CE conformity, directives and standards".
+
+converts the "absolute" position provided by the measure block into an "relative" position for displaying on hmi (profile bean)
+
+@FunctionID: S_KPIEC_PREJEC_EL_01
+@FunctionID: A-ALLG-3
+
+@@@END_Comment@@@ 
+
+@BEG_Body 
+@TL(7)
+(**************************************** WARNING ********************************************
+ *** The KEBA Kemro K2 System including software is not intended for safety control tasks! ***
+ ***                       For further information see Comment tab!                        ***
+ *********************************************************************************************)
+
+sv_rEjectorPlausDist:=sv_rEjectorStroke-sv_rEjectorLimOfs;
+
+@END_Body 
+
+@@@BEG_Comment@@@ 
+@TL(14)
+@h    ! WARNING !
+@h    The Kemro K2 system (including software) only meets category B according to EN 954-1,
+@h    thus it is not intended for usage in safety-relevant control applications in the field 
+@h    of personal safety (e.g. emergency stop).
+@h    To implement potentially necessary safety-relevant control tasks, always use additional 
+@h    external safety devices that are intended for the particular purpose, and meet the necessary 
+@h    functional safety.
+@h    For further information see EN 954-1 (EN ISO 13849-1) and/or the K2-x00 user manual, chapter 
+@h    "CE conformity, directives and standards".
+
+calulates plausibility range for ejector limit distance
+
+@FunctionID: S_KPIEC_PREJEC_EL_01
+@FunctionID: A-ALLG-3
+@@@END_Comment@@@ 
+
+@BEG_Body 
+@TL(7)
+(**************************************** WARNING ********************************************
+ *** The KEBA Kemro K2 System including software is not intended for safety control tasks! ***
+ ***                       For further information see Comment tab!                        ***
+ *********************************************************************************************)
+
+sv_rEjectorPlausOfs:=sv_rEjectorStroke-sv_rEjectorLimDist;
+
+@END_Body 
+
+@@@BEG_Comment@@@ 
+@TL(14)
+@h    ! WARNING !
+@h    The Kemro K2 system (including software) only meets category B according to EN 954-1,
+@h    thus it is not intended for usage in safety-relevant control applications in the field 
+@h    of personal safety (e.g. emergency stop).
+@h    To implement potentially necessary safety-relevant control tasks, always use additional 
+@h    external safety devices that are intended for the particular purpose, and meet the necessary 
+@h    functional safety.
+@h    For further information see EN 954-1 (EN ISO 13849-1) and/or the K2-x00 user manual, chapter 
+@h    "CE conformity, directives and standards".
+
+calulates plausibility range for ejector limit offset
+
+@FunctionID: S_KPIEC_PREJEC_EL_01
+@FunctionID: A-ALLG-3
+@@@END_Comment@@@ 
+
+@BEG_Body 
+@TL(15)
+(**************************************** WARNING ********************************************
+ *** The KEBA Kemro K2 System including software is not intended for safety control tasks! ***
+ ***                       For further information see Comment tab!                        ***
+ *********************************************************************************************)
+
+IF (sv_bSetEjectorZeroPos) THEN
+   IF (sv_OperationMode = nSetup) THEN
+       sv_rEjectorLimDist := sv_rEjectorStroke - sv_rEjectorPosition; 
+       sv_rEjectorLimOfs := sv_rEjectorPosition;
+   ELSE
+       SET_ALARM(erSetupModeRequired);
+   END_IF;
+   sv_bSetEjectorZeroPos := FALSE;  
+END_IF;
+
+@END_Body 
+
+@@@BEG_Comment@@@ 
+@TL(13)
+@h    ! WARNING !
+@h    The Kemro K2 system (including software) only meets category B according to EN 954-1,
+@h    thus it is not intended for usage in safety-relevant control applications in the field 
+@h    of personal safety (e.g. emergency stop).
+@h    To implement potentially necessary safety-relevant control tasks, always use additional 
+@h    external safety devices that are intended for the particular purpose, and meet the necessary 
+@h    functional safety.
+@h    For further information see EN 954-1 (EN ISO 13849-1) and/or the K2-x00 user manual, chapter 
+@h    "CE conformity, directives and standards".
+
+set actual ejector position as ejector offset so actual positon is zero.
+
+@FunctionID: CR_37588 Ejector offset calibration
+@@@END_Comment@@@ 
+
+@BEG_Body 
+@TL(12)
+(**************************************** WARNING ********************************************
+ *** The KEBA Kemro K2 System including software is not intended for safety control tasks! ***
+ ***                       For further information see Comment tab!                        ***
+ *********************************************************************************************)
+
+// pressure profile
+sv_CalculatedProfileBwdRel.PressureProfile.CalculatedProfile := sv_CalculatedProfileBwd.PressureProfile.CalculatedProfile;
+FOR i := 1 TO sv_CalculatedProfileBwd.PressureProfile.CalculatedProfile.uNoOfPoints DO
+   sv_CalculatedProfileBwdRel.PressureProfile.CalculatedProfile.Point[i].rX := sv_CalculatedProfileBwd.PressureProfile.CalculatedProfile.Point[i].rX + sv_rEjectorLimOfs;
+END_FOR;
+sv_CalculatedProfileBwdRel.PressureProfile.iProfileChangedCounter := sv_CalculatedProfileBwd.PressureProfile.iProfileChangedCounter;
+
+@END_Body 
+
+@@@BEG_Comment@@@ 
+@TL(0)
+
+@@@END_Comment@@@ 
+
+@BEG_Body 
+@TL(12)
+(**************************************** WARNING ********************************************
+ *** The KEBA Kemro K2 System including software is not intended for safety control tasks! ***
+ ***                       For further information see Comment tab!                        ***
+ *********************************************************************************************)
+
+// velocity profile
+sv_CalculatedProfileBwdRel.VelocityProfile.CalculatedProfile := sv_CalculatedProfileBwd.VelocityProfile.CalculatedProfile;
+FOR i := 1 TO sv_CalculatedProfileBwd.VelocityProfile.CalculatedProfile.uNoOfPoints DO
+   sv_CalculatedProfileBwdRel.VelocityProfile.CalculatedProfile.Point[i].rX := sv_CalculatedProfileBwd.VelocityProfile.CalculatedProfile.Point[i].rX + sv_rEjectorLimOfs;
+END_FOR;
+sv_CalculatedProfileBwdRel.VelocityProfile.iProfileChangedCounter := sv_CalculatedProfileBwd.VelocityProfile.iProfileChangedCounter;
+
+@END_Body 
+
+@@@BEG_Comment@@@ 
+@TL(0)
+
+@@@END_Comment@@@ 
+
+@BEG_Body 
+@TL(13)
+(**************************************** WARNING ********************************************
+ *** The KEBA Kemro K2 System including software is not intended for safety control tasks! ***
+ ***                       For further information see Comment tab!                        ***
+ *********************************************************************************************)
+
+// pressure profile
+sv_CalculatedProfileFwdRel.PressureProfile.CalculatedProfile := sv_CalculatedProfileFwd.PressureProfile.CalculatedProfile;
+FOR i := 1 TO sv_CalculatedProfileFwd.PressureProfile.CalculatedProfile.uNoOfPoints DO
+   sv_CalculatedProfileFwdRel.PressureProfile.CalculatedProfile.Point[i].rX := sv_CalculatedProfileFwd.PressureProfile.CalculatedProfile.Point[i].rX - sv_rEjectorLimOfs;
+END_FOR;
+sv_CalculatedProfileFwdRel.PressureProfile.iProfileChangedCounter := sv_CalculatedProfileFwd.PressureProfile.iProfileChangedCounter;
+
+
+@END_Body 
+
+@@@BEG_Comment@@@ 
+@TL(0)
+
+@@@END_Comment@@@ 
+
+@BEG_Body 
+@TL(13)
+(**************************************** WARNING ********************************************
+ *** The KEBA Kemro K2 System including software is not intended for safety control tasks! ***
+ ***                       For further information see Comment tab!                        ***
+ *********************************************************************************************)
+
+// velocity profile
+sv_CalculatedProfileFwdRel.VelocityProfile.CalculatedProfile := sv_CalculatedProfileFwd.VelocityProfile.CalculatedProfile;
+FOR i := 1 TO sv_CalculatedProfileFwd.VelocityProfile.CalculatedProfile.uNoOfPoints DO
+   sv_CalculatedProfileFwdRel.VelocityProfile.CalculatedProfile.Point[i].rX := sv_CalculatedProfileFwd.VelocityProfile.CalculatedProfile.Point[i].rX - sv_rEjectorLimOfs;
+END_FOR;
+sv_CalculatedProfileFwdRel.VelocityProfile.iProfileChangedCounter := sv_CalculatedProfileFwd.VelocityProfile.iProfileChangedCounter;
+
+
+@END_Body 
+
+@@@BEG_Comment@@@ 
+@TL(0)
+
+@@@END_Comment@@@ 
+
+@BEG_Body 
+@TL(5)
+FOR i:= 3 TO 20 DO
+    sv_EjectorBwdVisRel.Profile.Points[i].rVelRamp := sv_EjectorBwdVisRel.Profile.Points[2].rVelRamp;
+END_FOR;
+
+
+@END_Body 
+
+@@@BEG_Comment@@@ 
+@TL(0)
+
+@@@END_Comment@@@ 
+
+@BEG_Body 
+@TL(5)
+FOR i:= 3 TO 20 DO
+    sv_EjectorFwdVisRel.Profile.Points[i].rVelRamp := sv_EjectorFwdVisRel.Profile.Points[2].rVelRamp;
+END_FOR;
+
+
+@END_Body 
+
+@@@BEG_Comment@@@ 
+@TL(0)
+
+@@@END_Comment@@@ 
+
+@BEG_Body 
+@TL(11)
+(**************************************** WARNING ********************************************
+ *** The KEBA Kemro K2 System including software is not intended for safety control tasks! ***
+ ***                       For further information see Comment tab!                        ***
+ *********************************************************************************************)
+
+IF sv_rEjectorStroke < (sv_rEjectorLimDist + sv_rEjectorLimOfs) THEN
+   SET_ALARM(erStrokeTooSmall);
+ELSE
+   RESET_ALARM(erStrokeTooSmall);
+END_IF;
+
+@END_Body 
+
+@@@BEG_Comment@@@ 
+@TL(0)
+
+@@@END_Comment@@@ 
+@END_Body 
+
+@END_Contents 

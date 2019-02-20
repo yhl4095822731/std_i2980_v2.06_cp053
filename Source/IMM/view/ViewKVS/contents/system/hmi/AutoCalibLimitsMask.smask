@@ -1,0 +1,222 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<base:Mask xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xmlns:base="http://www.keba.at/viewedit.model.base" widgetId="kvs.mask" name="AutoCalibLimitsMask">
+  <resolution width="684" height="476"/>
+  <position x="1" y="1"/>
+  <attributeValues key="Background" value="BG_Desktop:30,30,30"/>
+  <attributeValues key="Title" value="Auto calibration limits"/>
+  <attributeValues key="Icon" value="system/hmi/images/maskicons/iconAutoCalibLimit.gif"/>
+  <attributeValues key="DisplayLevel" value="12"/>
+  <widgetInstances xsi:type="base:MultiPageWidgetInstance" widgetId="keplast.kvs.tabpanelplast" name="tabPanelPlast1" layoutConstraint="CENTER">
+    <resolution width="684" height="476"/>
+    <position/>
+    <attributeValues key="Tabs" value="Voltage limits, Tab1; Auto calibration settings, Tab2"/>
+    <attributeValues key="SelectedPage" value="1"/>
+    <pages widgetId="keplast.kvs.tabpanelplast.container" name="Tab1">
+      <resolution width="684" height="446"/>
+      <position/>
+      <attributeValues key="Background" value="BG_Panel:220,220,220"/>
+      <attributeValues key="HelpSubID" value="voltage"/>
+      <widgetInstances xsi:type="base:ContainerWidgetInstance" widgetId="kvs.panel" name="containerVLimitsLeft" layoutConstraint="LEFT">
+        <resolution width="336" height="306"/>
+        <position x="3"/>
+        <widgetInstances xsi:type="base:ContainerWidgetInstance" widgetId="kvs.panel" name="containerVLimitsPumpLeft" layoutConstraint="null">
+          <resolution width="336" height="240"/>
+          <position/>
+          <dynamicAttributes key="Create">
+            <value function="hasSpeedPump : UserFunctions" equal="false" unequal="true"/>
+          </dynamicAttributes>
+          <widgetInstances xsi:type="base:CompositeWidgetInstance" widgetId="c148c16b-77db-4182-9767-ee222278f0c1" name="pumpVoltageLimitPump1" layoutConstraint="null">
+            <resolution width="336" height="120"/>
+            <position/>
+            <attributeValues key="VariableVelMax" value="system.sv_rMaxVoltageVelocity"/>
+            <attributeValues key="VariablePressMax" value="system.sv_rMaxVoltagePressure"/>
+            <attributeValues key="VariableVelMin" value="Pump1.sv_rMinVoltageVelOutput"/>
+            <attributeValues key="VariablePressMin" value="Pump1.sv_rMinVoltagePressOutput"/>
+            <dynamicAttributes key="Idx">
+              <value function="doesDeviceExist : UserFunctions" equal="1" unequal="0">
+                <parameter key="1" value="devicename;PlastFunctionUtils.createDeviceName(&quot;Pump2&quot;)"/>
+              </value>
+            </dynamicAttributes>
+            <dynamicAttributes key="Create">
+              <value function="doesDeviceExist : UserFunctions" equal="true" unequal="false">
+                <parameter key="1" value="devicename;PlastFunctionUtils.createDeviceName(&quot;Pump1&quot;)"/>
+              </value>
+            </dynamicAttributes>
+          </widgetInstances>
+          <widgetInstances xsi:type="base:CompositeWidgetInstance" widgetId="c148c16b-77db-4182-9767-ee222278f0c1" name="pumpVoltageLimitPump3" layoutConstraint="null">
+            <resolution width="336" height="120"/>
+            <position y="120"/>
+            <attributeValues key="VariableVelMax" value="Pump3.sv_rMaxVoltageVelOutput"/>
+            <attributeValues key="VariablePressMax" value="Pump3.sv_rMaxVoltagePressOutput"/>
+            <attributeValues key="VariableVelMin" value="Pump3.sv_rMinVoltageVelOutput"/>
+            <attributeValues key="VariablePressMin" value="Pump3.sv_rMinVoltagePressOutput"/>
+            <attributeValues key="Idx" value="3"/>
+            <dynamicAttributes key="Create">
+              <value function="doesDeviceExist : UserFunctions" equal="true" unequal="false">
+                <parameter key="1" value="devicename;PlastFunctionUtils.createDeviceName(&quot;Pump3&quot;)"/>
+              </value>
+            </dynamicAttributes>
+          </widgetInstances>
+          <layout layoutID="kvs.layout.VerticalFlowLayout" name="VerticalFlowLayout">
+            <attributeValues key="Hgap" value="0"/>
+            <attributeValues key="Vgap" value="0"/>
+          </layout>
+        </widgetInstances>
+        <widgetInstances xsi:type="base:ContainerWidgetInstance" widgetId="keplast.kvs.borderpanelsmall" name="borderPanelVLimitBackPress" layoutConstraint="null">
+          <resolution width="336" height="66"/>
+          <position y="240"/>
+          <attributeValues key="Title" value="Back pressure"/>
+          <dynamicAttributes key="Create">
+            <value function="doesVariableExist : UserFunctions" equal="true" unequal="false">
+              <parameter key="1" value="variableasstring;PlastFunctionUtils.createVariableString(&quot;ValveBackPres1.ao_Pressure&quot;)"/>
+            </value>
+          </dynamicAttributes>
+          <widgetInstances widgetId="keplast.kvs.numfieldtext" name="numFieldText1" layoutConstraint="null">
+            <resolution width="330" height="29"/>
+            <position x="3" y="33"/>
+            <attributeValues key="Variable" value="ValveBackPres1.sv_rMinVoltageBackPressOutput"/>
+          </widgetInstances>
+          <layout layoutID="kvs.layout.VerticalFlowLayout" name="VerticalFlowLayout">
+            <attributeValues key="Hgap" value="0"/>
+            <attributeValues key="Vgap" value="0"/>
+          </layout>
+        </widgetInstances>
+        <layout layoutID="kvs.layout.VerticalFlowLayout" name="VerticalFlowLayout">
+          <attributeValues key="Hgap" value="0"/>
+          <attributeValues key="Vgap" value="0"/>
+        </layout>
+      </widgetInstances>
+      <widgetInstances xsi:type="base:ContainerWidgetInstance" widgetId="kvs.panel" name="containerVLimitsPumpRight" layoutConstraint="RIGHT">
+        <resolution width="336" height="120"/>
+        <position x="345"/>
+        <dynamicAttributes key="Create">
+          <value function="hasSpeedPump : UserFunctions" equal="false" unequal="true"/>
+        </dynamicAttributes>
+        <widgetInstances xsi:type="base:CompositeWidgetInstance" widgetId="c148c16b-77db-4182-9767-ee222278f0c1" name="pumpVoltageLimitPump2" layoutConstraint="null">
+          <resolution width="336" height="120"/>
+          <position/>
+          <attributeValues key="VariableVelMax" value="Pump2.sv_rMaxVoltageVelOutput"/>
+          <attributeValues key="VariablePressMax" value="Pump2.sv_rMaxVoltagePressOutput"/>
+          <attributeValues key="VariableVelMin" value="Pump2.sv_rMinVoltageVelOutput"/>
+          <attributeValues key="VariablePressMin" value="Pump2.sv_rMinVoltagePressOutput"/>
+          <attributeValues key="Idx" value="2"/>
+          <dynamicAttributes key="Create">
+            <value function="doesDeviceExist : UserFunctions" equal="true" unequal="false">
+              <parameter key="1" value="devicename;PlastFunctionUtils.createDeviceName(&quot;Pump2&quot;)"/>
+            </value>
+          </dynamicAttributes>
+        </widgetInstances>
+        <layout layoutID="kvs.layout.VerticalFlowLayout" name="VerticalFlowLayout">
+          <attributeValues key="Hgap" value="0"/>
+          <attributeValues key="Vgap" value="0"/>
+        </layout>
+      </widgetInstances>
+      <layout layoutID="keplast.kvs.layout.horizontalsplitlayout" name="HorizontalSplitLayout"/>
+    </pages>
+    <pages widgetId="keplast.kvs.tabpanelplast.container" name="Tab2">
+      <resolution width="684" height="446"/>
+      <position/>
+      <attributeValues key="Background" value="BG_Panel:220,220,220"/>
+      <attributeValues key="HelpSubID" value="settings"/>
+      <dynamicAttributes key="Create">
+        <value function="hasSpeedPump : UserFunctions" equal="false" unequal="true"/>
+      </dynamicAttributes>
+      <widgetInstances xsi:type="base:ContainerWidgetInstance" widgetId="kvs.panel" name="containerCalibSettingsLeft" layoutConstraint="null">
+        <resolution width="684" height="343"/>
+        <position/>
+        <widgetInstances xsi:type="base:ContainerWidgetInstance" widgetId="keplast.kvs.borderpanelsmall" name="borderPanelAxisForCalib" layoutConstraint="null">
+          <resolution width="684" height="124"/>
+          <position/>
+          <attributeValues key="Title" value="Axis for calibration"/>
+          <widgetInstances widgetId="keplast.kvs.comboboxtext" name="comboboxTextAxisForPumpCalib1" layoutConstraint="null">
+            <resolution width="678" height="29"/>
+            <position x="3" y="33"/>
+            <attributeValues key="Variable" value="Pump1.sv_iDeviceForCalib"/>
+            <attributeValues key="PreferredSizeComboBox" value="160, 29"/>
+          </widgetInstances>
+          <widgetInstances widgetId="keplast.kvs.comboboxtext" name="comboboxTextAxisForPumpCalib2" layoutConstraint="null">
+            <resolution width="678" height="29"/>
+            <position x="3" y="62"/>
+            <attributeValues key="Variable" value="Pump2.sv_iDeviceForCalib"/>
+            <attributeValues key="PreferredSizeComboBox" value="160, 29"/>
+            <dynamicAttributes key="Create">
+              <value function="doesDeviceExist : UserFunctions" equal="true" unequal="false">
+                <parameter key="1" value="devicename;PlastFunctionUtils.createDeviceName(&quot;Pump2&quot;)"/>
+              </value>
+            </dynamicAttributes>
+          </widgetInstances>
+          <widgetInstances widgetId="keplast.kvs.comboboxtext" name="comboboxTextAxisForPumpCalib3" layoutConstraint="null">
+            <resolution width="678" height="29"/>
+            <position x="3" y="91"/>
+            <attributeValues key="Variable" value="Pump3.sv_iDeviceForCalib"/>
+            <attributeValues key="PreferredSizeComboBox" value="160, 29"/>
+            <dynamicAttributes key="Create">
+              <value function="doesDeviceExist : UserFunctions" equal="true" unequal="false">
+                <parameter key="1" value="devicename;PlastFunctionUtils.createDeviceName(&quot;Pump3&quot;)"/>
+              </value>
+            </dynamicAttributes>
+          </widgetInstances>
+          <layout layoutID="kvs.layout.VerticalFlowLayout" name="VerticalFlowLayout">
+            <attributeValues key="Hgap" value="0"/>
+            <attributeValues key="Vgap" value="0"/>
+          </layout>
+        </widgetInstances>
+        <widgetInstances xsi:type="base:ContainerWidgetInstance" widgetId="keplast.kvs.borderpanelsmall" name="borderPanelMeasurePosForCalib" layoutConstraint="null">
+          <resolution width="684" height="124"/>
+          <position y="124"/>
+          <attributeValues key="Title" value="Measure positions for calibration"/>
+          <widgetInstances widgetId="keplast.kvs.numfieldtext" name="numFieldTextMaxMeasurePosScrew" layoutConstraint="null">
+            <resolution width="678" height="29"/>
+            <position x="3" y="33"/>
+            <attributeValues key="Variable" value="Injection1.sv_rMaxMeasurePositionRel"/>
+          </widgetInstances>
+          <widgetInstances widgetId="keplast.kvs.numfieldtext" name="numFieldTextMaxMeasurePosMold" layoutConstraint="null">
+            <resolution width="678" height="29"/>
+            <position x="3" y="62"/>
+            <attributeValues key="Variable" value="Mold1.sv_rMaxMeasurePositionRel"/>
+          </widgetInstances>
+          <widgetInstances widgetId="keplast.kvs.numfieldtext" name="numFieldTextMaxMeasurePosEje" layoutConstraint="null">
+            <resolution width="678" height="29"/>
+            <position x="3" y="91"/>
+            <attributeValues key="Variable" value="Ejector1.sv_rMaxMeasurePositionRel"/>
+          </widgetInstances>
+          <layout layoutID="kvs.layout.VerticalFlowLayout" name="VerticalFlowLayout">
+            <attributeValues key="Hgap" value="0"/>
+            <attributeValues key="Vgap" value="0"/>
+          </layout>
+        </widgetInstances>
+        <widgetInstances xsi:type="base:ContainerWidgetInstance" widgetId="keplast.kvs.borderpanelsmall" name="borderPanelAutoCalibPress" layoutConstraint="null">
+          <resolution width="684" height="95"/>
+          <position y="248"/>
+          <attributeValues key="Title" value="Auto pressure calibration"/>
+          <widgetInstances widgetId="keplast.kvs.numfieldtext" name="numFieldTextMaxVVelPressCalib" layoutConstraint="null">
+            <resolution width="678" height="29"/>
+            <position x="3" y="33"/>
+            <attributeValues key="Variable" value="system.sv_rMaxVoltageVelocityPresCalib"/>
+          </widgetInstances>
+          <widgetInstances widgetId="keplast.kvs.numfieldtext" name="numFieldTextDelayTimeNextShot" layoutConstraint="null">
+            <resolution width="678" height="29"/>
+            <position x="3" y="62"/>
+            <attributeValues key="Variable" value="system.sv_dDelayTimeNextShot"/>
+          </widgetInstances>
+          <layout layoutID="kvs.layout.VerticalFlowLayout" name="VerticalFlowLayout">
+            <attributeValues key="Hgap" value="0"/>
+            <attributeValues key="Vgap" value="0"/>
+          </layout>
+        </widgetInstances>
+        <layout layoutID="kvs.layout.VerticalFlowLayout" name="VerticalFlowLayout">
+          <attributeValues key="Hgap" value="0"/>
+          <attributeValues key="Vgap" value="0"/>
+        </layout>
+      </widgetInstances>
+      <layout layoutID="kvs.layout.VerticalFlowLayout" name="VerticalFlowLayout">
+        <attributeValues key="Hgap" value="0"/>
+        <attributeValues key="Vgap" value="0"/>
+      </layout>
+    </pages>
+    <layout layoutID="kvs.layout.xylayout" name="null"/>
+    <contentPanePosition y="30"/>
+    <contentPaneResolution width="684" height="446"/>
+  </widgetInstances>
+  <layout layoutID="kvs.layout.BorderLayout" name="BorderLayout"/>
+</base:Mask>

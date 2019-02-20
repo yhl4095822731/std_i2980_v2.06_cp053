@@ -1,0 +1,583 @@
+(*
+@h    ! WARNING !
+@h    The Kemro K2 system (including software) only meets category B according to EN 954-1,
+@h    thus it is not intended for usage in safety-relevant control applications in the field 
+@h    of personal safety (e.g. emergency stop).
+@h    To implement potentially necessary safety-relevant control tasks, always use additional 
+@h    external safety devices that are intended for the particular purpose, and meet the necessary 
+@h    functional safety.
+@h    For further information see EN 954-1 (EN ISO 13849-1) and/or the K2-x00 user manual, chapter 
+@h    "CE conformity, directives and standards".
+
+collects processdata for TIG
+
+@FunctionID: A-VAR-13
+TIG 3.9
+*)
+
+IMPORT_OVER_LISTFILE
+ FTimeToSec
+, cCompInjection
+, tsTIG
+, tyTIGProcessData
+, tyZoneArray
+, tevMovementState
+, tevMovementStateData
+
+END_IMPORT
+
+ALGORITHM_BLOCK ABProcessData #DUMMY_EDIT_BLOCK
+
+SYSTEM_VAR
+ sv_TIG : tsTIG;
+ sv_iShotCounterAct : DINT;
+ sv_dCycleTime : TIME (* act. cylce time *);
+ sv_dPlastTime : TIME;
+ sv_dInjectTime : TIME;
+ sv_rCutOffPosition : REAL;
+ sv_dCoolingTime : TIME;
+ sv_dCoolingRemainTime : TIME;
+ sv_HeatingZoneArray : tyZoneArray;
+ sv_rOilTemp : REAL;
+END_VAR
+
+SYSTEM_OBJECT
+ PU_Task_7 : TASK;
+ evMovementState : tevMovementState;
+END_OBJECT
+
+VAR
+ mActProcessData : tyTIGProcessData;
+END_VAR
+
+ALGORITHM aInit
+
+#BEGIN_EDIT_BLOCK
+
+
+
+;#END_EDIT_BLOCK END_ALGORITHM
+
+(*
+@h    ! WARNING !
+@h    The Kemro K2 system (including software) only meets category B according to EN 954-1,
+@h    thus it is not intended for usage in safety-relevant control applications in the field 
+@h    of personal safety (e.g. emergency stop).
+@h    To implement potentially necessary safety-relevant control tasks, always use additional 
+@h    external safety devices that are intended for the particular purpose, and meet the necessary 
+@h    functional safety.
+@h    For further information see EN 954-1 (EN ISO 13849-1) and/or the K2-x00 user manual, chapter 
+@h    "CE conformity, directives and standards".
+
+collects processdata: all values that are still valid at end of cycle
+
+@FunctionID: A-VAR-13
+TIG 3.9
+*)
+
+POSTUPDATE_ALGORITHM pShotCounterChanged ON PU_Task_7 WITH sv_iShotCounterAct
+
+
+VAR
+ emptyProcessData : tyTIGProcessData;
+END_VAR
+#BEGIN_EDIT_BLOCK
+(**************************************** WARNING ********************************************
+ *** The KEBA Kemro K2 System including software is not intended for safety control tasks! ***
+ ***                       For further information see Comment tab!                        ***
+ *********************************************************************************************)
+
+IF sv_iShotCounterAct > 0 THEN 
+   // copy values that do not change 
+   mActProcessData[1] := FTimeToSec(sv_dCycleTime); 
+   mActProcessData[2] := FTimeToSec(sv_dPlastTime); 
+   mActProcessData[3] := FTimeToSec(sv_dInjectTime);
+   mActProcessData[4] := FTimeToSec(sv_dCoolingTime-sv_dCoolingRemainTime);
+   
+   mActProcessData[6] := sv_rCutOffPosition;
+   
+      
+   IF sv_TIG.processData.iTrigger = 0 THEN 
+      sv_TIG.processData.yParameter := mActProcessData;
+      sv_TIG.processData.iTrigger := sv_iShotCounterAct;
+   END_IF;
+END_IF;
+
+mActProcessData := emptyProcessData; 
+
+
+;#END_EDIT_BLOCK END_ALGORITHM
+
+// PROCESS_ALGORITHM paTest ON TaskVis AUTOSTART
+
+
+// VAR
+ // tmp : DINT;
+ // i : DINT;
+// END_VAR
+// #BEGIN_EDIT_BLOCK
+// IF sv_iShotCounterAct > tmp THEN 
+//    FOR i := 2 TO 20 DO
+//       mActProcessData[i] := DINT_TO_REAL(sv_iShotCounterAct)+(DINT_TO_REAL(i)/100.0);
+//    END_FOR;
+//    tmp:=sv_iShotCounterAct;
+// END_IF;
+
+
+// ;#END_EDIT_BLOCK END_ALGORITHM
+
+(*
+@h    ! WARNING !
+@h    The Kemro K2 system (including software) only meets category B according to EN 954-1,
+@h    thus it is not intended for usage in safety-relevant control applications in the field 
+@h    of personal safety (e.g. emergency stop).
+@h    To implement potentially necessary safety-relevant control tasks, always use additional 
+@h    external safety devices that are intended for the particular purpose, and meet the necessary 
+@h    functional safety.
+@h    For further information see EN 954-1 (EN ISO 13849-1) and/or the K2-x00 user manual, chapter 
+@h    "CE conformity, directives and standards".
+
+collects processdata: all values at inject time
+
+@FunctionID: A-VAR-13
+TIG 3.9
+*)
+
+EVENT_ALGORITHM pInjectData ON PU_Task_7 WITH evMovementState
+
+
+VAR_INPUT
+ evMovementStateData : tevMovementStateData;
+END_VAR
+
+VAR_TEMP
+ i : DINT;
+END_VAR
+#BEGIN_EDIT_BLOCK
+(**************************************** WARNING ********************************************
+ *** The KEBA Kemro K2 System including software is not intended for safety control tasks! ***
+ ***                       For further information see Comment tab!                        ***
+ *********************************************************************************************)
+
+IF ((evMovementStateData.DeviceId.CompId = cCompInjection)
+   AND (evMovementStateData.DeviceId.IndexId = 1)
+   AND (evMovementStateData.MoveId   = cMoveInject)
+   AND (evMovementStateData.MoveDir  = cMoveFwd)
+   AND (evMovementStateData.State  = nActive)) THEN 
+    
+    // copy data at inject time
+   FOR i:=1 TO 8 DO
+      IF sv_HeatingZoneArray[i].bLinked AND
+         sv_HeatingZoneArray[i].DataRetain^.bUsed AND
+         sv_HeatingZoneArray[i].Data^.bSensorOK THEN    //in setter mode sensor not necessary 
+        mActProcessData[7+i] := sv_HeatingZoneArray[i].Data^.prActTemp^;
+      ELSE 
+        mActProcessData[7+i] := 0.0;
+      END_IF; 
+   END_FOR;
+   
+   IF IS_LINKED(sv_rOilTemp) THEN 
+     mActProcessData[16] := sv_rOilTemp;
+   ELSE
+     mActProcessData[16] := 0.0; 
+   END_IF;
+END_IF;
+
+
+;#END_EDIT_BLOCK END_ALGORITHM
+
+
+
+END_ALGORITHM_BLOCK
+
+
+
+#END_OF_IEC_PART
+
+@Puma @IecEditor 6 68 @Pou 25 
+@@@BEG_Comment@@@
+@h    ! WARNING !
+@h    The Kemro K2 system (including software) only meets category B according to EN 954-1,
+@h    thus it is not intended for usage in safety-relevant control applications in the field 
+@h    of personal safety (e.g. emergency stop).
+@h    To implement potentially necessary safety-relevant control tasks, always use additional 
+@h    external safety devices that are intended for the particular purpose, and meet the necessary 
+@h    functional safety.
+@h    For further information see EN 954-1 (EN ISO 13849-1) and/or the K2-x00 user manual, chapter 
+@h    "CE conformity, directives and standards".
+
+collects processdata for TIG
+
+@FunctionID: A-VAR-13
+TIG 3.9
+@@@END_Comment@@@
+
+@BEG_Contents 
+
+@BEG_Func 
+@RT(17)FuncTreeContainer 
+1 
+@Var @RT(10)FTimeToSec @RT(0) @T @T @DERIVED 0 @F @RT(8)FUNCTION @F 
+@T 
+@BEG_Attrib 
+0 @RT(0) @RT(0) 
+@END_Attrib 
+1 1 @F @F @F @F 
+
+@END_Func 
+
+@BEG_Const 
+@RT(18)ConstTreeContainer 
+1 
+@Var @RT(14)cCompInjection @RT(0) @T @F @DT @RT(4)DINT @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+0 @RT(3)104 @RT(19)Component Injection 
+@END_Attrib 
+1 1 @F @F @F @F 
+
+@END_Const 
+
+@BEG_Export 
+
+@BEG_Kind 
+@ALGORITHM_BLOCK @RT(13)ABProcessData @STRUCTURED_TEXT 
+@RT(0) @RT(0) @RT(0) 
+@END_Kind 
+
+@BEG_Dcl 
+@RT(16)DclTreeContainer 
+13 
+@Var @RT(6)sv_TIG @RT(0) @T @T @DERIVED 0 @T @T @DT @RT(5)tsTIG @RT(0) @T @T @UNKNOWN 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 8 @F @F @F @F 
+
+@Var @RT(18)sv_iShotCounterAct @RT(0) @T @F @DT @RT(4)DINT @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 8 @F @F @F @F 
+
+@Var @RT(9)PU_Task_7 @RT(0) @T @F @DT @RT(4)TASK @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 7 @F @F @F @F 
+
+@Var @RT(15)mActProcessData @RT(0) @T @T @DERIVED 0 @T @T @DT @RT(16)tyTIGProcessData @RT(0) @T @T @UNKNOWN 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(13)sv_dCycleTime @RT(0) @T @F @DT @RT(4)TIME @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(15)act. cylce time @RT(0) 
+@END_Attrib 
+1 8 @F @F @F @F 
+
+@Var @RT(13)sv_dPlastTime @RT(0) @T @F @DT @RT(4)TIME @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 8 @F @F @F @F 
+
+@Var @RT(14)sv_dInjectTime @RT(0) @T @F @DT @RT(4)TIME @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 8 @F @F @F @F 
+
+@Var @RT(18)sv_rCutOffPosition @RT(0) @T @F @DT @RT(4)REAL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 8 @F @F @F @F 
+
+@Var @RT(15)sv_dCoolingTime @RT(0) @T @F @DT @RT(4)TIME @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 8 @F @F @F @F 
+
+@Var @RT(21)sv_dCoolingRemainTime @RT(0) @T @F @DT @RT(4)TIME @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 8 @F @F @F @F 
+
+@Var @RT(19)sv_HeatingZoneArray @RT(0) @T @T @DERIVED 0 @F @RT(11)tyZoneArray @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 8 @F @F @F @F 
+
+@Var @RT(11)sv_rOilTemp @RT(0) @T @F @DT @RT(4)REAL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 8 @F @F @F @F 
+
+@Var @RT(15)evMovementState @RT(0) @T @T @DERIVED 0 @T @T @DT @RT(16)tevMovementState @RT(0) @T @T @UNKNOWN 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 7 @F @F @F @F 
+
+@END_Dcl 
+
+@END_Export 
+
+@BEG_Body 
+
+4 
+
+@BEG_Export 
+
+@BEG_Algo 
+@ALGORITHM @RT(5)aInit @STRUCTURED_TEXT 
+@RT(0) @RT(0) @RT(0) @F @F 
+@END_Algo 
+
+@BEG_Dcl 
+@RT(16)DclTreeContainer 
+0 
+@END_Dcl 
+
+@END_Export 
+
+@BEG_Export 
+
+@BEG_Algo 
+@POSTUPDATE_ALGORITHM @RT(19)pShotCounterChanged @STRUCTURED_TEXT 
+@RT(0) @RT(18)sv_iShotCounterAct @RT(9)PU_Task_7 @F @F 
+@END_Algo 
+
+@BEG_Dcl 
+@RT(16)DclTreeContainer 
+1 
+@Var @RT(16)emptyProcessData @RT(0) @T @T @DERIVED 0 @T @T @DT @RT(16)tyTIGProcessData @RT(0) @T @T @UNKNOWN 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@END_Dcl 
+
+@END_Export 
+
+@BEG_Export 
+
+@BEG_Algo 
+@PROCESS_ALGORITHM @RT(6)paTest @STRUCTURED_TEXT 
+@RT(0) @RT(0) @RT(7)TaskVis @T @T 
+@END_Algo 
+
+@BEG_Dcl 
+@RT(16)DclTreeContainer 
+2 
+@Var @RT(3)tmp @RT(0) @T @F @DT @RT(4)DINT @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(1)i @RT(0) @T @F @DT @RT(4)DINT @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@END_Dcl 
+
+@END_Export 
+
+@BEG_Export 
+
+@BEG_Algo 
+@EVENT_ALGORITHM @RT(11)pInjectData @STRUCTURED_TEXT 
+@RT(0) @RT(15)evMovementState @RT(9)PU_Task_7 @F @F 
+@END_Algo 
+
+@BEG_Dcl 
+@RT(16)DclTreeContainer 
+2 
+@Var @RT(19)evMovementStateData @RT(0) @T @T @DERIVED 0 @T @T @DT @RT(20)tevMovementStateData @RT(0) @T @T @UNKNOWN 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 1 @F @F @F @F 
+
+@Var @RT(1)i @RT(0) @T @F @DT @RT(4)DINT @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 4 @F @F @F @F 
+
+@END_Dcl 
+
+@END_Export 
+
+@BEG_Body 
+@TL(2)
+
+
+@END_Body 
+
+@@@BEG_Comment@@@ 
+@TL(0)
+
+@@@END_Comment@@@ 
+
+@BEG_Body 
+@TL(23)
+(**************************************** WARNING ********************************************
+ *** The KEBA Kemro K2 System including software is not intended for safety control tasks! ***
+ ***                       For further information see Comment tab!                        ***
+ *********************************************************************************************)
+
+IF sv_iShotCounterAct > 0 THEN 
+   // copy values that do not change 
+   mActProcessData[1] := FTimeToSec(sv_dCycleTime); 
+   mActProcessData[2] := FTimeToSec(sv_dPlastTime); 
+   mActProcessData[3] := FTimeToSec(sv_dInjectTime);
+   mActProcessData[4] := FTimeToSec(sv_dCoolingTime-sv_dCoolingRemainTime);
+   
+   mActProcessData[6] := sv_rCutOffPosition;
+   
+      
+   IF sv_TIG.processData.iTrigger = 0 THEN 
+      sv_TIG.processData.yParameter := mActProcessData;
+      sv_TIG.processData.iTrigger := sv_iShotCounterAct;
+   END_IF;
+END_IF;
+
+mActProcessData := emptyProcessData; 
+
+@END_Body 
+
+@@@BEG_Comment@@@ 
+@TL(14)
+@h    ! WARNING !
+@h    The Kemro K2 system (including software) only meets category B according to EN 954-1,
+@h    thus it is not intended for usage in safety-relevant control applications in the field 
+@h    of personal safety (e.g. emergency stop).
+@h    To implement potentially necessary safety-relevant control tasks, always use additional 
+@h    external safety devices that are intended for the particular purpose, and meet the necessary 
+@h    functional safety.
+@h    For further information see EN 954-1 (EN ISO 13849-1) and/or the K2-x00 user manual, chapter 
+@h    "CE conformity, directives and standards".
+
+collects processdata: all values that are still valid at end of cycle
+
+@FunctionID: A-VAR-13
+TIG 3.9
+@@@END_Comment@@@ 
+
+@BEG_Body 
+@TL(7)
+IF sv_iShotCounterAct > tmp THEN 
+   FOR i := 2 TO 20 DO
+      mActProcessData[i] := DINT_TO_REAL(sv_iShotCounterAct)+(DINT_TO_REAL(i)/100.0);
+   END_FOR;
+   tmp:=sv_iShotCounterAct;
+END_IF;
+
+@END_Body 
+
+@@@BEG_Comment@@@ 
+@TL(0)
+
+@@@END_Comment@@@ 
+
+@BEG_Body 
+@TL(29)
+(**************************************** WARNING ********************************************
+ *** The KEBA Kemro K2 System including software is not intended for safety control tasks! ***
+ ***                       For further information see Comment tab!                        ***
+ *********************************************************************************************)
+
+IF ((evMovementStateData.DeviceId.CompId = cCompInjection)
+   AND (evMovementStateData.DeviceId.IndexId = 1)
+   AND (evMovementStateData.MoveId   = cMoveInject)
+   AND (evMovementStateData.MoveDir  = cMoveFwd)
+   AND (evMovementStateData.State  = nActive)) THEN 
+    
+    // copy data at inject time
+   FOR i:=1 TO 8 DO
+      IF sv_HeatingZoneArray[i].bLinked AND
+         sv_HeatingZoneArray[i].DataRetain^.bUsed AND
+         sv_HeatingZoneArray[i].Data^.bSensorOK THEN    //in setter mode sensor not necessary 
+        mActProcessData[7+i] := sv_HeatingZoneArray[i].Data^.prActTemp^;
+      ELSE 
+        mActProcessData[7+i] := 0.0;
+      END_IF; 
+   END_FOR;
+   
+   IF IS_LINKED(sv_rOilTemp) THEN 
+     mActProcessData[16] := sv_rOilTemp;
+   ELSE
+     mActProcessData[16] := 0.0; 
+   END_IF;
+END_IF;
+
+@END_Body 
+
+@@@BEG_Comment@@@ 
+@TL(14)
+@h    ! WARNING !
+@h    The Kemro K2 system (including software) only meets category B according to EN 954-1,
+@h    thus it is not intended for usage in safety-relevant control applications in the field 
+@h    of personal safety (e.g. emergency stop).
+@h    To implement potentially necessary safety-relevant control tasks, always use additional 
+@h    external safety devices that are intended for the particular purpose, and meet the necessary 
+@h    functional safety.
+@h    For further information see EN 954-1 (EN ISO 13849-1) and/or the K2-x00 user manual, chapter 
+@h    "CE conformity, directives and standards".
+
+collects processdata: all values at inject time
+
+@FunctionID: A-VAR-13
+TIG 3.9
+@@@END_Comment@@@ 
+@END_Body 
+
+@END_Contents 

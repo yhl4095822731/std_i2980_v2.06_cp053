@@ -1,0 +1,205 @@
+IMPORT_OVER_LISTFILE
+ GET_SYNC_REFTO
+, tsDeviceId
+, tsMoveData
+, tsEndpointMonitor
+, ABMovementRegister
+
+END_IMPORT
+
+ALGORITHM_BLOCK ABMoveClosedLoop #DUMMY_EDIT_BLOCK
+
+SYSTEM_VAR
+ sv_DeviceId : tsDeviceId;
+ sv_MoveClosedLoop : tsMoveData;
+ sv_MoldHeightEndpoints : tsEndpointMonitor;
+END_VAR
+
+(*
+Registration of mold height forward movement to the sv_MovementsAvailable
+*)
+
+ALGORITHM aRegister
+
+
+VAR
+ abMovementRegister : ABMovementRegister;
+ sDeviceName : STRING(40) := 'MoldHeight';
+ sIconPath : STRING(255);
+ sCompletePath : STRING(255);
+END_VAR
+#BEGIN_EDIT_BLOCK
+(**************************************** WARNING ********************************************
+ *** The KEBA Kemro K2 System including software is not intended for safety control tasks! ***
+ ***                       For further information see Comment tab!                        ***
+ *********************************************************************************************)
+
+// movement registration
+sv_MoveClosedLoop.LockGroups[1] := cLockGroupMoldHeight;
+sv_MoveClosedLoop.LockGroups[2] := cLockGroupNozzleFwd;
+sv_MoveClosedLoop.LockGroups[3] := cLockGroupMotor;
+sv_MoveClosedLoop.LockGroups[4] := cLockGroupSafetyGateMold;
+
+sv_MoveClosedLoop.pbPosReached := @sv_MoldHeightEndpoints.bPositionForStepReached;
+sIconPath := "\hmi\images\movMoldAdjustCL.gif";
+sCompletePath := CONCAT(sDeviceName,(DINT_TO_STRING(sv_DeviceId.IndexId)),sIconPath);
+
+sv_MoveClosedLoop.sIconPath := sCompletePath;                
+abMovementRegister.aRegister(@sv_MoveClosedLoop);
+                                                                                               
+
+
+
+;#END_EDIT_BLOCK END_ALGORITHM
+
+
+
+END_ALGORITHM_BLOCK
+
+
+
+#END_OF_IEC_PART
+
+@Puma @IecEditor 6 131 @Pou 25 
+@@@BEG_Comment@@@
+
+@@@END_Comment@@@
+
+@BEG_Contents 
+
+@BEG_Func 
+@RT(17)FuncTreeContainer 
+1 
+@Var @RT(14)GET_SYNC_REFTO @RT(0) @T @T @DERIVED 0 @F @RT(22)KEBA_STANDARD_FUNCTION @F 
+@T 
+@BEG_Attrib 
+0 @RT(0) @RT(0) 
+@END_Attrib 
+1 1 @F @F @F @F 
+
+@END_Func 
+
+@BEG_Const 
+@RT(18)ConstTreeContainer 
+0 
+@END_Const 
+
+@BEG_Export 
+
+@BEG_Kind 
+@ALGORITHM_BLOCK @RT(16)ABMoveClosedLoop @STRUCTURED_TEXT 
+@RT(0) @RT(0) @RT(0) 
+@END_Kind 
+
+@BEG_Dcl 
+@RT(16)DclTreeContainer 
+3 
+@Var @RT(11)sv_DeviceId @RT(0) @T @T @DERIVED 0 @T @T @DT @RT(10)tsDeviceId @RT(0) @T @T @UNKNOWN 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 8 @F @F @F @F 
+
+@Var @RT(17)sv_MoveClosedLoop @RT(0) @T @T @DERIVED 0 @T @T @DT @RT(10)tsMoveData @RT(0) @T @T @UNKNOWN 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 8 @F @F @F @F 
+
+@Var @RT(22)sv_MoldHeightEndpoints @RT(0) @T @T @DERIVED 0 @T @T @DT @RT(17)tsEndpointMonitor @RT(0) @T @T @UNKNOWN 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 8 @F @F @F @F 
+
+@END_Dcl 
+
+@END_Export 
+
+@BEG_Body 
+
+1 
+
+@BEG_Export 
+
+@BEG_Algo 
+@ALGORITHM @RT(9)aRegister @STRUCTURED_TEXT 
+@RT(0) @RT(0) @RT(0) @F @F 
+@END_Algo 
+
+@BEG_Dcl 
+@RT(16)DclTreeContainer 
+4 
+@Var @RT(18)abMovementRegister @RT(0) @T @T @DERIVED 0 @T @T @DT @RT(18)ABMovementRegister @RT(0) @T @T @UNKNOWN 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(11)sDeviceName @RT(0) @T @F @DT @RT(10)STRING(40) @RT(0) @T @T @STRING 0 @F @RT(2)40 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(12)'MoldHeight' @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(9)sIconPath @RT(0) @T @F @DT @RT(11)STRING(255) @RT(0) @T @T @STRING 0 @F @RT(3)255 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(13)sCompletePath @RT(0) @T @F @DT @RT(11)STRING(255) @RT(0) @T @T @STRING 0 @F @RT(3)255 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@END_Dcl 
+
+@END_Export 
+
+@BEG_Body 
+@TL(20)
+(**************************************** WARNING ********************************************
+ *** The KEBA Kemro K2 System including software is not intended for safety control tasks! ***
+ ***                       For further information see Comment tab!                        ***
+ *********************************************************************************************)
+
+// movement registration
+sv_MoveClosedLoop.LockGroups[1] := cLockGroupMoldHeight;
+sv_MoveClosedLoop.LockGroups[2] := cLockGroupNozzleFwd;
+sv_MoveClosedLoop.LockGroups[3] := cLockGroupMotor;
+sv_MoveClosedLoop.LockGroups[4] := cLockGroupSafetyGateMold;
+
+sv_MoveClosedLoop.pbPosReached := @sv_MoldHeightEndpoints.bPositionForStepReached;
+sIconPath := "\hmi\images\movMoldAdjustCL.gif";
+sCompletePath := CONCAT(sDeviceName,(DINT_TO_STRING(sv_DeviceId.IndexId)),sIconPath);
+
+sv_MoveClosedLoop.sIconPath := sCompletePath;                
+abMovementRegister.aRegister(@sv_MoveClosedLoop);
+                                                                                               
+
+
+@END_Body 
+
+@@@BEG_Comment@@@ 
+@TL(1)
+Registration of mold height forward movement to the sv_MovementsAvailable
+@@@END_Comment@@@ 
+@END_Body 
+
+@END_Contents 

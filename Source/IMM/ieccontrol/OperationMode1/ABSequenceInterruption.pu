@@ -1,0 +1,594 @@
+(*
+@h    ! WARNING !
+@h    The Kemro K2 system (including software) only meets category B according to EN 954-1,
+@h    thus it is not intended for usage in safety-relevant control applications in the field 
+@h    of personal safety (e.g. emergency stop).
+@h    To implement potentially necessary safety-relevant control tasks, always use additional 
+@h    external safety devices that are intended for the particular purpose, and meet the necessary 
+@h    functional safety.
+@h    For further information see EN 954-1 (EN ISO 13849-1) and/or the K2-x00 user manual, chapter 
+@h    "CE conformity, directives and standards".
+
+This AB is responsible for setting / resetting the flag for sequence interruption (sv_bSequenceInterruption).
+A sequence interruption can be triggered by any function unit. Therefore and according event (evSequenceInterrupt)
+must be sent.
+This block can also handle a seperate digital input (di_SequenceInterruption) which can trigger an interrupt.
+Interrupt events (or the according digital input) are ignored in manual and setup mode.
+
+During sequence is interrupted, the led for halfautocycle or fullautocycle is set to "flashing"
+
+
+*)
+
+IMPORT_OVER_LISTFILE
+ tnOperationMode
+, tevSequenceInterrupt
+, tsActiveMovements
+, tevSequInterruptData
+
+END_IMPORT
+
+ALGORITHM_BLOCK ABSequenceInterruption #DUMMY_EDIT_BLOCK
+
+SYSTEM_VAR
+ di_SequenceInterruption : BOOL;
+ sv_bSequenceInterruption : BOOL (* TRUE: sequence is interrupted *);
+ sv_bLedHalfAutomatic_ledAttr : BYTE (* Panel LED half automatic *);
+ sv_bLedFullAutomatic_ledAttr : BYTE (* Panel LED full automatic *);
+ sv_bHMILedHalfAutomatic_ledAttr : BYTE (* Panel LED half automatic *);
+ sv_bHMILedFullAutomatic_ledAttr : BYTE (* Panel LED full automatic *);
+ sv_OperationMode : tnOperationMode;
+ sv_ActiveMovements : tsActiveMovements;
+END_VAR
+
+SYSTEM_OBJECT
+ PU_Task_7 : TASK;
+ EV_Task_7 : TASK;
+ evSequenceInterrupt : tevSequenceInterrupt;
+ TaskMid : TASK;
+END_OBJECT
+
+VAR
+ mbLedHalfAutomaticAttrLinked : BOOL;
+ mbLedFullAutomaticAttrLinked : BOOL;
+ mbResetInterrupt : BOOL;
+END_VAR
+
+POSTUPDATE_ALGORITHM pDISequenceInterrupt ON PU_Task_7 WITH di_SequenceInterruption
+
+
+VAR
+ evSequenceInterruptData : tevSequInterruptData;
+END_VAR
+#BEGIN_EDIT_BLOCK
+(**************************************** WARNING ********************************************
+ *** The KEBA Kemro K2 System including software is not intended for safety control tasks! ***
+ ***                       For further information see Comment tab!                        ***
+ *********************************************************************************************)
+
+IF di_SequenceInterruption THEN
+   IF sv_bSequenceInterruption THEN
+      evSequenceInterruptData.SequenceInterrupt := nSequenceContinue;
+   ELSE
+      evSequenceInterruptData.SequenceInterrupt := nSequenceInterrupt;
+   END_IF;
+   
+   SET_EVENT(evSequenceInterrupt, evSequenceInterruptData);
+END_IF;
+
+
+;#END_EDIT_BLOCK END_ALGORITHM
+
+EVENT_ALGORITHM evaSequenceInterrupt ON EV_Task_7 WITH evSequenceInterrupt
+
+
+VAR_INPUT
+ evSequInterruptData : tevSequInterruptData;
+END_VAR
+#BEGIN_EDIT_BLOCK
+(**************************************** WARNING ********************************************
+ *** The KEBA Kemro K2 System including software is not intended for safety control tasks! ***
+ ***                       For further information see Comment tab!                        ***
+ *********************************************************************************************)
+
+IF (sv_OperationMode = nSetup) OR (sv_OperationMode = nManual) THEN
+   RETURN;
+END_IF;
+
+IF evSequInterruptData.SequenceInterrupt = nSequenceInterrupt THEN
+   sv_bSequenceInterruption := TRUE;
+   mbResetInterrupt := FALSE;
+   
+   //set led attribute to "flashing" during sequence interrupt
+   sv_bLedHalfAutomatic_ledAttr := 16#3;
+   sv_bLedFullAutomatic_ledAttr := 16#3;
+   
+   sv_bHMILedHalfAutomatic_ledAttr := sv_bLedHalfAutomatic_ledAttr;
+   sv_bHMILedFullAutomatic_ledAttr := sv_bLedFullAutomatic_ledAttr;
+   
+   START_PROCESS_ALGORITHM(paSequenceInterrupted);
+ELSE
+   mbResetInterrupt := TRUE;
+END_IF;
+
+
+
+
+;#END_EDIT_BLOCK END_ALGORITHM
+
+PROCESS_ALGORITHM paSequenceInterrupted ON TaskMid
+
+
+(* IecGraph-Code *)
+
+(* init step *)
+INITIAL_STEP S_Init:
+Action9 (P);
+END_STEP
+
+ACTION Action9: #BEGIN_EDIT_BLOCK
+
+mbLedHalfAutomaticAttrLinked := IS_LINKED(sv_bLedHalfAutomatic_ledAttr);
+mbLedFullAutomaticAttrLinked := IS_LINKED(sv_bLedFullAutomatic_ledAttr);
+
+;#END_EDIT_BLOCK END_ACTION (*Action9*)
+
+(* steps *)
+STEP S_Interrupted:
+END_STEP
+
+STEP S_WaitNoMove:
+END_STEP
+
+STEP S_Stop:
+AReset (P);
+AStop (P);
+END_STEP
+
+ACTION AReset: #BEGIN_EDIT_BLOCK
+sv_bSequenceInterruption := FALSE;
+//set led attribute to "not flashing"
+sv_bHMILedHalfAutomatic_ledAttr := 16#1;
+sv_bHMILedFullAutomatic_ledAttr := 16#1;
+
+IF mbLedHalfAutomaticAttrLinked THEN
+   sv_bLedHalfAutomatic_ledAttr := sv_bHMILedHalfAutomatic_ledAttr;
+END_IF;   
+
+IF mbLedFullAutomaticAttrLinked THEN
+   sv_bLedFullAutomatic_ledAttr := sv_bHMILedFullAutomatic_ledAttr;
+END_IF;   
+
+
+;#END_EDIT_BLOCK END_ACTION (*AReset*)
+ACTION AStop: #BEGIN_EDIT_BLOCK
+STOP_PROCESS_ALGORITHM();
+
+;#END_EDIT_BLOCK END_ACTION (*AStop*)
+
+(* transitions *)
+GO_ON_TRANSITION Trans1 (* Trans1 *) FROM S_Init TO S_Interrupted :=  #BEGIN_EDIT_BLOCK
+TRUE
+;#END_EDIT_BLOCK
+END_TRANSITION
+
+GO_ON_TRANSITION TResetInterrupt (* Trans2 *) FROM S_Interrupted TO S_WaitNoMove :=  #BEGIN_EDIT_BLOCK
+mbResetInterrupt
+;#END_EDIT_BLOCK
+END_TRANSITION
+
+GO_ON_TRANSITION TNoMovementActive (* Trans4 *) FROM S_WaitNoMove TO S_Stop :=  #BEGIN_EDIT_BLOCK
+sv_ActiveMovements.iNumberOfActiveMovements = 0
+;#END_EDIT_BLOCK
+END_TRANSITION
+
+GO_ON_TRANSITION TOpModeChanged (* Trans8 *) FROM S_Interrupted TO S_Stop :=  #BEGIN_EDIT_BLOCK
+sv_OperationMode < nHalfAutomatic
+;#END_EDIT_BLOCK
+END_TRANSITION
+
+TRANSITION Trans3 (* Trans3 *) FROM S_Stop TO S_Interrupted :=  #BEGIN_EDIT_BLOCK
+TRUE
+;#END_EDIT_BLOCK
+END_TRANSITION
+
+(* end IecGraph-Code *)
+(* sfc-code *)
+
+(* stand alone actions *)
+// ACTION Action9: #BEGIN_EDIT_BLOCK
+
+// ;#END_EDIT_BLOCK END_ACTION (*Action9*)
+(* end sfc-code *)
+
+
+END_ALGORITHM
+
+
+
+END_ALGORITHM_BLOCK
+
+
+
+#END_OF_IEC_PART
+
+@Puma @IecEditor 6 131 @Pou 25 
+@@@BEG_Comment@@@
+@h    ! WARNING !
+@h    The Kemro K2 system (including software) only meets category B according to EN 954-1,
+@h    thus it is not intended for usage in safety-relevant control applications in the field 
+@h    of personal safety (e.g. emergency stop).
+@h    To implement potentially necessary safety-relevant control tasks, always use additional 
+@h    external safety devices that are intended for the particular purpose, and meet the necessary 
+@h    functional safety.
+@h    For further information see EN 954-1 (EN ISO 13849-1) and/or the K2-x00 user manual, chapter 
+@h    "CE conformity, directives and standards".
+
+This AB is responsible for setting / resetting the flag for sequence interruption (sv_bSequenceInterruption).
+A sequence interruption can be triggered by any function unit. Therefore and according event (evSequenceInterrupt)
+must be sent.
+This block can also handle a seperate digital input (di_SequenceInterruption) which can trigger an interrupt.
+Interrupt events (or the according digital input) are ignored in manual and setup mode.
+
+During sequence is interrupted, the led for halfautocycle or fullautocycle is set to "flashing"
+
+
+@@@END_Comment@@@
+
+@BEG_Contents 
+
+@BEG_Func 
+@RT(17)FuncTreeContainer 
+0 
+@END_Func 
+
+@BEG_Const 
+@RT(18)ConstTreeContainer 
+0 
+@END_Const 
+
+@BEG_Export 
+
+@BEG_Kind 
+@ALGORITHM_BLOCK @RT(22)ABSequenceInterruption @STRUCTURED_TEXT 
+@RT(0) @RT(0) @RT(0) 
+@END_Kind 
+
+@BEG_Dcl 
+@RT(16)DclTreeContainer 
+15 
+@Var @RT(23)di_SequenceInterruption @RT(0) @T @F @DT @RT(4)BOOL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 8 @F @F @F @F 
+
+@Var @RT(9)PU_Task_7 @RT(0) @T @T @RENAMED 0 @T @T @DT @RT(4)TASK @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 7 @F @F @F @F 
+
+@Var @RT(24)sv_bSequenceInterruption @RT(0) @T @F @DT @RT(4)BOOL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(29)TRUE: sequence is interrupted @RT(0) 
+@END_Attrib 
+1 8 @F @F @F @F 
+
+@Var @RT(28)sv_bLedHalfAutomatic_ledAttr @RT(0) @T @F @DT @RT(4)BYTE @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(24)Panel LED half automatic @RT(0) 
+@END_Attrib 
+1 8 @F @F @F @F 
+
+@Var @RT(28)sv_bLedFullAutomatic_ledAttr @RT(0) @T @F @DT @RT(4)BYTE @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(24)Panel LED full automatic @RT(0) 
+@END_Attrib 
+1 8 @F @F @F @F 
+
+@Var @RT(31)sv_bHMILedHalfAutomatic_ledAttr @RT(0) @T @F @DT @RT(4)BYTE @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(24)Panel LED half automatic @RT(0) 
+@END_Attrib 
+1 8 @F @F @F @F 
+
+@Var @RT(31)sv_bHMILedFullAutomatic_ledAttr @RT(0) @T @F @DT @RT(4)BYTE @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(24)Panel LED full automatic @RT(0) 
+@END_Attrib 
+1 8 @F @F @F @F 
+
+@Var @RT(16)sv_OperationMode @RT(0) @T @T @DERIVED 0 @T @T @DT @RT(15)tnOperationMode @RT(0) @T @T @UNKNOWN 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 8 @F @F @F @F 
+
+@Var @RT(9)EV_Task_7 @RT(0) @T @T @RENAMED 0 @T @T @DT @RT(4)TASK @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 7 @F @F @F @F 
+
+@Var @RT(19)evSequenceInterrupt @RT(0) @T @T @DERIVED 0 @T @T @DT @RT(20)tevSequenceInterrupt @RT(0) @T @T @UNKNOWN 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 7 @F @F @F @F 
+
+@Var @RT(7)TaskMid @RT(0) @T @T @RENAMED 0 @T @T @DT @RT(4)TASK @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 7 @F @F @F @F 
+
+@Var @RT(28)mbLedHalfAutomaticAttrLinked @RT(0) @T @F @DT @RT(4)BOOL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(28)mbLedFullAutomaticAttrLinked @RT(0) @T @F @DT @RT(4)BOOL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(16)mbResetInterrupt @RT(0) @T @F @DT @RT(4)BOOL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(18)sv_ActiveMovements @RT(0) @T @T @DERIVED 0 @T @T @DT @RT(17)tsActiveMovements @RT(0) @T @T @UNKNOWN 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 8 @F @F @F @F 
+
+@END_Dcl 
+
+@END_Export 
+
+@BEG_Body 
+
+3 
+
+@BEG_Export 
+
+@BEG_Algo 
+@POSTUPDATE_ALGORITHM @RT(20)pDISequenceInterrupt @STRUCTURED_TEXT 
+@RT(0) @RT(23)di_SequenceInterruption @RT(9)PU_Task_7 @F @F 
+@END_Algo 
+
+@BEG_Dcl 
+@RT(16)DclTreeContainer 
+1 
+@Var @RT(23)evSequenceInterruptData @RT(0) @T @T @DERIVED 0 @T @T @DT @RT(20)tevSequInterruptData @RT(0) @T @T @UNKNOWN 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@END_Dcl 
+
+@END_Export 
+
+@BEG_Export 
+
+@BEG_Algo 
+@EVENT_ALGORITHM @RT(20)evaSequenceInterrupt @STRUCTURED_TEXT 
+@RT(0) @RT(19)evSequenceInterrupt @RT(9)EV_Task_7 @F @F 
+@END_Algo 
+
+@BEG_Dcl 
+@RT(16)DclTreeContainer 
+1 
+@Var @RT(19)evSequInterruptData @RT(0) @T @T @DERIVED 0 @T @T @DT @RT(20)tevSequInterruptData @RT(0) @T @T @UNKNOWN 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 1 @F @F @F @F 
+
+@END_Dcl 
+
+@END_Export 
+
+@BEG_Export 
+
+@BEG_Algo 
+@PROCESS_ALGORITHM @RT(21)paSequenceInterrupted @SEQUENTIAL_FLOW_CHART 
+@RT(0) @RT(0) @RT(7)TaskMid @F @F 
+@END_Algo 
+
+@BEG_Dcl 
+@RT(16)DclTreeContainer 
+0 
+@END_Dcl 
+
+@END_Export 
+
+@BEG_Body 
+@TL(15)
+(**************************************** WARNING ********************************************
+ *** The KEBA Kemro K2 System including software is not intended for safety control tasks! ***
+ ***                       For further information see Comment tab!                        ***
+ *********************************************************************************************)
+
+IF di_SequenceInterruption THEN
+   IF sv_bSequenceInterruption THEN
+      evSequenceInterruptData.SequenceInterrupt := nSequenceContinue;
+   ELSE
+      evSequenceInterruptData.SequenceInterrupt := nSequenceInterrupt;
+   END_IF;
+   
+   SET_EVENT(evSequenceInterrupt, evSequenceInterruptData);
+END_IF;
+
+@END_Body 
+
+@@@BEG_Comment@@@ 
+@TL(0)
+
+@@@END_Comment@@@ 
+
+@BEG_Body 
+@TL(27)
+(**************************************** WARNING ********************************************
+ *** The KEBA Kemro K2 System including software is not intended for safety control tasks! ***
+ ***                       For further information see Comment tab!                        ***
+ *********************************************************************************************)
+
+IF (sv_OperationMode = nSetup) OR (sv_OperationMode = nManual) THEN
+   RETURN;
+END_IF;
+
+IF evSequInterruptData.SequenceInterrupt = nSequenceInterrupt THEN
+   sv_bSequenceInterruption := TRUE;
+   mbResetInterrupt := FALSE;
+   
+   //set led attribute to "flashing" during sequence interrupt
+   sv_bLedHalfAutomatic_ledAttr := 16#3;
+   sv_bLedFullAutomatic_ledAttr := 16#3;
+   
+   sv_bHMILedHalfAutomatic_ledAttr := sv_bLedHalfAutomatic_ledAttr;
+   sv_bHMILedFullAutomatic_ledAttr := sv_bLedFullAutomatic_ledAttr;
+   
+   START_PROCESS_ALGORITHM(paSequenceInterrupted);
+ELSE
+   mbResetInterrupt := TRUE;
+END_IF;
+
+
+
+@END_Body 
+
+@@@BEG_Comment@@@ 
+@TL(0)
+
+@@@END_Comment@@@ 
+
+@BEG_SfcBody 
+10 8 9 
+
+@BEG_SfcData 2 
+@StepSeq @RT(4)sseq @F 3 
+@Step @RT(6)S_Init @F @T @F @F @RT(0) @F 
+@AcbCont @RT(7)unnamed @F 1 
+@Acb @RT(7)Action9 @F @T @RT(1)P @RT(0) @F @F @T @TL(4)
+
+mbLedHalfAutomaticAttrLinked := IS_LINKED(sv_bLedHalfAutomatic_ledAttr);
+mbLedFullAutomaticAttrLinked := IS_LINKED(sv_bLedFullAutomatic_ledAttr);
+
+@F 
+
+@Trans @RT(6)Trans1 @F @T @F @F @T @F @TL(2)
+TRUE
+
+@RT(6)Trans1 @F 
+@Loop @RT(4)loop @F 2 
+@StepSeq @RT(3)seq @F 3 
+@Step @RT(13)S_Interrupted @F @F @F @F @RT(0) @F 
+@AcbCont @RT(7)unnamed @F 0 
+
+@AltBranch @RT(3)alt @F 2 
+@TransSeq @RT(4)tseq @F 3 
+@Trans @RT(15)TResetInterrupt @F @T @F @F @T @F @TL(2)
+mbResetInterrupt
+
+@RT(6)Trans2 @F 
+@Step @RT(12)S_WaitNoMove @F @F @F @F @RT(0) @F 
+@AcbCont @RT(7)unnamed @F 0 
+
+@Trans @RT(17)TNoMovementActive @F @T @F @F @T @F @TL(2)
+sv_ActiveMovements.iNumberOfActiveMovements = 0
+
+@RT(6)Trans4 @F 
+
+@TransSeq @RT(4)tseq @F 1 
+@Trans @RT(14)TOpModeChanged @F @T @T @F @T @F @TL(2)
+sv_OperationMode < nHalfAutomatic
+
+@RT(6)Trans8 @F 
+
+
+@Step @RT(6)S_Stop @F @F @F @F @RT(0) @F 
+@AcbCont @RT(7)unnamed @F 2 
+@Acb @RT(6)AReset @F @T @RT(1)P @RT(0) @F @F @T @TL(14)
+sv_bSequenceInterruption := FALSE;
+//set led attribute to "not flashing"
+sv_bHMILedHalfAutomatic_ledAttr := 16#1;
+sv_bHMILedFullAutomatic_ledAttr := 16#1;
+
+IF mbLedHalfAutomaticAttrLinked THEN
+   sv_bLedHalfAutomatic_ledAttr := sv_bHMILedHalfAutomatic_ledAttr;
+END_IF;   
+
+IF mbLedFullAutomaticAttrLinked THEN
+   sv_bLedFullAutomatic_ledAttr := sv_bHMILedFullAutomatic_ledAttr;
+END_IF;   
+
+
+@F 
+@Acb @RT(5)AStop @F @T @RT(1)P @RT(0) @F @F @T @TL(2)
+STOP_PROCESS_ALGORITHM();
+
+@F 
+
+
+@Trans @RT(6)Trans3 @F @T @T @T @T @T @TL(2)
+TRUE
+
+@RT(6)Trans3 @F 
+
+@END_SfcData 
+@SaActions 1 
+@SaText @RT(7)Action9 1 @TL(0)
+
+
+@SaTrans 0 
+@SaExits 0 
+@END_SfcBody 
+
+@@@BEG_Comment@@@ 
+@TL(0)
+
+@@@END_Comment@@@ 
+@END_Body 
+
+@END_Contents 

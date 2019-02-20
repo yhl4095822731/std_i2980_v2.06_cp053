@@ -1,0 +1,1795 @@
+(*
+@h    ! WARNING !
+@h    The Kemro K2 system (including software) only meets category B according to EN 954-1,
+@h    thus it is not intended for usage in safety-relevant control applications in the field 
+@h    of personal safety (e.g. emergency stop).
+@h    To implement potentially necessary safety-relevant control tasks, always use additional 
+@h    external safety devices that are intended for the particular purpose, and meet the necessary 
+@h    functional safety.
+@h    For further information see EN 954-1 (EN ISO 13849-1) and/or the K2-x00 user manual, chapter 
+@h    "CE conformity, directives and standards".
+
+PDS errorhandling, calculation of automatic mode time and power on time
+*)
+
+IMPORT_OVER_LISTFILE
+ GET_TASK_INTERVAL
+, SET_ALARM
+, SET_EVENT
+, STOP_PROCESS_ALGORITHM
+, ASSERT
+, GET_SYNC_REFTO
+, cNoAction
+, cHoldScrap
+, KMB_PD_SingleEvent
+, tevPartCheck
+, tevHoldScrap
+, ALARM_EVENT
+, tsPdProfileChange
+, tsTraceLevel
+, tySpcSettingsArray
+, tnOperationMode
+, tsDeviceId
+, tySpcMonData
+, tevPartCheckData
+, RTC
+, FBDebugTrace
+, FBPDProfileMap
+, KMB_MeasureBlock2
+, KMB_Status
+, KSYS_Status
+, TON
+, KMB_PD_SingleEventData
+, tevHoldScrapData
+, ALARM_EVENT_DATA
+, FBOpModeHalfAndAutoEntered
+, FBOpModeHalfAndAutoLeft
+
+END_IMPORT
+
+ALGORITHM_BLOCK ABPDP #DUMMY_EDIT_BLOCK
+
+SYSTEM_VAR
+ sv_SpcPreProfileChange : tsPdProfileChange;
+ sv_SpcPostProfileChange : tsPdProfileChange;
+ sv_TraceLevel : tsTraceLevel;
+ sv_PDPTime : TOD;
+ sv_PDGArray : tySpcSettingsArray;
+ sv_iPowerOnTime : LINT;
+ sv_iFullAutoTime : LINT;
+ sv_OperationMode : tnOperationMode;
+ sv_DeviceId : tsDeviceId (* unique Device Identifier *);
+ sv_iPreShotCounter : DINT (* shot counter for spc (increased before ejector movement) *);
+ sv_iSpcTotalErrCount : UINT (* total error counter for spc *);
+ sv_iSpcTotalErrWarnCount : UINT (* total error + warn counter for spc *);
+ sv_SpcMonData : tySpcMonData (* array for collecting spc monitoring data *);
+ sv_bSpcMonDataReset : BOOL (* triggers resetting of spc monitoring data *);
+ sv_iShotCounterAct : DINT;
+END_VAR
+
+SYSTEM_OBJECT
+ EV_Task_3 : TASK;
+ PU_Task_7 : TASK;
+ TaskSlow : TASK;
+ TaskVis : TASK;
+ SystemEventPdcSingle : KMB_PD_SingleEvent;
+ evPartCheck : tevPartCheck;
+ evHoldScrap : tevHoldScrap;
+ evAlarmFinishCycleAndStop : ALARM_EVENT;
+ erPDSOutOfTol : ALARM;
+ erAssert : ALARM;
+END_OBJECT
+
+VAR
+ mevPartCheckData : tevPartCheckData;
+ fbRTC : RTC;
+ fbDebugTrace : FBDebugTrace;
+ fbPreMap : FBPDProfileMap;
+ fbPostMap : FBPDProfileMap;
+ mbMsProfilesConnected : BOOL;
+ abMsProfile1 : KMB_MeasureBlock2;
+ abMsProfile2 : KMB_MeasureBlock2;
+ abMsProfile3 : KMB_MeasureBlock2;
+ mIsKvsSystem : BOOL;
+END_VAR
+
+(*
+@h    ! WARNING !
+@h    The Kemro K2 system (including software) only meets category B according to EN 954-1,
+@h    thus it is not intended for usage in safety-relevant control applications in the field 
+@h    of personal safety (e.g. emergency stop).
+@h    To implement potentially necessary safety-relevant control tasks, always use additional 
+@h    external safety devices that are intended for the particular purpose, and meet the necessary 
+@h    functional safety.
+@h    For further information see EN 954-1 (EN ISO 13849-1) and/or the K2-x00 user manual, chapter 
+@h    "CE conformity, directives and standards".
+
+function for saving MS PDP profiles. 
+initially this function must be called with input bSave = FALSE. 
+
+*)
+
+FUNCTION fMsProfiles : BOOL
+ #DUMMY_EDIT_BLOCK
+
+VAR_INPUT
+ bSave : BOOL;
+END_VAR
+
+VAR
+ s : KMB_Status;
+ s2 : KSYS_Status;
+ pIsKvb : REFTO DINT;
+END_VAR
+#BEGIN_EDIT_BLOCK
+(**************************************** WARNING ********************************************
+ *** The KEBA Kemro K2 System including software is not intended for safety control tasks! ***
+ ***                       For further information see Comment tab!                        ***
+ *********************************************************************************************)
+fMsProfiles := TRUE; 
+
+(*********************************** 
+*  save values of profiles 
+*)
+IF (bSave) THEN
+    IF (NOT mbMsProfilesConnected) THEN 
+       fMsProfiles := FALSE; 
+       RETURN; 
+    END_IF;
+
+   s := abMsProfile1.SaveValuesOnce(); 
+   fMsProfiles := fMsProfiles AND (s = KMB_Status_OK);
+    
+   s := abMsProfile2.SaveValuesOnce(); 
+   fMsProfiles := fMsProfiles AND (s = KMB_Status_OK);    
+    
+   IF (mIsKvsSystem) THEN
+       s := abMsProfile3.SaveValuesOnce(); 
+       fMsProfiles := fMsProfiles AND (s = KMB_Status_OK);
+   END_IF;
+END_IF;
+
+(*********************************** 
+ *  Connect profiles 
+ *)
+IF (NOT mbMsProfilesConnected) THEN
+    s := abMsProfile1.Connect("PDP1_SPC_POST");
+    fMsProfiles := fMsProfiles AND (s = KMB_Status_OK);
+    
+    s := abMsProfile2.Connect("PDP1_SPC_PRE");
+    fMsProfiles := fMsProfiles AND (s = KMB_Status_OK);
+   
+    // kvs system? 
+    pIsKvb := GET_SYNC_REFTO('KVB.sv_MaskID', T#0s, s2);
+    IF (s2 <> KSYS_Status_OK) THEN 
+        mIsKvsSystem := TRUE; 
+        s := abMsProfile3.Connect("PDP1_PDG");
+        fMsProfiles := fMsProfiles AND (s = KMB_Status_OK);
+    END_IF;
+    
+    // ATTENTION: to be thread save this assignment must be the last in this function (no further calls to KMB_MeasureBlock!)
+    mbMsProfilesConnected := fMsProfiles; 
+END_IF;
+
+
+
+
+
+
+;#END_EDIT_BLOCK END_FUNCTION
+
+PROCESS_ALGORITHM paWriteTime ON TaskVis AUTOSTART
+
+#BEGIN_EDIT_BLOCK
+(**************************************** WARNING ********************************************
+ *** The KEBA Kemro K2 System including software is not intended for safety control tasks! ***
+ ***                       For further information see Comment tab!                        ***
+ *********************************************************************************************)
+
+fbRTC();
+//sv_PDPTime := TOD_TO_TIME(DT_TO_TOD(fbRTC.CDT));
+sv_PDPTime := DT_TO_TOD(fbRTC.CDT);
+
+
+;#END_EDIT_BLOCK END_ALGORITHM
+
+PROCESS_ALGORITHM paCalculateMachineTimes ON TaskSlow AUTOSTART
+
+
+VAR
+ mInit : BOOL;
+ fbDelayWriting : TON;
+ dPowerOnTime : TIME (* local power on time (in microseconds) *);
+ dFullAutoTime : TIME (* local full automatic time (in microseconds) *);
+ dLastRunTime : TIME;
+ b : BOOL;
+END_VAR
+#BEGIN_EDIT_BLOCK
+(**************************************** WARNING ********************************************
+ *** The KEBA Kemro K2 System including software is not intended for safety control tasks! ***
+ ***                       For further information see Comment tab!                        ***
+ *********************************************************************************************)
+
+IF NOT mInit THEN
+  
+    // setting the delay timer for writing
+    fbDelayWriting(PT := t#5s, IN := FALSE);
+    fbDelayWriting(IN := TRUE);
+    
+    // reading the retain times at startup (convert from seconds to microseconds)
+    dPowerOnTime := LINT_TO_TIME(MUL(sv_iPowerOnTime, 1000000));
+    dFullAutoTime := LINT_TO_TIME(MUL(sv_iFullAutoTime, 1000000));
+    dLastRunTime := t#0s;
+   
+    b := fMsProfiles(FALSE);
+    b := ASSERT(b, erAssert);
+    mInit := TRUE;
+END_IF;
+
+
+fbDelayWriting();
+
+//calculate the power on time with 64 bit accuracy
+// writing the times to variables which are not retain any more to reduce the writing processes of
+// retain variables
+dPowerOnTime := dPowerOnTime + (GET_RUNTIME() - dLastRunTime);
+
+//calculate the full auto time with 64 bit accuracy
+// writing the times to variables which are not retain any more to reduce the writing processes of
+// retain variables
+IF sv_OperationMode = nFullAutomatic THEN
+    dFullAutoTime := dFullAutoTime + (GET_RUNTIME() - dLastRunTime);
+END_IF;
+
+// store the last measurement time
+dLastRunTime := GET_RUNTIME();
+
+// write the times every 5 seconds (fast retain)
+IF fbDelayWriting.Q THEN
+                                       
+   fbDelayWriting(IN := FALSE);   
+   // write to fast-retain variables (convert from microseconds to seconds)
+   sv_iPowerOnTime := DIV(TIME_TO_LINT(dPowerOnTime), 1000000);
+   sv_iFullAutoTime := DIV(TIME_TO_LINT(dFullAutoTime), 1000000);
+   fbDelayWriting(IN := TRUE);   
+    
+END_IF;
+
+
+;#END_EDIT_BLOCK END_ALGORITHM
+
+EVENT_ALGORITHM evaSpcViolation ON EV_Task_3 WITH SystemEventPdcSingle
+
+
+VAR_INPUT
+ EventData : KMB_PD_SingleEventData;
+END_VAR
+
+VAR_TEMP
+ uId : USINT;
+ Action : INT;
+ ErrorAction : INT;
+ WarnAction : INT;
+ I : INT;
+ J : INT;
+ iVarId : USINT;
+ MonData : tySpcMonData;
+ iTec : UINT;
+ iTewc : UINT;
+ bAlarm : BOOL;
+ bStopCycle : BOOL;
+ bHoldScrap : BOOL;
+ bPreProfile : BOOL;
+END_VAR
+
+VAR
+ evHoldScrapData : tevHoldScrapData;
+ evAlarmEventData : ALARM_EVENT_DATA;
+ // fbDebugTrace : FBDebugTrace;
+END_VAR
+#BEGIN_EDIT_BLOCK
+(**************************************** WARNING ********************************************
+ *** The KEBA Kemro K2 System including software is not intended for safety control tasks! ***
+ ***                       For further information see Comment tab!                        ***
+ *********************************************************************************************)
+
+IF(fbPreMap.ProfileMap.ProfileIndex = 0 OR
+   fbPostMap.ProfileMap.ProfileIndex = 0) THEN
+   RETURN;
+END_IF;
+
+IF (EventData.ProfileIdx = fbPreMap.ProfileMap.ProfileIndex) THEN
+   bPreProfile := TRUE;
+ELSIF (EventData.ProfileIdx = fbPostMap.ProfileMap.ProfileIndex) THEN
+   bPreProfile := FALSE;   
+ELSE
+   (* Invalid profile index *)
+   RETURN; 
+END_IF;      
+
+IF (NOT bPreProfile AND sv_iShotCounterAct = 0) THEN
+   (* Do not raise alarms when shot counter is reset on POST profile *)
+   RETURN;
+END_IF;
+
+MonData := sv_SpcMonData;
+iTec := sv_iSpcTotalErrCount;
+iTewc := sv_iSpcTotalErrWarnCount;
+
+bAlarm := FALSE;
+bStopCycle := FALSE;
+bHoldScrap := FALSE;
+                 
+FOR I := GET_LOW_BOUND(EventData.LimitViolations) TO 
+    MIN(DINT_TO_INT(EventData.ViolationCnt), GET_HIGH_BOUND(EventData.LimitViolations)) DO
+
+   IF (EventData.LimitViolations[I].Violation <> 0) THEN    
+      
+      ErrorAction := cNoAction;
+      WarnAction := cNoAction;
+        
+      iVarId := EventData.LimitViolations[I].VariableIndex; 
+      uId := 0;
+        
+      (* Lookup index in PDG array *)
+      IF (bPreProfile) THEN     
+         IF (iVarId >= GET_LOW_BOUND(fbPreMap.ProfileMap.Map) AND 
+            iVarId <= GET_HIGH_BOUND(fbPreMap.ProfileMap.Map)) THEN
+            uId := fbPreMap.ProfileMap.Map[iVarId];
+         END_IF;
+      ELSE
+         IF (iVarId >= GET_LOW_BOUND(fbPostMap.ProfileMap.Map) AND 
+            iVarId <= GET_HIGH_BOUND(fbPostMap.ProfileMap.Map)) THEN
+            uId := fbPostMap.ProfileMap.Map[iVarId];
+         END_IF;
+      END_IF;
+    
+      IF (uId >= GET_LOW_BOUND(sv_PDGArray) AND 
+         uId <= GET_HIGH_BOUND(sv_PDGArray)) THEN
+            
+         IF (sv_PDGArray[uId].WarnMonActive) THEN
+            (* Upper warning limit violated *)
+            IF ((EventData.LimitViolations[I].Violation AND cKMB_PDS_ViolationWarningUpper) = cKMB_PDS_ViolationWarningUpper) THEN
+               iTewc := iTewc + 1;
+               MonData[uId].iWarnCnt := MonData[uId].iWarnCnt + 1;
+               WarnAction := sv_PDGArray[uId].WarnAction;            
+            END_IF;
+               
+            (* Lower warning limit violated *)         
+            IF ((EventData.LimitViolations[I].Violation AND cKMB_PDS_ViolationWarningLow) = cKMB_PDS_ViolationWarningLow) THEN
+               iTewc := iTewc + 1;
+               MonData[uId].iWarnCnt := MonData[uId].iWarnCnt + 1;       
+               WarnAction := sv_PDGArray[uId].WarnAction;
+            END_IF;
+         END_IF;
+                         
+         IF (sv_PDGArray[uId].ErrMonActive) THEN
+            (* Upper error limit violated *)         
+            IF ((EventData.LimitViolations[I].Violation AND cKMB_PDS_ViolationErrorUpper) = cKMB_PDS_ViolationErrorUpper) THEN
+               iTec := iTec + 1;
+               iTewc := iTewc + 1;
+               MonData[uId].iErrCnt := MonData[uId].iErrCnt + 1;            
+               ErrorAction := sv_PDGArray[uId].TolAction;
+            END_IF;
+                     
+            (* Lower error limit violated *)          
+            IF ((EventData.LimitViolations[I].Violation AND cKMB_PDS_ViolationErrorLow) = cKMB_PDS_ViolationErrorLow) THEN
+               iTec := iTec + 1;
+               iTewc := iTewc + 1;
+               MonData[uId].iErrCnt := MonData[uId].iErrCnt + 1;            
+               ErrorAction := sv_PDGArray[uId].TolAction;            
+            END_IF;
+         END_IF;
+         
+         (* Error / warning actions *)         
+         FOR J := 1 TO 2 DO
+        
+            CASE J OF
+               1: Action := ErrorAction;
+               2: Action := WarnAction;
+            END_CASE;
+                    
+            IF (Action <> cNoAction) THEN
+               mevPartCheckData.bBadPart := TRUE;
+            END_IF;
+                
+            CASE Action OF
+               cLamp:            (* Alarm lamp *) 
+                  IF (NOT bAlarm) THEN
+                     SET_ALARM(Name := erPDSOutOfTol, Param1 := sv_PDGArray[uId].Variable);         
+                     bAlarm := TRUE;
+                  END_IF;
+               
+               cReject:          (* Reject *) 
+                  mevPartCheckData.bReject := TRUE;                                 
+            
+               cLampAndReject:   (* Alarm lamp and reject *) 
+                  IF (NOT bAlarm) THEN
+                     SET_ALARM(Name := erPDSOutOfTol, Param1 := sv_PDGArray[uId].Variable);
+                     bAlarm := TRUE;
+                  END_IF;
+                  mevPartCheckData.bReject := TRUE;               
+               
+               cStopCycle:       (* Stop cycle *) 
+                  IF (NOT bAlarm) THEN
+                     SET_ALARM(Name := erPDSOutOfTol, Param1 := sv_PDGArray[uId].Variable);
+                     bAlarm := TRUE;
+                  END_IF;
+                  IF (NOT bStopCycle) THEN
+                     SET_EVENT(evAlarmFinishCycleAndStop, evAlarmEventData);
+                     bStopCycle := TRUE;
+                  END_IF;
+                  mevPartCheckData.bReject := TRUE;               
+               
+               cHoldScrap:       (* Hold scrap *)
+                  IF (NOT bAlarm) THEN
+                     SET_ALARM(Name := erPDSOutOfTol, Param1 := sv_PDGArray[uId].Variable);
+                     bAlarm := TRUE;
+                  END_IF;
+                  IF (NOT bStopCycle) THEN
+                     SET_EVENT(evAlarmFinishCycleAndStop, evAlarmEventData);
+                     bStopCycle := TRUE;
+                  END_IF; 
+                  IF (NOT bHoldScrap) THEN
+                     evHoldScrapData.DeviceIdSender := sv_DeviceId;
+                     SET_EVENT(evHoldScrap, evHoldScrapData);
+                     bHoldScrap := TRUE;               
+                  END_IF;
+                  mevPartCheckData.bReject := TRUE;                              
+            
+            END_CASE;          
+         END_FOR;
+         
+      END_IF;         
+   END_IF;
+   
+END_FOR;
+
+sv_iSpcTotalErrCount := iTec;
+sv_iSpcTotalErrWarnCount := iTewc;
+sv_SpcMonData := MonData;
+
+
+
+;#END_EDIT_BLOCK END_ALGORITHM
+
+(*
+@h    ! WARNING !
+@h    The Kemro K2 system (including software) only meets category B according to EN 954-1,
+@h    thus it is not intended for usage in safety-relevant control applications in the field 
+@h    of personal safety (e.g. emergency stop).
+@h    To implement potentially necessary safety-relevant control tasks, always use additional 
+@h    external safety devices that are intended for the particular purpose, and meet the necessary 
+@h    functional safety.
+@h    For further information see EN 954-1 (EN ISO 13849-1) and/or the K2-x00 user manual, chapter 
+@h    "CE conformity, directives and standards".
+
+sends the part check event containing data if part is ok or if it should be rejected
+*)
+
+POSTUPDATE_ALGORITHM pSendPartCheckEvent ON PU_Task_7 WITH sv_iPreShotCounter
+
+
+VAR
+ s : STRING(255);
+END_VAR
+#BEGIN_EDIT_BLOCK
+(**************************************** WARNING ********************************************
+ *** The KEBA Kemro K2 System including software is not intended for safety control tasks! ***
+ ***                       For further information see Comment tab!                        ***
+ *********************************************************************************************)
+
+mevPartCheckData.DeviceID := sv_DeviceId;
+
+IF sv_TraceLevel.bApplication THEN
+  s := CONCAT('send evPartCheck badPart = ', 
+              BOOL_TO_STRING(mevPartCheckData.bBadPart), 
+              ' reject = ',             
+              BOOL_TO_STRING(mevPartCheckData.bReject));
+  fbDebugTrace(s);
+END_IF;
+
+SET_EVENT(evPartCheck, mevPartCheckData);
+
+mevPartCheckData.bBadPart := FALSE;
+mevPartCheckData.bReject := FALSE;
+
+
+;#END_EDIT_BLOCK END_ALGORITHM
+
+POSTUPDATE_ALGORITHM pOperationMode ON PU_Task_7 WITH sv_OperationMode
+
+
+VAR
+ fbOpModeHalfAndAutoEntered : FBOpModeHalfAndAutoEntered;
+ fbOpModeHalfAndAutoLeft : FBOpModeHalfAndAutoLeft;
+ b : BOOL;
+END_VAR
+#BEGIN_EDIT_BLOCK
+(**************************************** WARNING ********************************************
+ *** The KEBA Kemro K2 System including software is not intended for safety control tasks! ***
+ ***                       For further information see Comment tab!                        ***
+ *********************************************************************************************)
+fbOpModeHalfAndAutoEntered(sv_OperationMode);
+fbOpModeHalfAndAutoLeft(sv_OperationMode);
+ 
+IF (fbOpModeHalfAndAutoEntered.Q) THEN 
+    // init partcheckdata when cycle is being started. Because data may be set from last autocycle
+    mevPartCheckData.bBadPart := FALSE;
+    mevPartCheckData.bReject := FALSE;
+END_IF;
+
+
+IF (fbOpModeHalfAndAutoLeft.Q) THEN
+    // save profile data when cycle has ended 
+    IF (mbMsProfilesConnected) THEN
+        b := fMsProfiles(bSave := TRUE); 
+    END_IF;
+END_IF;
+
+
+;#END_EDIT_BLOCK END_ALGORITHM
+
+POSTUPDATE_ALGORITHM pPreProfileChange ON PU_Task_7 WITH sv_SpcPreProfileChange.ChangeCounter
+
+#BEGIN_EDIT_BLOCK
+
+fbPreMap(sv_SpcPreProfileChange.ProfileName, @sv_PDGArray);
+
+
+;#END_EDIT_BLOCK END_ALGORITHM
+
+POSTUPDATE_ALGORITHM pPostProfileChange ON PU_Task_7 WITH sv_SpcPostProfileChange.ChangeCounter
+
+#BEGIN_EDIT_BLOCK
+
+fbPostMap(sv_SpcPostProfileChange.ProfileName, @sv_PDGArray);
+
+
+;#END_EDIT_BLOCK END_ALGORITHM
+
+POSTUPDATE_ALGORITHM pResetErrWarnCounters ON PU_Task_7 WITH sv_bSpcMonDataReset
+
+
+VAR_TEMP
+ uId : INT;
+END_VAR
+#BEGIN_EDIT_BLOCK
+IF NOT sv_bSpcMonDataReset THEN
+    RETURN;
+END_IF;
+
+// Reset all counter variables
+sv_iSpcTotalErrCount := 0;
+sv_iSpcTotalErrWarnCount := 0;
+FOR uId:= 1 TO cMaxNumberPDSVars DO
+    sv_SpcMonData[uId].iErrCnt := 0;
+    sv_SpcMonData[uId].iWarnCnt := 0;
+END_FOR;
+
+sv_bSpcMonDataReset := FALSE;
+
+
+;#END_EDIT_BLOCK END_ALGORITHM
+
+
+
+END_ALGORITHM_BLOCK
+
+
+
+#END_OF_IEC_PART
+
+@Puma @IecEditor 6 93 @Pou 25 
+@@@BEG_Comment@@@
+@h    ! WARNING !
+@h    The Kemro K2 system (including software) only meets category B according to EN 954-1,
+@h    thus it is not intended for usage in safety-relevant control applications in the field 
+@h    of personal safety (e.g. emergency stop).
+@h    To implement potentially necessary safety-relevant control tasks, always use additional 
+@h    external safety devices that are intended for the particular purpose, and meet the necessary 
+@h    functional safety.
+@h    For further information see EN 954-1 (EN ISO 13849-1) and/or the K2-x00 user manual, chapter 
+@h    "CE conformity, directives and standards".
+
+PDS errorhandling, calculation of automatic mode time and power on time
+@@@END_Comment@@@
+
+@BEG_Contents 
+
+@BEG_Func 
+@RT(17)FuncTreeContainer 
+6 
+@Var @RT(17)GET_TASK_INTERVAL @RT(0) @T @T @DERIVED 0 @F @RT(22)KEBA_STANDARD_FUNCTION @F 
+@T 
+@BEG_Attrib 
+0 @RT(0) @RT(0) 
+@END_Attrib 
+1 1 @F @F @F @F 
+
+@Var @RT(9)SET_ALARM @RT(0) @T @T @DERIVED 0 @F @RT(23)KEBA_STANDARD_PROCEDURE @F 
+@T 
+@BEG_Attrib 
+0 @RT(0) @RT(0) 
+@END_Attrib 
+1 1 @F @F @F @F 
+
+@Var @RT(9)SET_EVENT @RT(0) @T @T @DERIVED 0 @F @RT(23)KEBA_STANDARD_PROCEDURE @F 
+@T 
+@BEG_Attrib 
+0 @RT(0) @RT(0) 
+@END_Attrib 
+1 1 @F @F @F @F 
+
+@Var @RT(22)STOP_PROCESS_ALGORITHM @RT(0) @T @T @DERIVED 0 @F @RT(23)KEBA_STANDARD_PROCEDURE @F 
+@T 
+@BEG_Attrib 
+0 @RT(0) @RT(0) 
+@END_Attrib 
+1 1 @F @F @F @F 
+
+@Var @RT(6)ASSERT @RT(0) @T @T @DERIVED 0 @F @RT(8)FUNCTION @F 
+@T 
+@BEG_Attrib 
+0 @RT(0) @RT(0) 
+@END_Attrib 
+1 1 @F @F @F @F 
+
+@Var @RT(14)GET_SYNC_REFTO @RT(0) @T @T @DERIVED 0 @F @RT(22)KEBA_STANDARD_FUNCTION @F 
+@T 
+@BEG_Attrib 
+0 @RT(0) @RT(0) 
+@END_Attrib 
+1 1 @F @F @F @F 
+
+@END_Func 
+
+@BEG_Const 
+@RT(18)ConstTreeContainer 
+2 
+@Var @RT(9)cNoAction @RT(0) @T @F @DT @RT(3)INT @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+0 @RT(1)0 @RT(0) 
+@END_Attrib 
+1 1 @F @F @F @F 
+
+@Var @RT(10)cHoldScrap @RT(0) @T @F @DT @RT(3)INT @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+0 @RT(1)5 @RT(0) 
+@END_Attrib 
+1 1 @F @F @F @F 
+
+@END_Const 
+
+@BEG_Export 
+
+@BEG_Kind 
+@ALGORITHM_BLOCK @RT(5)ABPDP @STRUCTURED_TEXT 
+@RT(0) @RT(0) @RT(0) 
+@END_Kind 
+
+@BEG_Dcl 
+@RT(16)DclTreeContainer 
+35 
+@Var @RT(9)EV_Task_3 @RT(0) @T @T @RENAMED 0 @T @T @DT @RT(4)TASK @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 7 @F @F @F @F 
+
+@Var @RT(9)PU_Task_7 @RT(0) @T @T @RENAMED 0 @T @T @DT @RT(4)TASK @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 7 @F @F @F @F 
+
+@Var @RT(8)TaskSlow @RT(0) @T @T @RENAMED 0 @T @T @DT @RT(4)TASK @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 7 @F @F @F @F 
+
+@Var @RT(7)TaskVis @RT(0) @T @F @DT @RT(4)TASK @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 7 @F @F @F @F 
+
+@Var @RT(20)SystemEventPdcSingle @RT(0) @T @T @DERIVED 0 @T @T @DT @RT(18)KMB_PD_SingleEvent @RT(0) @T @T @UNKNOWN 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 7 @F @F @F @F 
+
+@Var @RT(11)evPartCheck @RT(0) @T @T @DERIVED 0 @T @T @DT @RT(12)tevPartCheck @RT(0) @T @T @UNKNOWN 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 7 @F @F @F @F 
+
+@Var @RT(11)evHoldScrap @RT(0) @T @T @DERIVED 0 @T @T @DT @RT(12)tevHoldScrap @RT(0) @T @T @UNKNOWN 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 7 @F @F @F @F 
+
+@Var @RT(25)evAlarmFinishCycleAndStop @RT(0) @T @T @DERIVED 0 @T @T @DT @RT(11)ALARM_EVENT @RT(0) @T @T @UNKNOWN 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 7 @F @F @F @F 
+
+@Var @RT(13)erPDSOutOfTol @RT(0) @T @F @DT @RT(5)ALARM @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 7 @F @F @F @F 
+
+@Var @RT(22)sv_SpcPreProfileChange @RT(0) @T @T @DERIVED 0 @T @T @DT @RT(17)tsPdProfileChange @RT(0) @T @T @UNKNOWN 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 8 @F @F @F @F 
+
+@Var @RT(23)sv_SpcPostProfileChange @RT(0) @T @T @DERIVED 0 @T @T @DT @RT(17)tsPdProfileChange @RT(0) @T @T @UNKNOWN 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 8 @F @F @F @F 
+
+@Var @RT(13)sv_TraceLevel @RT(0) @T @T @DERIVED 0 @T @T @DT @RT(12)tsTraceLevel @RT(0) @T @T @UNKNOWN 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 8 @F @F @F @F 
+
+@Var @RT(10)sv_PDPTime @RT(0) @T @F @DT @RT(3)TOD @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 8 @F @F @F @F 
+
+@Var @RT(11)sv_PDGArray @RT(0) @T @T @DERIVED 0 @T @T @DT @RT(18)tySpcSettingsArray @RT(0) @T @T @UNKNOWN 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 8 @F @F @F @F 
+
+@Var @RT(15)sv_iPowerOnTime @RT(0) @T @F @DT @RT(4)LINT @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 8 @F @F @F @F 
+
+@Var @RT(16)sv_iFullAutoTime @RT(0) @T @F @DT @RT(4)LINT @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 8 @F @F @F @F 
+
+@Var @RT(16)sv_OperationMode @RT(0) @T @T @DERIVED 0 @T @T @DT @RT(15)tnOperationMode @RT(0) @T @T @UNKNOWN 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 8 @F @F @F @F 
+
+@Var @RT(11)sv_DeviceId @RT(0) @T @T @DERIVED 0 @T @T @DT @RT(10)tsDeviceId @RT(0) @T @T @UNKNOWN 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(24)unique Device Identifier @RT(0) 
+@END_Attrib 
+1 8 @F @F @F @F 
+
+@Var @RT(18)sv_iPreShotCounter @RT(0) @T @F @DT @RT(4)DINT @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(56)shot counter for spc (increased before ejector movement) @RT(0) 
+@END_Attrib 
+1 8 @F @F @F @F 
+
+@Var @RT(20)sv_iSpcTotalErrCount @RT(0) @T @F @DT @RT(4)UINT @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(27)total error counter for spc @RT(0) 
+@END_Attrib 
+1 8 @F @F @F @F 
+
+@Var @RT(24)sv_iSpcTotalErrWarnCount @RT(0) @T @F @DT @RT(4)UINT @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(34)total error + warn counter for spc @RT(0) 
+@END_Attrib 
+1 8 @F @F @F @F 
+
+@Var @RT(13)sv_SpcMonData @RT(0) @T @T @DERIVED 0 @T @T @DT @RT(12)tySpcMonData @RT(0) @T @T @UNKNOWN 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(40)array for collecting spc monitoring data @RT(0) 
+@END_Attrib 
+1 8 @F @F @F @F 
+
+@Var @RT(19)sv_bSpcMonDataReset @RT(0) @T @F @DT @RT(4)BOOL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(41)triggers resetting of spc monitoring data @RT(0) 
+@END_Attrib 
+1 8 @F @F @F @F 
+
+@Var @RT(18)sv_iShotCounterAct @RT(0) @T @F @DT @RT(4)DINT @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 8 @F @F @F @F 
+
+@Var @RT(16)mevPartCheckData @RT(0) @T @T @DERIVED 0 @T @T @DT @RT(16)tevPartCheckData @RT(0) @T @T @UNKNOWN 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(5)fbRTC @RT(0) @T @T @DERIVED 0 @T @T @DT @RT(3)RTC @RT(0) @T @T @UNKNOWN 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(12)fbDebugTrace @RT(0) @T @T @DERIVED 0 @T @T @DT @RT(12)FBDebugTrace @RT(0) @T @T @UNKNOWN 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(8)fbPreMap @RT(0) @T @T @DERIVED 0 @T @T @DT @RT(14)FBPDProfileMap @RT(0) @T @T @UNKNOWN 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(9)fbPostMap @RT(0) @T @T @DERIVED 0 @T @T @DT @RT(14)FBPDProfileMap @RT(0) @T @T @UNKNOWN 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(21)mbMsProfilesConnected @RT(0) @T @F @DT @RT(4)BOOL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(8)erAssert @RT(0) @T @F @DT @RT(5)ALARM @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 7 @F @F @F @F 
+
+@Var @RT(12)abMsProfile1 @RT(0) @T @T @DERIVED 0 @T @T @DT @RT(17)KMB_MeasureBlock2 @RT(0) @T @T @UNKNOWN 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(12)abMsProfile2 @RT(0) @T @T @DERIVED 0 @T @T @DT @RT(17)KMB_MeasureBlock2 @RT(0) @T @T @UNKNOWN 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(12)abMsProfile3 @RT(0) @T @T @DERIVED 0 @T @T @DT @RT(17)KMB_MeasureBlock2 @RT(0) @T @T @UNKNOWN 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(12)mIsKvsSystem @RT(0) @T @F @DT @RT(4)BOOL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@END_Dcl 
+
+@END_Export 
+
+@BEG_Body 
+
+9 
+
+@BEG_Export 
+
+@BEG_Algo 
+@FUNCTION @RT(11)fMsProfiles @STRUCTURED_TEXT 
+@RT(4)BOOL @RT(0) @RT(0) @F @F 
+@END_Algo 
+
+@BEG_Dcl 
+@RT(16)DclTreeContainer 
+4 
+@Var @RT(5)bSave @RT(0) @T @F @DT @RT(4)BOOL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 1 @F @F @F @F 
+
+@Var @RT(1)s @RT(0) @T @T @DERIVED 0 @T @T @DT @RT(10)KMB_Status @RT(0) @T @T @UNKNOWN 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(2)s2 @RT(0) @T @T @DERIVED 0 @T @T @DT @RT(11)KSYS_Status @RT(0) @T @T @UNKNOWN 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(6)pIsKvb @RT(0) @T @T @REFTO 0 @T @DT @RT(4)DINT @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@END_Dcl 
+
+@END_Export 
+
+@BEG_Export 
+
+@BEG_Algo 
+@PROCESS_ALGORITHM @RT(11)paWriteTime @STRUCTURED_TEXT 
+@RT(0) @RT(0) @RT(7)TaskVis @T @F 
+@END_Algo 
+
+@BEG_Dcl 
+@RT(16)DclTreeContainer 
+0 
+@END_Dcl 
+
+@END_Export 
+
+@BEG_Export 
+
+@BEG_Algo 
+@PROCESS_ALGORITHM @RT(23)paCalculateMachineTimes @STRUCTURED_TEXT 
+@RT(0) @RT(0) @RT(8)TaskSlow @T @F 
+@END_Algo 
+
+@BEG_Dcl 
+@RT(16)DclTreeContainer 
+6 
+@Var @RT(5)mInit @RT(0) @T @F @DT @RT(4)BOOL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(14)fbDelayWriting @RT(0) @T @T @DERIVED 0 @T @T @DT @RT(3)TON @RT(0) @T @T @UNKNOWN 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(12)dPowerOnTime @RT(0) @T @F @DT @RT(4)TIME @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(37)local power on time (in microseconds) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(13)dFullAutoTime @RT(0) @T @F @DT @RT(4)TIME @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(43)local full automatic time (in microseconds) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(12)dLastRunTime @RT(0) @T @F @DT @RT(4)TIME @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(1)b @RT(0) @T @F @DT @RT(4)BOOL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@END_Dcl 
+
+@END_Export 
+
+@BEG_Export 
+
+@BEG_Algo 
+@EVENT_ALGORITHM @RT(15)evaSpcViolation @STRUCTURED_TEXT 
+@RT(0) @RT(20)SystemEventPdcSingle @RT(9)EV_Task_3 @F @F 
+@END_Algo 
+
+@BEG_Dcl 
+@RT(16)DclTreeContainer 
+18 
+@Var @RT(9)EventData @RT(0) @T @T @DERIVED 0 @T @T @DT @RT(22)KMB_PD_SingleEventData @RT(0) @T @T @UNKNOWN 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 1 @F @F @F @F 
+
+@Var @RT(15)evHoldScrapData @RT(0) @T @T @DERIVED 0 @T @T @DT @RT(16)tevHoldScrapData @RT(0) @T @T @UNKNOWN 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(16)evAlarmEventData @RT(0) @T @T @DERIVED 0 @T @T @DT @RT(16)ALARM_EVENT_DATA @RT(0) @T @T @UNKNOWN 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(12)fbDebugTrace @RT(0) @T @T @DERIVED 0 @T @T @DT @RT(12)FBDebugTrace @RT(0) @T @T @UNKNOWN 0 @F 
+@F @T 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(3)uId @RT(0) @T @F @DT @RT(5)USINT @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 4 @F @F @F @F 
+
+@Var @RT(6)Action @RT(0) @T @F @DT @RT(3)INT @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 4 @F @F @F @F 
+
+@Var @RT(11)ErrorAction @RT(0) @T @F @DT @RT(3)INT @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 4 @F @F @F @F 
+
+@Var @RT(10)WarnAction @RT(0) @T @F @DT @RT(3)INT @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 4 @F @F @F @F 
+
+@Var @RT(1)I @RT(0) @T @F @DT @RT(3)INT @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 4 @F @F @F @F 
+
+@Var @RT(1)J @RT(0) @T @F @DT @RT(3)INT @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 4 @F @F @F @F 
+
+@Var @RT(6)iVarId @RT(0) @T @F @DT @RT(5)USINT @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 4 @F @F @F @F 
+
+@Var @RT(7)MonData @RT(0) @T @T @DERIVED 0 @T @T @DT @RT(12)tySpcMonData @RT(0) @T @T @UNKNOWN 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 4 @F @F @F @F 
+
+@Var @RT(4)iTec @RT(0) @T @F @DT @RT(4)UINT @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 4 @F @F @F @F 
+
+@Var @RT(5)iTewc @RT(0) @T @F @DT @RT(4)UINT @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 4 @F @F @F @F 
+
+@Var @RT(6)bAlarm @RT(0) @T @F @DT @RT(4)BOOL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 4 @F @F @F @F 
+
+@Var @RT(10)bStopCycle @RT(0) @T @F @DT @RT(4)BOOL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 4 @F @F @F @F 
+
+@Var @RT(10)bHoldScrap @RT(0) @T @F @DT @RT(4)BOOL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 4 @F @F @F @F 
+
+@Var @RT(11)bPreProfile @RT(0) @T @F @DT @RT(4)BOOL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 4 @F @F @F @F 
+
+@END_Dcl 
+
+@END_Export 
+
+@BEG_Export 
+
+@BEG_Algo 
+@POSTUPDATE_ALGORITHM @RT(19)pSendPartCheckEvent @STRUCTURED_TEXT 
+@RT(0) @RT(18)sv_iPreShotCounter @RT(9)PU_Task_7 @F @F 
+@END_Algo 
+
+@BEG_Dcl 
+@RT(16)DclTreeContainer 
+1 
+@Var @RT(1)s @RT(0) @T @F @DT @RT(11)STRING(255) @RT(0) @T @T @STRING 0 @F @RT(3)255 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@END_Dcl 
+
+@END_Export 
+
+@BEG_Export 
+
+@BEG_Algo 
+@POSTUPDATE_ALGORITHM @RT(14)pOperationMode @STRUCTURED_TEXT 
+@RT(0) @RT(16)sv_OperationMode @RT(9)PU_Task_7 @F @F 
+@END_Algo 
+
+@BEG_Dcl 
+@RT(16)DclTreeContainer 
+3 
+@Var @RT(26)fbOpModeHalfAndAutoEntered @RT(0) @T @T @DERIVED 0 @T @T @DT @RT(26)FBOpModeHalfAndAutoEntered @RT(0) @T @T @UNKNOWN 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(23)fbOpModeHalfAndAutoLeft @RT(0) @T @T @DERIVED 0 @T @T @DT @RT(23)FBOpModeHalfAndAutoLeft @RT(0) @T @T @UNKNOWN 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(1)b @RT(0) @T @F @DT @RT(4)BOOL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@END_Dcl 
+
+@END_Export 
+
+@BEG_Export 
+
+@BEG_Algo 
+@POSTUPDATE_ALGORITHM @RT(17)pPreProfileChange @STRUCTURED_TEXT 
+@RT(0) @RT(36)sv_SpcPreProfileChange.ChangeCounter @RT(9)PU_Task_7 @F @F 
+@END_Algo 
+
+@BEG_Dcl 
+@RT(16)DclTreeContainer 
+0 
+@END_Dcl 
+
+@END_Export 
+
+@BEG_Export 
+
+@BEG_Algo 
+@POSTUPDATE_ALGORITHM @RT(18)pPostProfileChange @STRUCTURED_TEXT 
+@RT(0) @RT(37)sv_SpcPostProfileChange.ChangeCounter @RT(9)PU_Task_7 @F @F 
+@END_Algo 
+
+@BEG_Dcl 
+@RT(16)DclTreeContainer 
+0 
+@END_Dcl 
+
+@END_Export 
+
+@BEG_Export 
+
+@BEG_Algo 
+@POSTUPDATE_ALGORITHM @RT(21)pResetErrWarnCounters @STRUCTURED_TEXT 
+@RT(0) @RT(19)sv_bSpcMonDataReset @RT(9)PU_Task_7 @F @F 
+@END_Algo 
+
+@BEG_Dcl 
+@RT(16)DclTreeContainer 
+1 
+@Var @RT(3)uId @RT(0) @T @F @DT @RT(3)INT @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 4 @F @F @F @F 
+
+@END_Dcl 
+
+@END_Export 
+
+@BEG_Body 
+@TL(53)
+(**************************************** WARNING ********************************************
+ *** The KEBA Kemro K2 System including software is not intended for safety control tasks! ***
+ ***                       For further information see Comment tab!                        ***
+ *********************************************************************************************)
+fMsProfiles := TRUE; 
+
+(*********************************** 
+*  save values of profiles 
+*)
+IF (bSave) THEN
+    IF (NOT mbMsProfilesConnected) THEN 
+       fMsProfiles := FALSE; 
+       RETURN; 
+    END_IF;
+
+   s := abMsProfile1.SaveValuesOnce(); 
+   fMsProfiles := fMsProfiles AND (s = KMB_Status_OK);
+    
+   s := abMsProfile2.SaveValuesOnce(); 
+   fMsProfiles := fMsProfiles AND (s = KMB_Status_OK);    
+    
+   IF (mIsKvsSystem) THEN
+       s := abMsProfile3.SaveValuesOnce(); 
+       fMsProfiles := fMsProfiles AND (s = KMB_Status_OK);
+   END_IF;
+END_IF;
+
+(*********************************** 
+ *  Connect profiles 
+ *)
+IF (NOT mbMsProfilesConnected) THEN
+    s := abMsProfile1.Connect("PDP1_SPC_POST");
+    fMsProfiles := fMsProfiles AND (s = KMB_Status_OK);
+    
+    s := abMsProfile2.Connect("PDP1_SPC_PRE");
+    fMsProfiles := fMsProfiles AND (s = KMB_Status_OK);
+   
+    // kvs system? 
+    pIsKvb := GET_SYNC_REFTO('KVB.sv_MaskID', T#0s, s2);
+    IF (s2 <> KSYS_Status_OK) THEN 
+        mIsKvsSystem := TRUE; 
+        s := abMsProfile3.Connect("PDP1_PDG");
+        fMsProfiles := fMsProfiles AND (s = KMB_Status_OK);
+    END_IF;
+    
+    // ATTENTION: to be thread save this assignment must be the last in this function (no further calls to KMB_MeasureBlock!)
+    mbMsProfilesConnected := fMsProfiles; 
+END_IF;
+
+
+
+
+
+@END_Body 
+
+@@@BEG_Comment@@@ 
+@TL(13)
+@h    ! WARNING !
+@h    The Kemro K2 system (including software) only meets category B according to EN 954-1,
+@h    thus it is not intended for usage in safety-relevant control applications in the field 
+@h    of personal safety (e.g. emergency stop).
+@h    To implement potentially necessary safety-relevant control tasks, always use additional 
+@h    external safety devices that are intended for the particular purpose, and meet the necessary 
+@h    functional safety.
+@h    For further information see EN 954-1 (EN ISO 13849-1) and/or the K2-x00 user manual, chapter 
+@h    "CE conformity, directives and standards".
+
+function for saving MS PDP profiles. 
+initially this function must be called with input bSave = FALSE. 
+
+@@@END_Comment@@@ 
+
+@BEG_Body 
+@TL(9)
+(**************************************** WARNING ********************************************
+ *** The KEBA Kemro K2 System including software is not intended for safety control tasks! ***
+ ***                       For further information see Comment tab!                        ***
+ *********************************************************************************************)
+
+fbRTC();
+//sv_PDPTime := TOD_TO_TIME(DT_TO_TOD(fbRTC.CDT));
+sv_PDPTime := DT_TO_TOD(fbRTC.CDT);
+
+@END_Body 
+
+@@@BEG_Comment@@@ 
+@TL(0)
+
+@@@END_Comment@@@ 
+
+@BEG_Body 
+@TL(50)
+(**************************************** WARNING ********************************************
+ *** The KEBA Kemro K2 System including software is not intended for safety control tasks! ***
+ ***                       For further information see Comment tab!                        ***
+ *********************************************************************************************)
+
+IF NOT mInit THEN
+  
+    // setting the delay timer for writing
+    fbDelayWriting(PT := t#5s, IN := FALSE);
+    fbDelayWriting(IN := TRUE);
+    
+    // reading the retain times at startup (convert from seconds to microseconds)
+    dPowerOnTime := LINT_TO_TIME(MUL(sv_iPowerOnTime, 1000000));
+    dFullAutoTime := LINT_TO_TIME(MUL(sv_iFullAutoTime, 1000000));
+    dLastRunTime := t#0s;
+   
+    b := fMsProfiles(FALSE);
+    b := ASSERT(b, erAssert);
+    mInit := TRUE;
+END_IF;
+
+
+fbDelayWriting();
+
+//calculate the power on time with 64 bit accuracy
+// writing the times to variables which are not retain any more to reduce the writing processes of
+// retain variables
+dPowerOnTime := dPowerOnTime + (GET_RUNTIME() - dLastRunTime);
+
+//calculate the full auto time with 64 bit accuracy
+// writing the times to variables which are not retain any more to reduce the writing processes of
+// retain variables
+IF sv_OperationMode = nFullAutomatic THEN
+    dFullAutoTime := dFullAutoTime + (GET_RUNTIME() - dLastRunTime);
+END_IF;
+
+// store the last measurement time
+dLastRunTime := GET_RUNTIME();
+
+// write the times every 5 seconds (fast retain)
+IF fbDelayWriting.Q THEN
+                                       
+   fbDelayWriting(IN := FALSE);   
+   // write to fast-retain variables (convert from microseconds to seconds)
+   sv_iPowerOnTime := DIV(TIME_TO_LINT(dPowerOnTime), 1000000);
+   sv_iFullAutoTime := DIV(TIME_TO_LINT(dFullAutoTime), 1000000);
+   fbDelayWriting(IN := TRUE);   
+    
+END_IF;
+
+@END_Body 
+
+@@@BEG_Comment@@@ 
+@TL(0)
+
+@@@END_Comment@@@ 
+
+@BEG_Body 
+@TL(162)
+(**************************************** WARNING ********************************************
+ *** The KEBA Kemro K2 System including software is not intended for safety control tasks! ***
+ ***                       For further information see Comment tab!                        ***
+ *********************************************************************************************)
+
+IF(fbPreMap.ProfileMap.ProfileIndex = 0 OR
+   fbPostMap.ProfileMap.ProfileIndex = 0) THEN
+   RETURN;
+END_IF;
+
+IF (EventData.ProfileIdx = fbPreMap.ProfileMap.ProfileIndex) THEN
+   bPreProfile := TRUE;
+ELSIF (EventData.ProfileIdx = fbPostMap.ProfileMap.ProfileIndex) THEN
+   bPreProfile := FALSE;   
+ELSE
+   (* Invalid profile index *)
+   RETURN; 
+END_IF;      
+
+IF (NOT bPreProfile AND sv_iShotCounterAct = 0) THEN
+   (* Do not raise alarms when shot counter is reset on POST profile *)
+   RETURN;
+END_IF;
+
+MonData := sv_SpcMonData;
+iTec := sv_iSpcTotalErrCount;
+iTewc := sv_iSpcTotalErrWarnCount;
+
+bAlarm := FALSE;
+bStopCycle := FALSE;
+bHoldScrap := FALSE;
+                 
+FOR I := GET_LOW_BOUND(EventData.LimitViolations) TO 
+    MIN(DINT_TO_INT(EventData.ViolationCnt), GET_HIGH_BOUND(EventData.LimitViolations)) DO
+
+   IF (EventData.LimitViolations[I].Violation <> 0) THEN    
+      
+      ErrorAction := cNoAction;
+      WarnAction := cNoAction;
+        
+      iVarId := EventData.LimitViolations[I].VariableIndex; 
+      uId := 0;
+        
+      (* Lookup index in PDG array *)
+      IF (bPreProfile) THEN     
+         IF (iVarId >= GET_LOW_BOUND(fbPreMap.ProfileMap.Map) AND 
+            iVarId <= GET_HIGH_BOUND(fbPreMap.ProfileMap.Map)) THEN
+            uId := fbPreMap.ProfileMap.Map[iVarId];
+         END_IF;
+      ELSE
+         IF (iVarId >= GET_LOW_BOUND(fbPostMap.ProfileMap.Map) AND 
+            iVarId <= GET_HIGH_BOUND(fbPostMap.ProfileMap.Map)) THEN
+            uId := fbPostMap.ProfileMap.Map[iVarId];
+         END_IF;
+      END_IF;
+    
+      IF (uId >= GET_LOW_BOUND(sv_PDGArray) AND 
+         uId <= GET_HIGH_BOUND(sv_PDGArray)) THEN
+            
+         IF (sv_PDGArray[uId].WarnMonActive) THEN
+            (* Upper warning limit violated *)
+            IF ((EventData.LimitViolations[I].Violation AND cKMB_PDS_ViolationWarningUpper) = cKMB_PDS_ViolationWarningUpper) THEN
+               iTewc := iTewc + 1;
+               MonData[uId].iWarnCnt := MonData[uId].iWarnCnt + 1;
+               WarnAction := sv_PDGArray[uId].WarnAction;            
+            END_IF;
+               
+            (* Lower warning limit violated *)         
+            IF ((EventData.LimitViolations[I].Violation AND cKMB_PDS_ViolationWarningLow) = cKMB_PDS_ViolationWarningLow) THEN
+               iTewc := iTewc + 1;
+               MonData[uId].iWarnCnt := MonData[uId].iWarnCnt + 1;       
+               WarnAction := sv_PDGArray[uId].WarnAction;
+            END_IF;
+         END_IF;
+                         
+         IF (sv_PDGArray[uId].ErrMonActive) THEN
+            (* Upper error limit violated *)         
+            IF ((EventData.LimitViolations[I].Violation AND cKMB_PDS_ViolationErrorUpper) = cKMB_PDS_ViolationErrorUpper) THEN
+               iTec := iTec + 1;
+               iTewc := iTewc + 1;
+               MonData[uId].iErrCnt := MonData[uId].iErrCnt + 1;            
+               ErrorAction := sv_PDGArray[uId].TolAction;
+            END_IF;
+                     
+            (* Lower error limit violated *)          
+            IF ((EventData.LimitViolations[I].Violation AND cKMB_PDS_ViolationErrorLow) = cKMB_PDS_ViolationErrorLow) THEN
+               iTec := iTec + 1;
+               iTewc := iTewc + 1;
+               MonData[uId].iErrCnt := MonData[uId].iErrCnt + 1;            
+               ErrorAction := sv_PDGArray[uId].TolAction;            
+            END_IF;
+         END_IF;
+         
+         (* Error / warning actions *)         
+         FOR J := 1 TO 2 DO
+        
+            CASE J OF
+               1: Action := ErrorAction;
+               2: Action := WarnAction;
+            END_CASE;
+                    
+            IF (Action <> cNoAction) THEN
+               mevPartCheckData.bBadPart := TRUE;
+            END_IF;
+                
+            CASE Action OF
+               cLamp:            (* Alarm lamp *) 
+                  IF (NOT bAlarm) THEN
+                     SET_ALARM(Name := erPDSOutOfTol, Param1 := sv_PDGArray[uId].Variable);         
+                     bAlarm := TRUE;
+                  END_IF;
+               
+               cReject:          (* Reject *) 
+                  mevPartCheckData.bReject := TRUE;                                 
+            
+               cLampAndReject:   (* Alarm lamp and reject *) 
+                  IF (NOT bAlarm) THEN
+                     SET_ALARM(Name := erPDSOutOfTol, Param1 := sv_PDGArray[uId].Variable);
+                     bAlarm := TRUE;
+                  END_IF;
+                  mevPartCheckData.bReject := TRUE;               
+               
+               cStopCycle:       (* Stop cycle *) 
+                  IF (NOT bAlarm) THEN
+                     SET_ALARM(Name := erPDSOutOfTol, Param1 := sv_PDGArray[uId].Variable);
+                     bAlarm := TRUE;
+                  END_IF;
+                  IF (NOT bStopCycle) THEN
+                     SET_EVENT(evAlarmFinishCycleAndStop, evAlarmEventData);
+                     bStopCycle := TRUE;
+                  END_IF;
+                  mevPartCheckData.bReject := TRUE;               
+               
+               cHoldScrap:       (* Hold scrap *)
+                  IF (NOT bAlarm) THEN
+                     SET_ALARM(Name := erPDSOutOfTol, Param1 := sv_PDGArray[uId].Variable);
+                     bAlarm := TRUE;
+                  END_IF;
+                  IF (NOT bStopCycle) THEN
+                     SET_EVENT(evAlarmFinishCycleAndStop, evAlarmEventData);
+                     bStopCycle := TRUE;
+                  END_IF; 
+                  IF (NOT bHoldScrap) THEN
+                     evHoldScrapData.DeviceIdSender := sv_DeviceId;
+                     SET_EVENT(evHoldScrap, evHoldScrapData);
+                     bHoldScrap := TRUE;               
+                  END_IF;
+                  mevPartCheckData.bReject := TRUE;                              
+            
+            END_CASE;          
+         END_FOR;
+         
+      END_IF;         
+   END_IF;
+   
+END_FOR;
+
+sv_iSpcTotalErrCount := iTec;
+sv_iSpcTotalErrWarnCount := iTewc;
+sv_SpcMonData := MonData;
+
+
+@END_Body 
+
+@@@BEG_Comment@@@ 
+@TL(0)
+
+@@@END_Comment@@@ 
+
+@BEG_Body 
+@TL(20)
+(**************************************** WARNING ********************************************
+ *** The KEBA Kemro K2 System including software is not intended for safety control tasks! ***
+ ***                       For further information see Comment tab!                        ***
+ *********************************************************************************************)
+
+mevPartCheckData.DeviceID := sv_DeviceId;
+
+IF sv_TraceLevel.bApplication THEN
+  s := CONCAT('send evPartCheck badPart = ', 
+              BOOL_TO_STRING(mevPartCheckData.bBadPart), 
+              ' reject = ',             
+              BOOL_TO_STRING(mevPartCheckData.bReject));
+  fbDebugTrace(s);
+END_IF;
+
+SET_EVENT(evPartCheck, mevPartCheckData);
+
+mevPartCheckData.bBadPart := FALSE;
+mevPartCheckData.bReject := FALSE;
+
+@END_Body 
+
+@@@BEG_Comment@@@ 
+@TL(11)
+@h    ! WARNING !
+@h    The Kemro K2 system (including software) only meets category B according to EN 954-1,
+@h    thus it is not intended for usage in safety-relevant control applications in the field 
+@h    of personal safety (e.g. emergency stop).
+@h    To implement potentially necessary safety-relevant control tasks, always use additional 
+@h    external safety devices that are intended for the particular purpose, and meet the necessary 
+@h    functional safety.
+@h    For further information see EN 954-1 (EN ISO 13849-1) and/or the K2-x00 user manual, chapter 
+@h    "CE conformity, directives and standards".
+
+sends the part check event containing data if part is ok or if it should be rejected
+@@@END_Comment@@@ 
+
+@BEG_Body 
+@TL(21)
+(**************************************** WARNING ********************************************
+ *** The KEBA Kemro K2 System including software is not intended for safety control tasks! ***
+ ***                       For further information see Comment tab!                        ***
+ *********************************************************************************************)
+fbOpModeHalfAndAutoEntered(sv_OperationMode);
+fbOpModeHalfAndAutoLeft(sv_OperationMode);
+ 
+IF (fbOpModeHalfAndAutoEntered.Q) THEN 
+    // init partcheckdata when cycle is being started. Because data may be set from last autocycle
+    mevPartCheckData.bBadPart := FALSE;
+    mevPartCheckData.bReject := FALSE;
+END_IF;
+
+
+IF (fbOpModeHalfAndAutoLeft.Q) THEN
+    // save profile data when cycle has ended 
+    IF (mbMsProfilesConnected) THEN
+        b := fMsProfiles(bSave := TRUE); 
+    END_IF;
+END_IF;
+
+@END_Body 
+
+@@@BEG_Comment@@@ 
+@TL(0)
+
+@@@END_Comment@@@ 
+
+@BEG_Body 
+@TL(3)
+
+fbPreMap(sv_SpcPreProfileChange.ProfileName, @sv_PDGArray);
+
+@END_Body 
+
+@@@BEG_Comment@@@ 
+@TL(0)
+
+@@@END_Comment@@@ 
+
+@BEG_Body 
+@TL(3)
+
+fbPostMap(sv_SpcPostProfileChange.ProfileName, @sv_PDGArray);
+
+@END_Body 
+
+@@@BEG_Comment@@@ 
+@TL(0)
+
+@@@END_Comment@@@ 
+
+@BEG_Body 
+@TL(14)
+IF NOT sv_bSpcMonDataReset THEN
+    RETURN;
+END_IF;
+
+// Reset all counter variables
+sv_iSpcTotalErrCount := 0;
+sv_iSpcTotalErrWarnCount := 0;
+FOR uId:= 1 TO cMaxNumberPDSVars DO
+    sv_SpcMonData[uId].iErrCnt := 0;
+    sv_SpcMonData[uId].iWarnCnt := 0;
+END_FOR;
+
+sv_bSpcMonDataReset := FALSE;
+
+@END_Body 
+
+@@@BEG_Comment@@@ 
+@TL(0)
+
+@@@END_Comment@@@ 
+@END_Body 
+
+@END_Contents 

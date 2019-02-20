@@ -1,0 +1,1257 @@
+IMPORT_OVER_LISTFILE
+ GET_MY_FU_NAME
+, KSWO_AddVariable
+, WRITE_SVREAL_DIRECT
+, FAddToScopeGroup
+, KAPPL_LintabData_2P
+, KAPPL_LintabData
+, KAPPL_MeasureMonitoring
+, tsDerivationEstimateParam
+, ABCalcVelocity
+, KAPPL_VisProfile
+, tnDataState
+, tsLintabLoaderData
+, KSWO_Status
+, ABMeasureAnalog
+, ABMeasureAI
+, TON
+
+END_IMPORT
+
+ALGORITHM_BLOCK ABMeasure #DUMMY_EDIT_BLOCK
+
+SYSTEM_VAR
+ sv_rMoldPosOffset : REAL (* Added to the actual moldposition, calculated by the clamppressure setting *);
+ sv_rMoldPosition : REAL;
+ ai_Position : REAL;
+ sv_ToggleLeverPosLintab : KAPPL_LintabData_2P (* lintab for voltage(x) -> toggle lever pos(y) *);
+ sv_ToggleLeverLintab : KAPPL_LintabData (* lintab for toggle lever pos(x) -> platen pos(y) *);
+ sv_bTransducerError : BOOL;
+ sv_rToggleLeverPosition : REAL;
+ sv_rToggleLeverVelocity : REAL;
+ sv_rToggleLeverVelEstimate : REAL;
+ sv_rMoldVelocity : REAL;
+ sv_rMoldVelEstimate : REAL;
+ sv_ToggleLeverMonitorMeas : KAPPL_MeasureMonitoring;
+ sv_MoldPosMonitorMeas : KAPPL_MeasureMonitoring;
+ sv_DerivationEstimateParam : tsDerivationEstimateParam;
+ sv_DerivationEstimateParToggle : tsDerivationEstimateParam;
+ sv_bDeviceReady : BOOL;
+ di_MoldClosed : BOOL;
+ sv_rMonTolerance : REAL (* tolerance for endpos monitoring *);
+ sv_dHighPresKeepTime : TIME (* additional time delay for highpressure stage finished *);
+ sv_bMoldClosed : BOOL;
+ sv_dVelFilterTime : TIME;
+ sv_MoldFwdProfVisSrc : KAPPL_VisProfile;
+ sv_DataState : tnDataState;
+ sv_LintabLoaderDataToggleLever : tsLintabLoaderData;
+ sv_rToggleLeverPositionAbs : REAL;
+ sv_rMaxMoldStroke : REAL (* Maximum Stroke of Mold (without a mounted mold); relevant for direct lock and 2 platen IMM´s *);
+ sv_rMoldStroke : REAL;
+END_VAR
+
+SYSTEM_OBJECT
+ TaskAnalog : TASK;
+ TaskSlow : TASK;
+ PU_Task_7 : TASK;
+ PU_Task_3 : TASK;
+END_OBJECT
+
+VAR_EXTERNAL
+ g_bDirectLockAvailable : BOOL;
+ g_b2Platen : BOOL;
+END_VAR
+
+VAR
+ abCalcVelocity : ABCalcVelocity;
+END_VAR
+
+PROCESS_ALGORITHM paInitDebugMeasurement ON TaskSlow AUTOSTART
+
+
+VAR
+ fuName : STRING(32);
+ variableName : STRING(255);
+ swoState : KSWO_Status;
+ b : BOOL;
+END_VAR
+#BEGIN_EDIT_BLOCK
+(**************************************** WARNING ********************************************
+ *** The KEBA Kemro K2 System including software is not intended for safety control tasks! ***
+ ***                       For further information see Comment tab!                        ***
+ *********************************************************************************************)
+
+fuName := GET_MY_FU_NAME();
+variableName := CONCAT(fuName,'.rTogglePos mm');
+swoState := KSWO_AddVariable( Task := TaskAnalog,
+                              Name := variableName,
+                              Variable := sv_rToggleLeverPosition);
+b := FAddToScopeGroup(Task := TaskAnalog, 
+                      Name := variableName, 
+                      GroupId := cScopeGroupMold);
+variableName := CONCAT(fuName,'.rToggleVel mm/s');
+swoState := KSWO_AddVariable( Task := TaskAnalog,
+                              Name := variableName,
+                              Variable := sv_rToggleLeverVelocity);
+b := FAddToScopeGroup(Task := TaskAnalog, 
+                      Name := variableName, 
+                      GroupId := cScopeGroupMold);
+variableName := CONCAT(fuName,'.rMoldPos mm');
+swoState := KSWO_AddVariable( Task := TaskAnalog,
+                              Name := variableName,
+                              Variable := sv_rMoldPosition);
+b := FAddToScopeGroup(Task := TaskAnalog, 
+                      Name := variableName, 
+                      GroupId := cScopeGroupMold);
+variableName := CONCAT(fuName,'.sv_rToggleVelEstimate mm/s');
+swoState := KSWO_AddVariable( Task := TaskAnalog,
+                              Name := variableName,
+                              Variable := sv_rToggleLeverVelEstimate);
+b := FAddToScopeGroup(Task := TaskAnalog, 
+                      Name := variableName, 
+                      GroupId := cScopeGroupMold);
+variableName := CONCAT(fuName,'.sv_rMoldVelocity mm/s');
+swoState := KSWO_AddVariable( Task := TaskAnalog,
+                              Name := variableName,
+                              Variable := sv_rMoldVelocity);
+b := FAddToScopeGroup(Task := TaskAnalog, 
+                      Name := variableName, 
+                      GroupId := cScopeGroupMold);
+variableName := CONCAT(fuName,'.sv_rMoldVelEstimate mm/s');
+swoState := KSWO_AddVariable( Task := TaskAnalog,
+                              Name := variableName,
+                              Variable := sv_rMoldVelEstimate);
+b := FAddToScopeGroup(Task := TaskAnalog, 
+                      Name := variableName, 
+                      GroupId := cScopeGroupMold);
+
+STOP_PROCESS_ALGORITHM();
+
+
+;#END_EDIT_BLOCK END_ALGORITHM
+
+PROCESS_ALGORITHM paMeasure ON TaskAnalog(1000) AUTOSTART
+
+
+VAR_TEMP
+ bClosed : BOOL;
+ b : BOOL;
+ rToggleLeverPosition : REAL;
+END_VAR
+
+VAR
+ abMeasureMoldPos : ABMeasureAnalog;
+ abMeasureToggleLeverPos : ABMeasureAI;
+ bDIMoldClosedLinked : BOOL;
+ fbKeepHighPresTon : TON;
+END_VAR
+
+(* IecGraph-Code *)
+
+(* init step *)
+INITIAL_STEP S_Start:
+END_STEP
+
+
+(* steps *)
+STEP S_Stop:
+AStop (P);
+END_STEP
+
+ACTION AStop: #BEGIN_EDIT_BLOCK
+STOP_PROCESS_ALGORITHM();
+
+;#END_EDIT_BLOCK END_ACTION (*AStop*)
+STEP S_Init:
+AInitMeasureBlock (P);
+ACheckDILinked (P);
+END_STEP
+
+STEP S_Measure:
+AMeasure (N);
+ACheckMoldClosed (N);
+END_STEP
+
+
+(* transitions *)
+TRANSITION TLinked (* TLinked *) FROM S_Start TO S_Init :=  #BEGIN_EDIT_BLOCK
+IS_LINKED(ai_Position)
+;#END_EDIT_BLOCK
+END_TRANSITION
+
+TRANSITION TNotLinked (* TNotLinked *) FROM S_Start TO S_Stop :=  #BEGIN_EDIT_BLOCK
+NOT IS_LINKED(ai_Position)
+;#END_EDIT_BLOCK
+END_TRANSITION
+
+TRANSITION TStop (* TStop *) FROM S_Stop TO S_Start :=  #BEGIN_EDIT_BLOCK
+TRUE
+;#END_EDIT_BLOCK
+END_TRANSITION
+
+TRANSITION TInitDone (* TInitDone *) FROM S_Init TO S_Measure :=  #BEGIN_EDIT_BLOCK
+TRUE
+;#END_EDIT_BLOCK
+END_TRANSITION
+
+(* end IecGraph-Code *)
+(* sfc-code *)
+
+(* stand alone actions *)
+ACTION ACheckDILinked: #BEGIN_EDIT_BLOCK
+(**************************************** WARNING ********************************************
+ *** The KEBA Kemro K2 System including software is not intended for safety control tasks! ***
+ ***                       For further information see Comment tab!                        ***
+ *********************************************************************************************)
+
+bDIMoldClosedLinked := IS_LINKED(di_MoldClosed);
+
+;#END_EDIT_BLOCK END_ACTION (*ACheckDILinked*)
+ACTION ACheckMoldClosed: #BEGIN_EDIT_BLOCK
+(**************************************** WARNING ********************************************
+ *** The KEBA Kemro K2 System including software is not intended for safety control tasks! ***
+ ***                       For further information see Comment tab!                        ***
+ *********************************************************************************************)
+
+//target position of mold close movement = 0.0 mm
+//for target position reached a tolerance is considered
+IF (bDIMoldClosedLinked) THEN
+   bClosed := (sv_rMoldPosition <= sv_rMonTolerance) AND di_MoldClosed;
+ELSE
+   bClosed := (sv_rMoldPosition <= sv_rMonTolerance);
+END_IF;
+
+IF g_b2Platen THEN
+   sv_bMoldClosed := (sv_rMoldPosition <= (sv_MoldFwdProfVisSrc.Profile.Points[19].rStartPos + sv_rMonTolerance));
+ELSIF (g_bDirectLockAvailable) THEN
+   sv_bMoldClosed := bClosed;
+ELSE    
+   // for hydraulic toggle lever machines run additional high pressure keep time
+   fbKeepHighPresTon(bClosed, sv_dHighPresKeepTime);
+   sv_bMoldClosed := fbKeepHighPresTon.Q;
+END_IF;
+        
+
+
+
+;#END_EDIT_BLOCK END_ACTION (*ACheckMoldClosed*)
+ACTION AMeasure: #BEGIN_EDIT_BLOCK
+(**************************************** WARNING ********************************************
+ *** The KEBA Kemro K2 System including software is not intended for safety control tasks! ***
+ ***                       For further information see Comment tab!                        ***
+ *********************************************************************************************)
+
+abMeasureToggleLeverPos.aRun(bIdle := sv_bDeviceReady);
+b := WRITE_SVREAL_DIRECT(sv_rToggleLeverPositionAbs, abMeasureToggleLeverPos.aRun.rValue);
+rToggleLeverPosition := abMeasureToggleLeverPos.aRun.rValue - sv_rMoldPosOffset;
+sv_bTransducerError := abMeasureToggleLeverPos.aRun.bSensorError;
+
+b := WRITE_SVREAL_DIRECT(sv_rToggleLeverPosition, rToggleLeverPosition);
+b := WRITE_SVREAL_DIRECT(sv_rToggleLeverVelocity, abMeasureToggleLeverPos.aRun.rVelocity);
+IF (sv_DerivationEstimateParToggle.bUseDerivationEstimator) THEN
+   b := WRITE_SVREAL_DIRECT(sv_rToggleLeverVelEstimate, abMeasureToggleLeverPos.aRun.rDiffValueEstimate);
+ELSE
+   b := WRITE_SVREAL_DIRECT(sv_rToggleLeverVelEstimate, abMeasureToggleLeverPos.aRun.rVelocitySign); 
+END_IF;
+
+
+// the offset which is subtracted from the moldposition is calculated by the clamppressuresetting.
+// clamp pressure is built if the togglelever is extruded (= durchgedrückt) - then the toggleleverposition is 0mm
+// if the mold is closed without building clamppressure the moldposition must be 0mm -> toggleleverposition is bigger than 0
+// -> the offset between toggleleverposition and moldposition is the distance for building clamppressure (= the extension of the tiebar)
+abMeasureMoldPos.aRunLight(rRawValue := sv_rToggleLeverPosition);
+b := WRITE_SVREAL_DIRECT(sv_rMoldPosition, abMeasureMoldPos.aRunLight.rValue);
+
+// The velocity is calculated with estimater.
+abCalcVelocity.aCalculate(Position := sv_rMoldPosition);
+b := WRITE_SVREAL_DIRECT(sv_rMoldVelocity, abCalcVelocity.aCalculate.Velocity);
+b := WRITE_SVREAL_DIRECT(sv_rMoldVelEstimate, abCalcVelocity.aCalculate.rDiffValueEstimate);
+
+
+;#END_EDIT_BLOCK END_ACTION (*AMeasure*)
+ACTION AInitMeasureBlock: #BEGIN_EDIT_BLOCK
+(**************************************** WARNING ********************************************
+ *** The KEBA Kemro K2 System including software is not intended for safety control tasks! ***
+ ***                       For further information see Comment tab!                        ***
+ *********************************************************************************************)
+
+abMeasureToggleLeverPos.aInit(sRawValue := 'Mold1.ai_Position',
+                              pLintabPointArray := @sv_ToggleLeverPosLintab.LintabPoints.Point,
+                              piUsedLintabPoints := @sv_ToggleLeverPosLintab.LintabPoints.uNoOfPoints,
+                              pdVelocityFilterTime:= @sv_dVelFilterTime,
+                              pDerivationEstimateParam := @sv_DerivationEstimateParToggle);
+
+
+abMeasureMoldPos.aInit(pLintabPointArray := @sv_ToggleLeverLintab.LintabPoints.Point,
+                       piUsedLintabPoints := @sv_ToggleLeverLintab.LintabPoints.uNoOfPoints,
+                       sRawValue := 'ToggleLever');
+
+
+abMeasureToggleLeverPos.aInitMonitoring(bEnable := sv_ToggleLeverMonitorMeas.EnableMonitoring,
+                                        rLowLimit := sv_ToggleLeverMonitorMeas.LowerLimit,
+                                        bLimitation := sv_ToggleLeverMonitorMeas.Limitation,
+                                        rFailureFactor := sv_ToggleLeverMonitorMeas.FailureFactor);
+
+
+abMeasureMoldPos.aInitMonitoring(bEnable := sv_MoldPosMonitorMeas.EnableMonitoring,
+                                 rLowLimit := sv_MoldPosMonitorMeas.LowerLimit,
+                                 bLimitation := sv_MoldPosMonitorMeas.Limitation,
+                                 rFailureFactor := sv_MoldPosMonitorMeas.FailureFactor);
+
+
+abCalcVelocity.aInit(DerivationEstimateParam := @sv_DerivationEstimateParam,
+                     rPosition := sv_rMoldPosition);
+
+;#END_EDIT_BLOCK END_ACTION (*AInitMeasureBlock*)
+(* end sfc-code *)
+
+
+END_ALGORITHM
+
+ALGORITHM aCorrectLintab
+
+#BEGIN_EDIT_BLOCK
+(**************************************** WARNING ********************************************
+ *** The KEBA Kemro K2 System including software is not intended for safety control tasks! ***
+ ***                       For further information see Comment tab!                        ***
+ *********************************************************************************************)
+
+sv_ToggleLeverLintab.LintabPoints.Point[1].rX := 0.0; 
+sv_ToggleLeverLintab.LintabPoints.Point[1].rY := 0.0;
+sv_ToggleLeverLintab.LintabPoints.Point[2].rX := 10000.0;
+sv_ToggleLeverLintab.LintabPoints.Point[2].rY := 10000.0;
+sv_ToggleLeverLintab.LintabPoints.uNoOfPoints := 2;
+
+
+;#END_EDIT_BLOCK END_ALGORITHM
+
+POSTUPDATE_ALGORITHM pToggleLeverLintabLoaded ON PU_Task_3(1) WITH sv_DataState,sv_LintabLoaderDataToggleLever.HMIComm.iCmdCtrl
+
+
+VAR
+ bMDLoadingInProgress : BOOL;
+ bToggleLintabLoading : BOOL;
+END_VAR
+#BEGIN_EDIT_BLOCK
+(**************************************** WARNING ********************************************
+ *** The KEBA Kemro K2 System including software is not intended for safety control tasks! ***
+ ***                       For further information see Comment tab!                        ***
+ *********************************************************************************************)
+
+//for direct lock and 2 platen IMM´s a fixed lintab with 2 points is used
+IF NOT g_b2Platen AND NOT g_bDirectLockAvailable THEN
+   RETURN;  // ------------------
+END_IF;
+
+IF sv_DataState = nReadMachineData THEN
+   //loading of machinedata in progress
+   bMDLoadingInProgress := TRUE;
+   
+   //reset value at the begin of data loading
+   sv_rMaxMoldStroke := 0.0;
+   
+   RETURN;
+END_IF;
+
+IF ((sv_LintabLoaderDataToggleLever.HMIComm.iCmdCtrl) MOD 2 = 1) AND ((sv_LintabLoaderDataToggleLever.HMIComm.iCmdSel) = 0) THEN
+   //loading of toggle lever lintab in progress
+   bToggleLintabLoading := TRUE;
+   RETURN;
+END_IF;
+
+IF sv_DataState = nReady AND bMDLoadingInProgress THEN
+   //new machine data loaded
+   
+   IF sv_rMaxMoldStroke = 0.0 THEN
+      //max mold stroke was not loaded with machine data -> calculate sv_rMaxMoldStroke 
+      sv_rMaxMoldStroke := sv_rMoldStroke + sv_rMoldPosOffset;
+   ELSE
+      //calculate new "reachable" mold stroke after machine data loading
+      sv_rMoldStroke := sv_rMaxMoldStroke - sv_rMoldPosOffset;
+   END_IF;
+   
+   aCorrectLintab();
+   bMDLoadingInProgress := FALSE;
+   RETURN;
+END_IF;
+
+IF bToggleLintabLoading THEN
+   //new toggle lever lintab loaded
+   aCorrectLintab();
+   bToggleLintabLoading := FALSE;
+END_IF;
+
+
+
+
+;#END_EDIT_BLOCK END_ALGORITHM
+
+POSTUPDATE_ALGORITHM pSetMoldStroke ON PU_Task_7 WITH sv_rMaxMoldStroke,sv_rMoldPosOffset
+
+#BEGIN_EDIT_BLOCK
+(**************************************** WARNING ********************************************
+ *** The KEBA Kemro K2 System including software is not intended for safety control tasks! ***
+ ***                       For further information see Comment tab!                        ***
+ *********************************************************************************************)
+
+IF sv_DataState = nReadMachineData THEN
+   //ignore change of sv_rMaxMoldStroke during machine data loading
+   RETURN;
+END_IF;
+
+IF g_b2Platen OR g_bDirectLockAvailable THEN
+   //calculate new "reachable" mold stroke
+   sv_rMoldStroke := sv_rMaxMoldStroke - sv_rMoldPosOffset;
+END_IF;
+
+
+
+;#END_EDIT_BLOCK END_ALGORITHM
+
+
+
+END_ALGORITHM_BLOCK
+
+
+
+#END_OF_IEC_PART
+
+@Puma @IecEditor 6 113 @Pou 25 
+@@@BEG_Comment@@@
+
+@@@END_Comment@@@
+
+@BEG_Contents 
+
+@BEG_Func 
+@RT(17)FuncTreeContainer 
+4 
+@Var @RT(14)GET_MY_FU_NAME @RT(0) @T @T @DERIVED 0 @F @RT(22)KEBA_STANDARD_FUNCTION @F 
+@T 
+@BEG_Attrib 
+0 @RT(0) @RT(0) 
+@END_Attrib 
+1 1 @F @F @F @F 
+
+@Var @RT(16)KSWO_AddVariable @RT(0) @T @T @DERIVED 0 @F @RT(22)KEBA_STANDARD_FUNCTION @F 
+@T 
+@BEG_Attrib 
+0 @RT(0) @RT(0) 
+@END_Attrib 
+1 1 @F @F @F @F 
+
+@Var @RT(19)WRITE_SVREAL_DIRECT @RT(0) @T @T @DERIVED 0 @F @RT(22)KEBA_STANDARD_FUNCTION @F 
+@T 
+@BEG_Attrib 
+0 @RT(0) @RT(0) 
+@END_Attrib 
+1 1 @F @F @F @F 
+
+@Var @RT(16)FAddToScopeGroup @RT(0) @T @T @DERIVED 0 @F @RT(8)FUNCTION @F 
+@T 
+@BEG_Attrib 
+0 @RT(0) @RT(0) 
+@END_Attrib 
+1 1 @F @F @F @F 
+
+@END_Func 
+
+@BEG_Const 
+@RT(18)ConstTreeContainer 
+0 
+@END_Const 
+
+@BEG_Export 
+
+@BEG_Kind 
+@ALGORITHM_BLOCK @RT(9)ABMeasure @STRUCTURED_TEXT 
+@RT(0) @RT(0) @RT(0) 
+@END_Kind 
+
+@BEG_Dcl 
+@RT(16)DclTreeContainer 
+34 
+@Var @RT(17)sv_rMoldPosOffset @RT(0) @T @F @DT @RT(4)REAL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(73)Added to the actual moldposition, calculated by the clamppressure setting @RT(0) 
+@END_Attrib 
+1 8 @F @F @F @F 
+
+@Var @RT(16)sv_rMoldPosition @RT(0) @T @F @DT @RT(4)REAL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 8 @F @F @F @F 
+
+@Var @RT(11)ai_Position @RT(0) @T @F @DT @RT(4)REAL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 8 @F @F @F @F 
+
+@Var @RT(23)sv_ToggleLeverPosLintab @RT(0) @T @T @DERIVED 0 @T @T @DT @RT(19)KAPPL_LintabData_2P @RT(0) @T @T @UNKNOWN 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(44)lintab for voltage(x) -> toggle lever pos(y) @RT(0) 
+@END_Attrib 
+1 8 @F @F @F @F 
+
+@Var @RT(20)sv_ToggleLeverLintab @RT(0) @T @T @DERIVED 0 @T @T @DT @RT(16)KAPPL_LintabData @RT(0) @T @T @UNKNOWN 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(47)lintab for toggle lever pos(x) -> platen pos(y) @RT(0) 
+@END_Attrib 
+1 8 @F @F @F @F 
+
+@Var @RT(19)sv_bTransducerError @RT(0) @T @F @DT @RT(4)BOOL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 8 @F @F @F @F 
+
+@Var @RT(23)sv_rToggleLeverPosition @RT(0) @T @F @DT @RT(4)REAL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 8 @F @F @F @F 
+
+@Var @RT(23)sv_rToggleLeverVelocity @RT(0) @T @F @DT @RT(4)REAL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 8 @F @F @F @F 
+
+@Var @RT(26)sv_rToggleLeverVelEstimate @RT(0) @T @F @DT @RT(4)REAL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 8 @F @F @F @F 
+
+@Var @RT(16)sv_rMoldVelocity @RT(0) @T @F @DT @RT(4)REAL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 8 @F @F @F @F 
+
+@Var @RT(19)sv_rMoldVelEstimate @RT(0) @T @F @DT @RT(4)REAL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 8 @F @F @F @F 
+
+@Var @RT(25)sv_ToggleLeverMonitorMeas @RT(0) @T @T @DERIVED 0 @T @T @DT @RT(23)KAPPL_MeasureMonitoring @RT(0) @T @T @UNKNOWN 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 8 @F @F @F @F 
+
+@Var @RT(21)sv_MoldPosMonitorMeas @RT(0) @T @T @DERIVED 0 @T @T @DT @RT(23)KAPPL_MeasureMonitoring @RT(0) @T @T @UNKNOWN 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 8 @F @F @F @F 
+
+@Var @RT(26)sv_DerivationEstimateParam @RT(0) @T @T @DERIVED 0 @T @T @DT @RT(25)tsDerivationEstimateParam @RT(0) @T @T @UNKNOWN 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 8 @F @F @F @F 
+
+@Var @RT(30)sv_DerivationEstimateParToggle @RT(0) @T @T @DERIVED 0 @T @T @DT @RT(25)tsDerivationEstimateParam @RT(0) @T @T @UNKNOWN 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 8 @F @F @F @F 
+
+@Var @RT(15)sv_bDeviceReady @RT(0) @T @F @DT @RT(4)BOOL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 8 @F @F @F @F 
+
+@Var @RT(13)di_MoldClosed @RT(0) @T @F @DT @RT(4)BOOL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 8 @F @F @F @F 
+
+@Var @RT(16)sv_rMonTolerance @RT(0) @T @F @DT @RT(4)REAL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(31)tolerance for endpos monitoring @RT(0) 
+@END_Attrib 
+1 8 @F @F @F @F 
+
+@Var @RT(20)sv_dHighPresKeepTime @RT(0) @T @F @DT @RT(4)TIME @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(53)additional time delay for highpressure stage finished @RT(0) 
+@END_Attrib 
+1 8 @F @F @F @F 
+
+@Var @RT(22)g_bDirectLockAvailable @RT(0) @T @F @DT @RT(4)BOOL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 6 @F @F @F @F 
+
+@Var @RT(14)sv_bMoldClosed @RT(0) @T @F @DT @RT(4)BOOL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 8 @F @F @F @F 
+
+@Var @RT(17)sv_dVelFilterTime @RT(0) @T @F @DT @RT(4)TIME @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 8 @F @F @F @F 
+
+@Var @RT(10)TaskAnalog @RT(0) @T @F @DT @RT(4)TASK @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 7 @F @F @F @F 
+
+@Var @RT(8)TaskSlow @RT(0) @T @F @DT @RT(4)TASK @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 7 @F @F @F @F 
+
+@Var @RT(14)abCalcVelocity @RT(0) @T @T @DERIVED 0 @T @T @DT @RT(14)ABCalcVelocity @RT(0) @T @T @UNKNOWN 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(10)g_b2Platen @RT(0) @T @F @DT @RT(4)BOOL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 6 @F @F @F @F 
+
+@Var @RT(20)sv_MoldFwdProfVisSrc @RT(0) @T @T @DERIVED 0 @T @T @DT @RT(16)KAPPL_VisProfile @RT(0) @T @T @UNKNOWN 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 8 @F @F @F @F 
+
+@Var @RT(9)PU_Task_7 @RT(0) @T @F @DT @RT(4)TASK @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 7 @F @F @F @F 
+
+@Var @RT(12)sv_DataState @RT(0) @T @T @DERIVED 0 @T @T @DT @RT(11)tnDataState @RT(0) @T @T @UNKNOWN 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 8 @F @F @F @F 
+
+@Var @RT(30)sv_LintabLoaderDataToggleLever @RT(0) @T @T @DERIVED 0 @T @T @DT @RT(18)tsLintabLoaderData @RT(0) @T @T @UNKNOWN 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 8 @F @F @F @F 
+
+@Var @RT(26)sv_rToggleLeverPositionAbs @RT(0) @T @F @DT @RT(4)REAL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 8 @F @F @F @F 
+
+@Var @RT(17)sv_rMaxMoldStroke @RT(0) @T @F @DT @RT(4)REAL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(92)Maximum Stroke of Mold (without a mounted mold); relevant for direct lock and 2 platen IMM´s @RT(0) 
+@END_Attrib 
+1 8 @F @F @F @F 
+
+@Var @RT(14)sv_rMoldStroke @RT(0) @T @F @DT @RT(4)REAL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 8 @F @F @F @F 
+
+@Var @RT(9)PU_Task_3 @RT(0) @T @T @RENAMED 0 @T @T @DT @RT(4)TASK @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 7 @F @F @F @F 
+
+@END_Dcl 
+
+@END_Export 
+
+@BEG_Body 
+
+5 
+
+@BEG_Export 
+
+@BEG_Algo 
+@PROCESS_ALGORITHM @RT(22)paInitDebugMeasurement @STRUCTURED_TEXT 
+@RT(0) @RT(0) @RT(8)TaskSlow @T @F 
+@END_Algo 
+
+@BEG_Dcl 
+@RT(16)DclTreeContainer 
+4 
+@Var @RT(6)fuName @RT(0) @T @F @DT @RT(10)STRING(32) @RT(0) @T @T @STRING 0 @F @RT(2)32 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(12)variableName @RT(0) @T @F @DT @RT(11)STRING(255) @RT(0) @T @T @STRING 0 @F @RT(3)255 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(8)swoState @RT(0) @T @T @DERIVED 0 @T @T @DT @RT(11)KSWO_Status @RT(0) @T @T @UNKNOWN 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(1)b @RT(0) @T @F @DT @RT(4)BOOL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@END_Dcl 
+
+@END_Export 
+
+@BEG_Export 
+
+@BEG_Algo 
+@PROCESS_ALGORITHM @RT(9)paMeasure @SEQUENTIAL_FLOW_CHART 
+@RT(0) @RT(0) @RT(16)TaskAnalog(1000) @T @F 
+@END_Algo 
+
+@BEG_Dcl 
+@RT(16)DclTreeContainer 
+7 
+@Var @RT(16)abMeasureMoldPos @RT(0) @T @T @DERIVED 0 @T @T @DT @RT(15)ABMeasureAnalog @RT(0) @T @T @UNKNOWN 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(23)abMeasureToggleLeverPos @RT(0) @T @T @DERIVED 0 @T @T @DT @RT(11)ABMeasureAI @RT(0) @T @T @UNKNOWN 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(19)bDIMoldClosedLinked @RT(0) @T @F @DT @RT(4)BOOL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(7)bClosed @RT(0) @T @F @DT @RT(4)BOOL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 4 @F @F @F @F 
+
+@Var @RT(17)fbKeepHighPresTon @RT(0) @T @T @DERIVED 0 @T @T @DT @RT(3)TON @RT(0) @T @T @UNKNOWN 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(1)b @RT(0) @T @F @DT @RT(4)BOOL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 4 @F @F @F @F 
+
+@Var @RT(20)rToggleLeverPosition @RT(0) @T @F @DT @RT(4)REAL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 4 @F @F @F @F 
+
+@END_Dcl 
+
+@END_Export 
+
+@BEG_Export 
+
+@BEG_Algo 
+@ALGORITHM @RT(14)aCorrectLintab @STRUCTURED_TEXT 
+@RT(0) @RT(0) @RT(0) @F @F 
+@END_Algo 
+
+@BEG_Dcl 
+@RT(16)DclTreeContainer 
+0 
+@END_Dcl 
+
+@END_Export 
+
+@BEG_Export 
+
+@BEG_Algo 
+@POSTUPDATE_ALGORITHM @RT(24)pToggleLeverLintabLoaded @STRUCTURED_TEXT 
+@RT(0) @RT(60)sv_DataState,sv_LintabLoaderDataToggleLever.HMIComm.iCmdCtrl @RT(12)PU_Task_3(1) @F @F 
+@END_Algo 
+
+@BEG_Dcl 
+@RT(16)DclTreeContainer 
+2 
+@Var @RT(20)bMDLoadingInProgress @RT(0) @T @F @DT @RT(4)BOOL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(20)bToggleLintabLoading @RT(0) @T @F @DT @RT(4)BOOL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@END_Dcl 
+
+@END_Export 
+
+@BEG_Export 
+
+@BEG_Algo 
+@POSTUPDATE_ALGORITHM @RT(14)pSetMoldStroke @STRUCTURED_TEXT 
+@RT(0) @RT(35)sv_rMaxMoldStroke,sv_rMoldPosOffset @RT(9)PU_Task_7 @F @F 
+@END_Algo 
+
+@BEG_Dcl 
+@RT(16)DclTreeContainer 
+0 
+@END_Dcl 
+
+@END_Export 
+
+@BEG_Body 
+@TL(51)
+(**************************************** WARNING ********************************************
+ *** The KEBA Kemro K2 System including software is not intended for safety control tasks! ***
+ ***                       For further information see Comment tab!                        ***
+ *********************************************************************************************)
+
+fuName := GET_MY_FU_NAME();
+variableName := CONCAT(fuName,'.rTogglePos mm');
+swoState := KSWO_AddVariable( Task := TaskAnalog,
+                              Name := variableName,
+                              Variable := sv_rToggleLeverPosition);
+b := FAddToScopeGroup(Task := TaskAnalog, 
+                      Name := variableName, 
+                      GroupId := cScopeGroupMold);
+variableName := CONCAT(fuName,'.rToggleVel mm/s');
+swoState := KSWO_AddVariable( Task := TaskAnalog,
+                              Name := variableName,
+                              Variable := sv_rToggleLeverVelocity);
+b := FAddToScopeGroup(Task := TaskAnalog, 
+                      Name := variableName, 
+                      GroupId := cScopeGroupMold);
+variableName := CONCAT(fuName,'.rMoldPos mm');
+swoState := KSWO_AddVariable( Task := TaskAnalog,
+                              Name := variableName,
+                              Variable := sv_rMoldPosition);
+b := FAddToScopeGroup(Task := TaskAnalog, 
+                      Name := variableName, 
+                      GroupId := cScopeGroupMold);
+variableName := CONCAT(fuName,'.sv_rToggleVelEstimate mm/s');
+swoState := KSWO_AddVariable( Task := TaskAnalog,
+                              Name := variableName,
+                              Variable := sv_rToggleLeverVelEstimate);
+b := FAddToScopeGroup(Task := TaskAnalog, 
+                      Name := variableName, 
+                      GroupId := cScopeGroupMold);
+variableName := CONCAT(fuName,'.sv_rMoldVelocity mm/s');
+swoState := KSWO_AddVariable( Task := TaskAnalog,
+                              Name := variableName,
+                              Variable := sv_rMoldVelocity);
+b := FAddToScopeGroup(Task := TaskAnalog, 
+                      Name := variableName, 
+                      GroupId := cScopeGroupMold);
+variableName := CONCAT(fuName,'.sv_rMoldVelEstimate mm/s');
+swoState := KSWO_AddVariable( Task := TaskAnalog,
+                              Name := variableName,
+                              Variable := sv_rMoldVelEstimate);
+b := FAddToScopeGroup(Task := TaskAnalog, 
+                      Name := variableName, 
+                      GroupId := cScopeGroupMold);
+
+STOP_PROCESS_ALGORITHM();
+
+@END_Body 
+
+@@@BEG_Comment@@@ 
+@TL(0)
+
+@@@END_Comment@@@ 
+
+@BEG_SfcBody 
+6 6 5 
+
+@BEG_SfcData 2 
+@StepSeq @RT(4)sseq @F 5 
+@Step @RT(7)S_Start @F @T @T @F @RT(0) @F 
+@AcbCont @RT(7)unnamed @F 0 
+
+@AltBranch @RT(3)alt @F 2 
+@TransSeq @RT(4)tseq @F 1 
+@Trans @RT(7)TLinked @F @T @F @F @T @T @TL(2)
+IS_LINKED(ai_Position)
+
+@RT(7)TLinked @F 
+
+@TransSeq @RT(4)tseq @F 4 
+@Trans @RT(10)TNotLinked @F @T @F @F @T @T @TL(2)
+NOT IS_LINKED(ai_Position)
+
+@RT(10)TNotLinked @F 
+@Step @RT(6)S_Stop @F @F @F @F @RT(0) @F 
+@AcbCont @RT(7)unnamed @F 1 
+@Acb @RT(5)AStop @F @T @RT(1)P @RT(0) @F @F @T @TL(2)
+STOP_PROCESS_ALGORITHM();
+
+@F 
+
+@Trans @RT(5)TStop @F @T @F @F @T @T @TL(2)
+TRUE
+
+@RT(5)TStop @F 
+@Goto @RT(7)S_Start @F @F 
+
+
+@Step @RT(6)S_Init @F @F @F @F @RT(0) @F 
+@AcbCont @RT(7)unnamed @F 2 
+@Acb @RT(17)AInitMeasureBlock @F @F @RT(1)P @RT(0) @F @F @F @F 
+@Acb @RT(14)ACheckDILinked @F @F @RT(1)P @RT(0) @F @F @F @F 
+
+@Trans @RT(9)TInitDone @F @T @F @F @T @T @TL(2)
+TRUE
+
+@RT(9)TInitDone @F 
+@Step @RT(9)S_Measure @F @F @F @F @RT(0) @F 
+@AcbCont @RT(7)unnamed @F 2 
+@Acb @RT(8)AMeasure @F @F @RT(1)N @RT(0) @F @F @F @F 
+@Acb @RT(16)ACheckMoldClosed @F @F @RT(1)N @RT(0) @F @F @F @F 
+
+@END_SfcData 
+@SaActions 4 
+@SaText @RT(14)ACheckDILinked 1 @TL(7)
+(**************************************** WARNING ********************************************
+ *** The KEBA Kemro K2 System including software is not intended for safety control tasks! ***
+ ***                       For further information see Comment tab!                        ***
+ *********************************************************************************************)
+
+bDIMoldClosedLinked := IS_LINKED(di_MoldClosed);
+
+
+@SaText @RT(16)ACheckMoldClosed 1 @TL(26)
+(**************************************** WARNING ********************************************
+ *** The KEBA Kemro K2 System including software is not intended for safety control tasks! ***
+ ***                       For further information see Comment tab!                        ***
+ *********************************************************************************************)
+
+//target position of mold close movement = 0.0 mm
+//for target position reached a tolerance is considered
+IF (bDIMoldClosedLinked) THEN
+   bClosed := (sv_rMoldPosition <= sv_rMonTolerance) AND di_MoldClosed;
+ELSE
+   bClosed := (sv_rMoldPosition <= sv_rMonTolerance);
+END_IF;
+
+IF g_b2Platen THEN
+   sv_bMoldClosed := (sv_rMoldPosition <= (sv_MoldFwdProfVisSrc.Profile.Points[19].rStartPos + sv_rMonTolerance));
+ELSIF (g_bDirectLockAvailable) THEN
+   sv_bMoldClosed := bClosed;
+ELSE    
+   // for hydraulic toggle lever machines run additional high pressure keep time
+   fbKeepHighPresTon(bClosed, sv_dHighPresKeepTime);
+   sv_bMoldClosed := fbKeepHighPresTon.Q;
+END_IF;
+        
+
+
+
+
+@SaText @RT(8)AMeasure 1 @TL(32)
+(**************************************** WARNING ********************************************
+ *** The KEBA Kemro K2 System including software is not intended for safety control tasks! ***
+ ***                       For further information see Comment tab!                        ***
+ *********************************************************************************************)
+
+abMeasureToggleLeverPos.aRun(bIdle := sv_bDeviceReady);
+b := WRITE_SVREAL_DIRECT(sv_rToggleLeverPositionAbs, abMeasureToggleLeverPos.aRun.rValue);
+rToggleLeverPosition := abMeasureToggleLeverPos.aRun.rValue - sv_rMoldPosOffset;
+sv_bTransducerError := abMeasureToggleLeverPos.aRun.bSensorError;
+
+b := WRITE_SVREAL_DIRECT(sv_rToggleLeverPosition, rToggleLeverPosition);
+b := WRITE_SVREAL_DIRECT(sv_rToggleLeverVelocity, abMeasureToggleLeverPos.aRun.rVelocity);
+IF (sv_DerivationEstimateParToggle.bUseDerivationEstimator) THEN
+   b := WRITE_SVREAL_DIRECT(sv_rToggleLeverVelEstimate, abMeasureToggleLeverPos.aRun.rDiffValueEstimate);
+ELSE
+   b := WRITE_SVREAL_DIRECT(sv_rToggleLeverVelEstimate, abMeasureToggleLeverPos.aRun.rVelocitySign); 
+END_IF;
+
+
+// the offset which is subtracted from the moldposition is calculated by the clamppressuresetting.
+// clamp pressure is built if the togglelever is extruded (= durchgedrückt) - then the toggleleverposition is 0mm
+// if the mold is closed without building clamppressure the moldposition must be 0mm -> toggleleverposition is bigger than 0
+// -> the offset between toggleleverposition and moldposition is the distance for building clamppressure (= the extension of the tiebar)
+abMeasureMoldPos.aRunLight(rRawValue := sv_rToggleLeverPosition);
+b := WRITE_SVREAL_DIRECT(sv_rMoldPosition, abMeasureMoldPos.aRunLight.rValue);
+
+// The velocity is calculated with estimater.
+abCalcVelocity.aCalculate(Position := sv_rMoldPosition);
+b := WRITE_SVREAL_DIRECT(sv_rMoldVelocity, abCalcVelocity.aCalculate.Velocity);
+b := WRITE_SVREAL_DIRECT(sv_rMoldVelEstimate, abCalcVelocity.aCalculate.rDiffValueEstimate);
+
+
+
+@SaText @RT(17)AInitMeasureBlock 1 @TL(32)
+(**************************************** WARNING ********************************************
+ *** The KEBA Kemro K2 System including software is not intended for safety control tasks! ***
+ ***                       For further information see Comment tab!                        ***
+ *********************************************************************************************)
+
+abMeasureToggleLeverPos.aInit(sRawValue := 'Mold1.ai_Position',
+                              pLintabPointArray := @sv_ToggleLeverPosLintab.LintabPoints.Point,
+                              piUsedLintabPoints := @sv_ToggleLeverPosLintab.LintabPoints.uNoOfPoints,
+                              pdVelocityFilterTime:= @sv_dVelFilterTime,
+                              pDerivationEstimateParam := @sv_DerivationEstimateParToggle);
+
+
+abMeasureMoldPos.aInit(pLintabPointArray := @sv_ToggleLeverLintab.LintabPoints.Point,
+                       piUsedLintabPoints := @sv_ToggleLeverLintab.LintabPoints.uNoOfPoints,
+                       sRawValue := 'ToggleLever');
+
+
+abMeasureToggleLeverPos.aInitMonitoring(bEnable := sv_ToggleLeverMonitorMeas.EnableMonitoring,
+                                        rLowLimit := sv_ToggleLeverMonitorMeas.LowerLimit,
+                                        bLimitation := sv_ToggleLeverMonitorMeas.Limitation,
+                                        rFailureFactor := sv_ToggleLeverMonitorMeas.FailureFactor);
+
+
+abMeasureMoldPos.aInitMonitoring(bEnable := sv_MoldPosMonitorMeas.EnableMonitoring,
+                                 rLowLimit := sv_MoldPosMonitorMeas.LowerLimit,
+                                 bLimitation := sv_MoldPosMonitorMeas.Limitation,
+                                 rFailureFactor := sv_MoldPosMonitorMeas.FailureFactor);
+
+
+abCalcVelocity.aInit(DerivationEstimateParam := @sv_DerivationEstimateParam,
+                     rPosition := sv_rMoldPosition);
+
+
+@SaTrans 0 
+@SaExits 0 
+@END_SfcBody 
+
+@@@BEG_Comment@@@ 
+@TL(0)
+
+@@@END_Comment@@@ 
+
+@BEG_Body 
+@TL(11)
+(**************************************** WARNING ********************************************
+ *** The KEBA Kemro K2 System including software is not intended for safety control tasks! ***
+ ***                       For further information see Comment tab!                        ***
+ *********************************************************************************************)
+
+sv_ToggleLeverLintab.LintabPoints.Point[1].rX := 0.0; 
+sv_ToggleLeverLintab.LintabPoints.Point[1].rY := 0.0;
+sv_ToggleLeverLintab.LintabPoints.Point[2].rX := 10000.0;
+sv_ToggleLeverLintab.LintabPoints.Point[2].rY := 10000.0;
+sv_ToggleLeverLintab.LintabPoints.uNoOfPoints := 2;
+
+@END_Body 
+
+@@@BEG_Comment@@@ 
+@TL(0)
+
+@@@END_Comment@@@ 
+
+@BEG_Body 
+@TL(50)
+(**************************************** WARNING ********************************************
+ *** The KEBA Kemro K2 System including software is not intended for safety control tasks! ***
+ ***                       For further information see Comment tab!                        ***
+ *********************************************************************************************)
+
+//for direct lock and 2 platen IMM´s a fixed lintab with 2 points is used
+IF NOT g_b2Platen AND NOT g_bDirectLockAvailable THEN
+   RETURN;  // ------------------
+END_IF;
+
+IF sv_DataState = nReadMachineData THEN
+   //loading of machinedata in progress
+   bMDLoadingInProgress := TRUE;
+   
+   //reset value at the begin of data loading
+   sv_rMaxMoldStroke := 0.0;
+   
+   RETURN;
+END_IF;
+
+IF ((sv_LintabLoaderDataToggleLever.HMIComm.iCmdCtrl) MOD 2 = 1) AND ((sv_LintabLoaderDataToggleLever.HMIComm.iCmdSel) = 0) THEN
+   //loading of toggle lever lintab in progress
+   bToggleLintabLoading := TRUE;
+   RETURN;
+END_IF;
+
+IF sv_DataState = nReady AND bMDLoadingInProgress THEN
+   //new machine data loaded
+   
+   IF sv_rMaxMoldStroke = 0.0 THEN
+      //max mold stroke was not loaded with machine data -> calculate sv_rMaxMoldStroke 
+      sv_rMaxMoldStroke := sv_rMoldStroke + sv_rMoldPosOffset;
+   ELSE
+      //calculate new "reachable" mold stroke after machine data loading
+      sv_rMoldStroke := sv_rMaxMoldStroke - sv_rMoldPosOffset;
+   END_IF;
+   
+   aCorrectLintab();
+   bMDLoadingInProgress := FALSE;
+   RETURN;
+END_IF;
+
+IF bToggleLintabLoading THEN
+   //new toggle lever lintab loaded
+   aCorrectLintab();
+   bToggleLintabLoading := FALSE;
+END_IF;
+
+
+
+@END_Body 
+
+@@@BEG_Comment@@@ 
+@TL(0)
+
+@@@END_Comment@@@ 
+
+@BEG_Body 
+@TL(16)
+(**************************************** WARNING ********************************************
+ *** The KEBA Kemro K2 System including software is not intended for safety control tasks! ***
+ ***                       For further information see Comment tab!                        ***
+ *********************************************************************************************)
+
+IF sv_DataState = nReadMachineData THEN
+   //ignore change of sv_rMaxMoldStroke during machine data loading
+   RETURN;
+END_IF;
+
+IF g_b2Platen OR g_bDirectLockAvailable THEN
+   //calculate new "reachable" mold stroke
+   sv_rMoldStroke := sv_rMaxMoldStroke - sv_rMoldPosOffset;
+END_IF;
+
+
+@END_Body 
+
+@@@BEG_Comment@@@ 
+@TL(0)
+
+@@@END_Comment@@@ 
+@END_Body 
+
+@END_Contents 

@@ -1,0 +1,350 @@
+(*
+Send evStartRequest and evStopRequest events to start a manual movement with a button.
+
+bButton should represent the actual state of the button
+(pressed/released)
+
+In half or full auto mode this block will not 
+react to button press/release
+and thus will not send evStartRequest or evStopRequest events.
+
+This FB has a non sticky behavior.
+On button press start the movement.
+On button release stop the movement.
+*)
+
+IMPORT_OVER_LISTFILE
+ SET_EVENT
+, nHalfAutomatic
+, cMoveNone
+, tMoveIdent
+, tnOperationMode
+, tsDeviceId
+, tevStartRequest
+, tevStopRequest
+, tevStartRequestData
+, tevStopRequestData
+
+END_IMPORT
+
+FUNCTION_BLOCK FBManualButton #DUMMY_EDIT_BLOCK
+
+VAR_INPUT
+ bButton : BOOL;
+ MoveId : tMoveIdent;
+ MoveDir : tMoveIdent;
+ IntermediateCond : DINT;
+END_VAR
+
+SYSTEM_VAR
+ sv_bDeviceReady : BOOL;
+ sv_OperationMode : tnOperationMode;
+ sv_DeviceId : tsDeviceId;
+ sv_bAutoCalibRunning : BOOL;
+ sv_bSequenceInterruption : BOOL (* TRUE: sequence is interrupted *);
+END_VAR
+
+SYSTEM_OBJECT
+ evStartRequest : tevStartRequest;
+ evStopRequest : tevStopRequest;
+END_OBJECT
+
+VAR
+ ActiveMoveId : tMoveIdent;
+ ActiveMoveDir : tMoveIdent;
+ evStartRequestData : tevStartRequestData;
+ evStopRequestData : tevStopRequestData;
+END_VAR
+#BEGIN_EDIT_BLOCK
+(**************************************** WARNING ********************************************
+ *** The KEBA Kemro K2 System including software is not intended for safety control tasks! ***
+ ***                       For further information see Comment tab!                        ***
+ *********************************************************************************************)
+
+IF ((sv_OperationMode >= nHalfAutomatic) AND NOT sv_bSequenceInterruption) OR sv_bAutoCalibRunning THEN
+   //do not react on manual buttons in half or fullauto mode or during active autocalibration
+   //if sequence is interrupted, some movements are allowed
+   RETURN;
+END_IF;
+
+IF MoveId > 0 AND
+   MoveDir > 0 THEN
+    
+   // only start movement if butten is not currently running another movement
+   IF bButton AND sv_bDeviceReady AND
+      ActiveMoveDir = cMoveNone AND
+      ActiveMoveId = cMoveNone THEN    
+           
+      // remember active movement in case button is used for 2 different MoveID/MoveDir
+      // so pressing the second button can not cause any problems
+      ActiveMoveDir := MoveDir;
+      ActiveMoveId := MoveId;
+       
+      // send start request
+      evStartRequestData.DeviceId := sv_DeviceId;
+      evStartRequestData.MoveDir := MoveDir; 
+      evStartRequestData.MoveId := MoveId;
+      evStartRequestData.IntermediateCond := IntermediateCond;
+      SET_EVENT(evStartRequest, evStartRequestData); 
+
+   END_IF;
+   
+   IF NOT bButton AND
+      MoveDir = ActiveMoveDir AND
+      MoveId  = ActiveMoveId THEN
+
+      //stop Movement
+      evStopRequestData.DeviceId := sv_DeviceId;
+      evStopRequestData.MoveDir := ActiveMoveDir; 
+      evStopRequestData.MoveId := ActiveMoveId;
+      SET_EVENT(evStopRequest, evStopRequestData);
+      
+      ActiveMoveDir := cMoveNone;
+      ActiveMoveId := cMoveNone;
+   END_IF;
+END_IF;   
+
+
+;#END_EDIT_BLOCK END_FUNCTION_BLOCK
+
+
+
+#END_OF_IEC_PART
+
+@Puma @IecEditor 6 114 @Pou 25 
+@@@BEG_Comment@@@
+Send evStartRequest and evStopRequest events to start a manual movement with a button.
+
+bButton should represent the actual state of the button
+(pressed/released)
+
+In half or full auto mode this block will not 
+react to button press/release
+and thus will not send evStartRequest or evStopRequest events.
+
+This FB has a non sticky behavior.
+On button press start the movement.
+On button release stop the movement.
+@@@END_Comment@@@
+
+@BEG_Contents 
+
+@BEG_Func 
+@RT(17)FuncTreeContainer 
+1 
+@Var @RT(9)SET_EVENT @RT(0) @T @T @DERIVED 0 @F @RT(23)KEBA_STANDARD_PROCEDURE @F 
+@T 
+@BEG_Attrib 
+0 @RT(0) @RT(0) 
+@END_Attrib 
+1 1 @F @F @F @F 
+
+@END_Func 
+
+@BEG_Const 
+@RT(18)ConstTreeContainer 
+2 
+@Var @RT(14)nHalfAutomatic @RT(0) @T @T @DERIVED 0 @F @RT(15)tnOperationMode @F 
+@T 
+@BEG_Attrib 
+0 @RT(1)2 @RT(34)confirmation every cycle necessary 
+@END_Attrib 
+1 1 @F @F @F @F 
+
+@Var @RT(9)cMoveNone @RT(0) @T @F @DT @RT(4)DINT @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+0 @RT(13)cMinMoveIdent @RT(4)None 
+@END_Attrib 
+1 1 @F @F @F @F 
+
+@END_Const 
+
+@BEG_Export 
+
+@BEG_Kind 
+@FUNCTION_BLOCK @RT(14)FBManualButton @STRUCTURED_TEXT 
+@RT(0) @RT(0) @RT(0) 
+@END_Kind 
+
+@BEG_Dcl 
+@RT(16)DclTreeContainer 
+15 
+@Var @RT(7)bButton @RT(0) @T @F @DT @RT(4)BOOL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 1 @F @F @F @F 
+
+@Var @RT(6)MoveId @RT(0) @T @T @DERIVED 0 @T @T @DT @RT(10)tMoveIdent @RT(0) @T @T @UNKNOWN 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 1 @F @F @F @F 
+
+@Var @RT(7)MoveDir @RT(0) @T @T @DERIVED 0 @T @T @DT @RT(10)tMoveIdent @RT(0) @T @T @UNKNOWN 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 1 @F @F @F @F 
+
+@Var @RT(16)IntermediateCond @RT(0) @T @F @DT @RT(4)DINT @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 1 @F @F @F @F 
+
+@Var @RT(15)sv_bDeviceReady @RT(0) @T @F @DT @RT(4)BOOL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 8 @F @F @F @F 
+
+@Var @RT(16)sv_OperationMode @RT(0) @T @T @DERIVED 0 @T @T @DT @RT(15)tnOperationMode @RT(0) @T @T @UNKNOWN 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 8 @F @F @F @F 
+
+@Var @RT(11)sv_DeviceId @RT(0) @T @T @DERIVED 0 @T @T @DT @RT(10)tsDeviceId @RT(0) @T @T @UNKNOWN 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 8 @F @F @F @F 
+
+@Var @RT(20)sv_bAutoCalibRunning @RT(0) @T @F @DT @RT(4)BOOL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 8 @F @F @F @F 
+
+@Var @RT(14)evStartRequest @RT(0) @T @T @DERIVED 0 @T @T @DT @RT(15)tevStartRequest @RT(0) @T @T @UNKNOWN 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 7 @F @F @F @F 
+
+@Var @RT(13)evStopRequest @RT(0) @T @T @DERIVED 0 @T @T @DT @RT(14)tevStopRequest @RT(0) @T @T @UNKNOWN 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 7 @F @F @F @F 
+
+@Var @RT(12)ActiveMoveId @RT(0) @T @T @DERIVED 0 @T @T @DT @RT(10)tMoveIdent @RT(0) @T @T @UNKNOWN 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(13)ActiveMoveDir @RT(0) @T @T @DERIVED 0 @T @T @DT @RT(10)tMoveIdent @RT(0) @T @T @UNKNOWN 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(18)evStartRequestData @RT(0) @T @T @DERIVED 0 @T @T @DT @RT(19)tevStartRequestData @RT(0) @T @T @UNKNOWN 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(17)evStopRequestData @RT(0) @T @T @DERIVED 0 @T @T @DT @RT(18)tevStopRequestData @RT(0) @T @T @UNKNOWN 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(24)sv_bSequenceInterruption @RT(0) @T @F @DT @RT(4)BOOL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(29)TRUE: sequence is interrupted @RT(0) 
+@END_Attrib 
+1 8 @F @F @F @F 
+
+@END_Dcl 
+
+@END_Export 
+
+@BEG_Body 
+@TL(48)
+(**************************************** WARNING ********************************************
+ *** The KEBA Kemro K2 System including software is not intended for safety control tasks! ***
+ ***                       For further information see Comment tab!                        ***
+ *********************************************************************************************)
+
+IF ((sv_OperationMode >= nHalfAutomatic) AND NOT sv_bSequenceInterruption) OR sv_bAutoCalibRunning THEN
+   //do not react on manual buttons in half or fullauto mode or during active autocalibration
+   //if sequence is interrupted, some movements are allowed
+   RETURN;
+END_IF;
+
+IF MoveId > 0 AND
+   MoveDir > 0 THEN
+    
+   // only start movement if butten is not currently running another movement
+   IF bButton AND sv_bDeviceReady AND
+      ActiveMoveDir = cMoveNone AND
+      ActiveMoveId = cMoveNone THEN    
+           
+      // remember active movement in case button is used for 2 different MoveID/MoveDir
+      // so pressing the second button can not cause any problems
+      ActiveMoveDir := MoveDir;
+      ActiveMoveId := MoveId;
+       
+      // send start request
+      evStartRequestData.DeviceId := sv_DeviceId;
+      evStartRequestData.MoveDir := MoveDir; 
+      evStartRequestData.MoveId := MoveId;
+      evStartRequestData.IntermediateCond := IntermediateCond;
+      SET_EVENT(evStartRequest, evStartRequestData); 
+
+   END_IF;
+   
+   IF NOT bButton AND
+      MoveDir = ActiveMoveDir AND
+      MoveId  = ActiveMoveId THEN
+
+      //stop Movement
+      evStopRequestData.DeviceId := sv_DeviceId;
+      evStopRequestData.MoveDir := ActiveMoveDir; 
+      evStopRequestData.MoveId := ActiveMoveId;
+      SET_EVENT(evStopRequest, evStopRequestData);
+      
+      ActiveMoveDir := cMoveNone;
+      ActiveMoveId := cMoveNone;
+   END_IF;
+END_IF;   
+
+@END_Body 
+
+@END_Contents 

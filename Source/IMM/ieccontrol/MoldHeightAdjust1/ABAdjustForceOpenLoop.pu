@@ -1,0 +1,1954 @@
+(*
+@h    ! WARNING !
+@h    The Kemro K2 system (including software) only meets category B according to EN 954-1,
+@h    thus it is not intended for usage in safety-relevant control applications in the field 
+@h    of personal safety (e.g. emergency stop).
+@h    To implement potentially necessary safety-relevant control tasks, always use additional 
+@h    external safety devices that are intended for the particular purpose, and meet the necessary 
+@h    functional safety.
+@h    For further information see EN 954-1 (EN ISO 13849-1) and/or the K2-x00 user manual, chapter 
+@h    "CE conformity, directives and standards". 
+
+The paRun algo controls the mold height automatic adjustment
+after a desired clamp force has been set and the mold height
+auto adjust has been started.
+Called by MoldHeightAdjustN.ABMoldHeightAutoAdmin.paRun
+*)
+
+IMPORT_OVER_LISTFILE
+ SET_ALARM
+, GET_SYNC_REFTO
+, cMoveFwdForMHAdjust
+, cMoveBwdForMHAdjust
+, KAPPL_VisProfile
+, tevStartRequest
+, tsVelPre
+, tsClampForces
+, tsEndpointMonitor
+, tsDeviceId
+, tnMoldHeightAdjustMode
+, FBCheckReady
+, FBCheckPosReached
+, tevStartRequestData
+, FBStop
+, tnMovementDirection
+, KSYS_Status
+, FBDebugTrace
+
+END_IMPORT
+
+ALGORITHM_BLOCK ABAdjustForceOpenLoop #DUMMY_EDIT_BLOCK
+
+SYSTEM_VAR
+ sv_MoldFwdProfVisSrc : KAPPL_VisProfile;
+ sv_rMaxPressureFwd : REAL;
+ sv_ConstFwdVis : tsVelPre (* const output for mold close movement *);
+ sv_ConstBwdVis : tsVelPre (* const output for mold open movement *);
+ sv_ClampForce : tsClampForces;
+ sv_bStandStillDetectionArmed : BOOL;
+ sv_MoldHeightEndpoints : tsEndpointMonitor;
+ sv_iThisStepsSetImpulses : UDINT;
+ sv_rSetClampPressure : REAL;
+ sv_bPresMoldHeightAdjustActive : BOOL;
+END_VAR
+
+SYSTEM_OBJECT
+ evStartRequest : tevStartRequest;
+ erMoldHeightAdjustAborted : ALARM;
+ erMoldHeightAdjustFinished : ALARM;
+END_OBJECT
+
+(*
+Controlling the mold height automatic adjustment as described in the manual - force controlled open loop.
+- Calculate high pressure setting from clamp force settings on hmi
+- close the mold and detect standstill.
+- adjust mold height, step by step (clamp open => +/- 64/32/16..1 teeth => clamp close ) 
+- until the mold can close with desired clamp force after the last mold height step of +/- 1 tooth.
+*)
+
+ALGORITHM aRun
+
+
+VAR_INPUT
+ bStop : BOOL;
+END_VAR
+
+VAR_OUTPUT
+ bReady : BOOL;
+END_VAR
+
+VAR_INPUT
+ DeviceIdMold : tsDeviceId;
+ DeviceIdMoldHeight : tsDeviceId;
+ MoldHeightAdjustMode : tnMoldHeightAdjustMode;
+END_VAR
+
+VAR
+ ConstFwdVisOrg : tsVelPre (* const output for mold close movement *);
+ ConstFwdVisHiPres : tsVelPre (* const output for mold close movement *);
+ ConstBwdVisOrg : tsVelPre (* const output for mold close movement *);
+ ConstBwdVisHiPres : tsVelPre (* const output for mold close movement *);
+ bMoldOpen : BOOL;
+ fbCheckReady : FBCheckReady;
+ fbCheckPosReached : FBCheckPosReached;
+ evStartRequestData : tevStartRequestData;
+ bMoldClosed : BOOL;
+ bMoldCloseReady : BOOL;
+ bStandStillDetected : BOOL;
+ bMoldOpenReady : BOOL;
+ bMoldHeightFwdReady : BOOL;
+ bAdjustBwdReady : BOOL;
+ bJumpToAdjustForward : BOOL;
+ bFinished : BOOL;
+ fbStop : FBStop;
+ bContinue : BOOL;
+ MovementDirection : tnMovementDirection;
+ dummy : DINT;
+ rHiPres : REAL;
+ bHiPresActive : BOOL;
+ rHiVel : REAL := 70.0;
+ Status : KSYS_Status;
+ fbDebugTrace : FBDebugTrace;
+ prActClampForce : REFTO REAL;
+ bClampPressSensorAvailable : BOOL;
+ prAIClampForce : REFTO REAL;
+END_VAR
+
+(* IecGraph-Code *)
+
+(* init step *)
+INITIAL_STEP START:
+aPreparAdjustment (P);
+aCheckClosed (P);
+END_STEP
+
+
+(* steps *)
+STEP Step31:
+Action44 (P);
+aOpenMold (P);
+aCheckMoldOpen (N);
+END_STEP
+
+ACTION Action44: #BEGIN_EDIT_BLOCK
+sv_ConstBwdVis := ConstBwdVisHiPres;
+
+;#END_EDIT_BLOCK END_ACTION (*Action44*)
+STEP Step32:
+AResetHiPressMldBwd (P);
+END_STEP
+
+STEP Step37:
+END_STEP
+
+STEP S_MoldClose:
+aCloseMold (P);
+aCheckMoldClosed (N);
+END_STEP
+
+STEP S_MoldCloseProf:
+aCloseMoldProf (P);
+aCheckMoldClosedProf (N);
+END_STEP
+
+STEP S_DecideNextStep:
+aDecideNextStep (P);
+END_STEP
+
+STEP S_OpenMold:
+aOpenMold (P);
+aCheckMoldOpen (N);
+END_STEP
+
+STEP S_OpenMoldProf:
+aOpenMoldProf (P);
+aCheckMoldOpenedProf (N);
+END_STEP
+
+STEP S_CheckFinished:
+END_STEP
+
+STEP S_DecideDirection:
+AResetHiPressMldBwd (P);
+END_STEP
+
+STEP S_AdjustFwd:
+aMoveMoldHeightFwd (P);
+aCheckMoldHeightFwdReady (N);
+END_STEP
+
+STEP S_CheckStandStillDetection:
+END_STEP
+
+STEP S_CheckContinue:
+aCheckContinue (P);
+END_STEP
+
+STEP S_CheckContinue2:
+aCheckCont2 (P);
+END_STEP
+
+STEP S_AdjustBwd:
+aMoveMoldHeightBwd (P);
+aCheckAdjBwdReady (N);
+END_STEP
+
+STEP Step26:
+END_STEP
+
+STEP S_CheckReady:
+END_STEP
+
+STEP S_Stop:
+AStop (P);
+END_STEP
+
+ACTION AStop: #BEGIN_EDIT_BLOCK
+//stop active movement
+IF bStop THEN
+    fbStop(DeviceId := DeviceIdMold);
+    fbStop(DeviceId := DeviceIdMoldHeight);
+END_IF;
+
+sv_bPresMoldHeightAdjustActive := FALSE;
+
+;#END_EDIT_BLOCK END_ACTION (*AStop*)
+STEP S_Ready:
+AReady (P);
+END_STEP
+
+ACTION AReady: #BEGIN_EDIT_BLOCK
+IF bFinished THEN
+    SET_ALARM(erMoldHeightAdjustFinished);
+    dummy := Print('AdjustForceOpenLoop finished');
+ELSE
+    SET_ALARM(erMoldHeightAdjustAborted);
+    dummy := Print('AdjustForceOpenLoop aborted');    
+END_IF;
+
+sv_ConstFwdVis := ConstFwdVisOrg;
+sv_ConstBwdVis := ConstBwdVisOrg;
+bHiPresActive := FALSE; 
+
+bReady := TRUE;
+
+;#END_EDIT_BLOCK END_ACTION (*AReady*)
+
+(* transitions *)
+TRANSITION TMoldIsNotClosed (* Trans1 *) FROM START TO Step37 :=  #BEGIN_EDIT_BLOCK
+NOT bMoldClosed
+;#END_EDIT_BLOCK
+END_TRANSITION
+
+TRANSITION TMoldIsClosed (* Trans51 *) FROM START TO Step31 :=  #BEGIN_EDIT_BLOCK
+bMoldClosed
+;#END_EDIT_BLOCK
+(*open mold so it is for sure that mold close is done with calculated pressure*)
+END_TRANSITION
+
+TRANSITION Trans52 (* Trans52 *) FROM Step31 TO Step32 :=  #BEGIN_EDIT_BLOCK
+bMoldOpenReady
+;#END_EDIT_BLOCK
+END_TRANSITION
+
+GO_ON_TRANSITION Trans54 (* Trans54 *) FROM Step32 TO Step37 :=  #BEGIN_EDIT_BLOCK
+TRUE
+;#END_EDIT_BLOCK
+END_TRANSITION
+
+TRANSITION Trans53 (* Trans53 *) FROM Step31 TO S_Stop :=  #BEGIN_EDIT_BLOCK
+bStop
+;#END_EDIT_BLOCK
+END_TRANSITION
+
+GO_ON_TRANSITION TCloseSlow (* Trans60 *) FROM Step37 TO S_MoldClose :=  #BEGIN_EDIT_BLOCK
+NOT sv_bPresMoldHeightAdjustActive
+;#END_EDIT_BLOCK
+END_TRANSITION
+
+TRANSITION TMoldClose (* Trans58 *) FROM S_MoldClose TO S_DecideNextStep :=  #BEGIN_EDIT_BLOCK
+bMoldCloseReady
+;#END_EDIT_BLOCK
+END_TRANSITION
+
+TRANSITION TMoldNotClosed (* Trans62 *) FROM S_MoldClose TO S_Stop :=  #BEGIN_EDIT_BLOCK
+bStop
+
+;#END_EDIT_BLOCK
+END_TRANSITION
+
+GO_ON_TRANSITION TCloseProfile (* Trans59 *) FROM Step37 TO S_MoldCloseProf :=  #BEGIN_EDIT_BLOCK
+sv_bPresMoldHeightAdjustActive
+;#END_EDIT_BLOCK
+END_TRANSITION
+
+TRANSITION TMoldClose2 (* Trans61 *) FROM S_MoldCloseProf TO S_DecideNextStep :=  #BEGIN_EDIT_BLOCK
+bMoldCloseReady
+;#END_EDIT_BLOCK
+END_TRANSITION
+
+TRANSITION TMoldNotClosed2 (* Trans63 *) FROM S_MoldCloseProf TO S_Stop :=  #BEGIN_EDIT_BLOCK
+bStop
+;#END_EDIT_BLOCK
+END_TRANSITION
+
+TRANSITION Trans50 (* Trans50 *) FROM S_DecideNextStep TO Step37 :=  #BEGIN_EDIT_BLOCK
+bHiPresActive
+;#END_EDIT_BLOCK
+END_TRANSITION
+
+TRANSITION TDoMoldOpenConst (* Trans67 *) FROM S_DecideNextStep TO S_OpenMold :=  #BEGIN_EDIT_BLOCK
+NOT bJumpToAdjustForward
+AND NOT sv_bPresMoldHeightAdjustActive
+;#END_EDIT_BLOCK
+END_TRANSITION
+
+TRANSITION TMoldIsOpen (* Trans4 *) FROM S_OpenMold TO S_CheckFinished :=  #BEGIN_EDIT_BLOCK
+bMoldOpenReady
+;#END_EDIT_BLOCK
+END_TRANSITION
+
+TRANSITION TMoldIsNotOpen (* Trans68 *) FROM S_OpenMold TO S_Stop :=  #BEGIN_EDIT_BLOCK
+bStop
+;#END_EDIT_BLOCK
+END_TRANSITION
+
+TRANSITION TDoMoldOpenProf (* Trans66 *) FROM S_DecideNextStep TO S_OpenMoldProf :=  #BEGIN_EDIT_BLOCK
+NOT bJumpToAdjustForward
+AND sv_bPresMoldHeightAdjustActive
+;#END_EDIT_BLOCK
+END_TRANSITION
+
+TRANSITION TMoldIsOpen2 (* Trans69 *) FROM S_OpenMoldProf TO S_CheckFinished :=  #BEGIN_EDIT_BLOCK
+bMoldOpenReady
+;#END_EDIT_BLOCK
+END_TRANSITION
+
+TRANSITION TMoldIsNotOpen2 (* Trans70 *) FROM S_OpenMoldProf TO S_Stop :=  #BEGIN_EDIT_BLOCK
+bStop
+;#END_EDIT_BLOCK
+END_TRANSITION
+
+GO_ON_TRANSITION TDoAdjustFwd (* Trans48 *) FROM S_DecideNextStep TO S_AdjustFwd :=  #BEGIN_EDIT_BLOCK
+bJumpToAdjustForward
+;#END_EDIT_BLOCK
+END_TRANSITION
+
+GO_ON_TRANSITION TContinueAdjustment (* Trans56 *) FROM S_CheckFinished TO S_DecideDirection :=  #BEGIN_EDIT_BLOCK
+NOT bFinished
+;#END_EDIT_BLOCK
+END_TRANSITION
+
+GO_ON_TRANSITION TFinishAdjusment (* Trans57 *) FROM S_CheckFinished TO S_CheckReady :=  #BEGIN_EDIT_BLOCK
+bFinished
+;#END_EDIT_BLOCK
+END_TRANSITION
+
+GO_ON_TRANSITION CheckMoldHeightMoveFwd (* Trans5 *) FROM S_DecideDirection TO S_AdjustFwd :=  #BEGIN_EDIT_BLOCK
+MovementDirection = nForward
+;#END_EDIT_BLOCK
+END_TRANSITION
+
+TRANSITION TAdjFwdReady (* Trans41 *) FROM S_AdjustFwd TO S_CheckStandStillDetection :=  #BEGIN_EDIT_BLOCK
+bMoldHeightFwdReady
+;#END_EDIT_BLOCK
+END_TRANSITION
+
+TRANSITION TStopAdjFwd (* Trans42 *) FROM S_AdjustFwd TO S_Stop :=  #BEGIN_EDIT_BLOCK
+bStop
+;#END_EDIT_BLOCK
+END_TRANSITION
+
+GO_ON_TRANSITION TStandStillNotActive (* Trans22 *) FROM S_CheckStandStillDetection TO S_CheckContinue :=  #BEGIN_EDIT_BLOCK
+NOT sv_bStandStillDetectionArmed
+;#END_EDIT_BLOCK
+END_TRANSITION
+
+GO_ON_TRANSITION TContinue (* Trans43 *) FROM S_CheckContinue TO S_CheckReady :=  #BEGIN_EDIT_BLOCK
+bContinue
+;#END_EDIT_BLOCK
+END_TRANSITION
+
+GO_ON_TRANSITION TNotContinue (* Trans44 *) FROM S_CheckContinue TO S_Stop :=  #BEGIN_EDIT_BLOCK
+NOT bContinue
+;#END_EDIT_BLOCK
+END_TRANSITION
+
+GO_ON_TRANSITION TStandStillDetectionActive (* Trans25 *) FROM S_CheckStandStillDetection TO S_CheckContinue2 :=  #BEGIN_EDIT_BLOCK
+sv_bStandStillDetectionArmed
+;#END_EDIT_BLOCK
+END_TRANSITION
+
+GO_ON_TRANSITION TContinue2 (* Trans45 *) FROM S_CheckContinue2 TO S_DecideNextStep :=  #BEGIN_EDIT_BLOCK
+bContinue
+;#END_EDIT_BLOCK
+END_TRANSITION
+
+GO_ON_TRANSITION TNotContinue2 (* Trans46 *) FROM S_CheckContinue2 TO S_Stop :=  #BEGIN_EDIT_BLOCK
+NOT bContinue
+;#END_EDIT_BLOCK
+END_TRANSITION
+
+GO_ON_TRANSITION CheckMoldHeightMoveBwd (* Trans7 *) FROM S_DecideDirection TO S_AdjustBwd :=  #BEGIN_EDIT_BLOCK
+MovementDirection = nBackward
+;#END_EDIT_BLOCK
+END_TRANSITION
+
+TRANSITION TAdjustBwdReady (* Trans38 *) FROM S_AdjustBwd TO Step26 :=  #BEGIN_EDIT_BLOCK
+bAdjustBwdReady
+;#END_EDIT_BLOCK
+END_TRANSITION
+
+TRANSITION TStopAdjBwd (* Trans39 *) FROM S_AdjustBwd TO S_Stop :=  #BEGIN_EDIT_BLOCK
+bStop
+;#END_EDIT_BLOCK
+END_TRANSITION
+
+GO_ON_TRANSITION AdjBwdPosReached (* Trans9 *) FROM Step26 TO S_CheckReady :=  #BEGIN_EDIT_BLOCK
+sv_MoldHeightEndpoints.bPositionForStepReached
+;#END_EDIT_BLOCK
+END_TRANSITION
+
+GO_ON_TRANSITION AdjBwdPosNotrReached (* Trans40 *) FROM Step26 TO S_Stop :=  #BEGIN_EDIT_BLOCK
+NOT sv_MoldHeightEndpoints.bPositionForStepReached
+;#END_EDIT_BLOCK
+END_TRANSITION
+
+TRANSITION TNotFinished (* Trans31 *) FROM S_CheckReady TO Step37 :=  #BEGIN_EDIT_BLOCK
+NOT bFinished
+;#END_EDIT_BLOCK
+END_TRANSITION
+
+TRANSITION TFinished (* Trans30 *) FROM S_CheckReady TO S_Stop :=  #BEGIN_EDIT_BLOCK
+bFinished
+;#END_EDIT_BLOCK
+END_TRANSITION
+
+GO_ON_TRANSITION TReady (* Trans32 *) FROM S_Stop TO S_Ready :=  #BEGIN_EDIT_BLOCK
+TRUE
+;#END_EDIT_BLOCK
+END_TRANSITION
+
+TRANSITION Trans33 (* Trans33 *) FROM S_Ready TO START :=  #BEGIN_EDIT_BLOCK
+TRUE
+;#END_EDIT_BLOCK
+END_TRANSITION
+
+(* end IecGraph-Code *)
+(* sfc-code *)
+
+(* stand alone actions *)
+ACTION aPreparAdjustment: #BEGIN_EDIT_BLOCK
+bReady := FALSE;
+bFinished := FALSE;
+
+//mold height adjust in closed-loop
+prActClampForce := GET_SYNC_REFTO('Mold1.sv_rClampForceAct', T#0s, Status);
+prAIClampForce := GET_SYNC_REFTO('Mold1.ai_ClampPress', T#0s, Status);
+bClampPressSensorAvailable := (Status = KSYS_Status_OK); 
+
+// sanity checks
+IF sv_ClampForce.rMaxClampForce <= 0.0 THEN
+   sv_ClampForce.rMaxClampForce := 1.0;
+END_IF;
+
+IF sv_ClampForce.rSetClampForce > sv_ClampForce.rMaxClampForce THEN
+   sv_ClampForce.rSetClampForce := sv_ClampForce.rMaxClampForce;
+END_IF;
+
+IF MoldHeightAdjustMode = nForceOpenLoop THEN
+    // Calculate the mold close high pressure like this:
+    // Set Pressure = (Maximum Pressure / Maximum Force) * Set Force
+    rHiPres := sv_ClampForce.rSetClampForce * (sv_rMaxPressureFwd / sv_ClampForce.rMaxClampForce);
+ELSE
+    rHiPres := sv_rSetClampPressure;
+END_IF;
+
+sv_MoldFwdProfVisSrc.Profile.Points[19].rPressure := rHiPres;
+   
+rHiVel := sv_MoldFwdProfVisSrc.Profile.Points[19].rVelocity;
+
+// Reset the standstill and jumpto flags
+bStandStillDetected := FALSE;
+bJumpToAdjustForward := FALSE;
+
+// set data for hi pressure const movement
+ConstFwdVisOrg := sv_ConstFwdVis;
+ConstFwdVisHiPres := sv_ConstFwdVis;
+
+ConstFwdVisHiPres.Velocity.Output.rOutputValue := rHiVel;
+ConstFwdVisHiPres.Pressure.Output.rOutputValue := rHiPres;
+
+ConstBwdVisOrg := sv_ConstBwdVis;
+ConstBwdVisHiPres := sv_ConstBwdVis;
+ConstBwdVisHiPres.Pressure.Output.rOutputValue := rHiPres;
+
+
+bHiPresActive := FALSE;
+
+IF MoldHeightAdjustMode = nForceOpenLoop THEN
+    dummy := Print('AdjustForceOpenLoop started');
+ELSE
+    dummy := Print('AdjustPressureOpenLoop started');
+END_IF;
+
+;#END_EDIT_BLOCK END_ACTION (*aPreparAdjustment*)
+ACTION aCloseMold: #BEGIN_EDIT_BLOCK
+(*@ MoldHeightAdjustN.ABAdjustForceOpenLoop.paRun.aCloseMold.Start the mold close movement *)
+
+evStartRequestData.DeviceId := DeviceIdMold;
+evStartRequestData.MoveDir := cMoveFwd; 
+evStartRequestData.MoveId := cMoveFwdForMHAdjust;
+SET_EVENT(evStartRequest, evStartRequestData);
+
+
+
+;#END_EDIT_BLOCK END_ACTION (*aCloseMold*)
+ACTION aCheckMoldClosed: #BEGIN_EDIT_BLOCK
+(*@ MoldHeightAdjustN.ABAdjustForceOpenLoop.paRun.aCheckMoldClosed.Check the status of mold close movement
+                                                    - Finished
+                                                    - PositionReached*)
+fbCheckReady(DeviceId := DeviceIdMold,
+             bReady => bMoldCloseReady);
+fbCheckPosReached(DeviceId := DeviceIdMold,
+                  MoveDir := cMoveFwd,
+                  MoveId := cMoveFwdForMHAdjust,
+                  bPosReached => bMoldClosed);
+
+;#END_EDIT_BLOCK END_ACTION (*aCheckMoldClosed*)
+ACTION aDecideNextStep: #BEGIN_EDIT_BLOCK
+(**************************************** WARNING ********************************************
+ *** The KEBA Kemro K2 System including software is not intended for safety control tasks! ***
+ ***                       For further information see Comment tab!                        ***
+ *********************************************************************************************)
+
+bJumpToAdjustForward := FALSE;
+
+IF bStandStillDetected THEN
+    //After the standstill has been detected:
+    //Find the correct mold height position where the mold can close with the calculated set high pressure.
+    //Reduce the mold height impulses from 64 to 32 to 16 ... to 1.
+    //If the mold could close after the last step then adjust mold height forward,
+    //if it couldn't close, adjust backward
+    IF (NOT bMoldClosed) AND (NOT bHiPresActive) AND (MoldHeightAdjustMode = nForceOpenLoop)  THEN  // try once again with hipressure
+        dummy := Print('AdjustForceOpenLoop: mold could not be closed -> try once again with hipres');
+        bHiPresActive := TRUE;
+        sv_ConstFwdVis := ConstFwdVisHiPres;
+        sv_ConstBwdVis := ConstBwdVisHiPres;
+        RETURN;
+    ELSE 
+        bHiPresActive := FALSE;
+        sv_ConstFwdVis := ConstFwdVisOrg;
+    END_IF;
+    
+    IF (sv_iThisStepsSetImpulses = 1) THEN
+        IF bMoldClosed THEN
+            //mold can be closed after last adjustment step with 1 impulse
+            //-> open mold and finish
+            bFinished := TRUE;
+        ELSE
+            //mold can not close
+            //-> adjust 1 bwd and try again
+            dummy := Print('AdjustForceOpenLoop: try again with 1 impulse because mold could not be closed');
+            sv_iThisStepsSetImpulses := 1;
+        END_IF;
+    ELSE
+        sv_iThisStepsSetImpulses := sv_iThisStepsSetImpulses/2;
+    END_IF;
+        
+    dummy:=Print('AdjustForceOpenLoop: set impulses to %d ', sv_iThisStepsSetImpulses);
+    
+ELSE
+    IF bMoldClosed THEN
+        sv_bStandStillDetectionArmed := TRUE;
+        sv_iThisStepsSetImpulses := 100000;
+        bJumpToAdjustForward := TRUE;
+    ELSE
+        //If the mold couldn't close the mold has to be opened again 
+        //and the mold height has to move backward until the mold can close
+        //always 64 impulses        
+        sv_iThisStepsSetImpulses := 64;      
+    END_IF;
+END_IF;
+
+//get direction for mold adjustment
+IF bMoldClosed THEN
+    //adjust in closed loop in case that the pressure sensor is available
+    IF bClampPressSensorAvailable THEN
+        sv_ClampForce.rActualClampForce := prActClampForce^;
+        IF sv_ClampForce.rActualClampForce <= sv_ClampForce.rSetClampForce THEN
+            //If the set val greater than act val at the last step, 
+            //once further movement by one gear is necessary             
+            IF (sv_iThisStepsSetImpulses = 1) THEN    
+                bFinished := FALSE;
+                fbDebugTrace(sText := 'Last mold height adjustment in closed loop by 1 impulse');
+            END_IF;
+            MovementDirection := nForward; 
+            dummy:=Print('MoldHeightAdjust: Mold closed and act force < set force -> set adjust direction to FWD');
+        ELSE
+            IF (sv_iThisStepsSetImpulses = 1) THEN
+                bFinished := TRUE; 
+            END_IF; 
+            MovementDirection := nBackward;
+            dummy:=Print('MoldHeightAdjust: Mold closed and act force > set force -> set adjust direction to BWD');
+        END_IF;
+        
+    ELSE     
+        MovementDirection := nForward;
+        dummy:=Print('MoldHeightAdjust: Mold closed -> set adjust direction to FWD');
+    END_IF;
+ELSE
+    MovementDirection := nBackward;
+    dummy:=Print('MoldHeightAdjust: Mold not closed -> set adjust direction to BWD');
+END_IF;
+
+                                                                                                 
+
+;#END_EDIT_BLOCK END_ACTION (*aDecideNextStep*)
+ACTION aOpenMold: #BEGIN_EDIT_BLOCK
+(*@ MoldHeightAdjustN.ABAdjustForceOpenLoop.paRun.aOpenMold.Start the mold open movement *)
+
+evStartRequestData.DeviceId := DeviceIdMold;
+evStartRequestData.MoveDir := cMoveBwd; 
+evStartRequestData.MoveId := cMoveBwdForMHAdjust;
+SET_EVENT(evStartRequest, evStartRequestData); 
+
+;#END_EDIT_BLOCK END_ACTION (*aOpenMold*)
+ACTION aMoveMoldHeightFwd: #BEGIN_EDIT_BLOCK
+(*@ MoldHeightAdjustN.ABAdjustForceOpenLoop.paRun.aMoveMoldHeightFwd.Because the mold height forward movement
+                                                    can be stopped by either the detection of a stand still or
+                                                    the reaching of desired impulses for this step, these two
+                                                    conditions are combined into the bMoldHeightFwdReady flag.
+                                                    Of course this flag has to be reset when the movement starts*)
+bMoldHeightFwdReady := FALSE;
+
+(*@ MoldHeightAdjustN.ABAdjustForceOpenLoop.paRun.aMoveMoldHeightFwd.Start the mold height forward movement *)
+evStartRequestData.DeviceId := DeviceIdMoldHeight;
+evStartRequestData.MoveDir := cMoveFwd; 
+evStartRequestData.MoveId := cMoveFwd;
+SET_EVENT(evStartRequest, evStartRequestData); 
+
+;#END_EDIT_BLOCK END_ACTION (*aMoveMoldHeightFwd*)
+ACTION aMoveMoldHeightBwd: #BEGIN_EDIT_BLOCK
+(*@ MoldHeightAdjustN.ABAdjustForceOpenLoop.paRun.aMoveMoldHeightBwd.Start the mold height backward movement *)
+
+evStartRequestData.DeviceId := DeviceIdMoldHeight;
+evStartRequestData.MoveDir := cMoveBwd; 
+evStartRequestData.MoveId := cMoveBwd;
+SET_EVENT(evStartRequest, evStartRequestData);
+
+;#END_EDIT_BLOCK END_ACTION (*aMoveMoldHeightBwd*)
+ACTION aCheckMoldHeightFwdReady: #BEGIN_EDIT_BLOCK
+(**************************************** WARNING ********************************************
+ *** The KEBA Kemro K2 System including software is not intended for safety control tasks! ***
+ ***                       For further information see Comment tab!                        ***
+ *********************************************************************************************)
+
+fbCheckReady(DeviceId := DeviceIdMoldHeight,
+             bReady => bMoldHeightFwdReady);
+
+;#END_EDIT_BLOCK END_ACTION (*aCheckMoldHeightFwdReady*)
+ACTION aCheckMoldOpen: #BEGIN_EDIT_BLOCK
+(*@ MoldHeightAdjustN.ABAdjustForceOpenLoop.paRun.aCheckMoldOpen.Check the status of mold open movement
+                                                    - Finished
+                                                    - PositionReached*)
+fbCheckReady(DeviceId := DeviceIdMold,
+             bReady => bMoldOpenReady);
+fbCheckPosReached(DeviceId := DeviceIdMold,
+                  MoveDir := cMoveBwd,
+                  MoveId := cMoveBwdForMHAdjust,
+                  bPosReached => bMoldOpen);
+
+;#END_EDIT_BLOCK END_ACTION (*aCheckMoldOpen*)
+ACTION aCheckAdjBwdReady: #BEGIN_EDIT_BLOCK
+(**************************************** WARNING ********************************************
+ *** The KEBA Kemro K2 System including software is not intended for safety control tasks! ***
+ ***                       For further information see Comment tab!                        ***
+ *********************************************************************************************)
+
+fbCheckReady(DeviceId := DeviceIdMoldHeight,
+             bReady => bAdjustBwdReady);
+
+;#END_EDIT_BLOCK END_ACTION (*aCheckAdjBwdReady*)
+ACTION aCheckContinue: #BEGIN_EDIT_BLOCK
+(**************************************** WARNING ********************************************
+ *** The KEBA Kemro K2 System including software is not intended for safety control tasks! ***
+ ***                       For further information see Comment tab!                        ***
+ *********************************************************************************************)
+
+bContinue := sv_MoldHeightEndpoints.bPositionForStepReached;
+
+;#END_EDIT_BLOCK END_ACTION (*aCheckContinue*)
+ACTION aCheckCont2: #BEGIN_EDIT_BLOCK
+(**************************************** WARNING ********************************************
+ *** The KEBA Kemro K2 System including software is not intended for safety control tasks! ***
+ ***                       For further information see Comment tab!                        ***
+ *********************************************************************************************)
+
+IF sv_MoldHeightEndpoints.bStandStillTimeReached THEN
+    dummy:=Print('AdjustForceOpenLoop: standstill during adjust fwd detected');
+    sv_bStandStillDetectionArmed := FALSE;
+    bStandStillDetected := TRUE;
+    bMoldHeightFwdReady := TRUE;
+    
+    sv_iThisStepsSetImpulses := 64;
+   
+    IF MoldHeightAdjustMode = nPressureOpenLoop THEN
+       sv_bPresMoldHeightAdjustActive := TRUE;
+    END_IF;
+    
+    bContinue := TRUE;
+ELSE
+    bContinue := FALSE;
+END_IF;
+
+
+;#END_EDIT_BLOCK END_ACTION (*aCheckCont2*)
+ACTION aCheckClosed: #BEGIN_EDIT_BLOCK
+
+fbCheckPosReached(DeviceId := DeviceIdMold,
+                  MoveDir := cMoveFwd,
+                  MoveId := cMoveFwdForMHAdjust,
+                  bPosReached => bMoldClosed);
+
+;#END_EDIT_BLOCK END_ACTION (*aCheckClosed*)
+ACTION AResetHiPressMldBwd: #BEGIN_EDIT_BLOCK
+sv_ConstBwdVis := ConstBwdVisOrg;
+
+;#END_EDIT_BLOCK END_ACTION (*AResetHiPressMldBwd*)
+ACTION aCloseMoldProf: #BEGIN_EDIT_BLOCK
+
+evStartRequestData.DeviceId := DeviceIdMold;
+evStartRequestData.MoveDir := cMoveFwd; 
+evStartRequestData.MoveId := cMoveFwd;
+SET_EVENT(evStartRequest, evStartRequestData);
+
+;#END_EDIT_BLOCK END_ACTION (*aCloseMoldProf*)
+ACTION aCheckMoldClosedProf: #BEGIN_EDIT_BLOCK
+fbCheckReady(DeviceId := DeviceIdMold,
+             bReady => bMoldCloseReady);
+fbCheckPosReached(DeviceId := DeviceIdMold,
+                  MoveDir := cMoveFwd,
+                  MoveId := cMoveFwd,
+                  bPosReached => bMoldClosed);
+
+;#END_EDIT_BLOCK END_ACTION (*aCheckMoldClosedProf*)
+ACTION aOpenMoldProf: #BEGIN_EDIT_BLOCK
+
+evStartRequestData.DeviceId := DeviceIdMold;
+evStartRequestData.MoveDir := cMoveBwd; 
+evStartRequestData.MoveId := cMoveBwd;
+SET_EVENT(evStartRequest, evStartRequestData); 
+
+;#END_EDIT_BLOCK END_ACTION (*aOpenMoldProf*)
+ACTION aCheckMoldOpenedProf: #BEGIN_EDIT_BLOCK
+fbCheckReady(DeviceId := DeviceIdMold,
+             bReady => bMoldOpenReady);
+fbCheckPosReached(DeviceId := DeviceIdMold,
+                  MoveDir := cMoveBwd,
+                  MoveId := cMoveBwd,
+                  bPosReached => bMoldOpen);
+
+;#END_EDIT_BLOCK END_ACTION (*aCheckMoldOpenedProf*)
+(* end sfc-code *)
+
+
+END_ALGORITHM
+
+
+
+END_ALGORITHM_BLOCK
+
+
+
+#END_OF_IEC_PART
+
+@Puma @IecEditor 6 97 @Pou 25 
+@@@BEG_Comment@@@
+@h    ! WARNING !
+@h    The Kemro K2 system (including software) only meets category B according to EN 954-1,
+@h    thus it is not intended for usage in safety-relevant control applications in the field 
+@h    of personal safety (e.g. emergency stop).
+@h    To implement potentially necessary safety-relevant control tasks, always use additional 
+@h    external safety devices that are intended for the particular purpose, and meet the necessary 
+@h    functional safety.
+@h    For further information see EN 954-1 (EN ISO 13849-1) and/or the K2-x00 user manual, chapter 
+@h    "CE conformity, directives and standards". 
+
+The paRun algo controls the mold height automatic adjustment
+after a desired clamp force has been set and the mold height
+auto adjust has been started.
+Called by MoldHeightAdjustN.ABMoldHeightAutoAdmin.paRun
+@@@END_Comment@@@
+
+@BEG_Contents 
+
+@BEG_Func 
+@RT(17)FuncTreeContainer 
+2 
+@Var @RT(9)SET_ALARM @RT(0) @T @T @DERIVED 0 @F @RT(23)KEBA_STANDARD_PROCEDURE @F 
+@T 
+@BEG_Attrib 
+0 @RT(0) @RT(0) 
+@END_Attrib 
+1 1 @F @F @F @F 
+
+@Var @RT(14)GET_SYNC_REFTO @RT(0) @T @T @DERIVED 0 @F @RT(22)KEBA_STANDARD_FUNCTION @F 
+@T 
+@BEG_Attrib 
+0 @RT(0) @RT(0) 
+@END_Attrib 
+1 1 @F @F @F @F 
+
+@END_Func 
+
+@BEG_Const 
+@RT(18)ConstTreeContainer 
+2 
+@Var @RT(19)cMoveFwdForMHAdjust @RT(0) @T @F @DT @RT(4)DINT @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+0 @RT(2)32 @RT(61)mold forward movement during automatic mold height adjustment 
+@END_Attrib 
+1 1 @F @F @F @F 
+
+@Var @RT(19)cMoveBwdForMHAdjust @RT(0) @T @F @DT @RT(4)DINT @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+0 @RT(2)33 @RT(62)mold backward movement during automatic mold height adjustment 
+@END_Attrib 
+1 1 @F @F @F @F 
+
+@END_Const 
+
+@BEG_Export 
+
+@BEG_Kind 
+@ALGORITHM_BLOCK @RT(21)ABAdjustForceOpenLoop @STRUCTURED_TEXT 
+@RT(0) @RT(0) @RT(0) 
+@END_Kind 
+
+@BEG_Dcl 
+@RT(16)DclTreeContainer 
+13 
+@Var @RT(20)sv_MoldFwdProfVisSrc @RT(0) @T @T @DERIVED 0 @T @T @DT @RT(16)KAPPL_VisProfile @RT(0) @T @T @UNKNOWN 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 8 @F @F @F @F 
+
+@Var @RT(18)sv_rMaxPressureFwd @RT(0) @T @F @DT @RT(4)REAL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 8 @F @F @F @F 
+
+@Var @RT(14)evStartRequest @RT(0) @T @T @DERIVED 0 @T @T @DT @RT(15)tevStartRequest @RT(0) @T @T @UNKNOWN 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 7 @F @F @F @F 
+
+@Var @RT(14)sv_ConstFwdVis @RT(0) @T @T @DERIVED 0 @T @T @DT @RT(8)tsVelPre @RT(0) @T @T @UNKNOWN 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(36)const output for mold close movement @RT(0) 
+@END_Attrib 
+1 8 @F @F @F @F 
+
+@Var @RT(14)sv_ConstBwdVis @RT(0) @T @T @DERIVED 0 @T @T @DT @RT(8)tsVelPre @RT(0) @T @T @UNKNOWN 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(35)const output for mold open movement @RT(0) 
+@END_Attrib 
+1 8 @F @F @F @F 
+
+@Var @RT(13)sv_ClampForce @RT(0) @T @T @DERIVED 0 @T @T @DT @RT(13)tsClampForces @RT(0) @T @T @UNKNOWN 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 8 @F @F @F @F 
+
+@Var @RT(28)sv_bStandStillDetectionArmed @RT(0) @T @T @RENAMED 0 @T @T @DT @RT(4)BOOL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 8 @F @F @F @F 
+
+@Var @RT(22)sv_MoldHeightEndpoints @RT(0) @T @T @DERIVED 0 @T @T @DT @RT(17)tsEndpointMonitor @RT(0) @T @T @UNKNOWN 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 8 @F @F @F @F 
+
+@Var @RT(24)sv_iThisStepsSetImpulses @RT(0) @T @F @DT @RT(5)UDINT @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 8 @F @F @F @F 
+
+@Var @RT(25)erMoldHeightAdjustAborted @RT(0) @T @F @DT @RT(5)ALARM @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 7 @F @F @F @F 
+
+@Var @RT(26)erMoldHeightAdjustFinished @RT(0) @T @F @DT @RT(5)ALARM @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 7 @F @F @F @F 
+
+@Var @RT(20)sv_rSetClampPressure @RT(0) @T @T @RENAMED 0 @T @T @DT @RT(4)REAL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 8 @F @F @F @F 
+
+@Var @RT(30)sv_bPresMoldHeightAdjustActive @RT(0) @T @T @RENAMED 0 @T @T @DT @RT(4)BOOL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 8 @F @F @F @F 
+
+@END_Dcl 
+
+@END_Export 
+
+@BEG_Body 
+
+1 
+
+@BEG_Export 
+
+@BEG_Algo 
+@ALGORITHM @RT(4)aRun @SEQUENTIAL_FLOW_CHART 
+@RT(0) @RT(0) @RT(0) @F @F 
+@END_Algo 
+
+@BEG_Dcl 
+@RT(16)DclTreeContainer 
+33 
+@Var @RT(5)bStop @RT(0) @T @F @DT @RT(4)BOOL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 1 @F @F @F @F 
+
+@Var @RT(14)ConstFwdVisOrg @RT(0) @T @T @DERIVED 0 @T @T @DT @RT(8)tsVelPre @RT(0) @T @T @UNKNOWN 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(36)const output for mold close movement @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(17)ConstFwdVisHiPres @RT(0) @T @T @DERIVED 0 @T @T @DT @RT(8)tsVelPre @RT(0) @T @T @UNKNOWN 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(36)const output for mold close movement @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(14)ConstBwdVisOrg @RT(0) @T @T @DERIVED 0 @T @T @DT @RT(8)tsVelPre @RT(0) @T @T @UNKNOWN 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(36)const output for mold close movement @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(17)ConstBwdVisHiPres @RT(0) @T @T @DERIVED 0 @T @T @DT @RT(8)tsVelPre @RT(0) @T @T @UNKNOWN 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(36)const output for mold close movement @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(6)bReady @RT(0) @T @F @DT @RT(4)BOOL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 3 @F @F @F @F 
+
+@Var @RT(12)DeviceIdMold @RT(0) @T @T @DERIVED 0 @T @T @DT @RT(10)tsDeviceId @RT(0) @T @T @UNKNOWN 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 1 @F @F @F @F 
+
+@Var @RT(18)DeviceIdMoldHeight @RT(0) @T @T @DERIVED 0 @T @T @DT @RT(10)tsDeviceId @RT(0) @T @T @UNKNOWN 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 1 @F @F @F @F 
+
+@Var @RT(20)MoldHeightAdjustMode @RT(0) @T @T @DERIVED 0 @T @T @DT @RT(22)tnMoldHeightAdjustMode @RT(0) @T @T @UNKNOWN 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 1 @F @F @F @F 
+
+@Var @RT(9)bMoldOpen @RT(0) @T @F @DT @RT(4)BOOL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(12)fbCheckReady @RT(0) @T @T @DERIVED 0 @T @T @DT @RT(12)FBCheckReady @RT(0) @T @T @UNKNOWN 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(17)fbCheckPosReached @RT(0) @T @T @DERIVED 0 @T @T @DT @RT(17)FBCheckPosReached @RT(0) @T @T @UNKNOWN 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(18)evStartRequestData @RT(0) @T @T @DERIVED 0 @T @T @DT @RT(19)tevStartRequestData @RT(0) @T @T @UNKNOWN 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(11)bMoldClosed @RT(0) @T @F @DT @RT(4)BOOL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(15)bMoldCloseReady @RT(0) @T @F @DT @RT(4)BOOL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(19)bStandStillDetected @RT(0) @T @F @DT @RT(4)BOOL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(14)bMoldOpenReady @RT(0) @T @F @DT @RT(4)BOOL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(19)bMoldHeightFwdReady @RT(0) @T @F @DT @RT(4)BOOL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(15)bAdjustBwdReady @RT(0) @T @F @DT @RT(4)BOOL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(20)bJumpToAdjustForward @RT(0) @T @F @DT @RT(4)BOOL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(9)bFinished @RT(0) @T @F @DT @RT(4)BOOL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(6)fbStop @RT(0) @T @T @DERIVED 0 @T @T @DT @RT(6)FBStop @RT(0) @T @T @UNKNOWN 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(9)bContinue @RT(0) @T @F @DT @RT(4)BOOL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(17)MovementDirection @RT(0) @T @T @DERIVED 0 @T @T @DT @RT(19)tnMovementDirection @RT(0) @T @T @UNKNOWN 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(5)dummy @RT(0) @T @F @DT @RT(4)DINT @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(7)rHiPres @RT(0) @T @F @DT @RT(4)REAL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(13)bHiPresActive @RT(0) @T @F @DT @RT(4)BOOL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(6)rHiVel @RT(0) @T @F @DT @RT(4)REAL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(4)70.0 @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(6)Status @RT(0) @T @T @DERIVED 0 @T @T @DT @RT(11)KSYS_Status @RT(0) @T @T @UNKNOWN 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(12)fbDebugTrace @RT(0) @T @T @RENAMED 0 @T @T @DT @RT(12)FBDebugTrace @RT(0) @T @T @UNKNOWN 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(15)prActClampForce @RT(0) @T @T @REFTO 0 @T @DT @RT(4)REAL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(26)bClampPressSensorAvailable @RT(0) @T @F @DT @RT(4)BOOL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(14)prAIClampForce @RT(0) @T @T @REFTO 0 @T @DT @RT(4)REAL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@END_Dcl 
+
+@END_Export 
+
+@BEG_SfcBody 
+63 42 71 
+
+@BEG_SfcData 2 
+@StepSeq @RT(4)sseq @F 1 
+@Loop @RT(4)loop @F 2 
+@StepSeq @RT(3)seq @F 7 
+@Step @RT(5)START @F @T @F @F @RT(0) @F 
+@AcbCont @RT(7)unnamed @F 2 
+@Acb @RT(17)aPreparAdjustment @F @F @RT(1)P @RT(0) @F @F @T @F 
+@Acb @RT(12)aCheckClosed @F @F @RT(1)P @RT(0) @F @F @F @F 
+
+@AltBranch @RT(3)alt @F 2 
+@TransSeq @RT(4)tseq @F 1 
+@Trans @RT(16)TMoldIsNotClosed @F @T @F @F @T @T @TL(2)
+NOT bMoldClosed
+
+@RT(6)Trans1 @F 
+
+@TransSeq @RT(4)tseq @F 3 
+@Trans @RT(13)TMoldIsClosed @F @T @F @F @T @T @TL(2)
+bMoldClosed
+
+@RT(7)Trans51 @T @TL(1)
+open mold so it is for sure that mold close is done with calculated pressure
+
+@Step @RT(6)Step31 @F @F @F @F @RT(0) @F 
+@AcbCont @RT(7)unnamed @F 3 
+@Acb @RT(8)Action44 @F @T @RT(1)P @RT(0) @F @F @T @TL(2)
+sv_ConstBwdVis := ConstBwdVisHiPres;
+
+@F 
+@Acb @RT(9)aOpenMold @F @F @RT(1)P @RT(0) @F @F @T @F 
+@Acb @RT(14)aCheckMoldOpen @F @F @RT(1)N @RT(0) @F @F @T @F 
+
+@AltBranch @RT(3)alt @F 2 
+@TransSeq @RT(4)tseq @F 3 
+@Trans @RT(7)Trans52 @F @T @F @F @T @T @TL(2)
+bMoldOpenReady
+
+@RT(7)Trans52 @F 
+@Step @RT(6)Step32 @F @F @F @F @RT(0) @F 
+@AcbCont @RT(7)unnamed @F 1 
+@Acb @RT(19)AResetHiPressMldBwd @F @F @RT(1)P @RT(0) @F @F @T @F 
+
+@Trans @RT(7)Trans54 @F @T @F @F @T @F @TL(2)
+TRUE
+
+@RT(7)Trans54 @F 
+
+@TransSeq @RT(4)tseq @F 2 
+@Trans @RT(7)Trans53 @F @T @F @F @T @T @TL(2)
+bStop
+
+@RT(7)Trans53 @F 
+@Goto @RT(6)S_Stop @F @F 
+
+
+
+
+@Loop @RT(4)loop @F 2 
+@StepSeq @RT(3)seq @F 7 
+@Loop @RT(4)loop @F 2 
+@StepSeq @RT(3)seq @F 3 
+@Step @RT(6)Step37 @F @F @F @F @RT(0) @F 
+@AcbCont @RT(7)unnamed @F 0 
+
+@AltBranch @RT(3)alt @F 2 
+@TransSeq @RT(4)tseq @F 3 
+@Trans @RT(10)TCloseSlow @F @T @F @F @T @F @TL(2)
+NOT sv_bPresMoldHeightAdjustActive
+
+@RT(7)Trans60 @F 
+@Step @RT(11)S_MoldClose @F @F @F @F @RT(0) @F 
+@AcbCont @RT(7)unnamed @F 2 
+@Acb @RT(10)aCloseMold @F @F @RT(1)P @RT(0) @F @F @T @F 
+@Acb @RT(16)aCheckMoldClosed @F @F @RT(1)N @RT(0) @F @F @T @F 
+
+@AltBranch @RT(3)alt @F 2 
+@TransSeq @RT(4)tseq @F 1 
+@Trans @RT(10)TMoldClose @F @T @F @F @T @T @TL(2)
+bMoldCloseReady
+
+@RT(7)Trans58 @F 
+
+@TransSeq @RT(4)tseq @F 2 
+@Trans @RT(14)TMoldNotClosed @F @T @F @F @T @T @TL(3)
+bStop
+
+
+@RT(7)Trans62 @F 
+@Goto @RT(6)S_Stop @F @F 
+
+
+
+@TransSeq @RT(4)tseq @F 3 
+@Trans @RT(13)TCloseProfile @F @T @F @F @T @F @TL(2)
+sv_bPresMoldHeightAdjustActive
+
+@RT(7)Trans59 @F 
+@Step @RT(15)S_MoldCloseProf @F @F @F @F @RT(0) @F 
+@AcbCont @RT(7)unnamed @F 2 
+@Acb @RT(14)aCloseMoldProf @F @F @RT(1)P @RT(0) @F @F @T @F 
+@Acb @RT(20)aCheckMoldClosedProf @F @F @RT(1)N @RT(0) @F @F @T @F 
+
+@AltBranch @RT(3)alt @F 2 
+@TransSeq @RT(4)tseq @F 1 
+@Trans @RT(11)TMoldClose2 @F @T @F @F @T @T @TL(2)
+bMoldCloseReady
+
+@RT(7)Trans61 @F 
+
+@TransSeq @RT(4)tseq @F 2 
+@Trans @RT(15)TMoldNotClosed2 @F @T @F @F @T @T @TL(2)
+bStop
+
+@RT(7)Trans63 @F 
+@Goto @RT(6)S_Stop @F @F 
+
+
+
+
+@Step @RT(16)S_DecideNextStep @F @F @T @F @RT(0) @F 
+@AcbCont @RT(7)unnamed @F 1 
+@Acb @RT(15)aDecideNextStep @F @F @RT(1)P @RT(0) @F @F @T @F 
+
+
+@Trans @RT(7)Trans50 @F @T @T @T @T @T @TL(2)
+bHiPresActive
+
+@RT(7)Trans50 @F 
+
+@AltBranch @RT(3)alt @F 3 
+@TransSeq @RT(4)tseq @F 3 
+@Trans @RT(16)TDoMoldOpenConst @F @T @F @F @T @T @TL(3)
+NOT bJumpToAdjustForward
+AND NOT sv_bPresMoldHeightAdjustActive
+
+@RT(7)Trans67 @F 
+@Step @RT(10)S_OpenMold @F @F @F @F @RT(0) @F 
+@AcbCont @RT(7)unnamed @F 2 
+@Acb @RT(9)aOpenMold @F @F @RT(1)P @RT(0) @F @F @T @F 
+@Acb @RT(14)aCheckMoldOpen @F @F @RT(1)N @RT(0) @F @F @T @F 
+
+@AltBranch @RT(3)alt @F 2 
+@TransSeq @RT(4)tseq @F 1 
+@Trans @RT(11)TMoldIsOpen @F @T @F @F @T @T @TL(2)
+bMoldOpenReady
+
+@RT(6)Trans4 @F 
+
+@TransSeq @RT(4)tseq @F 2 
+@Trans @RT(14)TMoldIsNotOpen @F @T @F @F @T @T @TL(2)
+bStop
+
+@RT(7)Trans68 @F 
+@Goto @RT(6)S_Stop @F @F 
+
+
+
+@TransSeq @RT(4)tseq @F 3 
+@Trans @RT(15)TDoMoldOpenProf @F @T @F @F @T @T @TL(3)
+NOT bJumpToAdjustForward
+AND sv_bPresMoldHeightAdjustActive
+
+@RT(7)Trans66 @F 
+@Step @RT(14)S_OpenMoldProf @F @F @F @F @RT(0) @F 
+@AcbCont @RT(7)unnamed @F 2 
+@Acb @RT(13)aOpenMoldProf @F @F @RT(1)P @RT(0) @F @F @T @F 
+@Acb @RT(20)aCheckMoldOpenedProf @F @F @RT(1)N @RT(0) @F @F @T @F 
+
+@AltBranch @RT(3)alt @F 2 
+@TransSeq @RT(4)tseq @F 1 
+@Trans @RT(12)TMoldIsOpen2 @F @T @F @F @T @T @TL(2)
+bMoldOpenReady
+
+@RT(7)Trans69 @F 
+
+@TransSeq @RT(4)tseq @F 2 
+@Trans @RT(15)TMoldIsNotOpen2 @F @T @F @F @T @T @TL(2)
+bStop
+
+@RT(7)Trans70 @F 
+@Goto @RT(6)S_Stop @F @F 
+
+
+
+@TransSeq @RT(4)tseq @F 2 
+@Trans @RT(12)TDoAdjustFwd @F @T @F @F @T @F @TL(2)
+bJumpToAdjustForward
+
+@RT(7)Trans48 @F 
+@Goto @RT(11)S_AdjustFwd @F @F 
+
+
+@Step @RT(15)S_CheckFinished @F @F @F @F @RT(0) @F 
+@AcbCont @RT(7)unnamed @F 0 
+
+@AltBranch @RT(3)alt @F 2 
+@TransSeq @RT(4)tseq @F 1 
+@Trans @RT(19)TContinueAdjustment @F @T @F @F @T @F @TL(2)
+NOT bFinished
+
+@RT(7)Trans56 @F 
+
+@TransSeq @RT(4)tseq @F 2 
+@Trans @RT(16)TFinishAdjusment @F @T @F @F @T @F @TL(2)
+bFinished
+
+@RT(7)Trans57 @F 
+@Goto @RT(12)S_CheckReady @F @F 
+
+
+@Step @RT(17)S_DecideDirection @F @F @F @F @RT(0) @F 
+@AcbCont @RT(7)unnamed @F 1 
+@Acb @RT(19)AResetHiPressMldBwd @F @F @RT(1)P @RT(0) @F @F @T @F 
+
+@AltBranch @RT(3)alt @F 2 
+@TransSeq @RT(4)tseq @F 5 
+@Trans @RT(22)CheckMoldHeightMoveFwd @F @T @F @F @T @F @TL(2)
+MovementDirection = nForward
+
+@RT(6)Trans5 @F 
+@Step @RT(11)S_AdjustFwd @F @F @T @F @RT(0) @F 
+@AcbCont @RT(7)unnamed @F 2 
+@Acb @RT(18)aMoveMoldHeightFwd @F @F @RT(1)P @RT(0) @F @F @T @F 
+@Acb @RT(24)aCheckMoldHeightFwdReady @F @F @RT(1)N @RT(0) @F @F @T @F 
+
+@AltBranch @RT(3)alt @F 2 
+@TransSeq @RT(4)tseq @F 1 
+@Trans @RT(12)TAdjFwdReady @F @T @F @F @T @T @TL(2)
+bMoldHeightFwdReady
+
+@RT(7)Trans41 @F 
+
+@TransSeq @RT(4)tseq @F 2 
+@Trans @RT(11)TStopAdjFwd @F @T @F @F @T @T @TL(2)
+bStop
+
+@RT(7)Trans42 @F 
+@Goto @RT(6)S_Stop @F @F 
+
+
+@Step @RT(26)S_CheckStandStillDetection @F @F @F @F @RT(0) @F 
+@AcbCont @RT(7)unnamed @F 0 
+
+@AltBranch @RT(3)alt @F 2 
+@TransSeq @RT(4)tseq @F 3 
+@Trans @RT(20)TStandStillNotActive @F @T @F @F @T @F @TL(2)
+NOT sv_bStandStillDetectionArmed
+
+@RT(7)Trans22 @F 
+@Step @RT(15)S_CheckContinue @F @F @F @F @RT(0) @F 
+@AcbCont @RT(7)unnamed @F 1 
+@Acb @RT(14)aCheckContinue @F @F @RT(1)P @RT(0) @F @F @F @F 
+
+@AltBranch @RT(3)alt @F 2 
+@TransSeq @RT(4)tseq @F 1 
+@Trans @RT(9)TContinue @F @T @F @F @T @F @TL(2)
+bContinue
+
+@RT(7)Trans43 @F 
+
+@TransSeq @RT(4)tseq @F 2 
+@Trans @RT(12)TNotContinue @F @T @F @F @T @F @TL(2)
+NOT bContinue
+
+@RT(7)Trans44 @F 
+@Goto @RT(6)S_Stop @F @F 
+
+
+
+@TransSeq @RT(4)tseq @F 4 
+@Trans @RT(26)TStandStillDetectionActive @F @T @F @F @T @F @TL(2)
+sv_bStandStillDetectionArmed
+
+@RT(7)Trans25 @F 
+@Step @RT(16)S_CheckContinue2 @F @F @F @F @RT(0) @F 
+@AcbCont @RT(7)unnamed @F 1 
+@Acb @RT(11)aCheckCont2 @F @F @RT(1)P @RT(0) @F @F @F @F 
+
+@AltBranch @RT(3)alt @F 2 
+@TransSeq @RT(4)tseq @F 1 
+@Trans @RT(10)TContinue2 @F @T @F @F @T @F @TL(2)
+bContinue
+
+@RT(7)Trans45 @F 
+
+@TransSeq @RT(4)tseq @F 2 
+@Trans @RT(13)TNotContinue2 @F @T @F @F @T @F @TL(2)
+NOT bContinue
+
+@RT(7)Trans46 @F 
+@Goto @RT(6)S_Stop @F @F 
+
+
+@Goto @RT(16)S_DecideNextStep @F @F 
+
+
+
+@TransSeq @RT(4)tseq @F 5 
+@Trans @RT(22)CheckMoldHeightMoveBwd @F @T @F @F @T @F @TL(2)
+MovementDirection = nBackward
+
+@RT(6)Trans7 @F 
+@Step @RT(11)S_AdjustBwd @F @F @F @F @RT(0) @F 
+@AcbCont @RT(7)unnamed @F 2 
+@Acb @RT(18)aMoveMoldHeightBwd @F @F @RT(1)P @RT(0) @F @F @T @F 
+@Acb @RT(17)aCheckAdjBwdReady @F @F @RT(1)N @RT(0) @F @F @F @F 
+
+@AltBranch @RT(3)alt @F 2 
+@TransSeq @RT(4)tseq @F 1 
+@Trans @RT(15)TAdjustBwdReady @F @T @F @F @T @T @TL(2)
+bAdjustBwdReady
+
+@RT(7)Trans38 @F 
+
+@TransSeq @RT(4)tseq @F 2 
+@Trans @RT(11)TStopAdjBwd @F @T @F @F @T @T @TL(2)
+bStop
+
+@RT(7)Trans39 @F 
+@Goto @RT(6)S_Stop @F @F 
+
+
+@Step @RT(6)Step26 @F @F @F @F @RT(0) @F 
+@AcbCont @RT(7)unnamed @F 0 
+
+@AltBranch @RT(3)alt @F 2 
+@TransSeq @RT(4)tseq @F 1 
+@Trans @RT(16)AdjBwdPosReached @F @T @F @F @T @F @TL(2)
+sv_MoldHeightEndpoints.bPositionForStepReached
+
+@RT(6)Trans9 @F 
+
+@TransSeq @RT(4)tseq @F 2 
+@Trans @RT(20)AdjBwdPosNotrReached @F @T @F @F @T @F @TL(2)
+NOT sv_MoldHeightEndpoints.bPositionForStepReached
+
+@RT(7)Trans40 @F 
+@Goto @RT(6)S_Stop @F @F 
+
+
+
+
+@Step @RT(12)S_CheckReady @F @F @T @F @RT(0) @F 
+@AcbCont @RT(7)unnamed @F 0 
+
+
+@Trans @RT(12)TNotFinished @F @T @T @T @T @T @TL(2)
+NOT bFinished
+
+@RT(7)Trans31 @F 
+
+@Trans @RT(9)TFinished @F @T @F @F @T @T @TL(2)
+bFinished
+
+@RT(7)Trans30 @F 
+@Step @RT(6)S_Stop @F @F @T @F @RT(0) @F 
+@AcbCont @RT(7)unnamed @F 1 
+@Acb @RT(5)AStop @F @T @RT(1)P @RT(0) @F @F @T @TL(8)
+//stop active movement
+IF bStop THEN
+    fbStop(DeviceId := DeviceIdMold);
+    fbStop(DeviceId := DeviceIdMoldHeight);
+END_IF;
+
+sv_bPresMoldHeightAdjustActive := FALSE;
+
+@F 
+
+@Trans @RT(6)TReady @F @T @F @F @T @F @TL(2)
+TRUE
+
+@RT(7)Trans32 @F 
+@Step @RT(7)S_Ready @F @F @F @F @RT(0) @F 
+@AcbCont @RT(7)unnamed @F 1 
+@Acb @RT(6)AReady @F @T @RT(1)P @RT(0) @F @F @T @TL(14)
+IF bFinished THEN
+    SET_ALARM(erMoldHeightAdjustFinished);
+    dummy := Print('AdjustForceOpenLoop finished');
+ELSE
+    SET_ALARM(erMoldHeightAdjustAborted);
+    dummy := Print('AdjustForceOpenLoop aborted');    
+END_IF;
+
+sv_ConstFwdVis := ConstFwdVisOrg;
+sv_ConstBwdVis := ConstBwdVisOrg;
+bHiPresActive := FALSE; 
+
+bReady := TRUE;
+
+@F 
+
+
+@Trans @RT(7)Trans33 @F @T @T @T @T @T @TL(2)
+TRUE
+
+@RT(7)Trans33 @F 
+
+@END_SfcData 
+@SaActions 18 
+@SaText @RT(17)aPreparAdjustment 1 @TL(53)
+bReady := FALSE;
+bFinished := FALSE;
+
+//mold height adjust in closed-loop
+prActClampForce := GET_SYNC_REFTO('Mold1.sv_rClampForceAct', T#0s, Status);
+prAIClampForce := GET_SYNC_REFTO('Mold1.ai_ClampPress', T#0s, Status);
+bClampPressSensorAvailable := (Status = KSYS_Status_OK); 
+
+// sanity checks
+IF sv_ClampForce.rMaxClampForce <= 0.0 THEN
+   sv_ClampForce.rMaxClampForce := 1.0;
+END_IF;
+
+IF sv_ClampForce.rSetClampForce > sv_ClampForce.rMaxClampForce THEN
+   sv_ClampForce.rSetClampForce := sv_ClampForce.rMaxClampForce;
+END_IF;
+
+IF MoldHeightAdjustMode = nForceOpenLoop THEN
+    // Calculate the mold close high pressure like this:
+    // Set Pressure = (Maximum Pressure / Maximum Force) * Set Force
+    rHiPres := sv_ClampForce.rSetClampForce * (sv_rMaxPressureFwd / sv_ClampForce.rMaxClampForce);
+ELSE
+    rHiPres := sv_rSetClampPressure;
+END_IF;
+
+sv_MoldFwdProfVisSrc.Profile.Points[19].rPressure := rHiPres;
+   
+rHiVel := sv_MoldFwdProfVisSrc.Profile.Points[19].rVelocity;
+
+// Reset the standstill and jumpto flags
+bStandStillDetected := FALSE;
+bJumpToAdjustForward := FALSE;
+
+// set data for hi pressure const movement
+ConstFwdVisOrg := sv_ConstFwdVis;
+ConstFwdVisHiPres := sv_ConstFwdVis;
+
+ConstFwdVisHiPres.Velocity.Output.rOutputValue := rHiVel;
+ConstFwdVisHiPres.Pressure.Output.rOutputValue := rHiPres;
+
+ConstBwdVisOrg := sv_ConstBwdVis;
+ConstBwdVisHiPres := sv_ConstBwdVis;
+ConstBwdVisHiPres.Pressure.Output.rOutputValue := rHiPres;
+
+
+bHiPresActive := FALSE;
+
+IF MoldHeightAdjustMode = nForceOpenLoop THEN
+    dummy := Print('AdjustForceOpenLoop started');
+ELSE
+    dummy := Print('AdjustPressureOpenLoop started');
+END_IF;
+
+
+@SaText @RT(10)aCloseMold 1 @TL(9)
+(*@ MoldHeightAdjustN.ABAdjustForceOpenLoop.paRun.aCloseMold.Start the mold close movement *)
+
+evStartRequestData.DeviceId := DeviceIdMold;
+evStartRequestData.MoveDir := cMoveFwd; 
+evStartRequestData.MoveId := cMoveFwdForMHAdjust;
+SET_EVENT(evStartRequest, evStartRequestData);
+
+
+
+
+@SaText @RT(16)aCheckMoldClosed 1 @TL(10)
+(*@ MoldHeightAdjustN.ABAdjustForceOpenLoop.paRun.aCheckMoldClosed.Check the status of mold close movement
+                                                    - Finished
+                                                    - PositionReached*)
+fbCheckReady(DeviceId := DeviceIdMold,
+             bReady => bMoldCloseReady);
+fbCheckPosReached(DeviceId := DeviceIdMold,
+                  MoveDir := cMoveFwd,
+                  MoveId := cMoveFwdForMHAdjust,
+                  bPosReached => bMoldClosed);
+
+
+@SaText @RT(15)aDecideNextStep 1 @TL(87)
+(**************************************** WARNING ********************************************
+ *** The KEBA Kemro K2 System including software is not intended for safety control tasks! ***
+ ***                       For further information see Comment tab!                        ***
+ *********************************************************************************************)
+
+bJumpToAdjustForward := FALSE;
+
+IF bStandStillDetected THEN
+    //After the standstill has been detected:
+    //Find the correct mold height position where the mold can close with the calculated set high pressure.
+    //Reduce the mold height impulses from 64 to 32 to 16 ... to 1.
+    //If the mold could close after the last step then adjust mold height forward,
+    //if it couldn't close, adjust backward
+    IF (NOT bMoldClosed) AND (NOT bHiPresActive) AND (MoldHeightAdjustMode = nForceOpenLoop)  THEN  // try once again with hipressure
+        dummy := Print('AdjustForceOpenLoop: mold could not be closed -> try once again with hipres');
+        bHiPresActive := TRUE;
+        sv_ConstFwdVis := ConstFwdVisHiPres;
+        sv_ConstBwdVis := ConstBwdVisHiPres;
+        RETURN;
+    ELSE 
+        bHiPresActive := FALSE;
+        sv_ConstFwdVis := ConstFwdVisOrg;
+    END_IF;
+    
+    IF (sv_iThisStepsSetImpulses = 1) THEN
+        IF bMoldClosed THEN
+            //mold can be closed after last adjustment step with 1 impulse
+            //-> open mold and finish
+            bFinished := TRUE;
+        ELSE
+            //mold can not close
+            //-> adjust 1 bwd and try again
+            dummy := Print('AdjustForceOpenLoop: try again with 1 impulse because mold could not be closed');
+            sv_iThisStepsSetImpulses := 1;
+        END_IF;
+    ELSE
+        sv_iThisStepsSetImpulses := sv_iThisStepsSetImpulses/2;
+    END_IF;
+        
+    dummy:=Print('AdjustForceOpenLoop: set impulses to %d ', sv_iThisStepsSetImpulses);
+    
+ELSE
+    IF bMoldClosed THEN
+        sv_bStandStillDetectionArmed := TRUE;
+        sv_iThisStepsSetImpulses := 100000;
+        bJumpToAdjustForward := TRUE;
+    ELSE
+        //If the mold couldn't close the mold has to be opened again 
+        //and the mold height has to move backward until the mold can close
+        //always 64 impulses        
+        sv_iThisStepsSetImpulses := 64;      
+    END_IF;
+END_IF;
+
+//get direction for mold adjustment
+IF bMoldClosed THEN
+    //adjust in closed loop in case that the pressure sensor is available
+    IF bClampPressSensorAvailable THEN
+        sv_ClampForce.rActualClampForce := prActClampForce^;
+        IF sv_ClampForce.rActualClampForce <= sv_ClampForce.rSetClampForce THEN
+            //If the set val greater than act val at the last step, 
+            //once further movement by one gear is necessary             
+            IF (sv_iThisStepsSetImpulses = 1) THEN    
+                bFinished := FALSE;
+                fbDebugTrace(sText := 'Last mold height adjustment in closed loop by 1 impulse');
+            END_IF;
+            MovementDirection := nForward; 
+            dummy:=Print('MoldHeightAdjust: Mold closed and act force < set force -> set adjust direction to FWD');
+        ELSE
+            IF (sv_iThisStepsSetImpulses = 1) THEN
+                bFinished := TRUE; 
+            END_IF; 
+            MovementDirection := nBackward;
+            dummy:=Print('MoldHeightAdjust: Mold closed and act force > set force -> set adjust direction to BWD');
+        END_IF;
+        
+    ELSE     
+        MovementDirection := nForward;
+        dummy:=Print('MoldHeightAdjust: Mold closed -> set adjust direction to FWD');
+    END_IF;
+ELSE
+    MovementDirection := nBackward;
+    dummy:=Print('MoldHeightAdjust: Mold not closed -> set adjust direction to BWD');
+END_IF;
+
+                                                                                                 
+
+
+@SaText @RT(9)aOpenMold 1 @TL(7)
+(*@ MoldHeightAdjustN.ABAdjustForceOpenLoop.paRun.aOpenMold.Start the mold open movement *)
+
+evStartRequestData.DeviceId := DeviceIdMold;
+evStartRequestData.MoveDir := cMoveBwd; 
+evStartRequestData.MoveId := cMoveBwdForMHAdjust;
+SET_EVENT(evStartRequest, evStartRequestData); 
+
+
+@SaText @RT(18)aMoveMoldHeightFwd 1 @TL(13)
+(*@ MoldHeightAdjustN.ABAdjustForceOpenLoop.paRun.aMoveMoldHeightFwd.Because the mold height forward movement
+                                                    can be stopped by either the detection of a stand still or
+                                                    the reaching of desired impulses for this step, these two
+                                                    conditions are combined into the bMoldHeightFwdReady flag.
+                                                    Of course this flag has to be reset when the movement starts*)
+bMoldHeightFwdReady := FALSE;
+
+(*@ MoldHeightAdjustN.ABAdjustForceOpenLoop.paRun.aMoveMoldHeightFwd.Start the mold height forward movement *)
+evStartRequestData.DeviceId := DeviceIdMoldHeight;
+evStartRequestData.MoveDir := cMoveFwd; 
+evStartRequestData.MoveId := cMoveFwd;
+SET_EVENT(evStartRequest, evStartRequestData); 
+
+
+@SaText @RT(18)aMoveMoldHeightBwd 1 @TL(7)
+(*@ MoldHeightAdjustN.ABAdjustForceOpenLoop.paRun.aMoveMoldHeightBwd.Start the mold height backward movement *)
+
+evStartRequestData.DeviceId := DeviceIdMoldHeight;
+evStartRequestData.MoveDir := cMoveBwd; 
+evStartRequestData.MoveId := cMoveBwd;
+SET_EVENT(evStartRequest, evStartRequestData);
+
+
+@SaText @RT(24)aCheckMoldHeightFwdReady 1 @TL(8)
+(**************************************** WARNING ********************************************
+ *** The KEBA Kemro K2 System including software is not intended for safety control tasks! ***
+ ***                       For further information see Comment tab!                        ***
+ *********************************************************************************************)
+
+fbCheckReady(DeviceId := DeviceIdMoldHeight,
+             bReady => bMoldHeightFwdReady);
+
+
+@SaText @RT(14)aCheckMoldOpen 1 @TL(10)
+(*@ MoldHeightAdjustN.ABAdjustForceOpenLoop.paRun.aCheckMoldOpen.Check the status of mold open movement
+                                                    - Finished
+                                                    - PositionReached*)
+fbCheckReady(DeviceId := DeviceIdMold,
+             bReady => bMoldOpenReady);
+fbCheckPosReached(DeviceId := DeviceIdMold,
+                  MoveDir := cMoveBwd,
+                  MoveId := cMoveBwdForMHAdjust,
+                  bPosReached => bMoldOpen);
+
+
+@SaText @RT(17)aCheckAdjBwdReady 1 @TL(8)
+(**************************************** WARNING ********************************************
+ *** The KEBA Kemro K2 System including software is not intended for safety control tasks! ***
+ ***                       For further information see Comment tab!                        ***
+ *********************************************************************************************)
+
+fbCheckReady(DeviceId := DeviceIdMoldHeight,
+             bReady => bAdjustBwdReady);
+
+
+@SaText @RT(14)aCheckContinue 1 @TL(7)
+(**************************************** WARNING ********************************************
+ *** The KEBA Kemro K2 System including software is not intended for safety control tasks! ***
+ ***                       For further information see Comment tab!                        ***
+ *********************************************************************************************)
+
+bContinue := sv_MoldHeightEndpoints.bPositionForStepReached;
+
+
+@SaText @RT(11)aCheckCont2 1 @TL(23)
+(**************************************** WARNING ********************************************
+ *** The KEBA Kemro K2 System including software is not intended for safety control tasks! ***
+ ***                       For further information see Comment tab!                        ***
+ *********************************************************************************************)
+
+IF sv_MoldHeightEndpoints.bStandStillTimeReached THEN
+    dummy:=Print('AdjustForceOpenLoop: standstill during adjust fwd detected');
+    sv_bStandStillDetectionArmed := FALSE;
+    bStandStillDetected := TRUE;
+    bMoldHeightFwdReady := TRUE;
+    
+    sv_iThisStepsSetImpulses := 64;
+   
+    IF MoldHeightAdjustMode = nPressureOpenLoop THEN
+       sv_bPresMoldHeightAdjustActive := TRUE;
+    END_IF;
+    
+    bContinue := TRUE;
+ELSE
+    bContinue := FALSE;
+END_IF;
+
+
+
+@SaText @RT(12)aCheckClosed 1 @TL(6)
+
+fbCheckPosReached(DeviceId := DeviceIdMold,
+                  MoveDir := cMoveFwd,
+                  MoveId := cMoveFwdForMHAdjust,
+                  bPosReached => bMoldClosed);
+
+
+@SaText @RT(19)AResetHiPressMldBwd 1 @TL(2)
+sv_ConstBwdVis := ConstBwdVisOrg;
+
+
+@SaText @RT(14)aCloseMoldProf 1 @TL(6)
+
+evStartRequestData.DeviceId := DeviceIdMold;
+evStartRequestData.MoveDir := cMoveFwd; 
+evStartRequestData.MoveId := cMoveFwd;
+SET_EVENT(evStartRequest, evStartRequestData);
+
+
+@SaText @RT(20)aCheckMoldClosedProf 1 @TL(7)
+fbCheckReady(DeviceId := DeviceIdMold,
+             bReady => bMoldCloseReady);
+fbCheckPosReached(DeviceId := DeviceIdMold,
+                  MoveDir := cMoveFwd,
+                  MoveId := cMoveFwd,
+                  bPosReached => bMoldClosed);
+
+
+@SaText @RT(13)aOpenMoldProf 1 @TL(6)
+
+evStartRequestData.DeviceId := DeviceIdMold;
+evStartRequestData.MoveDir := cMoveBwd; 
+evStartRequestData.MoveId := cMoveBwd;
+SET_EVENT(evStartRequest, evStartRequestData); 
+
+
+@SaText @RT(20)aCheckMoldOpenedProf 1 @TL(7)
+fbCheckReady(DeviceId := DeviceIdMold,
+             bReady => bMoldOpenReady);
+fbCheckPosReached(DeviceId := DeviceIdMold,
+                  MoveDir := cMoveBwd,
+                  MoveId := cMoveBwd,
+                  bPosReached => bMoldOpen);
+
+
+@SaTrans 0 
+@SaExits 0 
+@END_SfcBody 
+
+@@@BEG_Comment@@@ 
+@TL(5)
+Controlling the mold height automatic adjustment as described in the manual - force controlled open loop.
+- Calculate high pressure setting from clamp force settings on hmi
+- close the mold and detect standstill.
+- adjust mold height, step by step (clamp open => +/- 64/32/16..1 teeth => clamp close ) 
+- until the mold can close with desired clamp force after the last mold height step of +/- 1 tooth.
+@@@END_Comment@@@ 
+@END_Body 
+
+@END_Contents 

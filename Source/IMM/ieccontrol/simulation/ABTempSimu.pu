@@ -1,0 +1,1938 @@
+IMPORT_OVER_LISTFILE
+ GET_SYNC_REFTO
+, GET_TASK_INTERVAL
+, cMaxZones
+, KSYS_Status_OK
+, tyZoneArray
+, ABZoneSimu
+, KSYS_Status
+, KAPPL_TempZoneUsedArr
+, ABForceAnalog
+, KTEMP_PtnParam
+
+END_IMPORT
+
+ALGORITHM_BLOCK ABTempSimu #DUMMY_EDIT_BLOCK
+
+SYSTEM_VAR
+ sv_bSimulate : BOOL;
+ sv_bHeatingOn : BOOL;
+ sv_ZoneArray : tyZoneArray;
+ sv_bInitStart : BOOL;
+ sv_bSimuDeveloperMode : BOOL;
+END_VAR
+
+SYSTEM_OBJECT
+ TaskSim : TASK;
+ PU_Task_13 : TASK;
+END_OBJECT
+
+VAR
+ mbHopperTempLinked : BOOL (* TRUE: ti_HopperTempLinked *);
+ mbSimuDeveloperMode : BOOL;
+ mbReParam : BOOL := TRUE;
+ abZoneSimu1 : ABZoneSimu;
+ abZoneSimu2 : ABZoneSimu;
+ abZoneSimu3 : ABZoneSimu;
+ abZoneSimu4 : ABZoneSimu;
+ abZoneSimu5 : ABZoneSimu;
+ abZoneSimu6 : ABZoneSimu;
+ abZoneSimu7 : ABZoneSimu;
+ abZoneSimu8 : ABZoneSimu;
+ abZoneSimu9 : ABZoneSimu;
+ abZoneSimu10 : ABZoneSimu;
+ abZoneSimu11 : ABZoneSimu;
+ abZoneSimu12 : ABZoneSimu;
+END_VAR
+
+VAR RETAIN
+ mdHeatUpDurationSim : TIME := T#25s;
+ mdCoolingTimeSim : TIME := T#2m;
+ mbFastSimCoolingHeaterOff : BOOL := TRUE;
+ mrHeatUpVariance : REAL := 1.0;
+END_VAR
+
+POSTUPDATE_ALGORITHM pStart ON PU_Task_13 WITH sv_bSimulate,sv_bInitStart
+
+#BEGIN_EDIT_BLOCK
+(**************************************** WARNING ********************************************
+ *** The KEBA Kemro K2 System including software is not intended for safety control tasks! ***
+ ***                       For further information see Comment tab!                        ***
+ *********************************************************************************************)
+
+IF sv_bSimulate THEN
+    START_PROCESS_ALGORITHM(paSimulate);
+END_IF;
+
+
+;#END_EDIT_BLOCK END_ALGORITHM
+
+PROCESS_ALGORITHM paSimulate ON TaskSim
+
+
+VAR_TEMP
+ i : DINT;
+END_VAR
+
+VAR
+ s : STRING(255);
+ Status : KSYS_Status;
+ prTIOilTemp : REFTO REAL;
+ bTIOilTempLinked : BOOL;
+ bTITempZoneLinked : KAPPL_TempZoneUsedArr;
+ abForceHopperTemp : ABForceAnalog;
+ abForceOilTemp : ABForceAnalog;
+ dCycleTime : TIME;
+ Plant : KTEMP_PtnParam := (uN:=3,rK:=3.0,rT:=3(T#5s));
+ rFactorHeatUpTime : REAL := 0.05;
+ rKVariance : REAL;
+ rKActVariance : REAL;
+ rFactorCoolingTime : REAL := 0.1;
+END_VAR
+
+VAR RETAIN
+ rGain1 : REAL := 4.0;
+ rGain2 : REAL := 4.0;
+ rGain3 : REAL := 4.0;
+ rGain4 : REAL := 4.0;
+ rGain5 : REAL := 4.0;
+ rGain6 : REAL := 4.0;
+ rGain7 : REAL := 4.0;
+ rGain8 : REAL := 4.0;
+ rGain9 : REAL := 4.0;
+ rGain10 : REAL := 4.0;
+ rGain11 : REAL := 4.0;
+ rGain12 : REAL := 4.0;
+ dTPlant1 : TIME := T#1s500ms;
+ dTPlant2 : TIME := T#2s;
+ dTPlant3 : TIME := T#2s;
+ dTPlant4 : TIME := T#1s500ms;
+ dTPlant5 : TIME := T#1s500ms;
+ dTPlant6 : TIME := T#1s500ms;
+ dTPlant7 : TIME := T#1s500ms;
+ dTPlant8 : TIME := T#1s500ms;
+ dTPlant9 : TIME := T#1s500ms;
+ dTPlant10 : TIME := T#1s500ms;
+ dTPlant11 : TIME := T#1s500ms;
+ dTPlant12 : TIME := T#1s500ms;
+ rRadiationCoilFactor : REAL := 0.002;
+END_VAR
+
+(* IecGraph-Code *)
+
+(* init step *)
+INITIAL_STEP INIT:
+END_STEP
+
+
+(* steps *)
+STEP SIM:
+aInit (P);
+aSimulate (N);
+END_STEP
+
+STEP STOP:
+aStopSimu (P);
+END_STEP
+
+
+(* transitions *)
+TRANSITION SimRequired (* SimRequired *) FROM INIT TO SIM :=  #BEGIN_EDIT_BLOCK
+sv_bSimulate
+;#END_EDIT_BLOCK
+END_TRANSITION
+
+TRANSITION StpSimRequired (* StpSimRequired *) FROM SIM TO STOP :=  #BEGIN_EDIT_BLOCK
+NOT sv_bSimulate
+;#END_EDIT_BLOCK
+END_TRANSITION
+
+TRANSITION Return (* Return *) FROM STOP TO SIM :=  #BEGIN_EDIT_BLOCK
+TRUE
+;#END_EDIT_BLOCK
+END_TRANSITION
+
+(* end IecGraph-Code *)
+(* sfc-code *)
+
+(* stand alone actions *)
+ACTION aInit: #BEGIN_EDIT_BLOCK
+(**************************************** WARNING ********************************************
+ *** The KEBA Kemro K2 System including software is not intended for safety control tasks! ***
+ ***                       For further information see Comment tab!                        ***
+ *********************************************************************************************)
+
+FOR i := 1 TO cMaxZones DO
+   IF CHECK_REF(sv_ZoneArray[i].Data^.prActTemp^) THEN
+      bTITempZoneLinked[i]:= TRUE;
+      s := CONCAT('HeatingNozzle1.ti_InTemp', DINT_TO_STRING(i));
+   END_IF;
+   
+   IF sv_ZoneArray[i].bLinked THEN     
+      IF CHECK_REF(sv_ZoneArray[i].Data^.pbOutHeatTOStat^) THEN
+         sv_ZoneArray[i].Data^.pbOutHeatTOStat^ := FALSE;
+      END_IF;
+      IF CHECK_REF(sv_ZoneArray[i].Data^.pbOutCoolTOStat^) THEN
+            sv_ZoneArray[i].Data^.pbOutCoolTOStat^ := FALSE;
+      END_IF;
+      IF CHECK_REF(sv_ZoneArray[i].Data^.pbOutHeatDOStat^) THEN
+         sv_ZoneArray[i].Data^.pbOutHeatDOStat^ := FALSE;
+      END_IF;
+      IF CHECK_REF(sv_ZoneArray[i].Data^.pbOutCoolDOStat^) THEN
+         sv_ZoneArray[i].Data^.pbOutCoolDOStat^ := FALSE;
+      END_IF;  
+      IF CHECK_REF( sv_ZoneArray[i].Data^.pbActTempStat^) THEN
+            sv_ZoneArray[i].Data^.pbActTempStat^ := FALSE;
+      END_IF;
+   ELSE
+      EXIT;
+   END_IF;
+   
+END_FOR;
+
+prTIOilTemp := GET_SYNC_REFTO('OilMaintenance1.ti_OilTemp', T#0s, Status);
+IF Status = KSYS_Status_OK THEN
+   bTIOilTempLinked := TRUE;
+   abForceOilTemp.aInit(Name := 'OilMaintenance1.ti_OilTemp', Range := 50.0);
+   abForceOilTemp.aSetForceValue(rValue := 28.0);
+END_IF;
+
+IF mbHopperTempLinked THEN
+   abForceHopperTemp.aInit(Name := 'HeatingNozzle1.ti_HopperTemp', Range := 400.0);
+   abForceHopperTemp.aSetForceValue(rValue := 28.0);
+END_IF;
+
+dCycleTime := GET_TASK_INTERVAL();
+
+mbSimuDeveloperMode := sv_bSimuDeveloperMode;
+
+IF (mdHeatUpDurationSim > T#0s) THEN
+   IF (mrHeatUpVariance > 0.0) THEN
+      rKVariance := 1.0 + mrHeatUpVariance / 100.0;
+   ELSE
+      rKVariance := 1.0;
+   END_IF;
+   dTPlant1 := MULTIME(mdHeatUpDurationSim, rFactorHeatUpTime);
+   rKActVariance := rKVariance;
+   dTPlant2 := MULTIME(mdHeatUpDurationSim, rFactorHeatUpTime * rKActVariance);
+   dTPlant3 := MULTIME(mdHeatUpDurationSim, rFactorHeatUpTime / rKActVariance);
+   rKActVariance := EXPT(rKVariance,2.0);
+   dTPlant4 := MULTIME(mdHeatUpDurationSim, rFactorHeatUpTime * rKActVariance);
+   dTPlant5 := MULTIME(mdHeatUpDurationSim, rFactorHeatUpTime / rKActVariance);
+   rKActVariance := EXPT(rKVariance,3.0);
+   dTPlant6 := MULTIME(mdHeatUpDurationSim, rFactorHeatUpTime * rKActVariance);
+   dTPlant7 := MULTIME(mdHeatUpDurationSim, rFactorHeatUpTime / rKActVariance);
+   rKActVariance := EXPT(rKVariance,4.0);
+   dTPlant8 := MULTIME(mdHeatUpDurationSim, rFactorHeatUpTime * rKActVariance);
+   dTPlant9 := MULTIME(mdHeatUpDurationSim, rFactorHeatUpTime / rKActVariance);
+   rKActVariance := EXPT(rKVariance,5.0);
+   dTPlant10 := MULTIME(mdHeatUpDurationSim, rFactorHeatUpTime * rKActVariance);
+   dTPlant11 := MULTIME(mdHeatUpDurationSim, rFactorHeatUpTime / rKActVariance);
+   rKActVariance := EXPT(rKVariance,6.0);
+   dTPlant12 := MULTIME(mdHeatUpDurationSim, rFactorHeatUpTime * rKActVariance);   
+END_IF;
+IF (mdCoolingTimeSim > T#0s) THEN
+   rRadiationCoilFactor := rFactorCoolingTime * LINT_TO_REAL(TIME_TO_LINT(mdHeatUpDurationSim)) / LINT_TO_REAL(TIME_TO_LINT(mdCoolingTimeSim));
+END_IF;
+
+Plant.uN    := 3;    
+Plant.rK    := rGain1;    
+Plant.rT[0] := dTPlant1;
+Plant.rT[1] := dTPlant1;
+Plant.rT[2] := dTPlant1;    
+abZoneSimu1.aInit(ptnParam:=Plant,
+                  dCycleTime:=dCycleTime,
+                  sZoneName:='HeatingNozzle1.ti_InTemp1',
+                  bZoneLinked:=bTITempZoneLinked[1],
+                  rRadiationCoilFactor := rRadiationCoilFactor,
+                  bZoneModelMode := mbSimuDeveloperMode);
+
+Plant.rK    := rGain2;    
+Plant.rT[0] := dTPlant2;
+Plant.rT[1] := dTPlant2;
+Plant.rT[2] := dTPlant2;    
+abZoneSimu2.aInit(ptnParam:=Plant,
+                  dCycleTime:=dCycleTime,
+                  sZoneName:='HeatingNozzle1.ti_InTemp2',
+                  bZoneLinked:=bTITempZoneLinked[2],
+                  rRadiationCoilFactor := rRadiationCoilFactor,
+                  bZoneModelMode := mbSimuDeveloperMode);
+
+Plant.rK    := rGain3;    
+Plant.rT[0] := dTPlant3;
+Plant.rT[1] := dTPlant3;
+Plant.rT[2] := dTPlant3;    
+abZoneSimu3.aInit(ptnParam:=Plant,
+                  dCycleTime:=dCycleTime,
+                  sZoneName:='HeatingNozzle1.ti_InTemp3',
+                  bZoneLinked:=bTITempZoneLinked[3],
+                  rRadiationCoilFactor := rRadiationCoilFactor,
+                  bZoneModelMode := mbSimuDeveloperMode);
+
+Plant.rK    := rGain4;    
+Plant.rT[0] := dTPlant4;
+Plant.rT[1] := dTPlant4;
+Plant.rT[2] := dTPlant4;    
+abZoneSimu4.aInit(ptnParam:=Plant,
+                  dCycleTime:=dCycleTime,
+                  sZoneName:='HeatingNozzle1.ti_InTemp4',
+                  bZoneLinked:=bTITempZoneLinked[4],
+                  rRadiationCoilFactor := rRadiationCoilFactor,
+                  bZoneModelMode := mbSimuDeveloperMode);
+
+Plant.rK    := rGain5;    
+Plant.rT[0] := dTPlant5;
+Plant.rT[1] := dTPlant5;
+Plant.rT[2] := dTPlant5;    
+abZoneSimu5.aInit(ptnParam:=Plant,
+                  dCycleTime:=dCycleTime,
+                  sZoneName:='HeatingNozzle1.ti_InTemp5',
+                  bZoneLinked:=bTITempZoneLinked[5],
+                  rRadiationCoilFactor := rRadiationCoilFactor,
+                  bZoneModelMode := mbSimuDeveloperMode);
+
+Plant.rK    := rGain6;    
+Plant.rT[0] := dTPlant6;
+Plant.rT[1] := dTPlant6;
+Plant.rT[2] := dTPlant6;    
+abZoneSimu6.aInit(ptnParam:=Plant,
+                  dCycleTime:=dCycleTime,
+                  sZoneName:='HeatingNozzle1.ti_InTemp6',
+                  bZoneLinked:=bTITempZoneLinked[6],
+                  rRadiationCoilFactor := rRadiationCoilFactor,
+                  bZoneModelMode := mbSimuDeveloperMode);
+
+Plant.rK    := rGain7;    
+Plant.rT[0] := dTPlant7;
+Plant.rT[1] := dTPlant7;
+Plant.rT[2] := dTPlant7;    
+abZoneSimu7.aInit(ptnParam:=Plant,
+                  dCycleTime:=dCycleTime,
+                  sZoneName:='HeatingNozzle1.ti_InTemp7',
+                  bZoneLinked:=bTITempZoneLinked[7],
+                  rRadiationCoilFactor := rRadiationCoilFactor,
+                  bZoneModelMode := mbSimuDeveloperMode);
+
+Plant.rK    := rGain8;    
+Plant.rT[0] := dTPlant8;
+Plant.rT[1] := dTPlant8;
+Plant.rT[2] := dTPlant8;    
+abZoneSimu8.aInit(ptnParam:=Plant,
+                  dCycleTime:=dCycleTime,
+                  sZoneName:='HeatingNozzle1.ti_InTemp8',
+                  bZoneLinked:=bTITempZoneLinked[8],
+                  rRadiationCoilFactor := rRadiationCoilFactor,
+                  bZoneModelMode := mbSimuDeveloperMode);
+
+Plant.rK    := rGain9;    
+Plant.rT[0] := dTPlant9;
+Plant.rT[1] := dTPlant9;
+Plant.rT[2] := dTPlant9;    
+abZoneSimu9.aInit(ptnParam:=Plant,
+                  dCycleTime:=dCycleTime,
+                  sZoneName:='HeatingNozzle1.ti_InTemp9',
+                  bZoneLinked:=bTITempZoneLinked[9],
+                  rRadiationCoilFactor := rRadiationCoilFactor,
+                  bZoneModelMode := mbSimuDeveloperMode);
+
+Plant.rK    := rGain10;    
+Plant.rT[0] := dTPlant10;
+Plant.rT[1] := dTPlant10;
+Plant.rT[2] := dTPlant10;    
+abZoneSimu10.aInit(ptnParam:=Plant,
+                   dCycleTime:=dCycleTime,
+                   sZoneName:='HeatingNozzle1.ti_InTemp10',
+                   bZoneLinked:=bTITempZoneLinked[10],
+                   rRadiationCoilFactor := rRadiationCoilFactor,
+                   bZoneModelMode := mbSimuDeveloperMode);
+
+abZoneSimu11.aInit(ptnParam:=Plant,
+                   dCycleTime:=dCycleTime,
+                   sZoneName:='HeatingNozzle1.ti_InTemp11',
+                   bZoneLinked:=bTITempZoneLinked[11],
+                   rRadiationCoilFactor := rRadiationCoilFactor,
+                   bZoneModelMode := mbSimuDeveloperMode);
+
+abZoneSimu12.aInit(ptnParam:=Plant,
+                   dCycleTime:=dCycleTime,
+                   sZoneName:='HeatingNozzle1.ti_InTemp12',
+                   bZoneLinked:=bTITempZoneLinked[12],
+                   rRadiationCoilFactor := rRadiationCoilFactor,
+                   bZoneModelMode := mbSimuDeveloperMode);
+
+;#END_EDIT_BLOCK END_ACTION (*aInit*)
+ACTION aSimulate: #BEGIN_EDIT_BLOCK
+(**************************************** WARNING ********************************************
+ *** The KEBA Kemro K2 System including software is not intended for safety control tasks! ***
+ ***                       For further information see Comment tab!                        ***
+ *********************************************************************************************)
+IF mbReParam THEN
+   // calculate new parameter
+   IF (mdHeatUpDurationSim > T#0s) THEN
+      IF (mrHeatUpVariance > 0.0) THEN
+         rKVariance := 1.0 + mrHeatUpVariance / 100.0;
+      ELSE
+         rKVariance := 1.0;
+      END_IF;
+      dTPlant1 := MULTIME(mdHeatUpDurationSim, rFactorHeatUpTime);
+      rKActVariance := rKVariance;
+      dTPlant2 := MULTIME(mdHeatUpDurationSim, rFactorHeatUpTime * rKActVariance);
+      dTPlant3 := MULTIME(mdHeatUpDurationSim, rFactorHeatUpTime / rKActVariance);
+      rKActVariance := EXPT(rKVariance,2.0);
+      dTPlant4 := MULTIME(mdHeatUpDurationSim, rFactorHeatUpTime * rKActVariance);
+      dTPlant5 := MULTIME(mdHeatUpDurationSim, rFactorHeatUpTime / rKActVariance);
+      rKActVariance := EXPT(rKVariance,3.0);
+      dTPlant6 := MULTIME(mdHeatUpDurationSim, rFactorHeatUpTime * rKActVariance);
+      dTPlant7 := MULTIME(mdHeatUpDurationSim, rFactorHeatUpTime / rKActVariance);
+      rKActVariance := EXPT(rKVariance,4.0);
+      dTPlant8 := MULTIME(mdHeatUpDurationSim, rFactorHeatUpTime * rKActVariance);
+      dTPlant9 := MULTIME(mdHeatUpDurationSim, rFactorHeatUpTime / rKActVariance);
+      rKActVariance := EXPT(rKVariance,5.0);
+      dTPlant10 := MULTIME(mdHeatUpDurationSim, rFactorHeatUpTime * rKActVariance);
+      dTPlant11 := MULTIME(mdHeatUpDurationSim, rFactorHeatUpTime / rKActVariance);
+      rKActVariance := EXPT(rKVariance,6.0);
+      dTPlant12 := MULTIME(mdHeatUpDurationSim, rFactorHeatUpTime * rKActVariance);
+   END_IF;
+   IF (mdCoolingTimeSim > T#0s) THEN
+      rRadiationCoilFactor := rFactorCoolingTime * LINT_TO_REAL(TIME_TO_LINT(mdHeatUpDurationSim)) / LINT_TO_REAL(TIME_TO_LINT(mdCoolingTimeSim));
+   END_IF;
+
+   Plant.rK    := rGain1;    
+   Plant.rT[0] := dTPlant1;
+   Plant.rT[1] := dTPlant1;
+   Plant.rT[2] := dTPlant1;    
+   abZoneSimu1.aReParamPlant( ptnParam:=Plant,
+                              bZoneModelMode := mbSimuDeveloperMode,
+                              rRadiationCoilFactor := rRadiationCoilFactor);
+   Plant.rK    := rGain2;    
+   Plant.rT[0] := dTPlant2;
+   Plant.rT[1] := dTPlant2;
+   Plant.rT[2] := dTPlant2;    
+   abZoneSimu2.aReParamPlant( ptnParam:=Plant,
+                              bZoneModelMode := mbSimuDeveloperMode,
+                              rRadiationCoilFactor := rRadiationCoilFactor);
+   Plant.rK    := rGain3;    
+   Plant.rT[0] := dTPlant3;
+   Plant.rT[1] := dTPlant3;
+   Plant.rT[2] := dTPlant3;    
+   abZoneSimu3.aReParamPlant( ptnParam:=Plant,
+                              bZoneModelMode := mbSimuDeveloperMode,
+                              rRadiationCoilFactor := rRadiationCoilFactor);
+   Plant.rK    := rGain4;    
+   Plant.rT[0] := dTPlant4;
+   Plant.rT[1] := dTPlant4;
+   Plant.rT[2] := dTPlant4;    
+   abZoneSimu4.aReParamPlant( ptnParam:=Plant,
+                              bZoneModelMode := mbSimuDeveloperMode,
+                              rRadiationCoilFactor := rRadiationCoilFactor);
+   Plant.rK    := rGain5;    
+   Plant.rT[0] := dTPlant5;
+   Plant.rT[1] := dTPlant5;
+   Plant.rT[2] := dTPlant5;    
+   abZoneSimu5.aReParamPlant( ptnParam:=Plant,
+                              bZoneModelMode := mbSimuDeveloperMode,
+                              rRadiationCoilFactor := rRadiationCoilFactor);
+   Plant.rK    := rGain6;    
+   Plant.rT[0] := dTPlant6;
+   Plant.rT[1] := dTPlant6;
+   Plant.rT[2] := dTPlant6;    
+   abZoneSimu6.aReParamPlant( ptnParam:=Plant,
+                              bZoneModelMode := mbSimuDeveloperMode,
+                              rRadiationCoilFactor := rRadiationCoilFactor);
+   Plant.rK    := rGain7;    
+   Plant.rT[0] := dTPlant7;
+   Plant.rT[1] := dTPlant7;
+   Plant.rT[2] := dTPlant7;    
+   abZoneSimu7.aReParamPlant( ptnParam:=Plant,
+                              bZoneModelMode := mbSimuDeveloperMode,
+                              rRadiationCoilFactor := rRadiationCoilFactor);
+   Plant.rK    := rGain8;    
+   Plant.rT[0] := dTPlant8;
+   Plant.rT[1] := dTPlant8;
+   Plant.rT[2] := dTPlant8;    
+   abZoneSimu8.aReParamPlant( ptnParam:=Plant,
+                              bZoneModelMode := mbSimuDeveloperMode,
+                              rRadiationCoilFactor := rRadiationCoilFactor);
+   Plant.rK    := rGain9;    
+   Plant.rT[0] := dTPlant9;
+   Plant.rT[1] := dTPlant9;
+   Plant.rT[2] := dTPlant9;    
+   abZoneSimu9.aReParamPlant( ptnParam:=Plant,
+                              bZoneModelMode := mbSimuDeveloperMode,
+                              rRadiationCoilFactor := rRadiationCoilFactor);
+   Plant.rK    := rGain10;    
+   Plant.rT[0] := dTPlant10;
+   Plant.rT[1] := dTPlant10;
+   Plant.rT[2] := dTPlant10;    
+   abZoneSimu10.aReParamPlant(ptnParam:=Plant,
+                              bZoneModelMode := mbSimuDeveloperMode,
+                              rRadiationCoilFactor := rRadiationCoilFactor);
+   Plant.rK    := rGain11;    
+   Plant.rT[0] := dTPlant11;
+   Plant.rT[1] := dTPlant11;
+   Plant.rT[2] := dTPlant11;    
+   abZoneSimu11.aReParamPlant(ptnParam:=Plant,
+                              bZoneModelMode := mbSimuDeveloperMode,
+                              rRadiationCoilFactor := rRadiationCoilFactor);
+   Plant.rK    := rGain12;    
+   Plant.rT[0] := dTPlant12;
+   Plant.rT[1] := dTPlant12;
+   Plant.rT[2] := dTPlant12;    
+   abZoneSimu12.aReParamPlant(ptnParam:=Plant,
+                              bZoneModelMode := mbSimuDeveloperMode,
+                              rRadiationCoilFactor := rRadiationCoilFactor);
+
+   mbReParam := FALSE;
+END_IF; 
+ 
+
+IF (bTITempZoneLinked[1]) THEN
+   abZoneSimu1.aRunRef(bReset := mbFastSimCoolingHeaterOff AND (NOT sv_bHeatingOn),
+                     rControlValue:= @sv_ZoneArray[1].Data^.rOutputValue,
+                     rLeftZoneTemp := 0.0,
+                     rRightZoneTemp := abZoneSimu2.aRunRef.rZoneTemp,
+                     bZoneModelMode := mbSimuDeveloperMode,
+                     rSetTempZone := sv_ZoneArray[1].Data^.rSetVal,
+                     rActTempZone := sv_ZoneArray[1].Data^.prActTemp^,
+                     bHeatingOn := sv_bHeatingOn);
+END_IF; 
+
+IF (bTITempZoneLinked[2]) THEN
+   abZoneSimu2.aRunRef(bReset := mbFastSimCoolingHeaterOff AND (NOT sv_bHeatingOn),
+                     rControlValue:= @sv_ZoneArray[2].Data^.rOutputValue,
+                     rLeftZoneTemp := abZoneSimu1.aRunRef.rZoneTemp,
+                     rRightZoneTemp := abZoneSimu3.aRunRef.rZoneTemp,
+                     bZoneModelMode := mbSimuDeveloperMode,
+                     rSetTempZone := sv_ZoneArray[2].Data^.rSetVal,
+                     rActTempZone := sv_ZoneArray[2].Data^.prActTemp^,
+                     bHeatingOn := sv_bHeatingOn);
+END_IF;
+
+IF (bTITempZoneLinked[3]) THEN
+   abZoneSimu3.aRunRef(bReset := mbFastSimCoolingHeaterOff AND (NOT sv_bHeatingOn),
+                     rControlValue:=@sv_ZoneArray[3].Data^.rOutputValue,
+                     rLeftZoneTemp := abZoneSimu2.aRunRef.rZoneTemp,
+                     rRightZoneTemp := abZoneSimu4.aRunRef.rZoneTemp,
+                     bZoneModelMode := mbSimuDeveloperMode,
+                     rSetTempZone :=sv_ZoneArray[3].Data^.rSetVal,
+                     rActTempZone := sv_ZoneArray[3].Data^.prActTemp^,
+                     bHeatingOn := sv_bHeatingOn);
+END_IF;
+   
+IF (bTITempZoneLinked[4]) THEN
+   abZoneSimu4.aRunRef(bReset := mbFastSimCoolingHeaterOff AND (NOT sv_bHeatingOn),
+                     rControlValue:=@sv_ZoneArray[4].Data^.rOutputValue,
+                     rLeftZoneTemp := abZoneSimu3.aRunRef.rZoneTemp,
+                     rRightZoneTemp := abZoneSimu5.aRunRef.rZoneTemp,
+                     bZoneModelMode := mbSimuDeveloperMode,
+                     rSetTempZone :=sv_ZoneArray[4].Data^.rSetVal,
+                     rActTempZone := sv_ZoneArray[4].Data^.prActTemp^,
+                     bHeatingOn := sv_bHeatingOn);
+END_IF;
+   
+IF (bTITempZoneLinked[5]) THEN
+   abZoneSimu5.aRunRef(bReset := mbFastSimCoolingHeaterOff AND (NOT sv_bHeatingOn),
+                     rControlValue:=@sv_ZoneArray[5].Data^.rOutputValue,
+                     rLeftZoneTemp := abZoneSimu4.aRunRef.rZoneTemp,
+                     rRightZoneTemp := abZoneSimu6.aRunRef.rZoneTemp,
+                     bZoneModelMode := mbSimuDeveloperMode,
+                     rSetTempZone :=sv_ZoneArray[5].Data^.rSetVal,
+                     rActTempZone := sv_ZoneArray[5].Data^.prActTemp^,
+                     bHeatingOn := sv_bHeatingOn);
+END_IF;
+
+IF (bTITempZoneLinked[6]) THEN
+   abZoneSimu6.aRunRef(bReset := mbFastSimCoolingHeaterOff AND (NOT sv_bHeatingOn),
+                     rControlValue:=@sv_ZoneArray[6].Data^.rOutputValue,
+                     rLeftZoneTemp := abZoneSimu5.aRunRef.rZoneTemp,
+                     rRightZoneTemp := abZoneSimu7.aRunRef.rZoneTemp,
+                     bZoneModelMode := mbSimuDeveloperMode,
+                     rSetTempZone :=sv_ZoneArray[6].Data^.rSetVal,
+                     rActTempZone := sv_ZoneArray[6].Data^.prActTemp^,
+                     bHeatingOn := sv_bHeatingOn);
+END_IF;
+
+IF (bTITempZoneLinked[7]) THEN
+   abZoneSimu7.aRunRef(bReset := mbFastSimCoolingHeaterOff AND (NOT sv_bHeatingOn),
+                     rControlValue:=@sv_ZoneArray[7].Data^.rOutputValue,
+                     rLeftZoneTemp := abZoneSimu6.aRunRef.rZoneTemp,
+                     rRightZoneTemp := abZoneSimu8.aRunRef.rZoneTemp,
+                     bZoneModelMode := mbSimuDeveloperMode,
+                     rSetTempZone :=sv_ZoneArray[7].Data^.rSetVal,
+                     rActTempZone := sv_ZoneArray[7].Data^.prActTemp^,
+                     bHeatingOn := sv_bHeatingOn);
+END_IF;
+   
+IF (bTITempZoneLinked[8]) THEN
+   abZoneSimu8.aRunRef(bReset := mbFastSimCoolingHeaterOff AND (NOT sv_bHeatingOn),
+                     rControlValue:=@sv_ZoneArray[8].Data^.rOutputValue,
+                     rLeftZoneTemp := abZoneSimu7.aRunRef.rZoneTemp,
+                     rRightZoneTemp := abZoneSimu9.aRunRef.rZoneTemp,
+                     bZoneModelMode := mbSimuDeveloperMode,
+                     rSetTempZone :=sv_ZoneArray[8].Data^.rSetVal,
+                     rActTempZone := sv_ZoneArray[8].Data^.prActTemp^,
+                     bHeatingOn := sv_bHeatingOn);
+END_IF;
+   
+IF (bTITempZoneLinked[9]) THEN
+   abZoneSimu9.aRunRef(bReset := mbFastSimCoolingHeaterOff AND (NOT sv_bHeatingOn),
+                     rControlValue:=@sv_ZoneArray[9].Data^.rOutputValue,
+                     rLeftZoneTemp := abZoneSimu8.aRunRef.rZoneTemp,
+                     rRightZoneTemp := abZoneSimu10.aRunRef.rZoneTemp,
+                     bZoneModelMode := mbSimuDeveloperMode,
+                     rSetTempZone :=sv_ZoneArray[9].Data^.rSetVal,
+                     rActTempZone := sv_ZoneArray[9].Data^.prActTemp^,
+                     bHeatingOn := sv_bHeatingOn);
+END_IF;
+   
+IF (bTITempZoneLinked[10]) THEN
+   abZoneSimu10.aRunRef(bReset := mbFastSimCoolingHeaterOff AND (NOT sv_bHeatingOn),
+                        rControlValue:=@sv_ZoneArray[10].Data^.rOutputValue,
+                        rLeftZoneTemp := abZoneSimu9.aRunRef.rZoneTemp,
+                        rRightZoneTemp := abZoneSimu11.aRunRef.rZoneTemp,
+                        bZoneModelMode := mbSimuDeveloperMode,
+                        rSetTempZone :=sv_ZoneArray[10].Data^.rSetVal,
+                        rActTempZone := sv_ZoneArray[10].Data^.prActTemp^,
+                        bHeatingOn := sv_bHeatingOn);
+END_IF;
+   
+IF (bTITempZoneLinked[11]) THEN
+   abZoneSimu11.aRunRef(bReset := mbFastSimCoolingHeaterOff AND (NOT sv_bHeatingOn),
+                        rControlValue:=@sv_ZoneArray[11].Data^.rOutputValue,
+                        rLeftZoneTemp := abZoneSimu10.aRunRef.rZoneTemp,
+                        rRightZoneTemp := abZoneSimu12.aRunRef.rZoneTemp,
+                        bZoneModelMode := mbSimuDeveloperMode,
+                        rSetTempZone :=sv_ZoneArray[11].Data^.rSetVal,
+                        rActTempZone := sv_ZoneArray[11].Data^.prActTemp^,
+                        bHeatingOn := sv_bHeatingOn);
+END_IF;
+   
+IF (bTITempZoneLinked[12]) THEN
+   abZoneSimu12.aRunRef(bReset := mbFastSimCoolingHeaterOff AND (NOT sv_bHeatingOn),
+                        rControlValue:=@sv_ZoneArray[12].Data^.rOutputValue,
+                        rLeftZoneTemp := abZoneSimu11.aRunRef.rZoneTemp,
+                        rRightZoneTemp := 0.0,
+                        bZoneModelMode := mbSimuDeveloperMode,
+                        rSetTempZone :=sv_ZoneArray[12].Data^.rSetVal,
+                        rActTempZone := sv_ZoneArray[12].Data^.prActTemp^,
+                        bHeatingOn := sv_bHeatingOn);
+END_IF;
+
+;#END_EDIT_BLOCK END_ACTION (*aSimulate*)
+ACTION aStopSimu: #BEGIN_EDIT_BLOCK
+(**************************************** WARNING ********************************************
+ *** The KEBA Kemro K2 System including software is not intended for safety control tasks! ***
+ ***                       For further information see Comment tab!                        ***
+ *********************************************************************************************)
+
+abZoneSimu1.aUnforce();
+abZoneSimu2.aUnforce();
+abZoneSimu3.aUnforce();
+abZoneSimu4.aUnforce();
+abZoneSimu5.aUnforce();
+abZoneSimu6.aUnforce();
+abZoneSimu7.aUnforce();
+abZoneSimu8.aUnforce();
+abZoneSimu9.aUnforce();
+abZoneSimu10.aUnforce();
+abZoneSimu11.aUnforce();
+abZoneSimu12.aUnforce();
+
+IF bTIOilTempLinked THEN
+   abForceOilTemp.aUnforce();
+END_IF;
+
+IF mbHopperTempLinked THEN
+   abForceHopperTemp.aUnforce();
+END_IF;
+
+STOP_PROCESS_ALGORITHM();
+
+;#END_EDIT_BLOCK END_ACTION (*aStopSimu*)
+(* end sfc-code *)
+
+
+END_ALGORITHM
+
+PROCESS_ALGORITHM paInit ON TaskSim AUTOSTART
+
+
+VAR
+ prHopperTemp : REFTO REAL;
+ Status : KSYS_Status;
+END_VAR
+#BEGIN_EDIT_BLOCK
+(**************************************** WARNING ********************************************
+ *** The KEBA Kemro K2 System including software is not intended for safety control tasks! ***
+ ***                       For further information see Comment tab!                        ***
+ *********************************************************************************************)
+
+prHopperTemp := GET_SYNC_REFTO('HeatingNozzle1.ti_HopperTemp', T#0s, Status);
+mbHopperTempLinked := (Status = KSYS_Status_OK);
+
+STOP_PROCESS_ALGORITHM();
+
+
+;#END_EDIT_BLOCK END_ALGORITHM
+
+POSTUPDATE_ALGORITHM pSimuDataChanged ON PU_Task_13 WITH sv_bSimuDeveloperMode
+
+#BEGIN_EDIT_BLOCK
+mbSimuDeveloperMode := sv_bSimuDeveloperMode;
+mbReParam := TRUE;
+
+
+;#END_EDIT_BLOCK END_ALGORITHM
+
+
+
+END_ALGORITHM_BLOCK
+
+
+
+#END_OF_IEC_PART
+
+@Puma @IecEditor 6 168 @Pou 25 
+@@@BEG_Comment@@@
+
+@@@END_Comment@@@
+
+@BEG_Contents 
+
+@BEG_Func 
+@RT(17)FuncTreeContainer 
+2 
+@Var @RT(14)GET_SYNC_REFTO @RT(0) @T @T @DERIVED 0 @F @RT(22)KEBA_STANDARD_FUNCTION @F 
+@T 
+@BEG_Attrib 
+0 @RT(0) @RT(0) 
+@END_Attrib 
+1 1 @F @F @F @F 
+
+@Var @RT(17)GET_TASK_INTERVAL @RT(0) @T @T @DERIVED 0 @F @RT(22)KEBA_STANDARD_FUNCTION @F 
+@T 
+@BEG_Attrib 
+0 @RT(0) @RT(0) 
+@END_Attrib 
+1 1 @F @F @F @F 
+
+@END_Func 
+
+@BEG_Const 
+@RT(18)ConstTreeContainer 
+2 
+@Var @RT(9)cMaxZones @RT(0) @T @F @DT @RT(4)DINT @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+0 @RT(2)72 @RT(27)max number of heating zones 
+@END_Attrib 
+1 1 @F @F @F @F 
+
+@Var @RT(14)KSYS_Status_OK @RT(0) @T @T @DERIVED 0 @F @RT(11)KSYS_Status @F 
+@T 
+@BEG_Attrib 
+0 @RT(1)1 @RT(0) 
+@END_Attrib 
+1 1 @F @F @F @F 
+
+@END_Const 
+
+@BEG_Export 
+
+@BEG_Kind 
+@ALGORITHM_BLOCK @RT(10)ABTempSimu @STRUCTURED_TEXT 
+@RT(0) @RT(0) @RT(0) 
+@END_Kind 
+
+@BEG_Dcl 
+@RT(16)DclTreeContainer 
+26 
+@Var @RT(12)sv_bSimulate @RT(0) @T @F @DT @RT(4)BOOL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 8 @F @F @F @F 
+
+@Var @RT(13)sv_bHeatingOn @RT(0) @T @F @DT @RT(4)BOOL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 8 @F @F @F @F 
+
+@Var @RT(12)sv_ZoneArray @RT(0) @T @T @DERIVED 0 @T @T @DT @RT(11)tyZoneArray @RT(0) @T @T @UNKNOWN 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 8 @F @F @F @F 
+
+@Var @RT(13)sv_bInitStart @RT(0) @T @F @DT @RT(4)BOOL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 8 @F @F @F @F 
+
+@Var @RT(21)sv_bSimuDeveloperMode @RT(0) @T @F @DT @RT(4)BOOL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 8 @F @F @F @F 
+
+@Var @RT(7)TaskSim @RT(0) @T @F @DT @RT(4)TASK @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 7 @F @F @F @F 
+
+@Var @RT(10)PU_Task_13 @RT(0) @T @F @DT @RT(4)TASK @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 7 @F @F @F @F 
+
+@Var @RT(18)mbHopperTempLinked @RT(0) @T @F @DT @RT(4)BOOL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(25)TRUE: ti_HopperTempLinked @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(19)mbSimuDeveloperMode @RT(0) @T @F @DT @RT(4)BOOL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(9)mbReParam @RT(0) @T @F @DT @RT(4)BOOL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(4)TRUE @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(11)abZoneSimu1 @RT(0) @T @T @DERIVED 0 @T @T @DT @RT(10)ABZoneSimu @RT(0) @T @T @UNKNOWN 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(11)abZoneSimu2 @RT(0) @T @T @DERIVED 0 @T @T @DT @RT(10)ABZoneSimu @RT(0) @T @T @UNKNOWN 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(11)abZoneSimu3 @RT(0) @T @T @DERIVED 0 @T @T @DT @RT(10)ABZoneSimu @RT(0) @T @T @UNKNOWN 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(11)abZoneSimu4 @RT(0) @T @T @DERIVED 0 @T @T @DT @RT(10)ABZoneSimu @RT(0) @T @T @UNKNOWN 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(11)abZoneSimu5 @RT(0) @T @T @DERIVED 0 @T @T @DT @RT(10)ABZoneSimu @RT(0) @T @T @UNKNOWN 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(11)abZoneSimu6 @RT(0) @T @T @DERIVED 0 @T @T @DT @RT(10)ABZoneSimu @RT(0) @T @T @UNKNOWN 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(11)abZoneSimu7 @RT(0) @T @T @DERIVED 0 @T @T @DT @RT(10)ABZoneSimu @RT(0) @T @T @UNKNOWN 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(11)abZoneSimu8 @RT(0) @T @T @DERIVED 0 @T @T @DT @RT(10)ABZoneSimu @RT(0) @T @T @UNKNOWN 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(11)abZoneSimu9 @RT(0) @T @T @DERIVED 0 @T @T @DT @RT(10)ABZoneSimu @RT(0) @T @T @UNKNOWN 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(12)abZoneSimu10 @RT(0) @T @T @DERIVED 0 @T @T @DT @RT(10)ABZoneSimu @RT(0) @T @T @UNKNOWN 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(12)abZoneSimu11 @RT(0) @T @T @DERIVED 0 @T @T @DT @RT(10)ABZoneSimu @RT(0) @T @T @UNKNOWN 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(12)abZoneSimu12 @RT(0) @T @T @DERIVED 0 @T @T @DT @RT(10)ABZoneSimu @RT(0) @T @T @UNKNOWN 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(19)mdHeatUpDurationSim @RT(0) @T @F @DT @RT(4)TIME @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(5)T#25s @RT(0) @RT(0) 
+@END_Attrib 
+1 11 @F @F @F @F 
+
+@Var @RT(16)mdCoolingTimeSim @RT(0) @T @F @DT @RT(4)TIME @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(4)T#2m @RT(0) @RT(0) 
+@END_Attrib 
+1 11 @F @F @F @F 
+
+@Var @RT(25)mbFastSimCoolingHeaterOff @RT(0) @T @F @DT @RT(4)BOOL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(4)TRUE @RT(0) @RT(0) 
+@END_Attrib 
+1 11 @F @F @F @F 
+
+@Var @RT(16)mrHeatUpVariance @RT(0) @T @F @DT @RT(4)REAL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(3)1.0 @RT(0) @RT(0) 
+@END_Attrib 
+1 11 @F @F @F @F 
+
+@END_Dcl 
+
+@END_Export 
+
+@BEG_Body 
+
+4 
+
+@BEG_Export 
+
+@BEG_Algo 
+@POSTUPDATE_ALGORITHM @RT(6)pStart @STRUCTURED_TEXT 
+@RT(0) @RT(26)sv_bSimulate,sv_bInitStart @RT(10)PU_Task_13 @F @F 
+@END_Algo 
+
+@BEG_Dcl 
+@RT(16)DclTreeContainer 
+0 
+@END_Dcl 
+
+@END_Export 
+
+@BEG_Export 
+
+@BEG_Algo 
+@PROCESS_ALGORITHM @RT(10)paSimulate @SEQUENTIAL_FLOW_CHART 
+@RT(0) @RT(0) @RT(7)TaskSim @F @F 
+@END_Algo 
+
+@BEG_Dcl 
+@RT(16)DclTreeContainer 
+39 
+@Var @RT(1)i @RT(0) @T @F @DT @RT(4)DINT @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 4 @F @F @F @F 
+
+@Var @RT(1)s @RT(0) @T @F @DT @RT(11)STRING(255) @RT(0) @T @T @STRING 0 @F @RT(3)255 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(6)Status @RT(0) @T @T @DERIVED 0 @T @T @DT @RT(11)KSYS_Status @RT(0) @T @T @UNKNOWN 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(11)prTIOilTemp @RT(0) @T @T @REFTO 0 @T @DT @RT(4)REAL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(16)bTIOilTempLinked @RT(0) @T @F @DT @RT(4)BOOL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(17)bTITempZoneLinked @RT(0) @T @T @DERIVED 0 @T @T @DT @RT(21)KAPPL_TempZoneUsedArr @RT(0) @T @T @UNKNOWN 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(17)abForceHopperTemp @RT(0) @T @T @DERIVED 0 @T @T @DT @RT(13)ABForceAnalog @RT(0) @T @T @UNKNOWN 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(14)abForceOilTemp @RT(0) @T @T @DERIVED 0 @T @T @DT @RT(13)ABForceAnalog @RT(0) @T @T @UNKNOWN 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(10)dCycleTime @RT(0) @T @F @DT @RT(4)TIME @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(5)Plant @RT(0) @T @T @DERIVED 0 @T @T @DT @RT(14)KTEMP_PtnParam @RT(0) @T @T @UNKNOWN 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(27)(uN:=3,rK:=3.0,rT:=3(T#5s)) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(17)rFactorHeatUpTime @RT(0) @T @F @DT @RT(4)REAL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(4)0.05 @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(10)rKVariance @RT(0) @T @F @DT @RT(4)REAL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(13)rKActVariance @RT(0) @T @F @DT @RT(4)REAL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(18)rFactorCoolingTime @RT(0) @T @F @DT @RT(4)REAL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(3)0.1 @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(6)rGain1 @RT(0) @T @F @DT @RT(4)REAL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(3)4.0 @RT(0) @RT(0) 
+@END_Attrib 
+1 11 @F @F @F @F 
+
+@Var @RT(6)rGain2 @RT(0) @T @F @DT @RT(4)REAL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(3)4.0 @RT(0) @RT(0) 
+@END_Attrib 
+1 11 @F @F @F @F 
+
+@Var @RT(6)rGain3 @RT(0) @T @F @DT @RT(4)REAL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(3)4.0 @RT(0) @RT(0) 
+@END_Attrib 
+1 11 @F @F @F @F 
+
+@Var @RT(6)rGain4 @RT(0) @T @F @DT @RT(4)REAL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(3)4.0 @RT(0) @RT(0) 
+@END_Attrib 
+1 11 @F @F @F @F 
+
+@Var @RT(6)rGain5 @RT(0) @T @F @DT @RT(4)REAL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(3)4.0 @RT(0) @RT(0) 
+@END_Attrib 
+1 11 @F @F @F @F 
+
+@Var @RT(6)rGain6 @RT(0) @T @F @DT @RT(4)REAL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(3)4.0 @RT(0) @RT(0) 
+@END_Attrib 
+1 11 @F @F @F @F 
+
+@Var @RT(6)rGain7 @RT(0) @T @F @DT @RT(4)REAL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(3)4.0 @RT(0) @RT(0) 
+@END_Attrib 
+1 11 @F @F @F @F 
+
+@Var @RT(6)rGain8 @RT(0) @T @F @DT @RT(4)REAL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(3)4.0 @RT(0) @RT(0) 
+@END_Attrib 
+1 11 @F @F @F @F 
+
+@Var @RT(6)rGain9 @RT(0) @T @F @DT @RT(4)REAL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(3)4.0 @RT(0) @RT(0) 
+@END_Attrib 
+1 11 @F @F @F @F 
+
+@Var @RT(7)rGain10 @RT(0) @T @F @DT @RT(4)REAL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(3)4.0 @RT(0) @RT(0) 
+@END_Attrib 
+1 11 @F @F @F @F 
+
+@Var @RT(7)rGain11 @RT(0) @T @F @DT @RT(4)REAL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(3)4.0 @RT(0) @RT(0) 
+@END_Attrib 
+1 11 @F @F @F @F 
+
+@Var @RT(7)rGain12 @RT(0) @T @F @DT @RT(4)REAL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(3)4.0 @RT(0) @RT(0) 
+@END_Attrib 
+1 11 @F @F @F @F 
+
+@Var @RT(8)dTPlant1 @RT(0) @T @F @DT @RT(4)TIME @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(9)T#1s500ms @RT(0) @RT(0) 
+@END_Attrib 
+1 11 @F @F @F @F 
+
+@Var @RT(8)dTPlant2 @RT(0) @T @F @DT @RT(4)TIME @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(4)T#2s @RT(0) @RT(0) 
+@END_Attrib 
+1 11 @F @F @F @F 
+
+@Var @RT(8)dTPlant3 @RT(0) @T @F @DT @RT(4)TIME @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(4)T#2s @RT(0) @RT(0) 
+@END_Attrib 
+1 11 @F @F @F @F 
+
+@Var @RT(8)dTPlant4 @RT(0) @T @F @DT @RT(4)TIME @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(9)T#1s500ms @RT(0) @RT(0) 
+@END_Attrib 
+1 11 @F @F @F @F 
+
+@Var @RT(8)dTPlant5 @RT(0) @T @F @DT @RT(4)TIME @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(9)T#1s500ms @RT(0) @RT(0) 
+@END_Attrib 
+1 11 @F @F @F @F 
+
+@Var @RT(8)dTPlant6 @RT(0) @T @F @DT @RT(4)TIME @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(9)T#1s500ms @RT(0) @RT(0) 
+@END_Attrib 
+1 11 @F @F @F @F 
+
+@Var @RT(8)dTPlant7 @RT(0) @T @F @DT @RT(4)TIME @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(9)T#1s500ms @RT(0) @RT(0) 
+@END_Attrib 
+1 11 @F @F @F @F 
+
+@Var @RT(8)dTPlant8 @RT(0) @T @F @DT @RT(4)TIME @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(9)T#1s500ms @RT(0) @RT(0) 
+@END_Attrib 
+1 11 @F @F @F @F 
+
+@Var @RT(8)dTPlant9 @RT(0) @T @F @DT @RT(4)TIME @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(9)T#1s500ms @RT(0) @RT(0) 
+@END_Attrib 
+1 11 @F @F @F @F 
+
+@Var @RT(9)dTPlant10 @RT(0) @T @F @DT @RT(4)TIME @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(9)T#1s500ms @RT(0) @RT(0) 
+@END_Attrib 
+1 11 @F @F @F @F 
+
+@Var @RT(9)dTPlant11 @RT(0) @T @F @DT @RT(4)TIME @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(9)T#1s500ms @RT(0) @RT(0) 
+@END_Attrib 
+1 11 @F @F @F @F 
+
+@Var @RT(9)dTPlant12 @RT(0) @T @F @DT @RT(4)TIME @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(9)T#1s500ms @RT(0) @RT(0) 
+@END_Attrib 
+1 11 @F @F @F @F 
+
+@Var @RT(20)rRadiationCoilFactor @RT(0) @T @F @DT @RT(4)REAL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(5)0.002 @RT(0) @RT(0) 
+@END_Attrib 
+1 11 @F @F @F @F 
+
+@END_Dcl 
+
+@END_Export 
+
+@BEG_Export 
+
+@BEG_Algo 
+@PROCESS_ALGORITHM @RT(6)paInit @STRUCTURED_TEXT 
+@RT(0) @RT(0) @RT(7)TaskSim @T @F 
+@END_Algo 
+
+@BEG_Dcl 
+@RT(16)DclTreeContainer 
+2 
+@Var @RT(12)prHopperTemp @RT(0) @T @T @REFTO 0 @T @DT @RT(4)REAL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(6)Status @RT(0) @T @T @DERIVED 0 @T @T @DT @RT(11)KSYS_Status @RT(0) @T @T @UNKNOWN 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@END_Dcl 
+
+@END_Export 
+
+@BEG_Export 
+
+@BEG_Algo 
+@POSTUPDATE_ALGORITHM @RT(16)pSimuDataChanged @STRUCTURED_TEXT 
+@RT(0) @RT(21)sv_bSimuDeveloperMode @RT(10)PU_Task_13 @F @F 
+@END_Algo 
+
+@BEG_Dcl 
+@RT(16)DclTreeContainer 
+0 
+@END_Dcl 
+
+@END_Export 
+
+@BEG_Body 
+@TL(9)
+(**************************************** WARNING ********************************************
+ *** The KEBA Kemro K2 System including software is not intended for safety control tasks! ***
+ ***                       For further information see Comment tab!                        ***
+ *********************************************************************************************)
+
+IF sv_bSimulate THEN
+    START_PROCESS_ALGORITHM(paSimulate);
+END_IF;
+
+@END_Body 
+
+@@@BEG_Comment@@@ 
+@TL(0)
+
+@@@END_Comment@@@ 
+
+@BEG_SfcBody 
+4 4 4 
+
+@BEG_SfcData 2 
+@StepSeq @RT(4)sseq @F 3 
+@Step @RT(4)INIT @F @T @F @F @RT(0) @F 
+@AcbCont @RT(7)unnamed @F 0 
+
+@Trans @RT(11)SimRequired @F @T @F @F @T @T @TL(2)
+sv_bSimulate
+
+@RT(11)SimRequired @F 
+@Loop @RT(4)loop @F 2 
+@StepSeq @RT(4)sseq @F 3 
+@Step @RT(3)SIM @F @F @F @F @RT(0) @F 
+@AcbCont @RT(7)unnamed @F 2 
+@Acb @RT(5)aInit @F @F @RT(1)P @RT(0) @F @F @F @F 
+@Acb @RT(9)aSimulate @F @F @RT(1)N @RT(0) @F @F @F @F 
+
+@Trans @RT(14)StpSimRequired @F @T @F @F @T @T @TL(2)
+NOT sv_bSimulate
+
+@RT(14)StpSimRequired @F 
+@Step @RT(4)STOP @F @F @F @F @RT(0) @F 
+@AcbCont @RT(7)unnamed @F 1 
+@Acb @RT(9)aStopSimu @F @F @RT(1)P @RT(0) @F @F @F @F 
+
+
+@Trans @RT(6)Return @F @T @T @T @T @T @TL(2)
+TRUE
+
+@RT(6)Return @F 
+
+@END_SfcData 
+@SaActions 3 
+@SaText @RT(5)aInit 1 @TL(203)
+(**************************************** WARNING ********************************************
+ *** The KEBA Kemro K2 System including software is not intended for safety control tasks! ***
+ ***                       For further information see Comment tab!                        ***
+ *********************************************************************************************)
+
+FOR i := 1 TO cMaxZones DO
+   IF CHECK_REF(sv_ZoneArray[i].Data^.prActTemp^) THEN
+      bTITempZoneLinked[i]:= TRUE;
+      s := CONCAT('HeatingNozzle1.ti_InTemp', DINT_TO_STRING(i));
+   END_IF;
+   
+   IF sv_ZoneArray[i].bLinked THEN     
+      IF CHECK_REF(sv_ZoneArray[i].Data^.pbOutHeatTOStat^) THEN
+         sv_ZoneArray[i].Data^.pbOutHeatTOStat^ := FALSE;
+      END_IF;
+      IF CHECK_REF(sv_ZoneArray[i].Data^.pbOutCoolTOStat^) THEN
+            sv_ZoneArray[i].Data^.pbOutCoolTOStat^ := FALSE;
+      END_IF;
+      IF CHECK_REF(sv_ZoneArray[i].Data^.pbOutHeatDOStat^) THEN
+         sv_ZoneArray[i].Data^.pbOutHeatDOStat^ := FALSE;
+      END_IF;
+      IF CHECK_REF(sv_ZoneArray[i].Data^.pbOutCoolDOStat^) THEN
+         sv_ZoneArray[i].Data^.pbOutCoolDOStat^ := FALSE;
+      END_IF;  
+      IF CHECK_REF( sv_ZoneArray[i].Data^.pbActTempStat^) THEN
+            sv_ZoneArray[i].Data^.pbActTempStat^ := FALSE;
+      END_IF;
+   ELSE
+      EXIT;
+   END_IF;
+   
+END_FOR;
+
+prTIOilTemp := GET_SYNC_REFTO('OilMaintenance1.ti_OilTemp', T#0s, Status);
+IF Status = KSYS_Status_OK THEN
+   bTIOilTempLinked := TRUE;
+   abForceOilTemp.aInit(Name := 'OilMaintenance1.ti_OilTemp', Range := 50.0);
+   abForceOilTemp.aSetForceValue(rValue := 28.0);
+END_IF;
+
+IF mbHopperTempLinked THEN
+   abForceHopperTemp.aInit(Name := 'HeatingNozzle1.ti_HopperTemp', Range := 400.0);
+   abForceHopperTemp.aSetForceValue(rValue := 28.0);
+END_IF;
+
+dCycleTime := GET_TASK_INTERVAL();
+
+mbSimuDeveloperMode := sv_bSimuDeveloperMode;
+
+IF (mdHeatUpDurationSim > T#0s) THEN
+   IF (mrHeatUpVariance > 0.0) THEN
+      rKVariance := 1.0 + mrHeatUpVariance / 100.0;
+   ELSE
+      rKVariance := 1.0;
+   END_IF;
+   dTPlant1 := MULTIME(mdHeatUpDurationSim, rFactorHeatUpTime);
+   rKActVariance := rKVariance;
+   dTPlant2 := MULTIME(mdHeatUpDurationSim, rFactorHeatUpTime * rKActVariance);
+   dTPlant3 := MULTIME(mdHeatUpDurationSim, rFactorHeatUpTime / rKActVariance);
+   rKActVariance := EXPT(rKVariance,2.0);
+   dTPlant4 := MULTIME(mdHeatUpDurationSim, rFactorHeatUpTime * rKActVariance);
+   dTPlant5 := MULTIME(mdHeatUpDurationSim, rFactorHeatUpTime / rKActVariance);
+   rKActVariance := EXPT(rKVariance,3.0);
+   dTPlant6 := MULTIME(mdHeatUpDurationSim, rFactorHeatUpTime * rKActVariance);
+   dTPlant7 := MULTIME(mdHeatUpDurationSim, rFactorHeatUpTime / rKActVariance);
+   rKActVariance := EXPT(rKVariance,4.0);
+   dTPlant8 := MULTIME(mdHeatUpDurationSim, rFactorHeatUpTime * rKActVariance);
+   dTPlant9 := MULTIME(mdHeatUpDurationSim, rFactorHeatUpTime / rKActVariance);
+   rKActVariance := EXPT(rKVariance,5.0);
+   dTPlant10 := MULTIME(mdHeatUpDurationSim, rFactorHeatUpTime * rKActVariance);
+   dTPlant11 := MULTIME(mdHeatUpDurationSim, rFactorHeatUpTime / rKActVariance);
+   rKActVariance := EXPT(rKVariance,6.0);
+   dTPlant12 := MULTIME(mdHeatUpDurationSim, rFactorHeatUpTime * rKActVariance);   
+END_IF;
+IF (mdCoolingTimeSim > T#0s) THEN
+   rRadiationCoilFactor := rFactorCoolingTime * LINT_TO_REAL(TIME_TO_LINT(mdHeatUpDurationSim)) / LINT_TO_REAL(TIME_TO_LINT(mdCoolingTimeSim));
+END_IF;
+
+Plant.uN    := 3;    
+Plant.rK    := rGain1;    
+Plant.rT[0] := dTPlant1;
+Plant.rT[1] := dTPlant1;
+Plant.rT[2] := dTPlant1;    
+abZoneSimu1.aInit(ptnParam:=Plant,
+                  dCycleTime:=dCycleTime,
+                  sZoneName:='HeatingNozzle1.ti_InTemp1',
+                  bZoneLinked:=bTITempZoneLinked[1],
+                  rRadiationCoilFactor := rRadiationCoilFactor,
+                  bZoneModelMode := mbSimuDeveloperMode);
+
+Plant.rK    := rGain2;    
+Plant.rT[0] := dTPlant2;
+Plant.rT[1] := dTPlant2;
+Plant.rT[2] := dTPlant2;    
+abZoneSimu2.aInit(ptnParam:=Plant,
+                  dCycleTime:=dCycleTime,
+                  sZoneName:='HeatingNozzle1.ti_InTemp2',
+                  bZoneLinked:=bTITempZoneLinked[2],
+                  rRadiationCoilFactor := rRadiationCoilFactor,
+                  bZoneModelMode := mbSimuDeveloperMode);
+
+Plant.rK    := rGain3;    
+Plant.rT[0] := dTPlant3;
+Plant.rT[1] := dTPlant3;
+Plant.rT[2] := dTPlant3;    
+abZoneSimu3.aInit(ptnParam:=Plant,
+                  dCycleTime:=dCycleTime,
+                  sZoneName:='HeatingNozzle1.ti_InTemp3',
+                  bZoneLinked:=bTITempZoneLinked[3],
+                  rRadiationCoilFactor := rRadiationCoilFactor,
+                  bZoneModelMode := mbSimuDeveloperMode);
+
+Plant.rK    := rGain4;    
+Plant.rT[0] := dTPlant4;
+Plant.rT[1] := dTPlant4;
+Plant.rT[2] := dTPlant4;    
+abZoneSimu4.aInit(ptnParam:=Plant,
+                  dCycleTime:=dCycleTime,
+                  sZoneName:='HeatingNozzle1.ti_InTemp4',
+                  bZoneLinked:=bTITempZoneLinked[4],
+                  rRadiationCoilFactor := rRadiationCoilFactor,
+                  bZoneModelMode := mbSimuDeveloperMode);
+
+Plant.rK    := rGain5;    
+Plant.rT[0] := dTPlant5;
+Plant.rT[1] := dTPlant5;
+Plant.rT[2] := dTPlant5;    
+abZoneSimu5.aInit(ptnParam:=Plant,
+                  dCycleTime:=dCycleTime,
+                  sZoneName:='HeatingNozzle1.ti_InTemp5',
+                  bZoneLinked:=bTITempZoneLinked[5],
+                  rRadiationCoilFactor := rRadiationCoilFactor,
+                  bZoneModelMode := mbSimuDeveloperMode);
+
+Plant.rK    := rGain6;    
+Plant.rT[0] := dTPlant6;
+Plant.rT[1] := dTPlant6;
+Plant.rT[2] := dTPlant6;    
+abZoneSimu6.aInit(ptnParam:=Plant,
+                  dCycleTime:=dCycleTime,
+                  sZoneName:='HeatingNozzle1.ti_InTemp6',
+                  bZoneLinked:=bTITempZoneLinked[6],
+                  rRadiationCoilFactor := rRadiationCoilFactor,
+                  bZoneModelMode := mbSimuDeveloperMode);
+
+Plant.rK    := rGain7;    
+Plant.rT[0] := dTPlant7;
+Plant.rT[1] := dTPlant7;
+Plant.rT[2] := dTPlant7;    
+abZoneSimu7.aInit(ptnParam:=Plant,
+                  dCycleTime:=dCycleTime,
+                  sZoneName:='HeatingNozzle1.ti_InTemp7',
+                  bZoneLinked:=bTITempZoneLinked[7],
+                  rRadiationCoilFactor := rRadiationCoilFactor,
+                  bZoneModelMode := mbSimuDeveloperMode);
+
+Plant.rK    := rGain8;    
+Plant.rT[0] := dTPlant8;
+Plant.rT[1] := dTPlant8;
+Plant.rT[2] := dTPlant8;    
+abZoneSimu8.aInit(ptnParam:=Plant,
+                  dCycleTime:=dCycleTime,
+                  sZoneName:='HeatingNozzle1.ti_InTemp8',
+                  bZoneLinked:=bTITempZoneLinked[8],
+                  rRadiationCoilFactor := rRadiationCoilFactor,
+                  bZoneModelMode := mbSimuDeveloperMode);
+
+Plant.rK    := rGain9;    
+Plant.rT[0] := dTPlant9;
+Plant.rT[1] := dTPlant9;
+Plant.rT[2] := dTPlant9;    
+abZoneSimu9.aInit(ptnParam:=Plant,
+                  dCycleTime:=dCycleTime,
+                  sZoneName:='HeatingNozzle1.ti_InTemp9',
+                  bZoneLinked:=bTITempZoneLinked[9],
+                  rRadiationCoilFactor := rRadiationCoilFactor,
+                  bZoneModelMode := mbSimuDeveloperMode);
+
+Plant.rK    := rGain10;    
+Plant.rT[0] := dTPlant10;
+Plant.rT[1] := dTPlant10;
+Plant.rT[2] := dTPlant10;    
+abZoneSimu10.aInit(ptnParam:=Plant,
+                   dCycleTime:=dCycleTime,
+                   sZoneName:='HeatingNozzle1.ti_InTemp10',
+                   bZoneLinked:=bTITempZoneLinked[10],
+                   rRadiationCoilFactor := rRadiationCoilFactor,
+                   bZoneModelMode := mbSimuDeveloperMode);
+
+abZoneSimu11.aInit(ptnParam:=Plant,
+                   dCycleTime:=dCycleTime,
+                   sZoneName:='HeatingNozzle1.ti_InTemp11',
+                   bZoneLinked:=bTITempZoneLinked[11],
+                   rRadiationCoilFactor := rRadiationCoilFactor,
+                   bZoneModelMode := mbSimuDeveloperMode);
+
+abZoneSimu12.aInit(ptnParam:=Plant,
+                   dCycleTime:=dCycleTime,
+                   sZoneName:='HeatingNozzle1.ti_InTemp12',
+                   bZoneLinked:=bTITempZoneLinked[12],
+                   rRadiationCoilFactor := rRadiationCoilFactor,
+                   bZoneModelMode := mbSimuDeveloperMode);
+
+
+@SaText @RT(9)aSimulate 1 @TL(256)
+(**************************************** WARNING ********************************************
+ *** The KEBA Kemro K2 System including software is not intended for safety control tasks! ***
+ ***                       For further information see Comment tab!                        ***
+ *********************************************************************************************)
+IF mbReParam THEN
+   // calculate new parameter
+   IF (mdHeatUpDurationSim > T#0s) THEN
+      IF (mrHeatUpVariance > 0.0) THEN
+         rKVariance := 1.0 + mrHeatUpVariance / 100.0;
+      ELSE
+         rKVariance := 1.0;
+      END_IF;
+      dTPlant1 := MULTIME(mdHeatUpDurationSim, rFactorHeatUpTime);
+      rKActVariance := rKVariance;
+      dTPlant2 := MULTIME(mdHeatUpDurationSim, rFactorHeatUpTime * rKActVariance);
+      dTPlant3 := MULTIME(mdHeatUpDurationSim, rFactorHeatUpTime / rKActVariance);
+      rKActVariance := EXPT(rKVariance,2.0);
+      dTPlant4 := MULTIME(mdHeatUpDurationSim, rFactorHeatUpTime * rKActVariance);
+      dTPlant5 := MULTIME(mdHeatUpDurationSim, rFactorHeatUpTime / rKActVariance);
+      rKActVariance := EXPT(rKVariance,3.0);
+      dTPlant6 := MULTIME(mdHeatUpDurationSim, rFactorHeatUpTime * rKActVariance);
+      dTPlant7 := MULTIME(mdHeatUpDurationSim, rFactorHeatUpTime / rKActVariance);
+      rKActVariance := EXPT(rKVariance,4.0);
+      dTPlant8 := MULTIME(mdHeatUpDurationSim, rFactorHeatUpTime * rKActVariance);
+      dTPlant9 := MULTIME(mdHeatUpDurationSim, rFactorHeatUpTime / rKActVariance);
+      rKActVariance := EXPT(rKVariance,5.0);
+      dTPlant10 := MULTIME(mdHeatUpDurationSim, rFactorHeatUpTime * rKActVariance);
+      dTPlant11 := MULTIME(mdHeatUpDurationSim, rFactorHeatUpTime / rKActVariance);
+      rKActVariance := EXPT(rKVariance,6.0);
+      dTPlant12 := MULTIME(mdHeatUpDurationSim, rFactorHeatUpTime * rKActVariance);
+   END_IF;
+   IF (mdCoolingTimeSim > T#0s) THEN
+      rRadiationCoilFactor := rFactorCoolingTime * LINT_TO_REAL(TIME_TO_LINT(mdHeatUpDurationSim)) / LINT_TO_REAL(TIME_TO_LINT(mdCoolingTimeSim));
+   END_IF;
+
+   Plant.rK    := rGain1;    
+   Plant.rT[0] := dTPlant1;
+   Plant.rT[1] := dTPlant1;
+   Plant.rT[2] := dTPlant1;    
+   abZoneSimu1.aReParamPlant( ptnParam:=Plant,
+                              bZoneModelMode := mbSimuDeveloperMode,
+                              rRadiationCoilFactor := rRadiationCoilFactor);
+   Plant.rK    := rGain2;    
+   Plant.rT[0] := dTPlant2;
+   Plant.rT[1] := dTPlant2;
+   Plant.rT[2] := dTPlant2;    
+   abZoneSimu2.aReParamPlant( ptnParam:=Plant,
+                              bZoneModelMode := mbSimuDeveloperMode,
+                              rRadiationCoilFactor := rRadiationCoilFactor);
+   Plant.rK    := rGain3;    
+   Plant.rT[0] := dTPlant3;
+   Plant.rT[1] := dTPlant3;
+   Plant.rT[2] := dTPlant3;    
+   abZoneSimu3.aReParamPlant( ptnParam:=Plant,
+                              bZoneModelMode := mbSimuDeveloperMode,
+                              rRadiationCoilFactor := rRadiationCoilFactor);
+   Plant.rK    := rGain4;    
+   Plant.rT[0] := dTPlant4;
+   Plant.rT[1] := dTPlant4;
+   Plant.rT[2] := dTPlant4;    
+   abZoneSimu4.aReParamPlant( ptnParam:=Plant,
+                              bZoneModelMode := mbSimuDeveloperMode,
+                              rRadiationCoilFactor := rRadiationCoilFactor);
+   Plant.rK    := rGain5;    
+   Plant.rT[0] := dTPlant5;
+   Plant.rT[1] := dTPlant5;
+   Plant.rT[2] := dTPlant5;    
+   abZoneSimu5.aReParamPlant( ptnParam:=Plant,
+                              bZoneModelMode := mbSimuDeveloperMode,
+                              rRadiationCoilFactor := rRadiationCoilFactor);
+   Plant.rK    := rGain6;    
+   Plant.rT[0] := dTPlant6;
+   Plant.rT[1] := dTPlant6;
+   Plant.rT[2] := dTPlant6;    
+   abZoneSimu6.aReParamPlant( ptnParam:=Plant,
+                              bZoneModelMode := mbSimuDeveloperMode,
+                              rRadiationCoilFactor := rRadiationCoilFactor);
+   Plant.rK    := rGain7;    
+   Plant.rT[0] := dTPlant7;
+   Plant.rT[1] := dTPlant7;
+   Plant.rT[2] := dTPlant7;    
+   abZoneSimu7.aReParamPlant( ptnParam:=Plant,
+                              bZoneModelMode := mbSimuDeveloperMode,
+                              rRadiationCoilFactor := rRadiationCoilFactor);
+   Plant.rK    := rGain8;    
+   Plant.rT[0] := dTPlant8;
+   Plant.rT[1] := dTPlant8;
+   Plant.rT[2] := dTPlant8;    
+   abZoneSimu8.aReParamPlant( ptnParam:=Plant,
+                              bZoneModelMode := mbSimuDeveloperMode,
+                              rRadiationCoilFactor := rRadiationCoilFactor);
+   Plant.rK    := rGain9;    
+   Plant.rT[0] := dTPlant9;
+   Plant.rT[1] := dTPlant9;
+   Plant.rT[2] := dTPlant9;    
+   abZoneSimu9.aReParamPlant( ptnParam:=Plant,
+                              bZoneModelMode := mbSimuDeveloperMode,
+                              rRadiationCoilFactor := rRadiationCoilFactor);
+   Plant.rK    := rGain10;    
+   Plant.rT[0] := dTPlant10;
+   Plant.rT[1] := dTPlant10;
+   Plant.rT[2] := dTPlant10;    
+   abZoneSimu10.aReParamPlant(ptnParam:=Plant,
+                              bZoneModelMode := mbSimuDeveloperMode,
+                              rRadiationCoilFactor := rRadiationCoilFactor);
+   Plant.rK    := rGain11;    
+   Plant.rT[0] := dTPlant11;
+   Plant.rT[1] := dTPlant11;
+   Plant.rT[2] := dTPlant11;    
+   abZoneSimu11.aReParamPlant(ptnParam:=Plant,
+                              bZoneModelMode := mbSimuDeveloperMode,
+                              rRadiationCoilFactor := rRadiationCoilFactor);
+   Plant.rK    := rGain12;    
+   Plant.rT[0] := dTPlant12;
+   Plant.rT[1] := dTPlant12;
+   Plant.rT[2] := dTPlant12;    
+   abZoneSimu12.aReParamPlant(ptnParam:=Plant,
+                              bZoneModelMode := mbSimuDeveloperMode,
+                              rRadiationCoilFactor := rRadiationCoilFactor);
+
+   mbReParam := FALSE;
+END_IF; 
+ 
+
+IF (bTITempZoneLinked[1]) THEN
+   abZoneSimu1.aRunRef(bReset := mbFastSimCoolingHeaterOff AND (NOT sv_bHeatingOn),
+                     rControlValue:= @sv_ZoneArray[1].Data^.rOutputValue,
+                     rLeftZoneTemp := 0.0,
+                     rRightZoneTemp := abZoneSimu2.aRunRef.rZoneTemp,
+                     bZoneModelMode := mbSimuDeveloperMode,
+                     rSetTempZone := sv_ZoneArray[1].Data^.rSetVal,
+                     rActTempZone := sv_ZoneArray[1].Data^.prActTemp^,
+                     bHeatingOn := sv_bHeatingOn);
+END_IF; 
+
+IF (bTITempZoneLinked[2]) THEN
+   abZoneSimu2.aRunRef(bReset := mbFastSimCoolingHeaterOff AND (NOT sv_bHeatingOn),
+                     rControlValue:= @sv_ZoneArray[2].Data^.rOutputValue,
+                     rLeftZoneTemp := abZoneSimu1.aRunRef.rZoneTemp,
+                     rRightZoneTemp := abZoneSimu3.aRunRef.rZoneTemp,
+                     bZoneModelMode := mbSimuDeveloperMode,
+                     rSetTempZone := sv_ZoneArray[2].Data^.rSetVal,
+                     rActTempZone := sv_ZoneArray[2].Data^.prActTemp^,
+                     bHeatingOn := sv_bHeatingOn);
+END_IF;
+
+IF (bTITempZoneLinked[3]) THEN
+   abZoneSimu3.aRunRef(bReset := mbFastSimCoolingHeaterOff AND (NOT sv_bHeatingOn),
+                     rControlValue:=@sv_ZoneArray[3].Data^.rOutputValue,
+                     rLeftZoneTemp := abZoneSimu2.aRunRef.rZoneTemp,
+                     rRightZoneTemp := abZoneSimu4.aRunRef.rZoneTemp,
+                     bZoneModelMode := mbSimuDeveloperMode,
+                     rSetTempZone :=sv_ZoneArray[3].Data^.rSetVal,
+                     rActTempZone := sv_ZoneArray[3].Data^.prActTemp^,
+                     bHeatingOn := sv_bHeatingOn);
+END_IF;
+   
+IF (bTITempZoneLinked[4]) THEN
+   abZoneSimu4.aRunRef(bReset := mbFastSimCoolingHeaterOff AND (NOT sv_bHeatingOn),
+                     rControlValue:=@sv_ZoneArray[4].Data^.rOutputValue,
+                     rLeftZoneTemp := abZoneSimu3.aRunRef.rZoneTemp,
+                     rRightZoneTemp := abZoneSimu5.aRunRef.rZoneTemp,
+                     bZoneModelMode := mbSimuDeveloperMode,
+                     rSetTempZone :=sv_ZoneArray[4].Data^.rSetVal,
+                     rActTempZone := sv_ZoneArray[4].Data^.prActTemp^,
+                     bHeatingOn := sv_bHeatingOn);
+END_IF;
+   
+IF (bTITempZoneLinked[5]) THEN
+   abZoneSimu5.aRunRef(bReset := mbFastSimCoolingHeaterOff AND (NOT sv_bHeatingOn),
+                     rControlValue:=@sv_ZoneArray[5].Data^.rOutputValue,
+                     rLeftZoneTemp := abZoneSimu4.aRunRef.rZoneTemp,
+                     rRightZoneTemp := abZoneSimu6.aRunRef.rZoneTemp,
+                     bZoneModelMode := mbSimuDeveloperMode,
+                     rSetTempZone :=sv_ZoneArray[5].Data^.rSetVal,
+                     rActTempZone := sv_ZoneArray[5].Data^.prActTemp^,
+                     bHeatingOn := sv_bHeatingOn);
+END_IF;
+
+IF (bTITempZoneLinked[6]) THEN
+   abZoneSimu6.aRunRef(bReset := mbFastSimCoolingHeaterOff AND (NOT sv_bHeatingOn),
+                     rControlValue:=@sv_ZoneArray[6].Data^.rOutputValue,
+                     rLeftZoneTemp := abZoneSimu5.aRunRef.rZoneTemp,
+                     rRightZoneTemp := abZoneSimu7.aRunRef.rZoneTemp,
+                     bZoneModelMode := mbSimuDeveloperMode,
+                     rSetTempZone :=sv_ZoneArray[6].Data^.rSetVal,
+                     rActTempZone := sv_ZoneArray[6].Data^.prActTemp^,
+                     bHeatingOn := sv_bHeatingOn);
+END_IF;
+
+IF (bTITempZoneLinked[7]) THEN
+   abZoneSimu7.aRunRef(bReset := mbFastSimCoolingHeaterOff AND (NOT sv_bHeatingOn),
+                     rControlValue:=@sv_ZoneArray[7].Data^.rOutputValue,
+                     rLeftZoneTemp := abZoneSimu6.aRunRef.rZoneTemp,
+                     rRightZoneTemp := abZoneSimu8.aRunRef.rZoneTemp,
+                     bZoneModelMode := mbSimuDeveloperMode,
+                     rSetTempZone :=sv_ZoneArray[7].Data^.rSetVal,
+                     rActTempZone := sv_ZoneArray[7].Data^.prActTemp^,
+                     bHeatingOn := sv_bHeatingOn);
+END_IF;
+   
+IF (bTITempZoneLinked[8]) THEN
+   abZoneSimu8.aRunRef(bReset := mbFastSimCoolingHeaterOff AND (NOT sv_bHeatingOn),
+                     rControlValue:=@sv_ZoneArray[8].Data^.rOutputValue,
+                     rLeftZoneTemp := abZoneSimu7.aRunRef.rZoneTemp,
+                     rRightZoneTemp := abZoneSimu9.aRunRef.rZoneTemp,
+                     bZoneModelMode := mbSimuDeveloperMode,
+                     rSetTempZone :=sv_ZoneArray[8].Data^.rSetVal,
+                     rActTempZone := sv_ZoneArray[8].Data^.prActTemp^,
+                     bHeatingOn := sv_bHeatingOn);
+END_IF;
+   
+IF (bTITempZoneLinked[9]) THEN
+   abZoneSimu9.aRunRef(bReset := mbFastSimCoolingHeaterOff AND (NOT sv_bHeatingOn),
+                     rControlValue:=@sv_ZoneArray[9].Data^.rOutputValue,
+                     rLeftZoneTemp := abZoneSimu8.aRunRef.rZoneTemp,
+                     rRightZoneTemp := abZoneSimu10.aRunRef.rZoneTemp,
+                     bZoneModelMode := mbSimuDeveloperMode,
+                     rSetTempZone :=sv_ZoneArray[9].Data^.rSetVal,
+                     rActTempZone := sv_ZoneArray[9].Data^.prActTemp^,
+                     bHeatingOn := sv_bHeatingOn);
+END_IF;
+   
+IF (bTITempZoneLinked[10]) THEN
+   abZoneSimu10.aRunRef(bReset := mbFastSimCoolingHeaterOff AND (NOT sv_bHeatingOn),
+                        rControlValue:=@sv_ZoneArray[10].Data^.rOutputValue,
+                        rLeftZoneTemp := abZoneSimu9.aRunRef.rZoneTemp,
+                        rRightZoneTemp := abZoneSimu11.aRunRef.rZoneTemp,
+                        bZoneModelMode := mbSimuDeveloperMode,
+                        rSetTempZone :=sv_ZoneArray[10].Data^.rSetVal,
+                        rActTempZone := sv_ZoneArray[10].Data^.prActTemp^,
+                        bHeatingOn := sv_bHeatingOn);
+END_IF;
+   
+IF (bTITempZoneLinked[11]) THEN
+   abZoneSimu11.aRunRef(bReset := mbFastSimCoolingHeaterOff AND (NOT sv_bHeatingOn),
+                        rControlValue:=@sv_ZoneArray[11].Data^.rOutputValue,
+                        rLeftZoneTemp := abZoneSimu10.aRunRef.rZoneTemp,
+                        rRightZoneTemp := abZoneSimu12.aRunRef.rZoneTemp,
+                        bZoneModelMode := mbSimuDeveloperMode,
+                        rSetTempZone :=sv_ZoneArray[11].Data^.rSetVal,
+                        rActTempZone := sv_ZoneArray[11].Data^.prActTemp^,
+                        bHeatingOn := sv_bHeatingOn);
+END_IF;
+   
+IF (bTITempZoneLinked[12]) THEN
+   abZoneSimu12.aRunRef(bReset := mbFastSimCoolingHeaterOff AND (NOT sv_bHeatingOn),
+                        rControlValue:=@sv_ZoneArray[12].Data^.rOutputValue,
+                        rLeftZoneTemp := abZoneSimu11.aRunRef.rZoneTemp,
+                        rRightZoneTemp := 0.0,
+                        bZoneModelMode := mbSimuDeveloperMode,
+                        rSetTempZone :=sv_ZoneArray[12].Data^.rSetVal,
+                        rActTempZone := sv_ZoneArray[12].Data^.prActTemp^,
+                        bHeatingOn := sv_bHeatingOn);
+END_IF;
+
+
+@SaText @RT(9)aStopSimu 1 @TL(28)
+(**************************************** WARNING ********************************************
+ *** The KEBA Kemro K2 System including software is not intended for safety control tasks! ***
+ ***                       For further information see Comment tab!                        ***
+ *********************************************************************************************)
+
+abZoneSimu1.aUnforce();
+abZoneSimu2.aUnforce();
+abZoneSimu3.aUnforce();
+abZoneSimu4.aUnforce();
+abZoneSimu5.aUnforce();
+abZoneSimu6.aUnforce();
+abZoneSimu7.aUnforce();
+abZoneSimu8.aUnforce();
+abZoneSimu9.aUnforce();
+abZoneSimu10.aUnforce();
+abZoneSimu11.aUnforce();
+abZoneSimu12.aUnforce();
+
+IF bTIOilTempLinked THEN
+   abForceOilTemp.aUnforce();
+END_IF;
+
+IF mbHopperTempLinked THEN
+   abForceHopperTemp.aUnforce();
+END_IF;
+
+STOP_PROCESS_ALGORITHM();
+
+
+@SaTrans 0 
+@SaExits 0 
+@END_SfcBody 
+
+@@@BEG_Comment@@@ 
+@TL(0)
+
+@@@END_Comment@@@ 
+
+@BEG_Body 
+@TL(10)
+(**************************************** WARNING ********************************************
+ *** The KEBA Kemro K2 System including software is not intended for safety control tasks! ***
+ ***                       For further information see Comment tab!                        ***
+ *********************************************************************************************)
+
+prHopperTemp := GET_SYNC_REFTO('HeatingNozzle1.ti_HopperTemp', T#0s, Status);
+mbHopperTempLinked := (Status = KSYS_Status_OK);
+
+STOP_PROCESS_ALGORITHM();
+
+@END_Body 
+
+@@@BEG_Comment@@@ 
+@TL(0)
+
+@@@END_Comment@@@ 
+
+@BEG_Body 
+@TL(3)
+mbSimuDeveloperMode := sv_bSimuDeveloperMode;
+mbReParam := TRUE;
+
+@END_Body 
+
+@@@BEG_Comment@@@ 
+@TL(0)
+
+@@@END_Comment@@@ 
+@END_Body 
+
+@END_Contents 

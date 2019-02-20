@@ -1,0 +1,146 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<base:Mask xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xmlns:base="http://www.keba.at/viewedit.model.base" widgetId="kvs.mask" name="InjectDriveMask1">
+  <resolution width="684" height="476"/>
+  <position x="1" y="1"/>
+  <attributeValues key="Title" value="Inject drive"/>
+  <attributeValues key="Icon" value="Injection1/hmi/images/iconInjectDrive.gif"/>
+  <widgetInstances xsi:type="base:MultiPageWidgetInstance" widgetId="keplast.kvs.tabpanelplast" name="tabPanelPlast1" layoutConstraint="CENTER">
+    <resolution width="684" height="476"/>
+    <position/>
+    <attributeValues key="SelectedPage" value="4"/>
+    <attributeValues key="Tabs" value="Inject chart, Tab1; Inject chart 2, Tab5; Drive info, Tab2; Drive info 2, Tab6; Motor cooling, Tab3"/>
+    <pages widgetId="keplast.kvs.tabpanelplast.container" name="Tab1">
+      <resolution width="684" height="446"/>
+      <position/>
+      <attributeValues key="HelpSubID" value="injectChart1"/>
+      <widgetInstances widgetId="keplast.kvs.mschart" name="msChartInject1" layoutConstraint="CENTER">
+        <resolution width="684" height="400"/>
+        <position/>
+        <attributeValues key="MsProfileData" value="DriveChartInject1"/>
+      </widgetInstances>
+      <widgetInstances xsi:type="base:CompositeWidgetInstance" widgetId="d15380cc-a761-460c-9aa1-9d851df99905" name="chartKeyPanelInject1" layoutConstraint="SOUTH">
+        <resolution width="684" height="40"/>
+        <position y="400"/>
+      </widgetInstances>
+      <layout layoutID="kvs.layout.BorderLayout" name="BorderLayout"/>
+    </pages>
+    <pages widgetId="keplast.kvs.tabpanelplast.container" name="Tab5">
+      <resolution width="684" height="446"/>
+      <position/>
+      <attributeValues key="HelpSubID" value="injectChart2"/>
+      <dynamicAttributes key="Create">
+        <value function="hasOption : UserFunctions" equal="true" unequal="false">
+          <parameter key="1" value="devicename;PlastFunctionUtils.createDeviceName(&quot;Injection1&quot;)"/>
+          <parameter key="2" value="machineoptionid;system.hmi.MachineEquipment.SUB_OPTION_INJECTION_DRIVE_POS_BALANCE"/>
+        </value>
+      </dynamicAttributes>
+      <widgetInstances widgetId="keplast.kvs.mschart" name="msChartInject2" layoutConstraint="CENTER">
+        <resolution width="714" height="400"/>
+        <position/>
+        <attributeValues key="MsProfileData" value="DriveChartInject2"/>
+      </widgetInstances>
+      <widgetInstances xsi:type="base:CompositeWidgetInstance" widgetId="d15380cc-a761-460c-9aa1-9d851df99905" name="chartKeyPanelInject2" layoutConstraint="SOUTH">
+        <resolution width="714" height="40"/>
+        <position y="400"/>
+      </widgetInstances>
+      <layout layoutID="kvs.layout.BorderLayout" name="BorderLayout"/>
+    </pages>
+    <pages widgetId="keplast.kvs.tabpanelplast.container" name="Tab2">
+      <resolution width="684" height="446"/>
+      <position/>
+      <attributeValues key="HelpSubID" value="driveInfo1"/>
+      <widgetInstances xsi:type="base:CompositeWidgetInstance" widgetId="00d2e7ff-2188-424a-860f-293b97dd8f5c" name="driveStatusPanel1" layoutConstraint="CENTER">
+        <resolution width="684" height="376"/>
+        <position/>
+        <attributeValues key="VariableStatusWord" value="Injection1.sv_iDriveStatusInject"/>
+        <attributeValues key="VariableFwVersion" value="Injection1.sv_sRevisionInject"/>
+        <attributeValues key="VariableDriveName" value="Injection1.sv_sDrvIDInject"/>
+        <attributeValues key="VariableActPosition" value="Injection1.sv_rScrewPositionAxis1"/>
+        <attributeValues key="VariableActVelocity" value="Injection1.sv_rScrewVelocityAxis1"/>
+        <attributeValues key="VariableActTorque" value="Injection1.sv_rActTorqueInjectAxis1"/>
+        <attributeValues key="VariableActDriveTemp" value="Injection1.sv_iAmplifierTempInject"/>
+        <attributeValues key="VariableActMotorTemp" value="Injection1.sv_rMotorTempInject"/>
+        <attributeValues key="VariablePLCVersion" value="Injection1.sv_sPLCVersionInjectAxis1"/>
+        <attributeValues key="VariableActCurrent" value="Injection1.sv_rActCurrentInjectAxis1"/>
+      </widgetInstances>
+      <widgetInstances xsi:type="base:CompositeWidgetInstance" widgetId="3f4be1f1-f4c0-46dd-baed-09f74828f227" name="driveReferencingPanel1" layoutConstraint="SOUTH">
+        <resolution width="684" height="64"/>
+        <position y="376"/>
+        <attributeValues key="VariableRefStartRequest" value="Injection1.sv_ServoInject.RefData.bStartRequest"/>
+        <attributeValues key="VariableRefState" value="Injection1.sv_ServoInject.RefData.State"/>
+        <dynamicAttributes key="Visible">
+          <value function="n1_GT_const : ViewEditFunctions" equal="true" unequal="false">
+            <parameter key="1" value="kvariable;Injection1.sv_ServoInject.RefData.RefPointType"/>
+            <parameter key="2" value="double;0.0"/>
+          </value>
+        </dynamicAttributes>
+      </widgetInstances>
+      <layout layoutID="kvs.layout.BorderLayout" name="BorderLayout"/>
+    </pages>
+    <pages widgetId="keplast.kvs.tabpanelplast.container" name="Tab6">
+      <resolution width="684" height="446"/>
+      <position/>
+      <attributeValues key="HelpSubID" value="driveInfo2"/>
+      <dynamicAttributes key="Create">
+        <value function="doesVariableExist : UserFunctions" equal="true" unequal="false">
+          <parameter key="1" value="variableasstring;PlastFunctionUtils.createVariableString(&quot;Injection1.sv_ServoInject2.iID&quot;)"/>
+        </value>
+      </dynamicAttributes>
+      <widgetInstances xsi:type="base:CompositeWidgetInstance" widgetId="00d2e7ff-2188-424a-860f-293b97dd8f5c" name="driveStatusPanel2" layoutConstraint="CENTER">
+        <resolution width="684" height="376"/>
+        <position/>
+        <attributeValues key="VariableStatusWord" value="Injection1.sv_iDriveStatusInject2"/>
+        <attributeValues key="VariableFwVersion" value="Injection1.sv_sRevisionInject2"/>
+        <attributeValues key="VariableDriveName" value="Injection1.sv_sDrvIDInject2"/>
+        <attributeValues key="VariableActPosition" value="Injection1.sv_rScrewPositionAxis2"/>
+        <attributeValues key="VariableActVelocity" value="Injection1.sv_rScrewVelocityAxis2"/>
+        <attributeValues key="VariableActTorque" value="Injection1.sv_rActTorqueInjectAxis2"/>
+        <attributeValues key="VariableActDriveTemp" value="Injection1.sv_iAmplifierTempInjectAxis2"/>
+        <attributeValues key="VariableActMotorTemp" value="Injection1.sv_rMotorTempInjectAxis2"/>
+        <attributeValues key="VariablePLCVersion" value="Injection1.sv_sPLCVersionInjectAxis2"/>
+        <attributeValues key="VariableActCurrent" value="Injection1.sv_rActCurrentInjectAxis2"/>
+      </widgetInstances>
+      <widgetInstances xsi:type="base:CompositeWidgetInstance" widgetId="3f4be1f1-f4c0-46dd-baed-09f74828f227" name="driveReferencingPanel2" layoutConstraint="SOUTH">
+        <resolution width="684" height="64"/>
+        <position y="376"/>
+        <attributeValues key="VariableRefStartRequest" value="Injection1.sv_ServoInject2.RefData.bStartRequest"/>
+        <attributeValues key="VariableRefState" value="Injection1.sv_ServoInject2.RefData.State"/>
+        <dynamicAttributes key="Visible">
+          <value function="n1_GT_const : ViewEditFunctions" equal="true" unequal="false">
+            <parameter key="1" value="kvariable;Injection1.sv_ServoInject2.RefData.RefPointType"/>
+            <parameter key="2" value="double;0.0"/>
+          </value>
+        </dynamicAttributes>
+      </widgetInstances>
+      <layout layoutID="kvs.layout.BorderLayout" name="BorderLayout"/>
+    </pages>
+    <pages widgetId="keplast.kvs.tabpanelplast.container" name="Tab3">
+      <resolution width="684" height="446"/>
+      <position/>
+      <attributeValues key="HelpSubID" value="motorCooling"/>
+      <dynamicAttributes key="Create">
+        <value function="doesVariableExist : UserFunctions" equal="true" unequal="false">
+          <parameter key="1" value="variableasstring;PlastFunctionUtils.createVariableString(&quot;Injection1.do_MotorCoolInject&quot;)"/>
+        </value>
+      </dynamicAttributes>
+      <widgetInstances xsi:type="base:CompositeWidgetInstance" widgetId="139aee72-7f1d-4a2b-bc73-00ae7dedd12d" name="motorCoolingPanel1" layoutConstraint="NORTH">
+        <resolution width="714" height="440"/>
+        <position/>
+        <attributeValues key="VariableActTemp" value="Injection1.sv_rMotorTempInject"/>
+        <attributeValues key="VariableCoolOnTemp" value="Injection1.sv_rMotorCoolOnTempInject"/>
+        <attributeValues key="VariableCoolOffTemp" value="Injection1.sv_rMotorCoolOffTempInject"/>
+        <dynamicAttributes key="Visible">
+          <value function="n1_GT_const : ViewEditFunctions" equal="true" unequal="false">
+            <parameter key="1" value="kvariable;Injection1.sv_ServoInject.ServoState.OperationState"/>
+            <parameter key="2" value="double;0.0"/>
+          </value>
+        </dynamicAttributes>
+      </widgetInstances>
+      <layout layoutID="kvs.layout.BorderLayout" name="BorderLayout"/>
+    </pages>
+    <layout layoutID="kvs.layout.xylayout" name="null"/>
+    <contentPanePosition y="30"/>
+    <contentPaneResolution width="684" height="446"/>
+  </widgetInstances>
+  <layout layoutID="kvs.layout.BorderLayout" name="BorderLayout"/>
+</base:Mask>

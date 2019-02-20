@@ -1,0 +1,105 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<base:Mask xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xmlns:base="http://www.keba.at/viewedit.model.base" widgetId="kvs.mask" name="PlasticizeMask1">
+  <resolution width="714" height="476"/>
+  <position x="1" y="1"/>
+  <attributeValues key="Background" value="BG_Desktop:30,30,30"/>
+  <attributeValues key="Title" value="Plasticize"/>
+  <attributeValues key="Icon" value="Injection1/hmi/images/iconScrewRotate.gif"/>
+  <widgetInstances xsi:type="base:ContainerWidgetInstance" widgetId="kvs.panel" name="panelContentNorth" layoutConstraint="NORTH">
+    <resolution width="714" height="425"/>
+    <position/>
+    <widgetInstances xsi:type="base:CompositeWidgetInstance" widgetId="e0db95e5-9296-4496-b3d9-306d16c28c9c" name="decompressionPanel" layoutConstraint="SOUTH">
+      <resolution width="714" height="154"/>
+      <position y="271"/>
+      <attributeValues key="DeviceName" value="Injection1"/>
+    </widgetInstances>
+    <widgetInstances xsi:type="base:ContainerWidgetInstance" widgetId="keplast.kvs.borderpanelsmall" name="panelPlast" layoutConstraint="NORTH">
+      <resolution width="714" height="263"/>
+      <position/>
+      <attributeValues key="Title" value="Plasticize and backpressure"/>
+      <attributeValues key="Background" value="BG_Panel:220,220,220"/>
+      <attributeValues key="PreferredSize" value="714, 263"/>
+      <widgetInstances widgetId="keplast.kvs.separator" name="separator" layoutConstraint="SEPARATOR">
+        <resolution width="2" height="226"/>
+        <position x="356" y="33"/>
+        <attributeValues key="Foreground" value="gray_mid:153,153,153"/>
+      </widgetInstances>
+      <widgetInstances xsi:type="base:ContainerWidgetInstance" widgetId="kvs.panel" name="panelPlastRight" layoutConstraint="RIGHT">
+        <resolution width="320" height="223"/>
+        <position x="391" y="36"/>
+        <attributeValues key="PreferredSize" value="10, 1000"/>
+        <widgetInstances xsi:type="base:ContainerWidgetInstance" widgetId="kvs.panel" name="panelPlastRightParams" layoutConstraint="SOUTH">
+          <resolution width="320" height="116"/>
+          <position y="107"/>
+          <widgetInstances widgetId="keplast.kvs.actnumfieldtext" name="numfieldScrewPos" layoutConstraint="null">
+            <resolution width="320" height="29"/>
+            <position/>
+            <attributeValues key="Variable" value="Injection1.sv_rScrewPosition"/>
+            <attributeValues key="VariableMaximum" value="Injection1.sv_rMaxPlastEnd"/>
+          </widgetInstances>
+          <widgetInstances widgetId="keplast.kvs.actnumfieldtext" name="numfieldScrewSpeed" layoutConstraint="null">
+            <resolution width="320" height="29"/>
+            <position y="29"/>
+            <attributeValues key="Variable" value="Injection1.sv_rActScrewCircSpeed"/>
+            <attributeValues key="VariableMaximum" value="Injection1.sv_rMaxRotationPlast"/>
+          </widgetInstances>
+          <widgetInstances widgetId="keplast.kvs.numfieldtext" name="numfieldPlastPressure" layoutConstraint="null">
+            <resolution width="320" height="29"/>
+            <position y="58"/>
+            <attributeValues key="Variable" value="Injection1.sv_ConstChargePressure.Output.rOutputValue"/>
+          </widgetInstances>
+          <widgetInstances widgetId="keplast.kvs.actsetnumfieldtext" name="numfieldPlastDelay" layoutConstraint="null">
+            <resolution width="320" height="29"/>
+            <position y="87"/>
+            <attributeValues key="Variable" value="Injection1.sv_PlastTimesSet.dSetDelayTime"/>
+            <attributeValues key="VariableActual" value="Injection1.sv_PlastTimesAct.dActDelayTime"/>
+          </widgetInstances>
+          <layout layoutID="kvs.layout.GridLayout" name="GridLayout">
+            <attributeValues key="Rows" value="0"/>
+            <attributeValues key="Columns" value="1"/>
+          </layout>
+        </widgetInstances>
+        <widgetInstances xsi:type="base:ContainerWidgetInstance" widgetId="kvs.panel" name="container1" layoutConstraint="NORTH">
+          <resolution width="320" height="108"/>
+          <position/>
+          <border name="EmptyBorder" id="kv.border.EmptyBorder">
+            <attributeValues key="InnerInsets" value="0, 5, 5, 42"/>
+          </border>
+          <widgetInstances widgetId="keplast.kvs.kprofile.view" name="profileView1" layoutConstraint="NORTH">
+            <resolution width="273" height="103"/>
+            <position x="5"/>
+            <attributeValues key="Profile" value="Injection1.sv_PlastProfVis"/>
+          </widgetInstances>
+          <layout layoutID="kvs.layout.BorderLayout" name="BorderLayout"/>
+        </widgetInstances>
+        <layout layoutID="kvs.layout.BorderLayout" name="BorderLayout"/>
+      </widgetInstances>
+      <widgetInstances widgetId="keplast.kvs.kprofile.nofstages" name="profileStagesField1" layoutConstraint="TITLE_RIGHT">
+        <resolution width="120" height="22"/>
+        <position x="591" y="3"/>
+        <attributeValues key="Profile" value="Injection1.sv_PlastProfVis"/>
+      </widgetInstances>
+      <widgetInstances widgetId="keplast.kvs.kprofile.table" name="profileTablePlast" layoutConstraint="LEFT">
+        <resolution width="347" height="197"/>
+        <position x="6" y="33"/>
+        <attributeValues key="ProfileName" value="Injection1.sv_PlastProfVis"/>
+        <attributeValues key="IsLeftRightIncreasing" value="true"/>
+        <attributeValues key="IsUpDownIncreasing" value="true"/>
+        <attributeValues key="MaxDisplayedStages" value="5"/>
+        <attributeValues key="VariableUpperLimit" value="Injection1.sv_rMaxPlastEnd"/>
+        <attributeValues key="VariableMaxPosition" value="Injection1.sv_rScrewVolume"/>
+        <attributeValues key="VariableActPosition" value="Injection1.sv_rScrewPosition"/>
+        <attributeValues key="VariableIsReachedLeft" value="Injection1.sv_bInjectEnd"/>
+        <attributeValues key="VariableIsReachedRight" value="Injection1.sv_bPlastEndReached"/>
+        <attributeValues key="TextLastStage" value="End"/>
+      </widgetInstances>
+      <layout layoutID="keplast.kvs.layout.multisplitlayout" name="MultiSplitLayout">
+        <attributeValues key="InsetsRight" value="3, 33, 0, 0"/>
+      </layout>
+    </widgetInstances>
+    <layout layoutID="kvs.layout.BorderLayout" name="BorderLayout">
+      <attributeValues key="Vgap" value="4"/>
+    </layout>
+  </widgetInstances>
+  <layout layoutID="kvs.layout.BorderLayout" name="BorderLayout"/>
+</base:Mask>

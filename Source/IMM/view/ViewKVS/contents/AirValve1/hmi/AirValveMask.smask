@@ -1,0 +1,237 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<base:Mask xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xmlns:base="http://www.keba.at/viewedit.model.base" widgetId="kvs.mask" name="AirValveMask">
+  <resolution width="714" height="476"/>
+  <position x="1" y="1"/>
+  <attributeValues key="Title" value="Air valves"/>
+  <attributeValues key="Icon" value="AirValve1/hmi/images/iconAirValve.gif"/>
+  <attributeValues key="Background" value="BG_Desktop:30,30,30"/>
+  <widgetInstances xsi:type="base:ContainerWidgetInstance" widgetId="kvs.panel" name="panelActualValues" layoutConstraint="NORTH">
+    <resolution width="714" height="70"/>
+    <position/>
+    <attributeValues key="Background" value="BG_Panel:220,220,220"/>
+    <border name="TitledBorder" id="kv.border.TitledBorder">
+      <attributeValues key="InnerInsets" value="4, 0, 4, 0"/>
+    </border>
+    <widgetInstances xsi:type="base:ContainerWidgetInstance" widgetId="kvs.panel" name="panelSplitActValuesLeft" layoutConstraint="LEFT">
+      <resolution width="351" height="58"/>
+      <position x="3" y="6"/>
+      <widgetInstances widgetId="keplast.kvs.actnumfieldtext" name="numfieldMoldPosition" layoutConstraint="null">
+        <resolution width="351" height="29"/>
+        <position/>
+        <attributeValues key="Variable" value="Mold1.sv_rMoldPosition"/>
+        <attributeValues key="VariableMaximum" value="Mold1.sv_rMoldStroke"/>
+      </widgetInstances>
+      <widgetInstances widgetId="keplast.kvs.actnumfieldtext" name="numfieldEjectPosition" layoutConstraint="null">
+        <resolution width="351" height="29"/>
+        <position y="29"/>
+        <attributeValues key="Variable" value="Ejector1.sv_rEjectorPosition"/>
+        <attributeValues key="VariableMaximum" value="Ejector1.sv_rEjectorStroke"/>
+        <dynamicAttributes key="Create">
+          <value function="hasOption_OR_doesVariableExist : UserFunctions" equal="true" unequal="false">
+            <parameter key="1" value="devicename; PlastFunctionUtils.createDeviceName(&quot;Ejector1&quot;)"/>
+            <parameter key="2" value="machineoptionid; system.hmi.MachineEquipment.ELECTRIC"/>
+            <parameter key="3" value="variableasstring; PlastFunctionUtils.createVariableString(&quot;Ejector1.ai_Position&quot;)"/>
+          </value>
+        </dynamicAttributes>
+      </widgetInstances>
+      <layout layoutID="kvs.layout.GridLayout" name="GridLayout">
+        <attributeValues key="Rows" value="2"/>
+        <attributeValues key="Columns" value="1"/>
+      </layout>
+    </widgetInstances>
+    <widgetInstances xsi:type="base:ContainerWidgetInstance" widgetId="kvs.panel" name="panelSplitActValuesRight" layoutConstraint="RIGHT">
+      <resolution width="351" height="10"/>
+      <position x="360" y="6"/>
+      <layout layoutID="kvs.layout.GridLayout" name="GridLayout">
+        <attributeValues key="Rows" value="0"/>
+        <attributeValues key="Columns" value="1"/>
+      </layout>
+    </widgetInstances>
+    <layout layoutID="keplast.kvs.layout.horizontalsplitlayout" name="HorizontalSplitLayout"/>
+  </widgetInstances>
+  <widgetInstances xsi:type="base:ContainerWidgetInstance" widgetId="keplast.kvs.borderpanelsmall" name="panelAirValves" layoutConstraint="CENTER">
+    <resolution width="714" height="398"/>
+    <position y="78"/>
+    <attributeValues key="Title" value="Air valve settings"/>
+    <widgetInstances xsi:type="base:ContainerWidgetInstance" widgetId="kvs.panel" name="panelSettingsWrap" layoutConstraint="WEST">
+      <resolution width="473" height="361"/>
+      <position x="3" y="33"/>
+      <attributeValues key="PreferredSize" value="473, 361"/>
+      <widgetInstances xsi:type="base:ContainerWidgetInstance" widgetId="kvs.panel" name="panelAirValveSettings" layoutConstraint="NORTH">
+        <resolution width="473" height="290"/>
+        <position/>
+        <widgetInstances xsi:type="base:ContainerWidgetInstance" widgetId="kvs.panel" name="panelHeaderLabels" layoutConstraint="null">
+          <resolution width="473" height="29"/>
+          <position/>
+          <attributeValues key="PreferredSize" value="10, 29"/>
+          <widgetInstances xsi:type="base:ContainerWidgetInstance" widgetId="kvs.panel" name="container1" layoutConstraint="null">
+            <resolution width="10" height="10"/>
+            <position x="3" y="9"/>
+            <layout layoutID="kvs.layout.PercentLayout" name="PercentLayout"/>
+          </widgetInstances>
+          <widgetInstances widgetId="keplast.kvs.klabeltip" name="labelMode" layoutConstraint="null">
+            <resolution width="150" height="29"/>
+            <position x="134"/>
+            <attributeValues key="Text" value="Mode"/>
+            <attributeValues key="PreferredSize" value="150, 29"/>
+          </widgetInstances>
+          <widgetInstances widgetId="keplast.kvs.klabeltip" name="labelPos" layoutConstraint="null">
+            <resolution width="60" height="29"/>
+            <position x="287"/>
+            <attributeValues key="Text" value="Start"/>
+            <attributeValues key="PreferredSize" value="60, 29"/>
+          </widgetInstances>
+          <widgetInstances widgetId="keplast.kvs.klabeltip" name="labelDelay" layoutConstraint="null">
+            <resolution width="60" height="29"/>
+            <position x="350"/>
+            <attributeValues key="Text" value="Delay"/>
+            <attributeValues key="PreferredSize" value="60, 29"/>
+          </widgetInstances>
+          <widgetInstances widgetId="keplast.kvs.klabeltip" name="labelActive" layoutConstraint="null">
+            <resolution width="60" height="29"/>
+            <position x="413"/>
+            <attributeValues key="Text" value="Time"/>
+            <attributeValues key="PreferredSize" value="60, 29"/>
+          </widgetInstances>
+          <layout layoutID="keplast.kvs.layout.beanlayout" name="BeanLayout"/>
+        </widgetInstances>
+        <widgetInstances xsi:type="base:ContainerWidgetInstance" widgetId="kvs.panel" name="panelHeaderUnits" layoutConstraint="null">
+          <resolution width="473" height="29"/>
+          <position y="29"/>
+          <attributeValues key="PreferredSize" value="10, 29"/>
+          <dynamicAttributes key="Create">
+            <value function="doesDeviceExist : UserFunctions" equal="true" unequal="false">
+              <parameter key="1" value="devicename; PlastFunctionUtils.createDeviceName(&quot;AirValve1&quot;)"/>
+            </value>
+          </dynamicAttributes>
+          <widgetInstances widgetId="keplast.kvs.varlabeltip" name="unitPosition" layoutConstraint="null">
+            <resolution width="63" height="21"/>
+            <position x="284" y="4"/>
+            <attributeValues key="TextLabelType" value="Unit Variable Label"/>
+            <attributeValues key="Variable" value="AirValve1.sv_rStartPosition"/>
+          </widgetInstances>
+          <widgetInstances widgetId="keplast.kvs.varlabeltip" name="unitDelay" layoutConstraint="null">
+            <resolution width="63" height="21"/>
+            <position x="347" y="4"/>
+            <attributeValues key="TextLabelType" value="Unit Variable Label"/>
+            <attributeValues key="Variable" value="AirValve1.sv_AirValveTimesSet.dSetDelayTime"/>
+          </widgetInstances>
+          <widgetInstances widgetId="keplast.kvs.varlabeltip" name="unitActive" layoutConstraint="null">
+            <resolution width="63" height="21"/>
+            <position x="410" y="4"/>
+            <attributeValues key="TextLabelType" value="Unit Variable Label"/>
+            <attributeValues key="Variable" value="AirValve1.sv_AirValveTimesSet.dSetMoveTime"/>
+          </widgetInstances>
+          <layout layoutID="keplast.kvs.layout.beanlayout" name="BeanLayout">
+            <attributeValues key="UnitWidth" value="63"/>
+          </layout>
+        </widgetInstances>
+        <widgetInstances xsi:type="base:CompositeWidgetInstance" widgetId="34494dff-53ca-4661-83f7-7f0b63fac392" name="singleAirValvePanel1" layoutConstraint="null">
+          <resolution width="473" height="29"/>
+          <position y="58"/>
+          <attributeValues key="PreferredSize" value="571, 29"/>
+          <attributeValues key="Text" value="Air valve 1"/>
+          <attributeValues key="DeviceName" value="AirValve1"/>
+          <dynamicAttributes key="Create">
+            <value function="doesDeviceExist : UserFunctions" equal="true" unequal="false">
+              <parameter key="1" value="devicename; PlastFunctionUtils.createDeviceName(&quot;AirValve1&quot;)"/>
+            </value>
+          </dynamicAttributes>
+        </widgetInstances>
+        <widgetInstances xsi:type="base:CompositeWidgetInstance" widgetId="34494dff-53ca-4661-83f7-7f0b63fac392" name="singleAirValvePanel2" layoutConstraint="null">
+          <resolution width="473" height="29"/>
+          <position y="87"/>
+          <attributeValues key="PreferredSize" value="571, 29"/>
+          <attributeValues key="Text" value="Air valve 2"/>
+          <attributeValues key="DeviceName" value="AirValve2"/>
+          <dynamicAttributes key="Create">
+            <value function="doesDeviceExist : UserFunctions" equal="true" unequal="false">
+              <parameter key="1" value="devicename; PlastFunctionUtils.createDeviceName(&quot;AirValve2&quot;)"/>
+            </value>
+          </dynamicAttributes>
+        </widgetInstances>
+        <widgetInstances xsi:type="base:CompositeWidgetInstance" widgetId="34494dff-53ca-4661-83f7-7f0b63fac392" name="singleAirValvePanel3" layoutConstraint="null">
+          <resolution width="473" height="29"/>
+          <position y="116"/>
+          <attributeValues key="PreferredSize" value="571, 29"/>
+          <attributeValues key="Text" value="Air valve 3"/>
+          <attributeValues key="DeviceName" value="AirValve3"/>
+          <dynamicAttributes key="Create">
+            <value function="doesDeviceExist : UserFunctions" equal="true" unequal="false">
+              <parameter key="1" value="devicename; PlastFunctionUtils.createDeviceName(&quot;AirValve3&quot;)"/>
+            </value>
+          </dynamicAttributes>
+        </widgetInstances>
+        <widgetInstances xsi:type="base:CompositeWidgetInstance" widgetId="34494dff-53ca-4661-83f7-7f0b63fac392" name="singleAirValvePanel4" layoutConstraint="null">
+          <resolution width="473" height="29"/>
+          <position y="145"/>
+          <attributeValues key="PreferredSize" value="571, 29"/>
+          <attributeValues key="Text" value="Air valve 4"/>
+          <attributeValues key="DeviceName" value="AirValve4"/>
+          <dynamicAttributes key="Create">
+            <value function="doesDeviceExist : UserFunctions" equal="true" unequal="false">
+              <parameter key="1" value="devicename; PlastFunctionUtils.createDeviceName(&quot;AirValve4&quot;)"/>
+            </value>
+          </dynamicAttributes>
+        </widgetInstances>
+        <widgetInstances xsi:type="base:CompositeWidgetInstance" widgetId="34494dff-53ca-4661-83f7-7f0b63fac392" name="singleAirValvePanel5" layoutConstraint="null">
+          <resolution width="473" height="29"/>
+          <position y="174"/>
+          <attributeValues key="PreferredSize" value="571, 29"/>
+          <attributeValues key="Text" value="Air valve 5"/>
+          <attributeValues key="DeviceName" value="AirValve5"/>
+          <dynamicAttributes key="Create">
+            <value function="doesDeviceExist : UserFunctions" equal="true" unequal="false">
+              <parameter key="1" value="devicename; PlastFunctionUtils.createDeviceName(&quot;AirValve5&quot;)"/>
+            </value>
+          </dynamicAttributes>
+        </widgetInstances>
+        <widgetInstances xsi:type="base:CompositeWidgetInstance" widgetId="34494dff-53ca-4661-83f7-7f0b63fac392" name="singleAirValvePanel6" layoutConstraint="null">
+          <resolution width="473" height="29"/>
+          <position y="203"/>
+          <attributeValues key="PreferredSize" value="571, 29"/>
+          <attributeValues key="Text" value="Air valve 6"/>
+          <attributeValues key="DeviceName" value="AirValve6"/>
+          <dynamicAttributes key="Create">
+            <value function="doesDeviceExist : UserFunctions" equal="true" unequal="false">
+              <parameter key="1" value="devicename; PlastFunctionUtils.createDeviceName(&quot;AirValve6&quot;)"/>
+            </value>
+          </dynamicAttributes>
+        </widgetInstances>
+        <widgetInstances xsi:type="base:CompositeWidgetInstance" widgetId="34494dff-53ca-4661-83f7-7f0b63fac392" name="singleAirValvePanel7" layoutConstraint="null">
+          <resolution width="473" height="29"/>
+          <position y="232"/>
+          <attributeValues key="PreferredSize" value="571, 29"/>
+          <attributeValues key="Text" value="Air valve 7"/>
+          <attributeValues key="DeviceName" value="AirValve7"/>
+          <dynamicAttributes key="Create">
+            <value function="doesDeviceExist : UserFunctions" equal="true" unequal="false">
+              <parameter key="1" value="devicename; PlastFunctionUtils.createDeviceName(&quot;AirValve7&quot;)"/>
+            </value>
+          </dynamicAttributes>
+        </widgetInstances>
+        <widgetInstances xsi:type="base:CompositeWidgetInstance" widgetId="34494dff-53ca-4661-83f7-7f0b63fac392" name="singleAirValvePanel8" layoutConstraint="null">
+          <resolution width="473" height="29"/>
+          <position y="261"/>
+          <attributeValues key="PreferredSize" value="571, 29"/>
+          <attributeValues key="Text" value="Air valve 8"/>
+          <attributeValues key="DeviceName" value="AirValve8"/>
+          <dynamicAttributes key="Create">
+            <value function="doesDeviceExist : UserFunctions" equal="true" unequal="false">
+              <parameter key="1" value="devicename; PlastFunctionUtils.createDeviceName(&quot;AirValve8&quot;)"/>
+            </value>
+          </dynamicAttributes>
+        </widgetInstances>
+        <layout layoutID="kvs.layout.GridLayout" name="GridLayout">
+          <attributeValues key="Rows" value="0"/>
+          <attributeValues key="Columns" value="1"/>
+        </layout>
+      </widgetInstances>
+      <layout layoutID="kvs.layout.BorderLayout" name="BorderLayout"/>
+    </widgetInstances>
+    <layout layoutID="kvs.layout.BorderLayout" name="BorderLayout"/>
+  </widgetInstances>
+  <layout layoutID="kvs.layout.BorderLayout" name="BorderLayout">
+    <attributeValues key="Vgap" value="8"/>
+  </layout>
+</base:Mask>

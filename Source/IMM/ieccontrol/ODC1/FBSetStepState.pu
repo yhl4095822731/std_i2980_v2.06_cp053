@@ -1,0 +1,119 @@
+(*
+Update the current state of a step to the internal ODC sequence array
+at sv_ODCSequenceInt.StepState
+
+This state is used on the HMI to display errors, the currently executing step
+and finished steps.
+*)
+
+IMPORT_OVER_LISTFILE
+ tyODCSequenceInternal
+, tsODCStepPos
+, tnODCStepState
+
+END_IMPORT
+
+FUNCTION_BLOCK FBSetStepState #DUMMY_EDIT_BLOCK
+
+VAR_INPUT
+ StepPos : tsODCStepPos (* Position of the step for which to update the state *);
+ StepState : tnODCStepState (* New state *);
+END_VAR
+
+SYSTEM_VAR
+ sv_ODCSequenceInt : tyODCSequenceInternal;
+END_VAR
+#BEGIN_EDIT_BLOCK
+(**************************************** WARNING ********************************************
+ *** The KEBA Kemro K2 System including software is not intended for safety control tasks! ***
+ ***                       For further information see Comment tab!                        ***
+ *********************************************************************************************)
+
+sv_ODCSequenceInt[StepPos.iColumn][StepPos.iRow].StepState := StepState;
+
+sv_ODCSequenceInt[StepPos.iColumn][StepPos.iRow].bStepActive := (StepState = nStateActive); 
+sv_ODCSequenceInt[StepPos.iColumn][StepPos.iRow].bStepDone := (StepState = nStateReady);
+
+
+;#END_EDIT_BLOCK END_FUNCTION_BLOCK
+
+
+
+#END_OF_IEC_PART
+
+@Puma @IecEditor 6 96 @Pou 25 
+@@@BEG_Comment@@@
+Update the current state of a step to the internal ODC sequence array
+at sv_ODCSequenceInt.StepState
+
+This state is used on the HMI to display errors, the currently executing step
+and finished steps.
+@@@END_Comment@@@
+
+@BEG_Contents 
+
+@BEG_Func 
+@RT(17)FuncTreeContainer 
+0 
+@END_Func 
+
+@BEG_Const 
+@RT(18)ConstTreeContainer 
+0 
+@END_Const 
+
+@BEG_Export 
+
+@BEG_Kind 
+@FUNCTION_BLOCK @RT(14)FBSetStepState @STRUCTURED_TEXT 
+@RT(0) @RT(0) @RT(0) 
+@END_Kind 
+
+@BEG_Dcl 
+@RT(16)DclTreeContainer 
+3 
+@Var @RT(17)sv_ODCSequenceInt @RT(0) @T @T @DERIVED 0 @F @RT(21)tyODCSequenceInternal @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 8 @F @F @F @F 
+
+@Var @RT(7)StepPos @RT(0) @T @T @DERIVED 0 @T @T @DT @RT(12)tsODCStepPos @RT(0) @T @T @UNKNOWN 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(50)Position of the step for which to update the state @RT(0) 
+@END_Attrib 
+1 1 @F @F @F @F 
+
+@Var @RT(9)StepState @RT(0) @T @T @DERIVED 0 @T @T @DT @RT(14)tnODCStepState @RT(0) @T @T @UNKNOWN 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(9)New state @RT(0) 
+@END_Attrib 
+1 1 @F @F @F @F 
+
+@END_Dcl 
+
+@END_Export 
+
+@BEG_Body 
+@TL(10)
+(**************************************** WARNING ********************************************
+ *** The KEBA Kemro K2 System including software is not intended for safety control tasks! ***
+ ***                       For further information see Comment tab!                        ***
+ *********************************************************************************************)
+
+sv_ODCSequenceInt[StepPos.iColumn][StepPos.iRow].StepState := StepState;
+
+sv_ODCSequenceInt[StepPos.iColumn][StepPos.iRow].bStepActive := (StepState = nStateActive); 
+sv_ODCSequenceInt[StepPos.iColumn][StepPos.iRow].bStepDone := (StepState = nStateReady);
+
+@END_Body 
+
+@END_Contents 
+@@@BEG_Password@@@
+NGhzZm9kYzQ=
+@@@END_Password@@@

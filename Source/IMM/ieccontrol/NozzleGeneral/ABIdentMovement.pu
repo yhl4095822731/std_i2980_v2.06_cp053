@@ -1,0 +1,2022 @@
+IMPORT_OVER_LISTFILE
+ GET_TASK_INTERVAL
+, SET_ALARM
+, SET_EVENT
+, nSetup
+, cIdentFileNozzleFwd
+, cIdentFileNozzleBwd
+, tnCalibState_Done
+, cAutoIdentNoCycles
+, cMoveBwd
+, tnCalibState_Aborted
+, cMoveFwd
+, tsIdentMovement
+, tsDeviceId
+, tnOperationMode
+, tsVelPre
+, tsSetTimes
+, KAPPL_VisProfile
+, tevStopRequest
+, tevStartRequest
+, ABAutoIdentRedoListener
+, ABAutoIdentRun
+, tevStartRequestData
+, tevStopRequestData
+, FBCheckReady
+
+END_IMPORT
+
+ALGORITHM_BLOCK ABIdentMovement #DUMMY_EDIT_BLOCK
+
+SYSTEM_VAR
+ sv_IdentState : tsIdentMovement;
+ sv_bInitStart : BOOL;
+ sv_DeviceId : tsDeviceId;
+ sv_OperationMode : tnOperationMode;
+ sv_iPendingAlarms : DINT;
+ sv_bMoveIdent : BOOL;
+ sv_rMaxSpeedBwd : REAL;
+ sv_rMaxSpeedFwd : REAL;
+ sv_ConstFwdSetup : tsVelPre (* const output for nozzle forward movement *);
+ sv_ConstBwdSetup : tsVelPre (* const output for nozzle backward movement *);
+ sv_rNozzleStroke : REAL;
+ sv_rIdentPosition : REAL;
+ sv_rNozzlePosition : REAL;
+ sv_rVelocityAbs : REAL;
+ sv_rNozzleVelocity : REAL;
+ sv_rPressureAbs : REAL;
+ sv_NozzleFwdTimesSet : tsSetTimes;
+ sv_NozzleBwdTimesSet : tsSetTimes;
+ sv_NozzleFwdProfVis : KAPPL_VisProfile;
+ sv_NozzleBwdProfVis : KAPPL_VisProfile;
+ sv_dSetDelayTimeOffFwd : TIME;
+ sv_dSetDelayTimeOffBwd : TIME;
+ sv_rNozzlePositionOffset : REAL;
+END_VAR
+
+SYSTEM_OBJECT
+ PU_Task_7 : TASK;
+ TaskAnalog : TASK;
+ TaskMid : TASK;
+ evStopRequest : tevStopRequest;
+ evStartRequest : tevStartRequest;
+ erSetupModeRequired : ALARM;
+END_OBJECT
+
+VAR
+ dCycleTime : TIME;
+ rMaxRampFwd : REAL;
+ rMaxRampBwd : REAL;
+ dDeadTimeFwd : TIME;
+ dDeadTimeBwd : TIME;
+ iFileCounter : UDINT;
+ abAutoIdentRedoListener : ABAutoIdentRedoListener;
+ abAutoIdentRun : ABAutoIdentRun;
+END_VAR
+
+(*
+Calls the registration-algo of every movementblock after the deviceregistration succeeded(sv_bInitStart->true)
+
+*)
+
+POSTUPDATE_ALGORITHM pInitStart ON PU_Task_7 WITH sv_bInitStart
+
+#BEGIN_EDIT_BLOCK
+(**************************************** WARNING ********************************************
+ *** The KEBA Kemro K2 System including software is not intended for safety control tasks! ***
+ ***                       For further information see Comment tab!                        ***
+ *********************************************************************************************)
+
+IF sv_bInitStart THEN
+    dCycleTime := GET_TASK_INTERVAL(TaskAnalog);
+END_IF;
+
+
+;#END_EDIT_BLOCK END_ALGORITHM
+
+POSTUPDATE_ALGORITHM pStartIdent ON PU_Task_7 WITH sv_IdentState.bRedo
+
+#BEGIN_EDIT_BLOCK
+IF sv_IdentState.bRedo THEN
+    IF sv_OperationMode = nSetup THEN
+        sv_bMoveIdent := TRUE;
+        START_PROCESS_ALGORITHM(paIdentSequence);
+    ELSE
+        sv_bMoveIdent := FALSE;
+        sv_IdentState.bRedo := FALSE;
+        SET_ALARM(erSetupModeRequired);
+    END_IF;
+END_IF;
+
+
+;#END_EDIT_BLOCK END_ALGORITHM
+
+(*
+Coordinate sequential start of auto calib cycle
+starts one auto calib movement after the other
+*)
+
+PROCESS_ALGORITHM paIdentSequence ON TaskMid
+
+
+VAR
+ evStartRequestData : tevStartRequestData;
+ evStopRequestData : tevStopRequestData;
+ iIdentCounter : UDINT;
+ fbCheckReady : FBCheckReady;
+ rSetVelocityFwd : REAL;
+ rSetVelocityBwd : REAL;
+ rVelocityMoveFwdStartPos : REAL;
+ rVelocityMoveBwdStartPos : REAL;
+ dDelayTimeValve : TIME := T#1s;
+ dDeadTimeFwdMean : TIME;
+ dDeadTimeBwdMean : TIME;
+ bStop : BOOL;
+END_VAR
+
+(* IecGraph-Code *)
+
+(* init step *)
+INITIAL_STEP S_INIT:
+ACalcValuesIdentMovement (P);
+END_STEP
+
+ACTION ACalcValuesIdentMovement: #BEGIN_EDIT_BLOCK
+// calc movement data, save act values
+abAutoIdentRun.aCalcMovementData(ConstValuesFwd := sv_ConstFwdSetup,
+                                 ConstValuesBwd := sv_ConstBwdSetup,
+                                 TimesSetFwd := sv_NozzleFwdTimesSet,
+                                 TimesSetBwd := sv_NozzleBwdTimesSet,
+                                 dDelayTimeOffFwd := sv_dSetDelayTimeOffFwd,
+                                 dDelayTimeOffBwd := sv_dSetDelayTimeOffBwd,
+                                 rMaxVelocityFwd := sv_rMaxSpeedFwd,
+                                 rMaxVelocityBwd := sv_rMaxSpeedBwd,
+                                 rStroke := sv_rNozzleStroke+sv_rNozzlePositionOffset,
+                                 bMoveFwdPositionRising := FALSE);
+
+rSetVelocityFwd := abAutoIdentRun.aCalcMovementData.rSetVelocityFwd;
+rSetVelocityBwd := abAutoIdentRun.aCalcMovementData.rSetVelocityBwd;
+rVelocityMoveFwdStartPos := abAutoIdentRun.aCalcMovementData.rSetVelocityStartPosFwd;
+rVelocityMoveBwdStartPos := abAutoIdentRun.aCalcMovementData.rSetVelocityStartPosBwd;
+
+// reset counter
+iIdentCounter := 0;
+iFileCounter := 0;
+
+// reset dead time
+dDeadTimeFwdMean := T#0s;
+dDeadTimeBwdMean := T#0s;
+
+START_PROCESS_ALGORITHM(paInitMeasureData);
+
+;#END_EDIT_BLOCK END_ACTION (*ACalcValuesIdentMovement*)
+
+(* steps *)
+STEP S_RESET:
+ACheckLoggingActive (N);
+END_STEP
+
+ACTION ACheckLoggingActive: #BEGIN_EDIT_BLOCK
+//make sure that logging is not active before releasing the memory 
+abAutoIdentRun.aWriteLog();
+bStop := abAutoIdentRun.aWriteLog.bDone;
+
+;#END_EDIT_BLOCK END_ACTION (*ACheckLoggingActive*)
+STEP Step39:
+AStopSelf (P);
+END_STEP
+
+ACTION AStopSelf: #BEGIN_EDIT_BLOCK
+sv_bMoveIdent := FALSE;
+sv_IdentState.bRedo := FALSE;
+sv_rIdentPosition := 0.0;
+
+abAutoIdentRun.aRestoreSavedData(ConstValuesFwd := sv_ConstFwdSetup,
+                                 ConstValuesBwd := sv_ConstBwdSetup,
+                                 TimesSetFwd := sv_NozzleFwdTimesSet,
+                                 TimesSetBwd := sv_NozzleBwdTimesSet,
+                                 DelayTimeOffFwd := sv_dSetDelayTimeOffFwd,
+                                 DelayTimeOffBwd := sv_dSetDelayTimeOffBwd);
+
+//release memory and stop
+abAutoIdentRun.aEndIdent();
+STOP_PROCESS_ALGORITHM();
+
+;#END_EDIT_BLOCK END_ACTION (*AStopSelf*)
+STEP S_Abort:
+AErrorInit (P);
+END_STEP
+
+ACTION AErrorInit: #BEGIN_EDIT_BLOCK
+sv_IdentState.Status := tnCalibState_Aborted;
+
+;#END_EDIT_BLOCK END_ACTION (*AErrorInit*)
+STEP S_MoveBwdNoise:
+ASetSpeedStartBwdNoise (P);
+ABwd (P);
+ACheckMovementReady (N);
+END_STEP
+
+ACTION ASetSpeedStartBwdNoise: #BEGIN_EDIT_BLOCK
+sv_rIdentPosition := abAutoIdentRun.aCalcMovementData.rFwdStartPos;
+
+;#END_EDIT_BLOCK END_ACTION (*ASetSpeedStartBwdNoise*)
+STEP S_Stop:
+AStopBwd (P);
+END_STEP
+
+STEP S_WaitFwdNoise:
+END_STEP
+
+STEP S_InitMeasure:
+AMeasureInit (P);
+END_STEP
+
+STEP S_MoveFwdNoise:
+ASetSpeedStartFwdNoise (P);
+AFwdNoise (P);
+ACheckMovementReady (N);
+END_STEP
+
+ACTION ASetSpeedStartFwdNoise: #BEGIN_EDIT_BLOCK
+sv_rIdentPosition := abAutoIdentRun.aCalcMovementData.rNoisePos;
+
+;#END_EDIT_BLOCK END_ACTION (*ASetSpeedStartFwdNoise*)
+STEP S_StopFwdNoise:
+AStopFwd (P);
+END_STEP
+
+STEP S_CalcLimit:
+END_STEP
+
+STEP S_MoveBwd:
+ASetSpeedStartFwd (P);
+ABwd (P);
+ACheckMovementReady (N);
+END_STEP
+
+ACTION ASetSpeedStartFwd: #BEGIN_EDIT_BLOCK
+iFileCounter := iIdentCounter + 1;
+sv_rIdentPosition := abAutoIdentRun.aCalcMovementData.rFwdStartPos;
+sv_ConstBwdSetup.Velocity.Output.rOutputValue := rVelocityMoveBwdStartPos;
+sv_ConstBwdSetup.Velocity.PreOutput.rOutputValue := 0.0;
+sv_dSetDelayTimeOffBwd := T#0s;
+
+;#END_EDIT_BLOCK END_ACTION (*ASetSpeedStartFwd*)
+STEP S_StopBwdNoise:
+AStopBwd (P);
+END_STEP
+
+STEP S_WaitFwd:
+END_STEP
+
+STEP S_SetSpeedFwd:
+ASetSpeedFwd (P);
+END_STEP
+
+ACTION ASetSpeedFwd: #BEGIN_EDIT_BLOCK
+sv_rIdentPosition := abAutoIdentRun.aCalcMovementData.rFwdEndPos;
+sv_ConstFwdSetup.Velocity.Output.rOutputValue := rSetVelocityFwd;
+sv_ConstFwdSetup.Velocity.PreOutput.rOutputValue := 0.0;
+sv_dSetDelayTimeOffFwd := dDelayTimeValve;
+
+abAutoIdentRun.aInitMeasureData();
+IF abAutoIdentRun.aInitMeasureData.bDone AND NOT abAutoIdentRun.aInitMeasureData.bError THEN
+    START_PROCESS_ALGORITHM(paMeasureData);
+END_IF;
+
+;#END_EDIT_BLOCK END_ACTION (*ASetSpeedFwd*)
+STEP S_MoveFwd:
+AFwdIdent (P);
+ACheckMovementReady (N);
+AStopMeasurement (P0);
+END_STEP
+
+STEP S_StopBwdStart:
+AStopFwd (P);
+END_STEP
+
+STEP S_CalculateFwd:
+AStartCalcFwd (P);
+ACalculateFwd (N);
+END_STEP
+
+ACTION AStartCalcFwd: #BEGIN_EDIT_BLOCK
+abAutoIdentRun.aStartDetection();
+
+;#END_EDIT_BLOCK END_ACTION (*AStartCalcFwd*)
+ACTION ACalculateFwd: #BEGIN_EDIT_BLOCK
+// calculate parameters
+abAutoIdentRun.aDetectDeadTimeMaxRamp();
+
+;#END_EDIT_BLOCK END_ACTION (*ACalculateFwd*)
+STEP S_WriteLogFileFwd:
+AStoreIdentDataFwd (P);
+AWaitLogFwdReady (N);
+END_STEP
+
+ACTION AStoreIdentDataFwd: #BEGIN_EDIT_BLOCK
+rMaxRampFwd := abAutoIdentRun.aDetectDeadTimeMaxRamp.rRamp; 
+dDeadTimeFwd := abAutoIdentRun.aDetectDeadTimeMaxRamp.dDeadTime;
+dDeadTimeFwdMean := dDeadTimeFwdMean + dDeadTimeFwd;
+
+abAutoIdentRun.aStartLogging(sFileName := cIdentFileNozzleFwd,
+                         iFileCounter := iFileCounter,
+                         bDeleteFiles := FALSE, 
+                         dDeadTime := dDeadTimeFwd, 
+                         rMaxRamp := rMaxRampFwd);
+
+;#END_EDIT_BLOCK END_ACTION (*AStoreIdentDataFwd*)
+ACTION AWaitLogFwdReady: #BEGIN_EDIT_BLOCK
+abAutoIdentRun.aWriteLog();
+
+;#END_EDIT_BLOCK END_ACTION (*AWaitLogFwdReady*)
+STEP S_MoveBwdStart:
+ASetSpeedStartBwd (P);
+AFwd (P);
+ACheckMovementReady (N);
+END_STEP
+
+ACTION ASetSpeedStartBwd: #BEGIN_EDIT_BLOCK
+sv_rIdentPosition := abAutoIdentRun.aCalcMovementData.rBwdStartPos;
+sv_ConstFwdSetup.Velocity.Output.rOutputValue := rVelocityMoveFwdStartPos;
+sv_ConstFwdSetup.Velocity.PreOutput.rOutputValue := 0.0;
+sv_dSetDelayTimeOffFwd := T#0s;
+
+
+;#END_EDIT_BLOCK END_ACTION (*ASetSpeedStartBwd*)
+STEP S_StopFwd:
+AStopFwd (P);
+END_STEP
+
+STEP S_WaitBwd:
+END_STEP
+
+STEP S_SetSpeedBwd:
+ASetSpeedBwd (P);
+END_STEP
+
+ACTION ASetSpeedBwd: #BEGIN_EDIT_BLOCK
+sv_rIdentPosition := abAutoIdentRun.aCalcMovementData.rBwdEndPos;
+sv_ConstBwdSetup.Velocity.Output.rOutputValue := rSetVelocityBwd;
+sv_ConstBwdSetup.Velocity.PreOutput.rOutputValue := rSetVelocityBwd;
+sv_dSetDelayTimeOffBwd := dDelayTimeValve;
+
+abAutoIdentRun.aInitMeasureData();
+IF abAutoIdentRun.aInitMeasureData.bDone AND NOT abAutoIdentRun.aInitMeasureData.bError THEN
+    START_PROCESS_ALGORITHM(paMeasureData);
+END_IF;
+
+;#END_EDIT_BLOCK END_ACTION (*ASetSpeedBwd*)
+STEP S_MoveEndPos:
+ABwdIdent (P);
+ACheckMovementReady (N);
+AStopMeasurement (P0);
+END_STEP
+
+STEP End:
+AStopBwd (P);
+END_STEP
+
+STEP S_CalculateBwd:
+AStartCalcBwd (P);
+ACalculateBwd (N);
+END_STEP
+
+ACTION AStartCalcBwd: #BEGIN_EDIT_BLOCK
+abAutoIdentRun.aStartDetection();
+
+;#END_EDIT_BLOCK END_ACTION (*AStartCalcBwd*)
+ACTION ACalculateBwd: #BEGIN_EDIT_BLOCK
+// calculate parameters
+abAutoIdentRun.aDetectDeadTimeMaxRamp();
+
+;#END_EDIT_BLOCK END_ACTION (*ACalculateBwd*)
+STEP S_WriteLogFileBwd:
+ACalcRampBwd (P);
+AWaitLogBwdReady (N);
+END_STEP
+
+ACTION ACalcRampBwd: #BEGIN_EDIT_BLOCK
+rMaxRampBwd := abAutoIdentRun.aDetectDeadTimeMaxRamp.rRamp; 
+dDeadTimeBwd := abAutoIdentRun.aDetectDeadTimeMaxRamp.dDeadTime;
+dDeadTimeBwdMean := dDeadTimeBwdMean + dDeadTimeBwd ;
+// save date
+abAutoIdentRun.aStartLogging(sFileName := cIdentFileNozzleBwd,
+                         iFileCounter := iFileCounter,
+                         bDeleteFiles := FALSE, 
+                         dDeadTime := dDeadTimeBwd, 
+                         rMaxRamp := rMaxRampBwd);
+iIdentCounter := iIdentCounter +1;
+
+;#END_EDIT_BLOCK END_ACTION (*ACalcRampBwd*)
+ACTION AWaitLogBwdReady: #BEGIN_EDIT_BLOCK
+abAutoIdentRun.aWriteLog();
+
+;#END_EDIT_BLOCK END_ACTION (*AWaitLogBwdReady*)
+STEP Step38:
+END_STEP
+
+STEP S_StoreIdentData:
+AStoreIdentData (P);
+END_STEP
+
+ACTION AStoreIdentData: #BEGIN_EDIT_BLOCK
+abAutoIdentRun.aStoreIdentData(rMaxRampFwd := rMaxRampFwd,
+                               rMaxRampBwd := rMaxRampBwd,
+                               dDeadTimeFwdMean := dDeadTimeFwdMean,
+                               dDeadTimeBwdMean := dDeadTimeBwdMean,
+                               iIdentCounter := iIdentCounter,
+                               FwdProfVis := sv_NozzleFwdProfVis,
+                               BwdProfVis := sv_NozzleBwdProfVis,
+                               DelayTimeOffFwd := sv_dSetDelayTimeOffFwd,
+                               DelayTimeOffBwd := sv_dSetDelayTimeOffBwd);
+
+sv_IdentState.Status := tnCalibState_Done;
+
+;#END_EDIT_BLOCK END_ACTION (*AStoreIdentData*)
+
+(* transitions *)
+TRANSITION TStop (* Trans38 *) FROM S_RESET TO Step39 :=  #BEGIN_EDIT_BLOCK
+bStop
+;#END_EDIT_BLOCK
+END_TRANSITION
+
+TRANSITION TInit (* TInit *) FROM Step39 TO S_INIT :=  #BEGIN_EDIT_BLOCK
+TRUE
+;#END_EDIT_BLOCK
+END_TRANSITION
+
+TRANSITION TBwdNoise (* TBwdNoise *) FROM S_INIT TO S_MoveBwdNoise :=  #BEGIN_EDIT_BLOCK
+abAutoIdentRun.aInitMeasureData.bDone AND 
+NOT abAutoIdentRun.aInitMeasureData.bError
+;#END_EDIT_BLOCK
+END_TRANSITION
+
+GO_ON_TRANSITION TErrorInit (* TErrorInit *) FROM S_INIT TO S_Abort :=  #BEGIN_EDIT_BLOCK
+abAutoIdentRun.aInitMeasureData.bError
+;#END_EDIT_BLOCK
+END_TRANSITION
+
+GO_ON_TRANSITION TAborted (* TAborted *) FROM S_Abort TO S_RESET :=  #BEGIN_EDIT_BLOCK
+TRUE
+;#END_EDIT_BLOCK
+END_TRANSITION
+
+TRANSITION TBwdNoiseDone (* TBwdNoiseDone *) FROM S_MoveBwdNoise TO S_WaitFwdNoise :=  #BEGIN_EDIT_BLOCK
+fbCheckReady.bReady AND
+sv_iPendingAlarms = 0
+;#END_EDIT_BLOCK
+END_TRANSITION
+
+GO_ON_TRANSITION TBwdNoiseError (* TBwdNoiseError *) FROM S_MoveBwdNoise TO S_Stop :=  #BEGIN_EDIT_BLOCK
+(sv_IdentState.bRedo = FALSE)
+OR sv_iPendingAlarms <> 0
+;#END_EDIT_BLOCK
+END_TRANSITION
+
+TRANSITION TBwdNoiseErrorStop (* TBwdNoiseErrorStop *) FROM S_Stop TO S_RESET :=  #BEGIN_EDIT_BLOCK
+TRUE
+;#END_EDIT_BLOCK
+END_TRANSITION
+
+TRANSITION TInitMeasure (* Trans45 *) FROM S_WaitFwdNoise TO S_InitMeasure :=  #BEGIN_EDIT_BLOCK
+S_WaitFwdNoise.T > T#1s
+;#END_EDIT_BLOCK
+END_TRANSITION
+
+TRANSITION TWaitFwdNoise (* TWaitFwdNoise *) FROM S_InitMeasure TO S_MoveFwdNoise :=  #BEGIN_EDIT_BLOCK
+TRUE
+;#END_EDIT_BLOCK
+END_TRANSITION
+
+TRANSITION TFwdNoiseDone (* TFwdNoiseDone *) FROM S_MoveFwdNoise TO S_CalcLimit :=  #BEGIN_EDIT_BLOCK
+fbCheckReady.bReady AND
+sv_iPendingAlarms = 0
+;#END_EDIT_BLOCK
+END_TRANSITION
+
+GO_ON_TRANSITION TFwdNoiseError (* TFwdNoiseError *) FROM S_MoveFwdNoise TO S_StopFwdNoise :=  #BEGIN_EDIT_BLOCK
+(sv_IdentState.bRedo = FALSE)
+OR sv_iPendingAlarms <> 0
+;#END_EDIT_BLOCK
+END_TRANSITION
+
+TRANSITION TFwdNoiseErrorStop (* TFwdNoiseErrorStop *) FROM S_StopFwdNoise TO S_RESET :=  #BEGIN_EDIT_BLOCK
+TRUE
+;#END_EDIT_BLOCK
+END_TRANSITION
+
+TRANSITION TWaitBwdInit (* TWaitBwdInit *) FROM S_CalcLimit TO S_MoveBwd :=  #BEGIN_EDIT_BLOCK
+S_CalcLimit.T > T#1s
+;#END_EDIT_BLOCK
+END_TRANSITION
+
+TRANSITION TBwdDone (* TBwdDone *) FROM S_MoveBwd TO S_WaitFwd :=  #BEGIN_EDIT_BLOCK
+fbCheckReady.bReady AND
+sv_iPendingAlarms = 0
+;#END_EDIT_BLOCK
+END_TRANSITION
+
+GO_ON_TRANSITION TBwdError (* TBwdError *) FROM S_MoveBwd TO S_StopBwdNoise :=  #BEGIN_EDIT_BLOCK
+(sv_IdentState.bRedo = FALSE)
+OR sv_iPendingAlarms <> 0
+;#END_EDIT_BLOCK
+END_TRANSITION
+
+TRANSITION TBwdErrorStop (* TBwdErrorStop *) FROM S_StopBwdNoise TO S_RESET :=  #BEGIN_EDIT_BLOCK
+TRUE
+;#END_EDIT_BLOCK
+END_TRANSITION
+
+TRANSITION TWaitFwd (* TWaitFwd *) FROM S_WaitFwd TO S_SetSpeedFwd :=  #BEGIN_EDIT_BLOCK
+S_WaitFwd.T > T#1s
+;#END_EDIT_BLOCK
+END_TRANSITION
+
+TRANSITION TMoveFwd (* Trans46 *) FROM S_SetSpeedFwd TO S_MoveFwd :=  #BEGIN_EDIT_BLOCK
+TRUE
+;#END_EDIT_BLOCK
+END_TRANSITION
+
+TRANSITION TFwdDone (* TFwdDone *) FROM S_MoveFwd TO S_CalculateFwd :=  #BEGIN_EDIT_BLOCK
+fbCheckReady.bReady AND
+sv_iPendingAlarms = 0
+;#END_EDIT_BLOCK
+END_TRANSITION
+
+GO_ON_TRANSITION TFwdError (* TFwdError *) FROM S_MoveFwd TO S_StopBwdStart :=  #BEGIN_EDIT_BLOCK
+(sv_IdentState.bRedo = FALSE)
+OR sv_iPendingAlarms <> 0
+;#END_EDIT_BLOCK
+END_TRANSITION
+
+TRANSITION TBwdStartErrorStop (* TBwdStartErrorStop *) FROM S_StopBwdStart TO S_RESET :=  #BEGIN_EDIT_BLOCK
+TRUE
+;#END_EDIT_BLOCK
+END_TRANSITION
+
+TRANSITION Trans38 (* Trans37 *) FROM S_CalculateFwd TO S_WriteLogFileFwd :=  #BEGIN_EDIT_BLOCK
+abAutoIdentRun.aDetectDeadTimeMaxRamp.bDone
+;#END_EDIT_BLOCK
+END_TRANSITION
+
+TRANSITION TWait (* TWait *) FROM S_WriteLogFileFwd TO S_MoveBwdStart :=  #BEGIN_EDIT_BLOCK
+abAutoIdentRun.aWriteLog.bDone
+;#END_EDIT_BLOCK
+END_TRANSITION
+
+TRANSITION TBwdStartDone (* TBwdStartDone *) FROM S_MoveBwdStart TO S_WaitBwd :=  #BEGIN_EDIT_BLOCK
+fbCheckReady.bReady AND
+sv_iPendingAlarms = 0
+;#END_EDIT_BLOCK
+END_TRANSITION
+
+GO_ON_TRANSITION TBwdStartError (* TBwdStartError *) FROM S_MoveBwdStart TO S_StopFwd :=  #BEGIN_EDIT_BLOCK
+(sv_IdentState.bRedo = FALSE)
+OR sv_iPendingAlarms <> 0
+;#END_EDIT_BLOCK
+END_TRANSITION
+
+TRANSITION TFwdErrorStop (* TFwdErrorStop *) FROM S_StopFwd TO S_RESET :=  #BEGIN_EDIT_BLOCK
+TRUE
+;#END_EDIT_BLOCK
+END_TRANSITION
+
+TRANSITION TWaitBwd (* TWaitBwd *) FROM S_WaitBwd TO S_SetSpeedBwd :=  #BEGIN_EDIT_BLOCK
+S_WaitBwd.T > T#1s
+;#END_EDIT_BLOCK
+END_TRANSITION
+
+TRANSITION TMoveEnd (* Trans47 *) FROM S_SetSpeedBwd TO S_MoveEndPos :=  #BEGIN_EDIT_BLOCK
+TRUE
+;#END_EDIT_BLOCK
+END_TRANSITION
+
+TRANSITION TEndPosOK (* TMoldEndPosOK *) FROM S_MoveEndPos TO S_CalculateBwd :=  #BEGIN_EDIT_BLOCK
+fbCheckReady.bReady AND
+sv_iPendingAlarms = 0
+;#END_EDIT_BLOCK
+END_TRANSITION
+
+GO_ON_TRANSITION TEndPosError (* TMoldEndPosError *) FROM S_MoveEndPos TO End :=  #BEGIN_EDIT_BLOCK
+(sv_IdentState.bRedo = FALSE)
+OR sv_iPendingAlarms <> 0
+;#END_EDIT_BLOCK
+END_TRANSITION
+
+TRANSITION TEndPosStop (* TMoldEndPosStop *) FROM End TO S_RESET :=  #BEGIN_EDIT_BLOCK
+TRUE
+;#END_EDIT_BLOCK
+END_TRANSITION
+
+TRANSITION Trans39 (* Trans37 *) FROM S_CalculateBwd TO S_WriteLogFileBwd :=  #BEGIN_EDIT_BLOCK
+abAutoIdentRun.aDetectDeadTimeMaxRamp.bDone
+;#END_EDIT_BLOCK
+END_TRANSITION
+
+TRANSITION Trans37 (* Trans37 *) FROM S_WriteLogFileBwd TO Step38 :=  #BEGIN_EDIT_BLOCK
+abAutoIdentRun.aWriteLog.bDone
+;#END_EDIT_BLOCK
+END_TRANSITION
+
+TRANSITION TStartNextCycle (* TStartNextCycle *) FROM Step38 TO S_MoveBwd :=  #BEGIN_EDIT_BLOCK
+iIdentCounter < cAutoIdentNoCycles
+;#END_EDIT_BLOCK
+END_TRANSITION
+
+TRANSITION TStoreIdentData (* TStoreIdentData *) FROM Step38 TO S_StoreIdentData :=  #BEGIN_EDIT_BLOCK
+iIdentCounter >= cAutoIdentNoCycles
+;#END_EDIT_BLOCK
+END_TRANSITION
+
+TRANSITION TStopIdentMovement (* TStopIdentMovement *) FROM S_StoreIdentData TO S_RESET :=  #BEGIN_EDIT_BLOCK
+TRUE
+;#END_EDIT_BLOCK
+END_TRANSITION
+
+(* end IecGraph-Code *)
+(* sfc-code *)
+
+(* stand alone actions *)
+ACTION ACheckMovementReady: #BEGIN_EDIT_BLOCK
+fbCheckReady(DeviceId := sv_DeviceId);
+
+;#END_EDIT_BLOCK END_ACTION (*ACheckMovementReady*)
+ACTION AStopMeasurement: #BEGIN_EDIT_BLOCK
+sv_bMoveIdent := FALSE;
+
+abAutoIdentRun.aStopMeasurement();
+
+STOP_PROCESS_ALGORITHM(paMeasureData);
+
+;#END_EDIT_BLOCK END_ACTION (*AStopMeasurement*)
+ACTION AMeasureInit: #BEGIN_EDIT_BLOCK
+abAutoIdentRun.aInitMeasureData();
+IF abAutoIdentRun.aInitMeasureData.bDone AND NOT abAutoIdentRun.aInitMeasureData.bError THEN
+    START_PROCESS_ALGORITHM(paMeasureData);
+END_IF;
+
+;#END_EDIT_BLOCK END_ACTION (*AMeasureInit*)
+ACTION AStopBwd: #BEGIN_EDIT_BLOCK
+evStopRequestData.DeviceId := sv_DeviceId;  
+evStopRequestData.MoveDir := cMoveBwd;  
+evStopRequestData.MoveId := cMoveBwd;      
+SET_EVENT(evStopRequest, evStopRequestData);
+
+sv_IdentState.Status := tnCalibState_Aborted;
+
+;#END_EDIT_BLOCK END_ACTION (*AStopBwd*)
+ACTION AFwdNoise: #BEGIN_EDIT_BLOCK
+evStartRequestData.DeviceId := sv_DeviceId;
+evStartRequestData.MoveDir := cMoveFwd; 
+evStartRequestData.MoveId := cMoveFwd;
+SET_EVENT(evStartRequest, evStartRequestData);
+
+;#END_EDIT_BLOCK END_ACTION (*AFwdNoise*)
+ACTION AStopFwd: #BEGIN_EDIT_BLOCK
+evStopRequestData.DeviceId := sv_DeviceId;  
+evStopRequestData.MoveDir := cMoveFwd;  
+evStopRequestData.MoveId := cMoveFwd;      
+SET_EVENT(evStopRequest, evStopRequestData);
+
+sv_IdentState.Status := tnCalibState_Aborted;
+
+;#END_EDIT_BLOCK END_ACTION (*AStopFwd*)
+ACTION ABwd: #BEGIN_EDIT_BLOCK
+sv_bMoveIdent := TRUE;
+
+evStartRequestData.DeviceId := sv_DeviceId;
+evStartRequestData.MoveDir := cMoveBwd; 
+evStartRequestData.MoveId := cMoveBwd;
+SET_EVENT(evStartRequest, evStartRequestData);
+
+;#END_EDIT_BLOCK END_ACTION (*ABwd*)
+ACTION AFwd: #BEGIN_EDIT_BLOCK
+sv_bMoveIdent := TRUE;
+
+evStartRequestData.DeviceId := sv_DeviceId;
+evStartRequestData.MoveDir := cMoveFwd; 
+evStartRequestData.MoveId := cMoveFwd;
+SET_EVENT(evStartRequest, evStartRequestData);
+
+;#END_EDIT_BLOCK END_ACTION (*AFwd*)
+ACTION AFwdIdent: #BEGIN_EDIT_BLOCK
+sv_bMoveIdent := TRUE;
+
+evStartRequestData.DeviceId := sv_DeviceId;
+evStartRequestData.MoveDir := cMoveFwd; 
+evStartRequestData.MoveId := cMoveFwd;
+SET_EVENT(evStartRequest, evStartRequestData);
+
+;#END_EDIT_BLOCK END_ACTION (*AFwdIdent*)
+ACTION ABwdIdent: #BEGIN_EDIT_BLOCK
+sv_bMoveIdent := TRUE;
+
+evStartRequestData.DeviceId := sv_DeviceId;
+evStartRequestData.MoveDir := cMoveBwd; 
+evStartRequestData.MoveId := cMoveBwd;
+SET_EVENT(evStartRequest, evStartRequestData);
+
+;#END_EDIT_BLOCK END_ACTION (*ABwdIdent*)
+
+(* exits *)
+
+EXIT_TRANSITION E_NotSetupMode := #BEGIN_EDIT_BLOCK
+sv_OperationMode <> nSetup
+;#END_EDIT_BLOCK
+PRIORITY 1 WITH  INITIAL_STEP S_RESET: END_STEP
+END_TRANSITION
+(* end sfc-code *)
+
+
+END_ALGORITHM
+
+PROCESS_ALGORITHM paMeasureData ON TaskAnalog
+
+#BEGIN_EDIT_BLOCK
+abAutoIdentRun.aMeasureData(rPosition := sv_rNozzlePosition,
+                            rVelocityReference := sv_rVelocityAbs,                               
+                            rActVelocity := sv_rNozzleVelocity,
+                            rPressureReference := sv_rPressureAbs,
+                            rActPressure := 0.0,
+                            rPositionNonLinear :=0.0,
+                            rVelocityNonLinear :=0.0);
+
+
+;#END_EDIT_BLOCK END_ALGORITHM
+
+PROCESS_ALGORITHM paInitMeasureData ON TaskMid
+
+#BEGIN_EDIT_BLOCK
+abAutoIdentRun.aInitMeasureData();
+STOP_PROCESS_ALGORITHM();
+
+
+;#END_EDIT_BLOCK END_ALGORITHM
+
+
+
+END_ALGORITHM_BLOCK
+
+
+
+#END_OF_IEC_PART
+
+@Puma @IecEditor 6 128 @Pou 25 
+@@@BEG_Comment@@@
+
+@@@END_Comment@@@
+
+@BEG_Contents 
+
+@BEG_Func 
+@RT(17)FuncTreeContainer 
+3 
+@Var @RT(17)GET_TASK_INTERVAL @RT(0) @T @T @DERIVED 0 @F @RT(22)KEBA_STANDARD_FUNCTION @F 
+@T 
+@BEG_Attrib 
+0 @RT(0) @RT(0) 
+@END_Attrib 
+1 1 @F @F @F @F 
+
+@Var @RT(9)SET_ALARM @RT(0) @T @T @DERIVED 0 @F @RT(23)KEBA_STANDARD_PROCEDURE @F 
+@T 
+@BEG_Attrib 
+0 @RT(0) @RT(0) 
+@END_Attrib 
+1 1 @F @F @F @F 
+
+@Var @RT(9)SET_EVENT @RT(0) @T @T @DERIVED 0 @F @RT(23)KEBA_STANDARD_PROCEDURE @F 
+@T 
+@BEG_Attrib 
+0 @RT(0) @RT(0) 
+@END_Attrib 
+1 1 @F @F @F @F 
+
+@END_Func 
+
+@BEG_Const 
+@RT(18)ConstTreeContainer 
+8 
+@Var @RT(6)nSetup @RT(0) @T @T @DERIVED 0 @F @RT(15)tnOperationMode @F 
+@T 
+@BEG_Attrib 
+0 @RT(1)0 @RT(36)Setup mode only for service engineer 
+@END_Attrib 
+1 1 @F @F @F @F 
+
+@Var @RT(19)cIdentFileNozzleFwd @RT(0) @T @F @DT @RT(11)STRING(255) @RT(0) @T @T @STRING 0 @F @RT(3)255 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+0 @RT(20)'IdentNozzleRampFwd' @RT(29)Filename for Ident Nozzle Fwd 
+@END_Attrib 
+1 1 @F @F @F @F 
+
+@Var @RT(19)cIdentFileNozzleBwd @RT(0) @T @F @DT @RT(11)STRING(255) @RT(0) @T @T @STRING 0 @F @RT(3)255 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+0 @RT(20)'IdentNozzleRampBwd' @RT(29)Filename for Ident Nozzle Bwd 
+@END_Attrib 
+1 1 @F @F @F @F 
+
+@Var @RT(17)tnCalibState_Done @RT(0) @T @T @DERIVED 0 @F @RT(12)tnCalibState @F 
+@T 
+@BEG_Attrib 
+0 @RT(1)2 @RT(33)calibration finished successfully 
+@END_Attrib 
+1 1 @F @F @F @F 
+
+@Var @RT(18)cAutoIdentNoCycles @RT(0) @T @F @DT @RT(5)UDINT @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+0 @RT(2)10 @RT(49)number of cycles for auto identification of ramps 
+@END_Attrib 
+1 1 @F @F @F @F 
+
+@Var @RT(8)cMoveBwd @RT(0) @T @F @DT @RT(4)DINT @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+0 @RT(2)11 @RT(17)movement backward 
+@END_Attrib 
+1 1 @F @F @F @F 
+
+@Var @RT(20)tnCalibState_Aborted @RT(0) @T @T @DERIVED 0 @F @RT(12)tnCalibState @F 
+@T 
+@BEG_Attrib 
+0 @RT(1)4 @RT(19)calibration aborted 
+@END_Attrib 
+1 1 @F @F @F @F 
+
+@Var @RT(8)cMoveFwd @RT(0) @T @F @DT @RT(4)DINT @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+0 @RT(2)12 @RT(16)movement forward 
+@END_Attrib 
+1 1 @F @F @F @F 
+
+@END_Const 
+
+@BEG_Export 
+
+@BEG_Kind 
+@ALGORITHM_BLOCK @RT(15)ABIdentMovement @STRUCTURED_TEXT 
+@RT(0) @RT(0) @RT(0) 
+@END_Kind 
+
+@BEG_Dcl 
+@RT(16)DclTreeContainer 
+37 
+@Var @RT(13)sv_IdentState @RT(0) @T @T @DERIVED 0 @T @T @DT @RT(15)tsIdentMovement @RT(0) @T @T @UNKNOWN 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 8 @F @F @F @F 
+
+@Var @RT(13)sv_bInitStart @RT(0) @T @F @DT @RT(4)BOOL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 8 @F @F @F @F 
+
+@Var @RT(11)sv_DeviceId @RT(0) @T @T @DERIVED 0 @T @T @DT @RT(10)tsDeviceId @RT(0) @T @T @UNKNOWN 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 8 @F @F @F @F 
+
+@Var @RT(16)sv_OperationMode @RT(0) @T @T @DERIVED 0 @T @T @DT @RT(15)tnOperationMode @RT(0) @T @T @UNKNOWN 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 8 @F @F @F @F 
+
+@Var @RT(17)sv_iPendingAlarms @RT(0) @T @F @DT @RT(4)DINT @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 8 @F @F @F @F 
+
+@Var @RT(13)sv_bMoveIdent @RT(0) @T @F @DT @RT(4)BOOL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 8 @F @F @F @F 
+
+@Var @RT(15)sv_rMaxSpeedBwd @RT(0) @T @F @DT @RT(4)REAL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 8 @F @F @F @F 
+
+@Var @RT(15)sv_rMaxSpeedFwd @RT(0) @T @F @DT @RT(4)REAL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 8 @F @F @F @F 
+
+@Var @RT(16)sv_ConstFwdSetup @RT(0) @T @T @DERIVED 0 @T @T @DT @RT(8)tsVelPre @RT(0) @T @T @UNKNOWN 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(40)const output for nozzle forward movement @RT(0) 
+@END_Attrib 
+1 8 @F @F @F @F 
+
+@Var @RT(16)sv_ConstBwdSetup @RT(0) @T @T @DERIVED 0 @T @T @DT @RT(8)tsVelPre @RT(0) @T @T @UNKNOWN 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(41)const output for nozzle backward movement @RT(0) 
+@END_Attrib 
+1 8 @F @F @F @F 
+
+@Var @RT(16)sv_rNozzleStroke @RT(0) @T @F @DT @RT(4)REAL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 8 @F @F @F @F 
+
+@Var @RT(17)sv_rIdentPosition @RT(0) @T @F @DT @RT(4)REAL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 8 @F @F @F @F 
+
+@Var @RT(18)sv_rNozzlePosition @RT(0) @T @F @DT @RT(4)REAL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 8 @F @F @F @F 
+
+@Var @RT(15)sv_rVelocityAbs @RT(0) @T @F @DT @RT(4)REAL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 8 @F @F @F @F 
+
+@Var @RT(18)sv_rNozzleVelocity @RT(0) @T @F @DT @RT(4)REAL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 8 @F @F @F @F 
+
+@Var @RT(15)sv_rPressureAbs @RT(0) @T @F @DT @RT(4)REAL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 8 @F @F @F @F 
+
+@Var @RT(20)sv_NozzleFwdTimesSet @RT(0) @T @T @DERIVED 0 @T @T @DT @RT(10)tsSetTimes @RT(0) @T @T @UNKNOWN 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 8 @F @F @F @F 
+
+@Var @RT(20)sv_NozzleBwdTimesSet @RT(0) @T @T @DERIVED 0 @T @T @DT @RT(10)tsSetTimes @RT(0) @T @T @UNKNOWN 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 8 @F @F @F @F 
+
+@Var @RT(19)sv_NozzleFwdProfVis @RT(0) @T @T @DERIVED 0 @T @T @DT @RT(16)KAPPL_VisProfile @RT(0) @T @T @UNKNOWN 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 8 @F @F @F @F 
+
+@Var @RT(19)sv_NozzleBwdProfVis @RT(0) @T @T @DERIVED 0 @T @T @DT @RT(16)KAPPL_VisProfile @RT(0) @T @T @UNKNOWN 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 8 @F @F @F @F 
+
+@Var @RT(22)sv_dSetDelayTimeOffFwd @RT(0) @T @F @DT @RT(4)TIME @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 8 @F @F @F @F 
+
+@Var @RT(22)sv_dSetDelayTimeOffBwd @RT(0) @T @F @DT @RT(4)TIME @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 8 @F @F @F @F 
+
+@Var @RT(24)sv_rNozzlePositionOffset @RT(0) @T @F @DT @RT(4)REAL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 8 @F @F @F @F 
+
+@Var @RT(9)PU_Task_7 @RT(0) @T @F @DT @RT(4)TASK @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 7 @F @F @F @F 
+
+@Var @RT(10)TaskAnalog @RT(0) @T @F @DT @RT(4)TASK @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 7 @F @F @F @F 
+
+@Var @RT(7)TaskMid @RT(0) @T @F @DT @RT(4)TASK @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 7 @F @F @F @F 
+
+@Var @RT(13)evStopRequest @RT(0) @T @T @DERIVED 0 @T @T @DT @RT(14)tevStopRequest @RT(0) @T @T @UNKNOWN 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 7 @F @F @F @F 
+
+@Var @RT(14)evStartRequest @RT(0) @T @T @DERIVED 0 @T @T @DT @RT(15)tevStartRequest @RT(0) @T @T @UNKNOWN 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 7 @F @F @F @F 
+
+@Var @RT(19)erSetupModeRequired @RT(0) @T @F @DT @RT(5)ALARM @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 7 @F @F @F @F 
+
+@Var @RT(10)dCycleTime @RT(0) @T @F @DT @RT(4)TIME @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(11)rMaxRampFwd @RT(0) @T @F @DT @RT(4)REAL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(11)rMaxRampBwd @RT(0) @T @F @DT @RT(4)REAL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(12)dDeadTimeFwd @RT(0) @T @F @DT @RT(4)TIME @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(12)dDeadTimeBwd @RT(0) @T @F @DT @RT(4)TIME @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(12)iFileCounter @RT(0) @T @F @DT @RT(5)UDINT @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(23)abAutoIdentRedoListener @RT(0) @T @T @DERIVED 0 @T @T @DT @RT(23)ABAutoIdentRedoListener @RT(0) @T @T @UNKNOWN 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(14)abAutoIdentRun @RT(0) @T @T @DERIVED 0 @T @T @DT @RT(14)ABAutoIdentRun @RT(0) @T @T @UNKNOWN 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@END_Dcl 
+
+@END_Export 
+
+@BEG_Body 
+
+5 
+
+@BEG_Export 
+
+@BEG_Algo 
+@POSTUPDATE_ALGORITHM @RT(10)pInitStart @STRUCTURED_TEXT 
+@RT(0) @RT(13)sv_bInitStart @RT(9)PU_Task_7 @F @F 
+@END_Algo 
+
+@BEG_Dcl 
+@RT(16)DclTreeContainer 
+0 
+@END_Dcl 
+
+@END_Export 
+
+@BEG_Export 
+
+@BEG_Algo 
+@POSTUPDATE_ALGORITHM @RT(11)pStartIdent @STRUCTURED_TEXT 
+@RT(0) @RT(19)sv_IdentState.bRedo @RT(9)PU_Task_7 @F @F 
+@END_Algo 
+
+@BEG_Dcl 
+@RT(16)DclTreeContainer 
+0 
+@END_Dcl 
+
+@END_Export 
+
+@BEG_Export 
+
+@BEG_Algo 
+@PROCESS_ALGORITHM @RT(15)paIdentSequence @SEQUENTIAL_FLOW_CHART 
+@RT(0) @RT(0) @RT(7)TaskMid @F @F 
+@END_Algo 
+
+@BEG_Dcl 
+@RT(16)DclTreeContainer 
+12 
+@Var @RT(18)evStartRequestData @RT(0) @T @T @DERIVED 0 @T @T @DT @RT(19)tevStartRequestData @RT(0) @T @T @UNKNOWN 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(17)evStopRequestData @RT(0) @T @T @DERIVED 0 @T @T @DT @RT(18)tevStopRequestData @RT(0) @T @T @UNKNOWN 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(13)iIdentCounter @RT(0) @T @F @DT @RT(5)UDINT @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(12)fbCheckReady @RT(0) @T @T @DERIVED 0 @T @T @DT @RT(12)FBCheckReady @RT(0) @T @T @UNKNOWN 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(15)rSetVelocityFwd @RT(0) @T @F @DT @RT(4)REAL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(15)rSetVelocityBwd @RT(0) @T @F @DT @RT(4)REAL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(24)rVelocityMoveFwdStartPos @RT(0) @T @F @DT @RT(4)REAL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(24)rVelocityMoveBwdStartPos @RT(0) @T @F @DT @RT(4)REAL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(15)dDelayTimeValve @RT(0) @T @F @DT @RT(4)TIME @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(4)T#1s @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(16)dDeadTimeFwdMean @RT(0) @T @F @DT @RT(4)TIME @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(16)dDeadTimeBwdMean @RT(0) @T @F @DT @RT(4)TIME @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(5)bStop @RT(0) @T @F @DT @RT(4)BOOL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@END_Dcl 
+
+@END_Export 
+
+@BEG_Export 
+
+@BEG_Algo 
+@PROCESS_ALGORITHM @RT(13)paMeasureData @STRUCTURED_TEXT 
+@RT(0) @RT(0) @RT(10)TaskAnalog @F @F 
+@END_Algo 
+
+@BEG_Dcl 
+@RT(16)DclTreeContainer 
+0 
+@END_Dcl 
+
+@END_Export 
+
+@BEG_Export 
+
+@BEG_Algo 
+@PROCESS_ALGORITHM @RT(17)paInitMeasureData @STRUCTURED_TEXT 
+@RT(0) @RT(0) @RT(7)TaskMid @F @F 
+@END_Algo 
+
+@BEG_Dcl 
+@RT(16)DclTreeContainer 
+0 
+@END_Dcl 
+
+@END_Export 
+
+@BEG_Body 
+@TL(9)
+(**************************************** WARNING ********************************************
+ *** The KEBA Kemro K2 System including software is not intended for safety control tasks! ***
+ ***                       For further information see Comment tab!                        ***
+ *********************************************************************************************)
+
+IF sv_bInitStart THEN
+    dCycleTime := GET_TASK_INTERVAL(TaskAnalog);
+END_IF;
+
+@END_Body 
+
+@@@BEG_Comment@@@ 
+@TL(2)
+Calls the registration-algo of every movementblock after the deviceregistration succeeded(sv_bInitStart->true)
+
+@@@END_Comment@@@ 
+
+@BEG_Body 
+@TL(11)
+IF sv_IdentState.bRedo THEN
+    IF sv_OperationMode = nSetup THEN
+        sv_bMoveIdent := TRUE;
+        START_PROCESS_ALGORITHM(paIdentSequence);
+    ELSE
+        sv_bMoveIdent := FALSE;
+        sv_IdentState.bRedo := FALSE;
+        SET_ALARM(erSetupModeRequired);
+    END_IF;
+END_IF;
+
+@END_Body 
+
+@@@BEG_Comment@@@ 
+@TL(0)
+
+@@@END_Comment@@@ 
+
+@BEG_SfcBody 
+41 40 39 
+
+@BEG_SfcData 2 
+@StepSeq @RT(4)sseq @F 43 
+@Step @RT(7)S_RESET @F @F @T @F @RT(0) @F 
+@AcbCont @RT(7)unnamed @F 1 
+@Acb @RT(19)ACheckLoggingActive @F @T @RT(1)N @RT(0) @F @F @T @TL(4)
+//make sure that logging is not active before releasing the memory 
+abAutoIdentRun.aWriteLog();
+bStop := abAutoIdentRun.aWriteLog.bDone;
+
+@F 
+
+@Trans @RT(5)TStop @F @T @F @F @T @T @TL(2)
+bStop
+
+@RT(7)Trans38 @F 
+@Step @RT(6)Step39 @F @F @F @F @RT(0) @F 
+@AcbCont @RT(7)unnamed @F 1 
+@Acb @RT(9)AStopSelf @F @T @RT(1)P @RT(0) @F @F @T @TL(15)
+sv_bMoveIdent := FALSE;
+sv_IdentState.bRedo := FALSE;
+sv_rIdentPosition := 0.0;
+
+abAutoIdentRun.aRestoreSavedData(ConstValuesFwd := sv_ConstFwdSetup,
+                                 ConstValuesBwd := sv_ConstBwdSetup,
+                                 TimesSetFwd := sv_NozzleFwdTimesSet,
+                                 TimesSetBwd := sv_NozzleBwdTimesSet,
+                                 DelayTimeOffFwd := sv_dSetDelayTimeOffFwd,
+                                 DelayTimeOffBwd := sv_dSetDelayTimeOffBwd);
+
+//release memory and stop
+abAutoIdentRun.aEndIdent();
+STOP_PROCESS_ALGORITHM();
+
+@F 
+
+@Trans @RT(5)TInit @F @T @F @F @T @T @TL(2)
+TRUE
+
+@RT(5)TInit @F 
+@Step @RT(6)S_INIT @F @T @F @F @RT(0) @F 
+@AcbCont @RT(7)unnamed @F 1 
+@Acb @RT(24)ACalcValuesIdentMovement @F @T @RT(1)P @RT(0) @F @F @T @TL(27)
+// calc movement data, save act values
+abAutoIdentRun.aCalcMovementData(ConstValuesFwd := sv_ConstFwdSetup,
+                                 ConstValuesBwd := sv_ConstBwdSetup,
+                                 TimesSetFwd := sv_NozzleFwdTimesSet,
+                                 TimesSetBwd := sv_NozzleBwdTimesSet,
+                                 dDelayTimeOffFwd := sv_dSetDelayTimeOffFwd,
+                                 dDelayTimeOffBwd := sv_dSetDelayTimeOffBwd,
+                                 rMaxVelocityFwd := sv_rMaxSpeedFwd,
+                                 rMaxVelocityBwd := sv_rMaxSpeedBwd,
+                                 rStroke := sv_rNozzleStroke+sv_rNozzlePositionOffset,
+                                 bMoveFwdPositionRising := FALSE);
+
+rSetVelocityFwd := abAutoIdentRun.aCalcMovementData.rSetVelocityFwd;
+rSetVelocityBwd := abAutoIdentRun.aCalcMovementData.rSetVelocityBwd;
+rVelocityMoveFwdStartPos := abAutoIdentRun.aCalcMovementData.rSetVelocityStartPosFwd;
+rVelocityMoveBwdStartPos := abAutoIdentRun.aCalcMovementData.rSetVelocityStartPosBwd;
+
+// reset counter
+iIdentCounter := 0;
+iFileCounter := 0;
+
+// reset dead time
+dDeadTimeFwdMean := T#0s;
+dDeadTimeBwdMean := T#0s;
+
+START_PROCESS_ALGORITHM(paInitMeasureData);
+
+@F 
+
+@AltBranch @RT(3)alt @F 2 
+@TransSeq @RT(4)tseq @F 1 
+@Trans @RT(9)TBwdNoise @F @T @F @F @T @T @TL(3)
+abAutoIdentRun.aInitMeasureData.bDone AND 
+NOT abAutoIdentRun.aInitMeasureData.bError
+
+@RT(9)TBwdNoise @F 
+
+@TransSeq @RT(4)tseq @F 4 
+@Trans @RT(10)TErrorInit @F @T @F @F @T @F @TL(2)
+abAutoIdentRun.aInitMeasureData.bError
+
+@RT(10)TErrorInit @F 
+@Step @RT(7)S_Abort @F @F @F @F @RT(0) @F 
+@AcbCont @RT(7)unnamed @F 1 
+@Acb @RT(10)AErrorInit @F @T @RT(1)P @RT(0) @F @F @T @TL(2)
+sv_IdentState.Status := tnCalibState_Aborted;
+
+@F 
+
+@Trans @RT(8)TAborted @F @T @F @F @T @F @TL(2)
+TRUE
+
+@RT(8)TAborted @F 
+@Goto @RT(7)S_RESET @F @F 
+
+
+@Step @RT(14)S_MoveBwdNoise @F @F @F @F @RT(0) @F 
+@AcbCont @RT(7)unnamed @F 3 
+@Acb @RT(22)ASetSpeedStartBwdNoise @F @T @RT(1)P @RT(0) @F @F @T @TL(2)
+sv_rIdentPosition := abAutoIdentRun.aCalcMovementData.rFwdStartPos;
+
+@F 
+@Acb @RT(4)ABwd @F @F @RT(1)P @RT(0) @F @F @F @F 
+@Acb @RT(19)ACheckMovementReady @F @F @RT(1)N @RT(0) @F @F @F @F 
+
+@AltBranch @RT(3)alt @F 2 
+@TransSeq @RT(4)tseq @F 1 
+@Trans @RT(13)TBwdNoiseDone @F @T @F @F @T @T @TL(3)
+fbCheckReady.bReady AND
+sv_iPendingAlarms = 0
+
+@RT(13)TBwdNoiseDone @F 
+
+@TransSeq @RT(4)tseq @F 4 
+@Trans @RT(14)TBwdNoiseError @F @T @F @F @T @F @TL(3)
+(sv_IdentState.bRedo = FALSE)
+OR sv_iPendingAlarms <> 0
+
+@RT(14)TBwdNoiseError @F 
+@Step @RT(6)S_Stop @F @F @F @F @RT(0) @F 
+@AcbCont @RT(7)unnamed @F 1 
+@Acb @RT(8)AStopBwd @F @F @RT(1)P @RT(0) @F @F @F @F 
+
+@Trans @RT(18)TBwdNoiseErrorStop @F @T @F @F @T @T @TL(2)
+TRUE
+
+@RT(18)TBwdNoiseErrorStop @F 
+@Goto @RT(7)S_RESET @F @F 
+
+
+@Step @RT(14)S_WaitFwdNoise @F @F @F @F @RT(0) @F 
+@AcbCont @RT(7)unnamed @F 0 
+
+@Trans @RT(12)TInitMeasure @F @T @F @F @T @T @TL(2)
+S_WaitFwdNoise.T > T#1s
+
+@RT(7)Trans45 @F 
+@Step @RT(13)S_InitMeasure @F @F @F @F @RT(0) @F 
+@AcbCont @RT(7)unnamed @F 1 
+@Acb @RT(12)AMeasureInit @F @F @RT(1)P @RT(0) @F @F @F @F 
+
+@Trans @RT(13)TWaitFwdNoise @F @T @F @F @T @T @TL(2)
+TRUE
+
+@RT(13)TWaitFwdNoise @F 
+@Step @RT(14)S_MoveFwdNoise @F @F @F @F @RT(0) @F 
+@AcbCont @RT(7)unnamed @F 3 
+@Acb @RT(22)ASetSpeedStartFwdNoise @F @T @RT(1)P @RT(0) @F @F @T @TL(2)
+sv_rIdentPosition := abAutoIdentRun.aCalcMovementData.rNoisePos;
+
+@F 
+@Acb @RT(9)AFwdNoise @F @F @RT(1)P @RT(0) @F @F @F @F 
+@Acb @RT(19)ACheckMovementReady @F @F @RT(1)N @RT(0) @F @F @F @F 
+
+@AltBranch @RT(3)alt @F 2 
+@TransSeq @RT(4)tseq @F 1 
+@Trans @RT(13)TFwdNoiseDone @F @T @F @F @T @T @TL(3)
+fbCheckReady.bReady AND
+sv_iPendingAlarms = 0
+
+@RT(13)TFwdNoiseDone @F 
+
+@TransSeq @RT(4)tseq @F 4 
+@Trans @RT(14)TFwdNoiseError @F @T @F @F @T @F @TL(3)
+(sv_IdentState.bRedo = FALSE)
+OR sv_iPendingAlarms <> 0
+
+@RT(14)TFwdNoiseError @F 
+@Step @RT(14)S_StopFwdNoise @F @F @F @F @RT(0) @F 
+@AcbCont @RT(7)unnamed @F 1 
+@Acb @RT(8)AStopFwd @F @F @RT(1)P @RT(0) @F @F @F @F 
+
+@Trans @RT(18)TFwdNoiseErrorStop @F @T @F @F @T @T @TL(2)
+TRUE
+
+@RT(18)TFwdNoiseErrorStop @F 
+@Goto @RT(7)S_RESET @F @F 
+
+
+@Step @RT(11)S_CalcLimit @F @F @F @F @RT(0) @F 
+@AcbCont @RT(7)unnamed @F 0 
+
+@Trans @RT(12)TWaitBwdInit @F @T @F @F @T @T @TL(2)
+S_CalcLimit.T > T#1s
+
+@RT(12)TWaitBwdInit @F 
+@Step @RT(9)S_MoveBwd @F @F @T @F @RT(0) @F 
+@AcbCont @RT(7)unnamed @F 3 
+@Acb @RT(17)ASetSpeedStartFwd @F @T @RT(1)P @RT(0) @F @F @T @TL(6)
+iFileCounter := iIdentCounter + 1;
+sv_rIdentPosition := abAutoIdentRun.aCalcMovementData.rFwdStartPos;
+sv_ConstBwdSetup.Velocity.Output.rOutputValue := rVelocityMoveBwdStartPos;
+sv_ConstBwdSetup.Velocity.PreOutput.rOutputValue := 0.0;
+sv_dSetDelayTimeOffBwd := T#0s;
+
+@F 
+@Acb @RT(4)ABwd @F @F @RT(1)P @RT(0) @F @F @F @F 
+@Acb @RT(19)ACheckMovementReady @F @F @RT(1)N @RT(0) @F @F @F @F 
+
+@AltBranch @RT(3)alt @F 2 
+@TransSeq @RT(4)tseq @F 1 
+@Trans @RT(8)TBwdDone @F @T @F @F @T @T @TL(3)
+fbCheckReady.bReady AND
+sv_iPendingAlarms = 0
+
+@RT(8)TBwdDone @F 
+
+@TransSeq @RT(4)tseq @F 4 
+@Trans @RT(9)TBwdError @F @T @F @F @T @F @TL(3)
+(sv_IdentState.bRedo = FALSE)
+OR sv_iPendingAlarms <> 0
+
+@RT(9)TBwdError @F 
+@Step @RT(14)S_StopBwdNoise @F @F @F @F @RT(0) @F 
+@AcbCont @RT(7)unnamed @F 1 
+@Acb @RT(8)AStopBwd @F @F @RT(1)P @RT(0) @F @F @F @F 
+
+@Trans @RT(13)TBwdErrorStop @F @T @F @F @T @T @TL(2)
+TRUE
+
+@RT(13)TBwdErrorStop @F 
+@Goto @RT(7)S_RESET @F @F 
+
+
+@Step @RT(9)S_WaitFwd @F @F @F @F @RT(0) @F 
+@AcbCont @RT(7)unnamed @F 0 
+
+@Trans @RT(8)TWaitFwd @F @T @F @F @T @T @TL(2)
+S_WaitFwd.T > T#1s
+
+@RT(8)TWaitFwd @F 
+@Step @RT(13)S_SetSpeedFwd @F @F @F @F @RT(0) @F 
+@AcbCont @RT(7)unnamed @F 1 
+@Acb @RT(12)ASetSpeedFwd @F @T @RT(1)P @RT(0) @F @F @T @TL(10)
+sv_rIdentPosition := abAutoIdentRun.aCalcMovementData.rFwdEndPos;
+sv_ConstFwdSetup.Velocity.Output.rOutputValue := rSetVelocityFwd;
+sv_ConstFwdSetup.Velocity.PreOutput.rOutputValue := 0.0;
+sv_dSetDelayTimeOffFwd := dDelayTimeValve;
+
+abAutoIdentRun.aInitMeasureData();
+IF abAutoIdentRun.aInitMeasureData.bDone AND NOT abAutoIdentRun.aInitMeasureData.bError THEN
+    START_PROCESS_ALGORITHM(paMeasureData);
+END_IF;
+
+@F 
+
+@Trans @RT(8)TMoveFwd @F @T @F @F @T @T @TL(2)
+TRUE
+
+@RT(7)Trans46 @F 
+@Step @RT(9)S_MoveFwd @F @F @F @F @RT(0) @F 
+@AcbCont @RT(7)unnamed @F 3 
+@Acb @RT(9)AFwdIdent @F @F @RT(1)P @RT(0) @F @F @F @F 
+@Acb @RT(19)ACheckMovementReady @F @F @RT(1)N @RT(0) @F @F @F @F 
+@Acb @RT(16)AStopMeasurement @F @F @RT(2)P0 @RT(0) @F @F @F @F 
+
+@AltBranch @RT(3)alt @F 2 
+@TransSeq @RT(4)tseq @F 1 
+@Trans @RT(8)TFwdDone @F @T @F @F @T @T @TL(3)
+fbCheckReady.bReady AND
+sv_iPendingAlarms = 0
+
+@RT(8)TFwdDone @F 
+
+@TransSeq @RT(4)tseq @F 4 
+@Trans @RT(9)TFwdError @F @T @F @F @T @F @TL(3)
+(sv_IdentState.bRedo = FALSE)
+OR sv_iPendingAlarms <> 0
+
+@RT(9)TFwdError @F 
+@Step @RT(14)S_StopBwdStart @F @F @F @F @RT(0) @F 
+@AcbCont @RT(7)unnamed @F 1 
+@Acb @RT(8)AStopFwd @F @F @RT(1)P @RT(0) @F @F @F @F 
+
+@Trans @RT(18)TBwdStartErrorStop @F @T @F @F @T @T @TL(2)
+TRUE
+
+@RT(18)TBwdStartErrorStop @F 
+@Goto @RT(7)S_RESET @F @F 
+
+
+@Step @RT(14)S_CalculateFwd @F @F @F @F @RT(0) @F 
+@AcbCont @RT(7)unnamed @F 2 
+@Acb @RT(13)AStartCalcFwd @F @T @RT(1)P @RT(0) @F @F @T @TL(2)
+abAutoIdentRun.aStartDetection();
+
+@F 
+@Acb @RT(13)ACalculateFwd @F @T @RT(1)N @RT(0) @F @F @T @TL(3)
+// calculate parameters
+abAutoIdentRun.aDetectDeadTimeMaxRamp();
+
+@F 
+
+@Trans @RT(7)Trans38 @F @T @F @F @T @T @TL(2)
+abAutoIdentRun.aDetectDeadTimeMaxRamp.bDone
+
+@RT(7)Trans37 @F 
+@Step @RT(17)S_WriteLogFileFwd @F @F @F @F @RT(0) @F 
+@AcbCont @RT(7)unnamed @F 2 
+@Acb @RT(18)AStoreIdentDataFwd @F @T @RT(1)P @RT(0) @F @F @T @TL(10)
+rMaxRampFwd := abAutoIdentRun.aDetectDeadTimeMaxRamp.rRamp; 
+dDeadTimeFwd := abAutoIdentRun.aDetectDeadTimeMaxRamp.dDeadTime;
+dDeadTimeFwdMean := dDeadTimeFwdMean + dDeadTimeFwd;
+
+abAutoIdentRun.aStartLogging(sFileName := cIdentFileNozzleFwd,
+                         iFileCounter := iFileCounter,
+                         bDeleteFiles := FALSE, 
+                         dDeadTime := dDeadTimeFwd, 
+                         rMaxRamp := rMaxRampFwd);
+
+@F 
+@Acb @RT(16)AWaitLogFwdReady @F @T @RT(1)N @RT(0) @F @F @T @TL(2)
+abAutoIdentRun.aWriteLog();
+
+@F 
+
+@Trans @RT(5)TWait @F @T @F @F @T @T @TL(2)
+abAutoIdentRun.aWriteLog.bDone
+
+@RT(5)TWait @F 
+@Step @RT(14)S_MoveBwdStart @F @F @F @F @RT(0) @F 
+@AcbCont @RT(7)unnamed @F 3 
+@Acb @RT(17)ASetSpeedStartBwd @F @T @RT(1)P @RT(0) @F @F @T @TL(6)
+sv_rIdentPosition := abAutoIdentRun.aCalcMovementData.rBwdStartPos;
+sv_ConstFwdSetup.Velocity.Output.rOutputValue := rVelocityMoveFwdStartPos;
+sv_ConstFwdSetup.Velocity.PreOutput.rOutputValue := 0.0;
+sv_dSetDelayTimeOffFwd := T#0s;
+
+
+@F 
+@Acb @RT(4)AFwd @F @F @RT(1)P @RT(0) @F @F @F @F 
+@Acb @RT(19)ACheckMovementReady @F @F @RT(1)N @RT(0) @F @F @F @F 
+
+@AltBranch @RT(3)alt @F 2 
+@TransSeq @RT(4)tseq @F 1 
+@Trans @RT(13)TBwdStartDone @F @T @F @F @T @T @TL(3)
+fbCheckReady.bReady AND
+sv_iPendingAlarms = 0
+
+@RT(13)TBwdStartDone @F 
+
+@TransSeq @RT(4)tseq @F 4 
+@Trans @RT(14)TBwdStartError @F @T @F @F @T @F @TL(3)
+(sv_IdentState.bRedo = FALSE)
+OR sv_iPendingAlarms <> 0
+
+@RT(14)TBwdStartError @F 
+@Step @RT(9)S_StopFwd @F @F @F @F @RT(0) @F 
+@AcbCont @RT(7)unnamed @F 1 
+@Acb @RT(8)AStopFwd @F @F @RT(1)P @RT(0) @F @F @F @F 
+
+@Trans @RT(13)TFwdErrorStop @F @T @F @F @T @T @TL(2)
+TRUE
+
+@RT(13)TFwdErrorStop @F 
+@Goto @RT(7)S_RESET @F @F 
+
+
+@Step @RT(9)S_WaitBwd @F @F @F @F @RT(0) @F 
+@AcbCont @RT(7)unnamed @F 0 
+
+@Trans @RT(8)TWaitBwd @F @T @F @F @T @T @TL(2)
+S_WaitBwd.T > T#1s
+
+@RT(8)TWaitBwd @F 
+@Step @RT(13)S_SetSpeedBwd @F @F @F @F @RT(0) @F 
+@AcbCont @RT(7)unnamed @F 1 
+@Acb @RT(12)ASetSpeedBwd @F @T @RT(1)P @RT(0) @F @F @T @TL(10)
+sv_rIdentPosition := abAutoIdentRun.aCalcMovementData.rBwdEndPos;
+sv_ConstBwdSetup.Velocity.Output.rOutputValue := rSetVelocityBwd;
+sv_ConstBwdSetup.Velocity.PreOutput.rOutputValue := rSetVelocityBwd;
+sv_dSetDelayTimeOffBwd := dDelayTimeValve;
+
+abAutoIdentRun.aInitMeasureData();
+IF abAutoIdentRun.aInitMeasureData.bDone AND NOT abAutoIdentRun.aInitMeasureData.bError THEN
+    START_PROCESS_ALGORITHM(paMeasureData);
+END_IF;
+
+@F 
+
+@Trans @RT(8)TMoveEnd @F @T @F @F @T @T @TL(2)
+TRUE
+
+@RT(7)Trans47 @F 
+@Step @RT(12)S_MoveEndPos @F @F @F @F @RT(0) @F 
+@AcbCont @RT(7)unnamed @F 3 
+@Acb @RT(9)ABwdIdent @F @F @RT(1)P @RT(0) @F @F @F @F 
+@Acb @RT(19)ACheckMovementReady @F @F @RT(1)N @RT(0) @F @F @F @F 
+@Acb @RT(16)AStopMeasurement @F @F @RT(2)P0 @RT(0) @F @F @F @F 
+
+@AltBranch @RT(3)alt @F 2 
+@TransSeq @RT(4)tseq @F 1 
+@Trans @RT(9)TEndPosOK @F @T @F @F @T @T @TL(3)
+fbCheckReady.bReady AND
+sv_iPendingAlarms = 0
+
+@RT(13)TMoldEndPosOK @F 
+
+@TransSeq @RT(4)tseq @F 4 
+@Trans @RT(12)TEndPosError @F @T @F @F @T @F @TL(3)
+(sv_IdentState.bRedo = FALSE)
+OR sv_iPendingAlarms <> 0
+
+@RT(16)TMoldEndPosError @F 
+@Step @RT(3)End @F @F @F @F @RT(0) @F 
+@AcbCont @RT(7)unnamed @F 1 
+@Acb @RT(8)AStopBwd @F @F @RT(1)P @RT(0) @F @F @F @F 
+
+@Trans @RT(11)TEndPosStop @F @T @F @F @T @T @TL(2)
+TRUE
+
+@RT(15)TMoldEndPosStop @F 
+@Goto @RT(7)S_RESET @F @F 
+
+
+@Step @RT(14)S_CalculateBwd @F @F @F @F @RT(0) @F 
+@AcbCont @RT(7)unnamed @F 2 
+@Acb @RT(13)AStartCalcBwd @F @T @RT(1)P @RT(0) @F @F @T @TL(2)
+abAutoIdentRun.aStartDetection();
+
+@F 
+@Acb @RT(13)ACalculateBwd @F @T @RT(1)N @RT(0) @F @F @T @TL(3)
+// calculate parameters
+abAutoIdentRun.aDetectDeadTimeMaxRamp();
+
+@F 
+
+@Trans @RT(7)Trans39 @F @T @F @F @T @T @TL(2)
+abAutoIdentRun.aDetectDeadTimeMaxRamp.bDone
+
+@RT(7)Trans37 @F 
+@Step @RT(17)S_WriteLogFileBwd @F @F @F @F @RT(0) @F 
+@AcbCont @RT(7)unnamed @F 2 
+@Acb @RT(12)ACalcRampBwd @F @T @RT(1)P @RT(0) @F @F @T @TL(11)
+rMaxRampBwd := abAutoIdentRun.aDetectDeadTimeMaxRamp.rRamp; 
+dDeadTimeBwd := abAutoIdentRun.aDetectDeadTimeMaxRamp.dDeadTime;
+dDeadTimeBwdMean := dDeadTimeBwdMean + dDeadTimeBwd ;
+// save date
+abAutoIdentRun.aStartLogging(sFileName := cIdentFileNozzleBwd,
+                         iFileCounter := iFileCounter,
+                         bDeleteFiles := FALSE, 
+                         dDeadTime := dDeadTimeBwd, 
+                         rMaxRamp := rMaxRampBwd);
+iIdentCounter := iIdentCounter +1;
+
+@F 
+@Acb @RT(16)AWaitLogBwdReady @F @T @RT(1)N @RT(0) @F @F @T @TL(2)
+abAutoIdentRun.aWriteLog();
+
+@F 
+
+@Trans @RT(7)Trans37 @F @T @F @F @T @T @TL(2)
+abAutoIdentRun.aWriteLog.bDone
+
+@RT(7)Trans37 @F 
+@Step @RT(6)Step38 @F @F @F @F @RT(0) @F 
+@AcbCont @RT(7)unnamed @F 0 
+
+@AltBranch @RT(3)alt @F 2 
+@TransSeq @RT(4)tseq @F 1 
+@Trans @RT(15)TStartNextCycle @F @T @F @F @T @T @TL(2)
+iIdentCounter < cAutoIdentNoCycles
+
+@RT(15)TStartNextCycle @F 
+
+@TransSeq @RT(4)tseq @F 4 
+@Trans @RT(15)TStoreIdentData @F @T @F @F @T @T @TL(2)
+iIdentCounter >= cAutoIdentNoCycles
+
+@RT(15)TStoreIdentData @F 
+@Step @RT(16)S_StoreIdentData @F @F @F @F @RT(0) @F 
+@AcbCont @RT(7)unnamed @F 1 
+@Acb @RT(15)AStoreIdentData @F @T @RT(1)P @RT(0) @F @F @T @TL(12)
+abAutoIdentRun.aStoreIdentData(rMaxRampFwd := rMaxRampFwd,
+                               rMaxRampBwd := rMaxRampBwd,
+                               dDeadTimeFwdMean := dDeadTimeFwdMean,
+                               dDeadTimeBwdMean := dDeadTimeBwdMean,
+                               iIdentCounter := iIdentCounter,
+                               FwdProfVis := sv_NozzleFwdProfVis,
+                               BwdProfVis := sv_NozzleBwdProfVis,
+                               DelayTimeOffFwd := sv_dSetDelayTimeOffFwd,
+                               DelayTimeOffBwd := sv_dSetDelayTimeOffBwd);
+
+sv_IdentState.Status := tnCalibState_Done;
+
+@F 
+
+@Trans @RT(18)TStopIdentMovement @F @T @F @F @T @T @TL(2)
+TRUE
+
+@RT(18)TStopIdentMovement @F 
+@Goto @RT(7)S_RESET @F @F 
+
+
+@Goto @RT(9)S_MoveBwd @F @F 
+@END_SfcData 
+@SaActions 10 
+@SaText @RT(19)ACheckMovementReady 1 @TL(2)
+fbCheckReady(DeviceId := sv_DeviceId);
+
+
+@SaText @RT(16)AStopMeasurement 1 @TL(6)
+sv_bMoveIdent := FALSE;
+
+abAutoIdentRun.aStopMeasurement();
+
+STOP_PROCESS_ALGORITHM(paMeasureData);
+
+
+@SaText @RT(12)AMeasureInit 1 @TL(5)
+abAutoIdentRun.aInitMeasureData();
+IF abAutoIdentRun.aInitMeasureData.bDone AND NOT abAutoIdentRun.aInitMeasureData.bError THEN
+    START_PROCESS_ALGORITHM(paMeasureData);
+END_IF;
+
+
+@SaText @RT(8)AStopBwd 1 @TL(7)
+evStopRequestData.DeviceId := sv_DeviceId;  
+evStopRequestData.MoveDir := cMoveBwd;  
+evStopRequestData.MoveId := cMoveBwd;      
+SET_EVENT(evStopRequest, evStopRequestData);
+
+sv_IdentState.Status := tnCalibState_Aborted;
+
+
+@SaText @RT(9)AFwdNoise 1 @TL(5)
+evStartRequestData.DeviceId := sv_DeviceId;
+evStartRequestData.MoveDir := cMoveFwd; 
+evStartRequestData.MoveId := cMoveFwd;
+SET_EVENT(evStartRequest, evStartRequestData);
+
+
+@SaText @RT(8)AStopFwd 1 @TL(7)
+evStopRequestData.DeviceId := sv_DeviceId;  
+evStopRequestData.MoveDir := cMoveFwd;  
+evStopRequestData.MoveId := cMoveFwd;      
+SET_EVENT(evStopRequest, evStopRequestData);
+
+sv_IdentState.Status := tnCalibState_Aborted;
+
+
+@SaText @RT(4)ABwd 1 @TL(7)
+sv_bMoveIdent := TRUE;
+
+evStartRequestData.DeviceId := sv_DeviceId;
+evStartRequestData.MoveDir := cMoveBwd; 
+evStartRequestData.MoveId := cMoveBwd;
+SET_EVENT(evStartRequest, evStartRequestData);
+
+
+@SaText @RT(4)AFwd 1 @TL(7)
+sv_bMoveIdent := TRUE;
+
+evStartRequestData.DeviceId := sv_DeviceId;
+evStartRequestData.MoveDir := cMoveFwd; 
+evStartRequestData.MoveId := cMoveFwd;
+SET_EVENT(evStartRequest, evStartRequestData);
+
+
+@SaText @RT(9)AFwdIdent 1 @TL(7)
+sv_bMoveIdent := TRUE;
+
+evStartRequestData.DeviceId := sv_DeviceId;
+evStartRequestData.MoveDir := cMoveFwd; 
+evStartRequestData.MoveId := cMoveFwd;
+SET_EVENT(evStartRequest, evStartRequestData);
+
+
+@SaText @RT(9)ABwdIdent 1 @TL(7)
+sv_bMoveIdent := TRUE;
+
+evStartRequestData.DeviceId := sv_DeviceId;
+evStartRequestData.MoveDir := cMoveBwd; 
+evStartRequestData.MoveId := cMoveBwd;
+SET_EVENT(evStartRequest, evStartRequestData);
+
+
+@SaTrans 0 
+@SaExits 1 
+@SaExit @SaText @RT(14)E_NotSetupMode 1 @TL(2)
+sv_OperationMode <> nSetup
+
+@RT(7)S_RESET @RT(1)1 @F @F @SaSfc @RT(14)E_NotSetupMode 5 @RT(5)DUMMY 
+@BEG_SfcData 2 
+@ExitSeq @RT(4)sseq @F 3 
+@Step @RT(8)unnamed1 @F @T @F @F @RT(0) @F 
+@AcbCont @RT(7)unnamed @F 0 
+
+@Trans @RT(8)unnamed3 @F @T @F @F @T @T @TL(2)
+
+
+@RT(8)unnamed3 @F 
+@Goto @RT(9)unlabeled @F @F 
+@END_SfcData 
+
+@END_SfcBody 
+
+@@@BEG_Comment@@@ 
+@TL(2)
+Coordinate sequential start of auto calib cycle
+starts one auto calib movement after the other
+@@@END_Comment@@@ 
+
+@BEG_Body 
+@TL(8)
+abAutoIdentRun.aMeasureData(rPosition := sv_rNozzlePosition,
+                            rVelocityReference := sv_rVelocityAbs,                               
+                            rActVelocity := sv_rNozzleVelocity,
+                            rPressureReference := sv_rPressureAbs,
+                            rActPressure := 0.0,
+                            rPositionNonLinear :=0.0,
+                            rVelocityNonLinear :=0.0);
+
+@END_Body 
+
+@@@BEG_Comment@@@ 
+@TL(0)
+
+@@@END_Comment@@@ 
+
+@BEG_Body 
+@TL(3)
+abAutoIdentRun.aInitMeasureData();
+STOP_PROCESS_ALGORITHM();
+
+@END_Body 
+
+@@@BEG_Comment@@@ 
+@TL(0)
+
+@@@END_Comment@@@ 
+@END_Body 
+
+@END_Contents 

@@ -1,0 +1,590 @@
+IMPORT_OVER_LISTFILE
+ GET_MY_FU_NAME
+, KSWO_AddVariable
+, IS_LINKED
+, WRITE_SVREAL_DIRECT
+, cApplPlasticsPI
+, KAPPL_LintabData_2P
+, KAPPL_MeasureMonitoring
+, KSWO_Status
+, ABMeasureAI
+
+END_IMPORT
+
+ALGORITHM_BLOCK ABMeasureMoldPressure #DUMMY_EDIT_BLOCK
+
+SYSTEM_VAR
+ ai_MoldPressure1 : REAL (* raw value of pressure sensor mold fw *);
+ ai_MoldPressure2 : REAL (* raw value of pressure sensor mold bw *);
+ sv_rMoldPressure1 : REAL (* pressure mold fwd *);
+ sv_rMoldPressure2 : REAL (* pressure mold bwd *);
+ sv_bDeviceReady : BOOL;
+ sv_Pressure2Lintab : KAPPL_LintabData_2P (* lintab for measuring with backpressure sensor *);
+ sv_Pressure1Lintab : KAPPL_LintabData_2P (* lintab for measuring with backpressure sensor *);
+ sv_Pres1MonitorMeas : KAPPL_MeasureMonitoring;
+ sv_Pres2MonitorMeas : KAPPL_MeasureMonitoring;
+ sv_bPressureSensor1Error : BOOL;
+ sv_bPressureSensor2Error : BOOL;
+END_VAR
+
+SYSTEM_OBJECT
+ TaskAnalog : TASK;
+ TaskSlow : TASK;
+END_OBJECT
+
+VAR_EXTERNAL
+ g_bPressureSensor1Available : BOOL;
+ g_bPressureSensor2Available : BOOL;
+ g_bPressureSensorsAvailable : BOOL;
+END_VAR
+
+PROCESS_ALGORITHM paInitDebugMeasurement ON TaskSlow AUTOSTART
+
+
+VAR
+ variableName : STRING(255);
+ swoState : KSWO_Status;
+END_VAR
+#BEGIN_EDIT_BLOCK
+(**************************************** WARNING ********************************************
+ *** The KEBA Kemro K2 System including software is not intended for safety control tasks! ***
+ ***                       For further information see Comment tab!                        ***
+ *********************************************************************************************)
+
+variableName := CONCAT(GET_MY_FU_NAME(),'.sv_rMoldPressure1');
+swoState := KSWO_AddVariable( Task := TaskAnalog,
+                              Name := variableName,
+                              Variable := sv_rMoldPressure1);
+variableName := CONCAT(GET_MY_FU_NAME(),'.sv_rMoldPressure2');
+swoState := KSWO_AddVariable( Task := TaskAnalog,
+                              Name := variableName,
+                              Variable := sv_rMoldPressure2);
+STOP_PROCESS_ALGORITHM();
+
+
+;#END_EDIT_BLOCK END_ALGORITHM
+
+PROCESS_ALGORITHM paMeasurePressure ON TaskAnalog(1000) AUTOSTART
+
+
+VAR_TEMP
+ b : BOOL;
+END_VAR
+
+VAR
+ abPressure1Measure : ABMeasureAI;
+ abPressure2Measure : ABMeasureAI;
+END_VAR
+
+(* IecGraph-Code *)
+
+(* init step *)
+INITIAL_STEP S_Start:
+ACheckPressSensorAvailable (P);
+END_STEP
+
+
+(* steps *)
+STEP S_Stop:
+AStop (P);
+END_STEP
+
+ACTION AStop: #BEGIN_EDIT_BLOCK
+STOP_PROCESS_ALGORITHM();
+  
+
+;#END_EDIT_BLOCK END_ACTION (*AStop*)
+STEP S_Init:
+AInitMeasure (P);
+END_STEP
+
+STEP S_Measure:
+AMeasure (N);
+END_STEP
+
+
+(* transitions *)
+TRANSITION TLinked (* TLinked *) FROM S_Start TO S_Init :=  #BEGIN_EDIT_BLOCK
+g_bPressureSensor1Available OR
+g_bPressureSensor2Available
+;#END_EDIT_BLOCK
+END_TRANSITION
+
+TRANSITION TNotLinked (* TNotLinked *) FROM S_Start TO S_Stop :=  #BEGIN_EDIT_BLOCK
+NOT (g_bPressureSensor1Available OR 
+     g_bPressureSensor2Available)
+;#END_EDIT_BLOCK
+END_TRANSITION
+
+TRANSITION TStop (* TStop *) FROM S_Stop TO S_Start :=  #BEGIN_EDIT_BLOCK
+TRUE
+;#END_EDIT_BLOCK
+END_TRANSITION
+
+TRANSITION TInitDone (* TInitDone *) FROM S_Init TO S_Measure :=  #BEGIN_EDIT_BLOCK
+TRUE
+;#END_EDIT_BLOCK
+END_TRANSITION
+
+(* end IecGraph-Code *)
+(* sfc-code *)
+
+(* stand alone actions *)
+ACTION ACheckPressSensorAvailable: #BEGIN_EDIT_BLOCK
+g_bPressureSensor1Available := IS_LINKED(ai_MoldPressure1); 
+g_bPressureSensor2Available := IS_LINKED(ai_MoldPressure2);
+
+IF NOT (g_bPressureSensor1Available OR g_bPressureSensor2Available) THEN
+   g_bPressureSensorsAvailable := FALSE;
+END_IF;
+
+;#END_EDIT_BLOCK END_ACTION (*ACheckPressSensorAvailable*)
+ACTION AInitMeasure: #BEGIN_EDIT_BLOCK
+IF g_bPressureSensor1Available THEN
+   abPressure1Measure.aInit(sRawValue:='Mold1.ai_MoldPressure1',
+                            pLintabPointArray := @sv_Pressure1Lintab.LintabPoints.Point,
+                            piUsedLintabPoints := @sv_Pressure1Lintab.LintabPoints.uNoOfPoints);
+                           
+   abPressure1Measure.aInitMonitoring(bEnable:=sv_Pres1MonitorMeas.EnableMonitoring,
+                                      rLowLimit:=sv_Pres1MonitorMeas.LowerLimit,
+                                      bLimitation:=sv_Pres1MonitorMeas.Limitation,
+                                      rFailureFactor:=sv_Pres1MonitorMeas.FailureFactor); 
+END_IF;
+
+IF g_bPressureSensor2Available THEN
+   abPressure2Measure.aInit(sRawValue:='Mold1.ai_MoldPressure2',
+                            pLintabPointArray := @sv_Pressure2Lintab.LintabPoints.Point,
+                            piUsedLintabPoints := @sv_Pressure2Lintab.LintabPoints.uNoOfPoints);
+                          
+   abPressure2Measure.aInitMonitoring(bEnable:=sv_Pres2MonitorMeas.EnableMonitoring,
+                                      rLowLimit:=sv_Pres2MonitorMeas.LowerLimit,
+                                      bLimitation:=sv_Pres2MonitorMeas.Limitation,
+                                      rFailureFactor:=sv_Pres2MonitorMeas.FailureFactor); 
+END_IF;
+
+
+;#END_EDIT_BLOCK END_ACTION (*AInitMeasure*)
+ACTION AMeasure: #BEGIN_EDIT_BLOCK
+IF g_bPressureSensor1Available THEN
+   abPressure1Measure.aRunLight(bIdle:=sv_bDeviceReady);
+   sv_bPressureSensor1Error := abPressure1Measure.aRunLight.bSensorError;
+   b := WRITE_SVREAL_DIRECT(sv_rMoldPressure1, abPressure1Measure.aRunLight.rValue);
+END_IF;
+IF g_bPressureSensor2Available THEN
+   abPressure2Measure.aRunLight(bIdle:=sv_bDeviceReady);
+   sv_bPressureSensor2Error := abPressure2Measure.aRunLight.bSensorError;
+   b := WRITE_SVREAL_DIRECT(sv_rMoldPressure2, abPressure2Measure.aRunLight.rValue);   
+END_IF;
+
+;#END_EDIT_BLOCK END_ACTION (*AMeasure*)
+(* end sfc-code *)
+
+
+END_ALGORITHM
+
+
+
+END_ALGORITHM_BLOCK
+
+
+
+#END_OF_IEC_PART
+
+@Puma @IecEditor 6 114 @Pou 25 
+@@@BEG_Comment@@@
+
+@@@END_Comment@@@
+
+@BEG_Contents 
+
+@BEG_Func 
+@RT(17)FuncTreeContainer 
+4 
+@Var @RT(14)GET_MY_FU_NAME @RT(0) @T @T @DERIVED 0 @F @RT(22)KEBA_STANDARD_FUNCTION @F 
+@T 
+@BEG_Attrib 
+0 @RT(0) @RT(0) 
+@END_Attrib 
+1 1 @F @F @F @F 
+
+@Var @RT(16)KSWO_AddVariable @RT(0) @T @T @DERIVED 0 @F @RT(22)KEBA_STANDARD_FUNCTION @F 
+@T 
+@BEG_Attrib 
+0 @RT(0) @RT(0) 
+@END_Attrib 
+1 1 @F @F @F @F 
+
+@Var @RT(9)IS_LINKED @RT(0) @T @T @DERIVED 0 @F @RT(22)KEBA_STANDARD_FUNCTION @F 
+@T 
+@BEG_Attrib 
+0 @RT(0) @RT(0) 
+@END_Attrib 
+1 1 @F @F @F @F 
+
+@Var @RT(19)WRITE_SVREAL_DIRECT @RT(0) @T @T @DERIVED 0 @F @RT(22)KEBA_STANDARD_FUNCTION @F 
+@T 
+@BEG_Attrib 
+0 @RT(0) @RT(0) 
+@END_Attrib 
+1 1 @F @F @F @F 
+
+@END_Func 
+
+@BEG_Const 
+@RT(18)ConstTreeContainer 
+1 
+@Var @RT(15)cApplPlasticsPI @RT(0) @T @F @DT @RT(4)REAL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+0 @RT(10)3.14159265 @RT(13)pi=3.14159265 
+@END_Attrib 
+1 1 @F @F @F @F 
+
+@END_Const 
+
+@BEG_Export 
+
+@BEG_Kind 
+@ALGORITHM_BLOCK @RT(21)ABMeasureMoldPressure @STRUCTURED_TEXT 
+@RT(0) @RT(0) @RT(0) 
+@END_Kind 
+
+@BEG_Dcl 
+@RT(16)DclTreeContainer 
+16 
+@Var @RT(16)ai_MoldPressure1 @RT(0) @T @F @DT @RT(4)REAL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(36)raw value of pressure sensor mold fw @RT(0) 
+@END_Attrib 
+1 8 @F @F @F @F 
+
+@Var @RT(16)ai_MoldPressure2 @RT(0) @T @F @DT @RT(4)REAL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(36)raw value of pressure sensor mold bw @RT(0) 
+@END_Attrib 
+1 8 @F @F @F @F 
+
+@Var @RT(17)sv_rMoldPressure1 @RT(0) @T @F @DT @RT(4)REAL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(17)pressure mold fwd @RT(0) 
+@END_Attrib 
+1 8 @F @F @F @F 
+
+@Var @RT(17)sv_rMoldPressure2 @RT(0) @T @F @DT @RT(4)REAL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(17)pressure mold bwd @RT(0) 
+@END_Attrib 
+1 8 @F @F @F @F 
+
+@Var @RT(15)sv_bDeviceReady @RT(0) @T @F @DT @RT(4)BOOL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 8 @F @F @F @F 
+
+@Var @RT(18)sv_Pressure2Lintab @RT(0) @T @T @DERIVED 0 @F @RT(19)KAPPL_LintabData_2P @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(45)lintab for measuring with backpressure sensor @RT(0) 
+@END_Attrib 
+1 8 @F @F @F @F 
+
+@Var @RT(18)sv_Pressure1Lintab @RT(0) @T @T @DERIVED 0 @F @RT(19)KAPPL_LintabData_2P @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(45)lintab for measuring with backpressure sensor @RT(0) 
+@END_Attrib 
+1 8 @F @F @F @F 
+
+@Var @RT(19)sv_Pres1MonitorMeas @RT(0) @T @T @DERIVED 0 @T @T @DT @RT(23)KAPPL_MeasureMonitoring @RT(0) @T @T @UNKNOWN 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 8 @F @F @F @F 
+
+@Var @RT(19)sv_Pres2MonitorMeas @RT(0) @T @T @DERIVED 0 @T @T @DT @RT(23)KAPPL_MeasureMonitoring @RT(0) @T @T @UNKNOWN 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 8 @F @F @F @F 
+
+@Var @RT(24)sv_bPressureSensor1Error @RT(0) @T @F @DT @RT(4)BOOL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 8 @F @F @F @F 
+
+@Var @RT(24)sv_bPressureSensor2Error @RT(0) @T @F @DT @RT(4)BOOL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 8 @F @F @F @F 
+
+@Var @RT(10)TaskAnalog @RT(0) @T @F @DT @RT(4)TASK @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 7 @F @F @F @F 
+
+@Var @RT(8)TaskSlow @RT(0) @T @F @DT @RT(4)TASK @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 7 @F @F @F @F 
+
+@Var @RT(27)g_bPressureSensor1Available @RT(0) @T @F @DT @RT(4)BOOL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 6 @F @F @F @F 
+
+@Var @RT(27)g_bPressureSensor2Available @RT(0) @T @F @DT @RT(4)BOOL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 6 @F @F @F @F 
+
+@Var @RT(27)g_bPressureSensorsAvailable @RT(0) @T @F @DT @RT(4)BOOL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 6 @F @F @F @F 
+
+@END_Dcl 
+
+@END_Export 
+
+@BEG_Body 
+
+2 
+
+@BEG_Export 
+
+@BEG_Algo 
+@PROCESS_ALGORITHM @RT(22)paInitDebugMeasurement @STRUCTURED_TEXT 
+@RT(0) @RT(0) @RT(8)TaskSlow @T @F 
+@END_Algo 
+
+@BEG_Dcl 
+@RT(16)DclTreeContainer 
+2 
+@Var @RT(12)variableName @RT(0) @T @F @DT @RT(11)STRING(255) @RT(0) @T @T @STRING 0 @F @RT(3)255 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(8)swoState @RT(0) @T @T @DERIVED 0 @T @T @DT @RT(11)KSWO_Status @RT(0) @T @T @UNKNOWN 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@END_Dcl 
+
+@END_Export 
+
+@BEG_Export 
+
+@BEG_Algo 
+@PROCESS_ALGORITHM @RT(17)paMeasurePressure @SEQUENTIAL_FLOW_CHART 
+@RT(0) @RT(0) @RT(16)TaskAnalog(1000) @T @F 
+@END_Algo 
+
+@BEG_Dcl 
+@RT(16)DclTreeContainer 
+3 
+@Var @RT(18)abPressure1Measure @RT(0) @T @T @DERIVED 0 @F @RT(11)ABMeasureAI @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(18)abPressure2Measure @RT(0) @T @T @DERIVED 0 @T @T @DT @RT(11)ABMeasureAI @RT(0) @T @T @UNKNOWN 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(1)b @RT(0) @T @F @DT @RT(4)BOOL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 4 @F @F @F @F 
+
+@END_Dcl 
+
+@END_Export 
+
+@BEG_Body 
+@TL(15)
+(**************************************** WARNING ********************************************
+ *** The KEBA Kemro K2 System including software is not intended for safety control tasks! ***
+ ***                       For further information see Comment tab!                        ***
+ *********************************************************************************************)
+
+variableName := CONCAT(GET_MY_FU_NAME(),'.sv_rMoldPressure1');
+swoState := KSWO_AddVariable( Task := TaskAnalog,
+                              Name := variableName,
+                              Variable := sv_rMoldPressure1);
+variableName := CONCAT(GET_MY_FU_NAME(),'.sv_rMoldPressure2');
+swoState := KSWO_AddVariable( Task := TaskAnalog,
+                              Name := variableName,
+                              Variable := sv_rMoldPressure2);
+STOP_PROCESS_ALGORITHM();
+
+@END_Body 
+
+@@@BEG_Comment@@@ 
+@TL(0)
+
+@@@END_Comment@@@ 
+
+@BEG_SfcBody 
+7 6 5 
+
+@BEG_SfcData 2 
+@StepSeq @RT(4)sseq @F 5 
+@Step @RT(7)S_Start @F @T @T @F @RT(0) @F 
+@AcbCont @RT(7)unnamed @F 1 
+@Acb @RT(26)ACheckPressSensorAvailable @F @F @RT(1)P @RT(0) @F @F @F @F 
+
+@AltBranch @RT(3)alt @F 2 
+@TransSeq @RT(4)tseq @F 1 
+@Trans @RT(7)TLinked @F @T @F @F @T @T @TL(3)
+g_bPressureSensor1Available OR
+g_bPressureSensor2Available
+
+@RT(7)TLinked @F 
+
+@TransSeq @RT(4)tseq @F 4 
+@Trans @RT(10)TNotLinked @F @T @F @F @T @T @TL(3)
+NOT (g_bPressureSensor1Available OR 
+     g_bPressureSensor2Available)
+
+@RT(10)TNotLinked @F 
+@Step @RT(6)S_Stop @F @F @F @F @RT(0) @F 
+@AcbCont @RT(7)unnamed @F 1 
+@Acb @RT(5)AStop @F @T @RT(1)P @RT(0) @F @F @T @TL(3)
+STOP_PROCESS_ALGORITHM();
+  
+
+@F 
+
+@Trans @RT(5)TStop @F @T @F @F @T @T @TL(2)
+TRUE
+
+@RT(5)TStop @F 
+@Goto @RT(7)S_Start @F @F 
+
+
+@Step @RT(6)S_Init @F @F @F @F @RT(0) @F 
+@AcbCont @RT(7)unnamed @F 1 
+@Acb @RT(12)AInitMeasure @F @F @RT(1)P @RT(0) @F @F @F @F 
+
+@Trans @RT(9)TInitDone @F @T @F @F @T @T @TL(2)
+TRUE
+
+@RT(9)TInitDone @F 
+@Step @RT(9)S_Measure @F @F @F @F @RT(0) @F 
+@AcbCont @RT(7)unnamed @F 1 
+@Acb @RT(8)AMeasure @F @F @RT(1)N @RT(0) @F @F @F @F 
+
+@END_SfcData 
+@SaActions 3 
+@SaText @RT(26)ACheckPressSensorAvailable 1 @TL(7)
+g_bPressureSensor1Available := IS_LINKED(ai_MoldPressure1); 
+g_bPressureSensor2Available := IS_LINKED(ai_MoldPressure2);
+
+IF NOT (g_bPressureSensor1Available OR g_bPressureSensor2Available) THEN
+   g_bPressureSensorsAvailable := FALSE;
+END_IF;
+
+
+@SaText @RT(12)AInitMeasure 1 @TL(23)
+IF g_bPressureSensor1Available THEN
+   abPressure1Measure.aInit(sRawValue:='Mold1.ai_MoldPressure1',
+                            pLintabPointArray := @sv_Pressure1Lintab.LintabPoints.Point,
+                            piUsedLintabPoints := @sv_Pressure1Lintab.LintabPoints.uNoOfPoints);
+                           
+   abPressure1Measure.aInitMonitoring(bEnable:=sv_Pres1MonitorMeas.EnableMonitoring,
+                                      rLowLimit:=sv_Pres1MonitorMeas.LowerLimit,
+                                      bLimitation:=sv_Pres1MonitorMeas.Limitation,
+                                      rFailureFactor:=sv_Pres1MonitorMeas.FailureFactor); 
+END_IF;
+
+IF g_bPressureSensor2Available THEN
+   abPressure2Measure.aInit(sRawValue:='Mold1.ai_MoldPressure2',
+                            pLintabPointArray := @sv_Pressure2Lintab.LintabPoints.Point,
+                            piUsedLintabPoints := @sv_Pressure2Lintab.LintabPoints.uNoOfPoints);
+                          
+   abPressure2Measure.aInitMonitoring(bEnable:=sv_Pres2MonitorMeas.EnableMonitoring,
+                                      rLowLimit:=sv_Pres2MonitorMeas.LowerLimit,
+                                      bLimitation:=sv_Pres2MonitorMeas.Limitation,
+                                      rFailureFactor:=sv_Pres2MonitorMeas.FailureFactor); 
+END_IF;
+
+
+
+@SaText @RT(8)AMeasure 1 @TL(11)
+IF g_bPressureSensor1Available THEN
+   abPressure1Measure.aRunLight(bIdle:=sv_bDeviceReady);
+   sv_bPressureSensor1Error := abPressure1Measure.aRunLight.bSensorError;
+   b := WRITE_SVREAL_DIRECT(sv_rMoldPressure1, abPressure1Measure.aRunLight.rValue);
+END_IF;
+IF g_bPressureSensor2Available THEN
+   abPressure2Measure.aRunLight(bIdle:=sv_bDeviceReady);
+   sv_bPressureSensor2Error := abPressure2Measure.aRunLight.bSensorError;
+   b := WRITE_SVREAL_DIRECT(sv_rMoldPressure2, abPressure2Measure.aRunLight.rValue);   
+END_IF;
+
+
+@SaTrans 0 
+@SaExits 0 
+@END_SfcBody 
+
+@@@BEG_Comment@@@ 
+@TL(0)
+
+@@@END_Comment@@@ 
+@END_Body 
+
+@END_Contents 

@@ -1,0 +1,2490 @@
+IMPORT_OVER_LISTFILE
+ GET_TASK_INTERVAL
+, FCalcScrewSize
+, GET_MY_FU_NAME
+, GET_SYNC_REFTO
+, START_PROCESS_ALGORITHM
+, WRITE_SVREAL_DIRECT
+, FAddToScopeGroup
+, IS_LINKED
+, KAPPL_LintabData_2P
+, tsDerivationEstimateParam
+, KAPPL_MeasureMonitoring
+, KAPPL_LintabData
+, ABLintabApply
+, tsCalibMovement
+, ABMeasureAI
+, KSYS_Status
+, FBPeakMeasure
+, tOptionId
+, KSWO_Status
+
+END_IMPORT
+
+ALGORITHM_BLOCK ABMeasure #DUMMY_EDIT_BLOCK
+
+SYSTEM_VAR
+ sv_rScrewPosition : REAL;
+ sv_rScrewVelocity : REAL;
+ sv_rInjPeakPosition : REAL (* measured inject peak position *);
+ sv_rInjPeakPressure : REAL (* measured inject peak pressure *);
+ sv_rInjPeakVelocity : REAL (* measured inject peak velocity *);
+ sv_bPressureSensorAvailable : BOOL;
+ sv_bSysPressureSensorAvailable : BOOL;
+ ai_Position : REAL (* raw value of screw transducer *);
+ ai_Pressure : REAL (* raw value of pressure sensor *);
+ ai_SysPressure : REAL (* raw value of system pressure sensor *);
+ sv_ScrewLintab : KAPPL_LintabData_2P;
+ sv_PressureLintab : KAPPL_LintabData_2P;
+ sv_SysPressureLintab : KAPPL_LintabData_2P;
+ sv_bTransducerError : BOOL;
+ sv_bPressureSensorError : BOOL;
+ sv_bSysPressureSensorError : BOOL;
+ sv_rScrewDiameter : REAL;
+ sv_rActPressureHydr : REAL;
+ sv_rActSysPressure : REAL;
+ sv_rScrewPositionAbs : REAL;
+ sv_bInjectActive : BOOL (* Injection is active *);
+ sv_DerivationEstimateParam : tsDerivationEstimateParam;
+ sv_rScrewVelocityEstimateAbs : REAL;
+ sv_bDeviceReady : BOOL;
+ sv_bValveServoInj1Ready : BOOL;
+ sv_rActPressure : REAL;
+ sv_rScrewVelocityAbs : REAL;
+ sv_SysPresMonitorMeas : KAPPL_MeasureMonitoring;
+ sv_PresMonitorMeas : KAPPL_MeasureMonitoring;
+ sv_ScrewMonitorMeas : KAPPL_MeasureMonitoring;
+ sv_LintabOutFwdP : KAPPL_LintabData;
+ sv_InstanceCounter : INT;
+ sv_speed1 : REAL;
+ sv_speed2 : REAL;
+ sv_speed3 : REAL;
+ sv_speed4 : REAL;
+ ai_0 : REAL;
+ ai_1 : REAL;
+ ai_2 : REAL;
+ ai_3 : REAL;
+ sv_Lintab1 : tsCalibMovement;
+ sv_Lintab2 : tsCalibMovement;
+ sv_Lintab3 : tsCalibMovement;
+ sv_Lintab4 : tsCalibMovement;
+ sv_Lintab10 : KAPPL_LintabData;
+ sv_Lintab20 : KAPPL_LintabData;
+ sv_Lintab30 : KAPPL_LintabData;
+ sv_Lintab40 : KAPPL_LintabData;
+END_VAR
+
+SYSTEM_OBJECT
+ TaskInject : TASK;
+ TaskMid : TASK;
+ PU_Task_7 : TASK;
+ TaskSlow : TASK;
+ TaskAnalog : TASK;
+END_OBJECT
+
+VAR
+ abLintabApplyPres : ABLintabApply;
+ mprActPresssureHydr : REFTO REAL;
+ Speed1 : ABLintabApply;
+ Speed2 : ABLintabApply;
+ Speed3 : ABLintabApply;
+ Speed4 : ABLintabApply;
+END_VAR
+
+PROCESS_ALGORITHM paMeasurePressure ON TaskInject(1000) AUTOSTART
+
+
+VAR_TEMP
+ b : BOOL;
+END_VAR
+
+VAR
+ abPressureMeasure : ABMeasureAI;
+ abSysPressureMeasure : ABMeasureAI;
+ bSysPresSensorAvailable : BOOL;
+ sEndPoint : STRING(64);
+END_VAR
+
+(* IecGraph-Code *)
+
+(* init step *)
+INITIAL_STEP S_Start:
+ACheckPressSensorAvailable (P);
+END_STEP
+
+
+(* steps *)
+STEP S_CheckSysPressure:
+ACheckSysPressSensor (P);
+END_STEP
+
+STEP S_Stop:
+AStop (P);
+END_STEP
+
+ACTION AStop: #BEGIN_EDIT_BLOCK
+STOP_PROCESS_ALGORITHM();
+  
+
+;#END_EDIT_BLOCK END_ACTION (*AStop*)
+STEP S_InitSysPressure:
+Action8 (N);
+AInitMeasureSysPressure (P);
+END_STEP
+
+ACTION Action8: #BEGIN_EDIT_BLOCK
+sEndPoint := CONCAT(GET_MY_FU_NAME(),".ai_SysPressure");
+
+;#END_EDIT_BLOCK END_ACTION (*Action8*)
+STEP S_MeasureSysPressure:
+AMeasureSysPress (N);
+END_STEP
+
+STEP S_Init:
+Action9 (N);
+AInitMeasureBlock (P);
+END_STEP
+
+ACTION Action9: #BEGIN_EDIT_BLOCK
+sEndPoint := CONCAT(GET_MY_FU_NAME(),".ai_Pressure");
+
+;#END_EDIT_BLOCK END_ACTION (*Action9*)
+STEP S_Measure:
+AMeasure (N);
+END_STEP
+
+
+(* transitions *)
+TRANSITION TLinked (* TLinked *) FROM S_Start TO S_Init :=  #BEGIN_EDIT_BLOCK
+sv_bPressureSensorAvailable
+;#END_EDIT_BLOCK
+END_TRANSITION
+
+TRANSITION TNotLinked (* TNotLinked *) FROM S_Start TO S_CheckSysPressure :=  #BEGIN_EDIT_BLOCK
+NOT sv_bPressureSensorAvailable
+;#END_EDIT_BLOCK
+END_TRANSITION
+
+TRANSITION TSysPressLinked (* TSysPressLinked *) FROM S_CheckSysPressure TO S_InitSysPressure :=  #BEGIN_EDIT_BLOCK
+bSysPresSensorAvailable
+;#END_EDIT_BLOCK
+END_TRANSITION
+
+TRANSITION TSysPressNotLinked (* TSysPressNotLinked *) FROM S_CheckSysPressure TO S_Stop :=  #BEGIN_EDIT_BLOCK
+NOT bSysPresSensorAvailable
+;#END_EDIT_BLOCK
+END_TRANSITION
+
+TRANSITION TStop (* TStop *) FROM S_Stop TO S_Start :=  #BEGIN_EDIT_BLOCK
+TRUE
+;#END_EDIT_BLOCK
+END_TRANSITION
+
+TRANSITION TSysPressInitDone (* TSysPressInitDone *) FROM S_InitSysPressure TO S_MeasureSysPressure :=  #BEGIN_EDIT_BLOCK
+TRUE
+;#END_EDIT_BLOCK
+END_TRANSITION
+
+TRANSITION TMeasureDone (* TMeasureDone *) FROM S_MeasureSysPressure TO S_MeasureSysPressure :=  #BEGIN_EDIT_BLOCK
+FALSE
+;#END_EDIT_BLOCK
+END_TRANSITION
+
+TRANSITION TInitDone (* TInitDone *) FROM S_Init TO S_Measure :=  #BEGIN_EDIT_BLOCK
+TRUE
+;#END_EDIT_BLOCK
+END_TRANSITION
+
+(* end IecGraph-Code *)
+(* sfc-code *)
+
+(* stand alone actions *)
+ACTION ACheckPressSensorAvailable: #BEGIN_EDIT_BLOCK
+sv_bPressureSensorAvailable := IS_LINKED(ai_Pressure);
+
+;#END_EDIT_BLOCK END_ACTION (*ACheckPressSensorAvailable*)
+ACTION ACheckSysPressSensor: #BEGIN_EDIT_BLOCK
+bSysPresSensorAvailable := IS_LINKED(ai_SysPressure);
+
+;#END_EDIT_BLOCK END_ACTION (*ACheckSysPressSensor*)
+ACTION AInitMeasureSysPressure: #BEGIN_EDIT_BLOCK
+(**************************************** WARNING ********************************************
+ *** The KEBA Kemro K2 System including software is not intended for safety control tasks! ***
+ ***                       For further information see Comment tab!                        ***
+ *********************************************************************************************)
+
+abSysPressureMeasure.aInit(sRawValue := sEndPoint,
+                           pLintabPointArray := @sv_SysPressureLintab.LintabPoints.Point,
+                           piUsedLintabPoints := @sv_SysPressureLintab.LintabPoints.uNoOfPoints,
+                           pInstanceCounter := @sv_InstanceCounter);
+    
+abSysPressureMeasure.aInitMonitoring(bEnable := sv_SysPresMonitorMeas.EnableMonitoring,
+                                     rLowLimit := sv_SysPresMonitorMeas.LowerLimit,
+                                     bLimitation := sv_SysPresMonitorMeas.Limitation,
+                                     rFailureFactor := sv_SysPresMonitorMeas.FailureFactor);
+
+abLintabApplyPres.aInit(pLintab := @sv_LintabOutFwdP);
+
+;#END_EDIT_BLOCK END_ACTION (*AInitMeasureSysPressure*)
+ACTION AMeasureSysPress: #BEGIN_EDIT_BLOCK
+(**************************************** WARNING ********************************************
+ *** The KEBA Kemro K2 System including software is not intended for safety control tasks! ***
+ ***                       For further information see Comment tab!                        ***
+ *********************************************************************************************)
+
+// sys pressure:
+abSysPressureMeasure.aRunLight(bIdle := sv_bDeviceReady AND sv_bValveServoInj1Ready,
+                               bSensorError => sv_bSysPressureSensorError);           
+b := WRITE_SVREAL_DIRECT(sv_rActPressureHydr, abSysPressureMeasure.aRunLight.rValue);
+b := WRITE_SVREAL_DIRECT(sv_rActSysPressure, sv_rActPressureHydr);
+
+
+
+// specific pressure:
+abLintabApplyPres.aCalcInv(rY := sv_rActPressureHydr);               
+b := WRITE_SVREAL_DIRECT(sv_rActPressure, abLintabApplyPres.aCalcInv.rX);
+
+;#END_EDIT_BLOCK END_ACTION (*AMeasureSysPress*)
+ACTION AInitMeasureBlock: #BEGIN_EDIT_BLOCK
+(**************************************** WARNING ********************************************
+ *** The KEBA Kemro K2 System including software is not intended for safety control tasks! ***
+ ***                       For further information see Comment tab!                        ***
+ *********************************************************************************************)
+
+abPressureMeasure.aInit(sRawValue := sEndPoint,
+                        pLintabPointArray := @sv_PressureLintab.LintabPoints.Point,
+                        piUsedLintabPoints := @sv_PressureLintab.LintabPoints.uNoOfPoints,
+                        pInstanceCounter := @sv_InstanceCounter);
+
+abPressureMeasure.aInitMonitoring(bEnable := sv_PresMonitorMeas.EnableMonitoring,
+                                  rLowLimit := sv_PresMonitorMeas.LowerLimit,
+                                  bLimitation := sv_PresMonitorMeas.Limitation,
+                                  rFailureFactor := sv_PresMonitorMeas.FailureFactor);
+
+abLintabApplyPres.aInit(pLintab := @sv_LintabOutFwdP);
+
+;#END_EDIT_BLOCK END_ACTION (*AInitMeasureBlock*)
+ACTION AMeasure: #BEGIN_EDIT_BLOCK
+(**************************************** WARNING ********************************************
+ *** The KEBA Kemro K2 System including software is not intended for safety control tasks! ***
+ ***                       For further information see Comment tab!                        ***
+ *********************************************************************************************)
+
+// pressure:
+abPressureMeasure.aRunLight(bIdle := sv_bDeviceReady AND sv_bValveServoInj1Ready,
+                            bSensorError => sv_bPressureSensorError);
+b := WRITE_SVREAL_DIRECT(sv_rActPressureHydr, abPressureMeasure.aRunLight.rValue);
+
+// specific pressure:
+abLintabApplyPres.aCalcInv(rY := sv_rActPressureHydr);
+b := WRITE_SVREAL_DIRECT(sv_rActPressure, abLintabApplyPres.aCalcInv.rX);
+
+;#END_EDIT_BLOCK END_ACTION (*AMeasure*)
+(* end sfc-code *)
+
+
+END_ALGORITHM
+
+PROCESS_ALGORITHM paMeasurePosition ON TaskInject(1000) AUTOSTART
+
+
+VAR_TEMP
+ rScrewVelocityAbs : REAL;
+ rScrewPositionAbs : REAL;
+ b : BOOL;
+END_VAR
+
+VAR
+ abPositionMeasure : ABMeasureAI;
+ rSize : REAL (* screw size in mm^2 *);
+ dCycleTime : TIME;
+ sEndPoint : STRING(64);
+ s : KSYS_Status;
+ prAnalogOutput : REFTO REAL;
+END_VAR
+
+(* IecGraph-Code *)
+
+(* init step *)
+INITIAL_STEP S_Start:
+END_STEP
+
+
+(* steps *)
+STEP S_Stop:
+AStop (P);
+END_STEP
+
+ACTION AStop: #BEGIN_EDIT_BLOCK
+STOP_PROCESS_ALGORITHM();
+
+;#END_EDIT_BLOCK END_ACTION (*AStop*)
+STEP S_Init:
+AInitMeasureBlock (P);
+END_STEP
+
+STEP S_Measure:
+AMeasure (N);
+END_STEP
+
+
+(* transitions *)
+TRANSITION TLinked (* TLinked *) FROM S_Start TO S_Init :=  #BEGIN_EDIT_BLOCK
+IS_LINKED(ai_Position)
+;#END_EDIT_BLOCK
+END_TRANSITION
+
+TRANSITION TNotLinked (* TNotLinked *) FROM S_Start TO S_Stop :=  #BEGIN_EDIT_BLOCK
+NOT IS_LINKED(ai_Position)
+;#END_EDIT_BLOCK
+END_TRANSITION
+
+TRANSITION TStop (* TStop *) FROM S_Stop TO S_Start :=  #BEGIN_EDIT_BLOCK
+TRUE
+;#END_EDIT_BLOCK
+END_TRANSITION
+
+TRANSITION TInitDone (* TInitDone *) FROM S_Init TO S_Measure :=  #BEGIN_EDIT_BLOCK
+TRUE
+;#END_EDIT_BLOCK
+END_TRANSITION
+
+(* end IecGraph-Code *)
+(* sfc-code *)
+
+(* stand alone actions *)
+ACTION AMeasure: #BEGIN_EDIT_BLOCK
+(**************************************** WARNING ********************************************
+ *** The KEBA Kemro K2 System including software is not intended for safety control tasks! ***
+ ***                       For further information see Comment tab!                        ***
+ *********************************************************************************************)
+
+// calculate size of screw
+rSize := FCalcScrewSize(sv_rScrewDiameter);
+
+// position is multiplied by screw size to get volume position
+abPositionMeasure.aRun(bIdle := sv_bDeviceReady AND sv_bValveServoInj1Ready,
+                       rValue => rScrewPositionAbs,
+                       rVelocity => rScrewVelocityAbs,
+                       bSensorError => sv_bTransducerError);
+
+b := WRITE_SVREAL_DIRECT(sv_rScrewPositionAbs, rScrewPositionAbs);
+b := WRITE_SVREAL_DIRECT(sv_rScrewVelocityAbs, rScrewVelocityAbs);
+b := WRITE_SVREAL_DIRECT(sv_rScrewVelocity, (abPositionMeasure.aRun.rVelocity * rSize) / 1000.0);
+b := WRITE_SVREAL_DIRECT(sv_rScrewVelocityEstimateAbs, abPositionMeasure.aRun.rDiffValueEstimate * -1.0);
+
+// calculate specific screw position from absolute
+b := WRITE_SVREAL_DIRECT(sv_rScrewPosition, (sv_rScrewPositionAbs * rSize) / 1000.0);
+
+;#END_EDIT_BLOCK END_ACTION (*AMeasure*)
+ACTION AInitMeasureBlock: #BEGIN_EDIT_BLOCK
+(**************************************** WARNING ********************************************
+ *** The KEBA Kemro K2 System including software is not intended for safety control tasks! ***
+ ***                       For further information see Comment tab!                        ***
+ *********************************************************************************************)
+
+dCycleTime := GET_TASK_INTERVAL();
+sv_DerivationEstimateParam.dMeasCycleTime := dCycleTime;
+IF dCycleTime = T#2ms THEN
+   sv_DerivationEstimateParam.dT := T#60ms;
+ELSE
+   sv_DerivationEstimateParam.dT := MULTIME(dCycleTime,20);
+END_IF;
+
+prAnalogOutput := GET_SYNC_REFTO('ValveServoInj1.ao_Servo', T#0s, s);
+IF (s = KSYS_Status_OK) THEN
+   //activate derivation estimator if inject servovalve is available
+   sv_DerivationEstimateParam.bUseDerivationEstimator := TRUE;
+END_IF;
+
+sEndPoint := CONCAT(GET_MY_FU_NAME(),".ai_Position");
+
+abPositionMeasure.aInit(sRawValue := sEndPoint,
+                        pLintabPointArray := @sv_ScrewLintab.LintabPoints.Point,
+                        piUsedLintabPoints := @sv_ScrewLintab.LintabPoints.uNoOfPoints,
+                        pInstanceCounter := @sv_InstanceCounter,
+                        pDerivationEstimateParam := @sv_DerivationEstimateParam);
+
+abPositionMeasure.aInitMonitoring(bEnable := sv_ScrewMonitorMeas.EnableMonitoring,
+                                  rLowLimit := sv_ScrewMonitorMeas.LowerLimit,
+                                  bLimitation := sv_ScrewMonitorMeas.Limitation,
+                                  rFailureFactor := sv_ScrewMonitorMeas.FailureFactor);
+
+;#END_EDIT_BLOCK END_ACTION (*AInitMeasureBlock*)
+(* end sfc-code *)
+
+
+END_ALGORITHM
+
+PROCESS_ALGORITHM paMeasureSysPressure ON TaskInject(1000) AUTOSTART
+
+
+VAR_TEMP
+ b : BOOL;
+END_VAR
+
+VAR
+ abPressureMeasure : ABMeasureAI;
+ sEndPoint : STRING(99);
+ bPressureSensorAvailable : BOOL;
+END_VAR
+
+(* IecGraph-Code *)
+
+(* init step *)
+INITIAL_STEP S_Start:
+ACheckAvailableSensors (P);
+END_STEP
+
+
+(* steps *)
+STEP S_Stop:
+AStop (P);
+END_STEP
+
+ACTION AStop: #BEGIN_EDIT_BLOCK
+STOP_PROCESS_ALGORITHM();
+  
+
+;#END_EDIT_BLOCK END_ACTION (*AStop*)
+STEP S_Init:
+Action6 (N);
+AInitMeasureBlock (P);
+END_STEP
+
+ACTION Action6: #BEGIN_EDIT_BLOCK
+sEndPoint := CONCAT(GET_MY_FU_NAME(),".ai_SysPressure");
+
+;#END_EDIT_BLOCK END_ACTION (*Action6*)
+STEP S_Measure:
+AMeasure (N);
+END_STEP
+
+
+(* transitions *)
+TRANSITION TLinked (* TLinked *) FROM S_Start TO S_Init :=  #BEGIN_EDIT_BLOCK
+sv_bSysPressureSensorAvailable AND
+bPressureSensorAvailable
+;#END_EDIT_BLOCK
+END_TRANSITION
+
+TRANSITION TNotLinked (* TNotLinked *) FROM S_Start TO S_Stop :=  #BEGIN_EDIT_BLOCK
+NOT (sv_bSysPressureSensorAvailable AND
+     bPressureSensorAvailable)
+;#END_EDIT_BLOCK
+END_TRANSITION
+
+TRANSITION TStop (* TStop *) FROM S_Stop TO S_Start :=  #BEGIN_EDIT_BLOCK
+TRUE
+;#END_EDIT_BLOCK
+END_TRANSITION
+
+TRANSITION TInitDone (* TInitDone *) FROM S_Init TO S_Measure :=  #BEGIN_EDIT_BLOCK
+TRUE
+;#END_EDIT_BLOCK
+END_TRANSITION
+
+(* end IecGraph-Code *)
+(* sfc-code *)
+
+(* stand alone actions *)
+ACTION ACheckAvailableSensors: #BEGIN_EDIT_BLOCK
+// use systempressure sensor only if injectpressure sensor is available
+sv_bSysPressureSensorAvailable := IS_LINKED(ai_SysPressure);
+bPressureSensorAvailable := IS_LINKED(ai_Pressure);
+
+;#END_EDIT_BLOCK END_ACTION (*ACheckAvailableSensors*)
+ACTION AInitMeasureBlock: #BEGIN_EDIT_BLOCK
+(**************************************** WARNING ********************************************
+ *** The KEBA Kemro K2 System including software is not intended for safety control tasks! ***
+ ***                       For further information see Comment tab!                        ***
+ *********************************************************************************************)
+
+abPressureMeasure.aInit(sRawValue := sEndPoint,
+                        pLintabPointArray := @sv_SysPressureLintab.LintabPoints.Point,
+                        piUsedLintabPoints := @sv_SysPressureLintab.LintabPoints.uNoOfPoints,
+                        pInstanceCounter := @sv_InstanceCounter);
+
+abPressureMeasure.aInitMonitoring(bEnable := sv_SysPresMonitorMeas.EnableMonitoring,
+                                  rLowLimit := sv_SysPresMonitorMeas.LowerLimit,
+                                  bLimitation := sv_SysPresMonitorMeas.Limitation,
+                                  rFailureFactor := sv_SysPresMonitorMeas.FailureFactor);
+
+;#END_EDIT_BLOCK END_ACTION (*AInitMeasureBlock*)
+ACTION AMeasure: #BEGIN_EDIT_BLOCK
+(**************************************** WARNING ********************************************
+ *** The KEBA Kemro K2 System including software is not intended for safety control tasks! ***
+ ***                       For further information see Comment tab!                        ***
+ *********************************************************************************************)
+
+abPressureMeasure.aRunLight(bIdle := sv_bDeviceReady AND sv_bValveServoInj1Ready,
+                            bSensorError => sv_bSysPressureSensorError);
+
+b := WRITE_SVREAL_DIRECT(sv_rActSysPressure, abPressureMeasure.aRunLight.rValue);
+
+;#END_EDIT_BLOCK END_ACTION (*AMeasure*)
+(* end sfc-code *)
+
+
+END_ALGORITHM
+
+POSTUPDATE_ALGORITHM pInjectActive ON PU_Task_7 WITH sv_bInjectActive
+
+#BEGIN_EDIT_BLOCK
+(**************************************** WARNING ********************************************
+ *** The KEBA Kemro K2 System including software is not intended for safety control tasks! ***
+ ***                       For further information see Comment tab!                        ***
+ *********************************************************************************************)
+
+IF sv_bInjectActive THEN
+   //starting peakvalue measurement
+   START_PROCESS_ALGORITHM(paPeakMeasure);
+END_IF;
+
+
+;#END_EDIT_BLOCK END_ALGORITHM
+
+PROCESS_ALGORITHM paPeakMeasure ON TaskInject(2000)
+
+
+VAR
+ fbPeakVelocity : FBPeakMeasure;
+ fbPeakPressure : FBPeakMeasure;
+ fbPeakPosition : FBPeakMeasure;
+ dStopMeasureDelayTime : TIME := T#50ms;
+ rInjPeakPosition : REAL;
+ rInjPeakVelocity : REAL;
+ rInjPeakPressure : REAL;
+END_VAR
+
+(* IecGraph-Code *)
+
+(* init step *)
+INITIAL_STEP MEASURE:
+AReset (P);
+APeak (N);
+END_STEP
+
+ACTION AReset: #BEGIN_EDIT_BLOCK
+fbPeakVelocity(bReset := TRUE, rActVal := sv_rScrewVelocity);
+fbPeakPressure(bReset := TRUE, rActVal := sv_rActPressure);
+fbPeakPosition(bReset := TRUE, rActVal := sv_rScrewPosition);
+
+;#END_EDIT_BLOCK END_ACTION (*AReset*)
+
+(* steps *)
+STEP S_DelayStop:
+APeak (N);
+ACopyToSVs (P0);
+END_STEP
+
+ACTION ACopyToSVs: #BEGIN_EDIT_BLOCK
+sv_rInjPeakPosition := rInjPeakPosition;
+sv_rInjPeakPressure := rInjPeakPressure;
+sv_rInjPeakVelocity := rInjPeakVelocity;
+
+;#END_EDIT_BLOCK END_ACTION (*ACopyToSVs*)
+STEP STOP:
+AStopAlgo (P);
+END_STEP
+
+ACTION AStopAlgo: #BEGIN_EDIT_BLOCK
+STOP_PROCESS_ALGORITHM();
+
+;#END_EDIT_BLOCK END_ACTION (*AStopAlgo*)
+
+(* transitions *)
+TRANSITION TInjectFinished (* TInjectFinished *) FROM MEASURE TO S_DelayStop :=  #BEGIN_EDIT_BLOCK
+NOT sv_bInjectActive
+;#END_EDIT_BLOCK
+END_TRANSITION
+
+TRANSITION TDelayFinished (* TDelayFinished *) FROM S_DelayStop TO STOP :=  #BEGIN_EDIT_BLOCK
+//delay for stopping measurement
+//because actual position still changes a little bit
+S_DelayStop.T > dStopMeasureDelayTime
+;#END_EDIT_BLOCK
+END_TRANSITION
+
+TRANSITION TNextMeasurement (* TNextMeasurement *) FROM STOP TO MEASURE :=  #BEGIN_EDIT_BLOCK
+TRUE
+;#END_EDIT_BLOCK
+END_TRANSITION
+
+(* end IecGraph-Code *)
+(* sfc-code *)
+
+(* stand alone actions *)
+ACTION APeak: #BEGIN_EDIT_BLOCK
+
+fbPeakVelocity ( 
+   rActVal := sv_rScrewVelocity,
+   bTrigger := TRUE,
+   bReset := FALSE,
+   bMinMax := FALSE,
+   rPeakVal => rInjPeakVelocity
+);
+
+
+fbPeakPressure ( 
+   rActVal := sv_rActPressure,
+   bTrigger := TRUE,
+   bReset := FALSE,
+   bMinMax := FALSE,
+   rPeakVal => rInjPeakPressure
+);
+
+
+fbPeakPosition ( 
+   rActVal := sv_rScrewPosition,
+   bTrigger := TRUE,
+   bReset := FALSE,
+   bMinMax := TRUE,
+   rPeakVal => rInjPeakPosition
+);
+
+;#END_EDIT_BLOCK END_ACTION (*APeak*)
+(* end sfc-code *)
+
+
+END_ALGORITHM
+
+PROCESS_ALGORITHM paMeasurePressSpeedPump ON TaskAnalog(1000)
+
+
+VAR_TEMP
+ b : BOOL;
+END_VAR
+
+(* IecGraph-Code *)
+
+(* init step *)
+INITIAL_STEP S_Start:
+END_STEP
+
+
+(* steps *)
+STEP S_Init:
+AInitMeasureBlock (P);
+END_STEP
+
+STEP S_Measure:
+AMeasure (N);
+ACopyPressValue (N);
+END_STEP
+
+
+(* transitions *)
+TRANSITION TStart (* TLinked *) FROM S_Start TO S_Init :=  #BEGIN_EDIT_BLOCK
+TRUE
+
+;#END_EDIT_BLOCK
+END_TRANSITION
+
+TRANSITION TInitDone (* TInitDone *) FROM S_Init TO S_Measure :=  #BEGIN_EDIT_BLOCK
+TRUE
+;#END_EDIT_BLOCK
+END_TRANSITION
+
+(* end IecGraph-Code *)
+(* sfc-code *)
+
+(* stand alone actions *)
+ACTION ACopyPressValue: #BEGIN_EDIT_BLOCK
+(**************************************** WARNING ********************************************
+ *** The KEBA Kemro K2 System including software is not intended for safety control tasks! ***
+ ***                       For further information see Comment tab!                        ***
+ *********************************************************************************************)
+
+//copy press value 
+b := WRITE_SVREAL_DIRECT(sv_rActPressureHydr, mprActPresssureHydr^);
+
+;#END_EDIT_BLOCK END_ACTION (*ACopyPressValue*)
+ACTION AMeasure: #BEGIN_EDIT_BLOCK
+(**************************************** WARNING ********************************************
+ *** The KEBA Kemro K2 System including software is not intended for safety control tasks! ***
+ ***                       For further information see Comment tab!                        ***
+ *********************************************************************************************)
+
+abLintabApplyPres.aCalcInv(rY := mprActPresssureHydr^); 
+b := WRITE_SVREAL_DIRECT(sv_rActPressure, abLintabApplyPres.aCalcInv.rX);
+
+;#END_EDIT_BLOCK END_ACTION (*AMeasure*)
+ACTION AInitMeasureBlock: #BEGIN_EDIT_BLOCK
+(**************************************** WARNING ********************************************
+ *** The KEBA Kemro K2 System including software is not intended for safety control tasks! ***
+ ***                       For further information see Comment tab!                        ***
+ *********************************************************************************************)
+
+//initialize applying of pressure specifix/absolute calculation lintab
+abLintabApplyPres.aInit(pLintab := @sv_LintabOutFwdP);
+
+;#END_EDIT_BLOCK END_ACTION (*AInitMeasureBlock*)
+(* end sfc-code *)
+
+
+END_ALGORITHM
+
+PROCESS_ALGORITHM paInitMeasureSpeedPump ON TaskMid AUTOSTART
+
+
+VAR
+ s : KSYS_Status;
+ pOptions : REFTO tOptionId;
+END_VAR
+#BEGIN_EDIT_BLOCK
+(**************************************** WARNING ********************************************
+ *** The KEBA Kemro K2 System including software is not intended for safety control tasks! ***
+ ***                       For further information see Comment tab!                        ***
+ *********************************************************************************************)
+
+mprActPresssureHydr := GET_SYNC_REFTO('Pump1.sv_rActPressureHydr',T#0ms, s);   
+pOptions := GET_SYNC_REFTO('Pump1.sv_Options',T#0ms, s);               //get the pointer to option of pump
+
+//Check if the speed pump exists
+IF (pOptions <> EMPTY) AND ((pOptions^ = 16#101) OR (pOptions^ = 16#103) OR (pOptions^ = 16#105)) AND NOT (IS_LINKED(ai_Pressure)) THEN   
+    START_PROCESS_ALGORITHM(paMeasurePressSpeedPump); 
+END_IF;  
+
+STOP_PROCESS_ALGORITHM();
+
+
+;#END_EDIT_BLOCK END_ALGORITHM
+
+PROCESS_ALGORITHM paInitDebugMeasurement ON TaskSlow AUTOSTART
+
+
+VAR
+ fuName : STRING(255);
+ variableName : STRING(255);
+ swoState : KSWO_Status;
+ b : BOOL;
+END_VAR
+#BEGIN_EDIT_BLOCK
+(**************************************** WARNING ********************************************
+ *** The KEBA Kemro K2 System including software is not intended for safety control tasks! ***
+ ***                       For further information see Comment tab!                        ***
+ *********************************************************************************************)
+
+fuName := GET_MY_FU_NAME();
+variableName := CONCAT(fuName,'.ScrewPosition ccm');
+swoState := KSWO_AddVariable(Task := TaskInject,
+                             Name := variableName,
+                             Variable := sv_rScrewPosition);    
+b := FAddToScopeGroup(Task := TaskInject, 
+                      Name := variableName, 
+                      GroupId := cScopeGroupInject);
+variableName := CONCAT(fuName,'.ActVelocity ccm/s');
+swoState := KSWO_AddVariable(Task := TaskInject,
+                             Name := variableName,
+                             Variable := sv_rScrewVelocity);
+b := FAddToScopeGroup(Task := TaskInject, 
+                      Name := variableName, 
+                      GroupId := cScopeGroupInject);
+variableName := CONCAT(fuName,'.ScrewPosition mm');
+swoState := KSWO_AddVariable(Task := TaskInject,
+                             Name := variableName,
+                             Variable := sv_rScrewPositionAbs);        
+variableName := CONCAT(fuName,'.ActVelocity mm/s');
+swoState := KSWO_AddVariable(Task := TaskInject,
+                             Name := variableName,
+                             Variable := sv_rScrewVelocityAbs);
+variableName := CONCAT(fuName,'.ActPressure bar');
+swoState := KSWO_AddVariable(Task := TaskInject,
+                             Name := variableName,
+                             Variable := sv_rActPressure);
+b := FAddToScopeGroup(Task := TaskInject, 
+                      Name := variableName, 
+                      GroupId := cScopeGroupInject);
+
+STOP_PROCESS_ALGORITHM();
+
+
+;#END_EDIT_BLOCK END_ALGORITHM
+
+PROCESS_ALGORITHM paSpeed ON TaskAnalog AUTOSTART
+
+#BEGIN_EDIT_BLOCK
+//sv_Lintab1.pLintab := @sv_Lintab10;
+Speed1.aInit(pLintab := sv_Lintab1.pLintab);
+Speed1.aCalc(rX :=ai_0,
+            rY => sv_speed1);
+//sv_Lintab2.pLintab := @sv_Lintab20;
+//Speed2.aInit(pLintab := sv_Lintab2.pLintab);
+Speed2.aCalc(rX :=ai_1,
+            rY => sv_speed2);
+//Speed3.aInit(pLintab := sv_Lintab3.pLintab);
+Speed3.aCalc(rX :=ai_2,
+            rY => sv_speed3);
+//sv_Lintab4.pLintab := @sv_Lintab40;
+//Speed4.aInit(pLintab := sv_Lintab4.pLintab);
+Speed4.aCalc(rX :=ai_3,
+            rY => sv_speed4);
+
+
+;#END_EDIT_BLOCK END_ALGORITHM
+
+PROCESS_ALGORITHM paSpeedInit ON TaskAnalog AUTOSTART
+
+#BEGIN_EDIT_BLOCK
+Speed1.aInit(pLintab := sv_Lintab1.pLintab);
+Speed2.aInit(pLintab := sv_Lintab2.pLintab);
+Speed3.aInit(pLintab := sv_Lintab3.pLintab);
+Speed4.aInit(pLintab := sv_Lintab4.pLintab);
+STOP_PROCESS_ALGORITHM();
+
+
+;#END_EDIT_BLOCK END_ALGORITHM
+
+
+
+END_ALGORITHM_BLOCK
+
+
+
+#END_OF_IEC_PART
+
+@Puma @IecEditor 6 113 @Pou 25 
+@@@BEG_Comment@@@
+
+@@@END_Comment@@@
+
+@BEG_Contents 
+
+@BEG_Func 
+@RT(17)FuncTreeContainer 
+8 
+@Var @RT(17)GET_TASK_INTERVAL @RT(0) @T @T @DERIVED 0 @F @RT(22)KEBA_STANDARD_FUNCTION @F 
+@T 
+@BEG_Attrib 
+0 @RT(0) @RT(0) 
+@END_Attrib 
+1 1 @F @F @F @F 
+
+@Var @RT(14)FCalcScrewSize @RT(0) @T @T @DERIVED 0 @F @RT(8)FUNCTION @F 
+@T 
+@BEG_Attrib 
+0 @RT(0) @RT(0) 
+@END_Attrib 
+1 1 @F @F @F @F 
+
+@Var @RT(14)GET_MY_FU_NAME @RT(0) @T @T @DERIVED 0 @F @RT(22)KEBA_STANDARD_FUNCTION @F 
+@T 
+@BEG_Attrib 
+0 @RT(0) @RT(0) 
+@END_Attrib 
+1 1 @F @F @F @F 
+
+@Var @RT(14)GET_SYNC_REFTO @RT(0) @T @T @DERIVED 0 @F @RT(22)KEBA_STANDARD_FUNCTION @F 
+@T 
+@BEG_Attrib 
+0 @RT(0) @RT(0) 
+@END_Attrib 
+1 1 @F @F @F @F 
+
+@Var @RT(23)START_PROCESS_ALGORITHM @RT(0) @T @T @DERIVED 0 @F @RT(23)KEBA_STANDARD_PROCEDURE @F 
+@T 
+@BEG_Attrib 
+0 @RT(0) @RT(0) 
+@END_Attrib 
+1 1 @F @F @F @F 
+
+@Var @RT(19)WRITE_SVREAL_DIRECT @RT(0) @T @T @DERIVED 0 @F @RT(22)KEBA_STANDARD_FUNCTION @F 
+@T 
+@BEG_Attrib 
+0 @RT(0) @RT(0) 
+@END_Attrib 
+1 1 @F @F @F @F 
+
+@Var @RT(16)FAddToScopeGroup @RT(0) @T @T @DERIVED 0 @F @RT(8)FUNCTION @F 
+@T 
+@BEG_Attrib 
+0 @RT(0) @RT(0) 
+@END_Attrib 
+1 1 @F @F @F @F 
+
+@Var @RT(9)IS_LINKED @RT(0) @T @T @DERIVED 0 @F @RT(22)KEBA_STANDARD_FUNCTION @F 
+@T 
+@BEG_Attrib 
+0 @RT(0) @RT(0) 
+@END_Attrib 
+1 1 @F @F @F @F 
+
+@END_Func 
+
+@BEG_Const 
+@RT(18)ConstTreeContainer 
+0 
+@END_Const 
+
+@BEG_Export 
+
+@BEG_Kind 
+@ALGORITHM_BLOCK @RT(9)ABMeasure @STRUCTURED_TEXT 
+@RT(0) @RT(0) @RT(0) 
+@END_Kind 
+
+@BEG_Dcl 
+@RT(16)DclTreeContainer 
+59 
+@Var @RT(17)sv_rScrewPosition @RT(0) @T @F @DT @RT(4)REAL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 8 @F @F @F @F 
+
+@Var @RT(17)sv_rScrewVelocity @RT(0) @T @F @DT @RT(4)REAL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 8 @F @F @F @F 
+
+@Var @RT(19)sv_rInjPeakPosition @RT(0) @T @F @DT @RT(4)REAL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(29)measured inject peak position @RT(0) 
+@END_Attrib 
+1 8 @F @F @F @F 
+
+@Var @RT(19)sv_rInjPeakPressure @RT(0) @T @F @DT @RT(4)REAL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(29)measured inject peak pressure @RT(0) 
+@END_Attrib 
+1 8 @F @F @F @F 
+
+@Var @RT(19)sv_rInjPeakVelocity @RT(0) @T @F @DT @RT(4)REAL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(29)measured inject peak velocity @RT(0) 
+@END_Attrib 
+1 8 @F @F @F @F 
+
+@Var @RT(27)sv_bPressureSensorAvailable @RT(0) @T @F @DT @RT(4)BOOL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 8 @F @F @F @F 
+
+@Var @RT(30)sv_bSysPressureSensorAvailable @RT(0) @T @F @DT @RT(4)BOOL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 8 @F @F @F @F 
+
+@Var @RT(11)ai_Position @RT(0) @T @F @DT @RT(4)REAL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(29)raw value of screw transducer @RT(0) 
+@END_Attrib 
+1 8 @F @F @F @F 
+
+@Var @RT(11)ai_Pressure @RT(0) @T @F @DT @RT(4)REAL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(28)raw value of pressure sensor @RT(0) 
+@END_Attrib 
+1 8 @F @F @F @F 
+
+@Var @RT(14)ai_SysPressure @RT(0) @T @F @DT @RT(4)REAL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(35)raw value of system pressure sensor @RT(0) 
+@END_Attrib 
+1 8 @F @F @F @F 
+
+@Var @RT(14)sv_ScrewLintab @RT(0) @T @T @DERIVED 0 @T @T @DT @RT(19)KAPPL_LintabData_2P @RT(0) @T @T @UNKNOWN 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 8 @F @F @F @F 
+
+@Var @RT(17)sv_PressureLintab @RT(0) @T @T @DERIVED 0 @T @T @DT @RT(19)KAPPL_LintabData_2P @RT(0) @T @T @UNKNOWN 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 8 @F @F @F @F 
+
+@Var @RT(20)sv_SysPressureLintab @RT(0) @T @T @DERIVED 0 @T @T @DT @RT(19)KAPPL_LintabData_2P @RT(0) @T @T @UNKNOWN 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 8 @F @F @F @F 
+
+@Var @RT(19)sv_bTransducerError @RT(0) @T @F @DT @RT(4)BOOL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 8 @F @F @F @F 
+
+@Var @RT(23)sv_bPressureSensorError @RT(0) @T @F @DT @RT(4)BOOL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 8 @F @F @F @F 
+
+@Var @RT(26)sv_bSysPressureSensorError @RT(0) @T @F @DT @RT(4)BOOL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 8 @F @F @F @F 
+
+@Var @RT(17)sv_rScrewDiameter @RT(0) @T @F @DT @RT(4)REAL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 8 @F @F @F @F 
+
+@Var @RT(19)sv_rActPressureHydr @RT(0) @T @F @DT @RT(4)REAL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 8 @F @F @F @F 
+
+@Var @RT(18)sv_rActSysPressure @RT(0) @T @F @DT @RT(4)REAL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 8 @F @F @F @F 
+
+@Var @RT(20)sv_rScrewPositionAbs @RT(0) @T @F @DT @RT(4)REAL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 8 @F @F @F @F 
+
+@Var @RT(16)sv_bInjectActive @RT(0) @T @F @DT @RT(4)BOOL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(19)Injection is active @RT(0) 
+@END_Attrib 
+1 8 @F @F @F @F 
+
+@Var @RT(26)sv_DerivationEstimateParam @RT(0) @T @T @DERIVED 0 @T @T @DT @RT(25)tsDerivationEstimateParam @RT(0) @T @T @UNKNOWN 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 8 @F @F @F @F 
+
+@Var @RT(28)sv_rScrewVelocityEstimateAbs @RT(0) @T @F @DT @RT(4)REAL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 8 @F @F @F @F 
+
+@Var @RT(15)sv_bDeviceReady @RT(0) @T @F @DT @RT(4)BOOL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 8 @F @F @F @F 
+
+@Var @RT(23)sv_bValveServoInj1Ready @RT(0) @T @F @DT @RT(4)BOOL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 8 @F @F @F @F 
+
+@Var @RT(15)sv_rActPressure @RT(0) @T @F @DT @RT(4)REAL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 8 @F @F @F @F 
+
+@Var @RT(20)sv_rScrewVelocityAbs @RT(0) @T @F @DT @RT(4)REAL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 8 @F @F @F @F 
+
+@Var @RT(21)sv_SysPresMonitorMeas @RT(0) @T @T @DERIVED 0 @T @T @DT @RT(23)KAPPL_MeasureMonitoring @RT(0) @T @T @UNKNOWN 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 8 @F @F @F @F 
+
+@Var @RT(18)sv_PresMonitorMeas @RT(0) @T @T @DERIVED 0 @T @T @DT @RT(23)KAPPL_MeasureMonitoring @RT(0) @T @T @UNKNOWN 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 8 @F @F @F @F 
+
+@Var @RT(19)sv_ScrewMonitorMeas @RT(0) @T @T @DERIVED 0 @T @T @DT @RT(23)KAPPL_MeasureMonitoring @RT(0) @T @T @UNKNOWN 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 8 @F @F @F @F 
+
+@Var @RT(16)sv_LintabOutFwdP @RT(0) @T @T @DERIVED 0 @T @T @DT @RT(16)KAPPL_LintabData @RT(0) @T @T @UNKNOWN 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 8 @F @F @F @F 
+
+@Var @RT(18)sv_InstanceCounter @RT(0) @T @F @DT @RT(3)INT @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 8 @F @F @F @F 
+
+@Var @RT(10)TaskInject @RT(0) @T @F @DT @RT(4)TASK @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 7 @F @F @F @F 
+
+@Var @RT(7)TaskMid @RT(0) @T @T @RENAMED 0 @T @T @DT @RT(4)TASK @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 7 @F @F @F @F 
+
+@Var @RT(9)PU_Task_7 @RT(0) @T @F @DT @RT(4)TASK @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 7 @F @F @F @F 
+
+@Var @RT(8)TaskSlow @RT(0) @T @T @RENAMED 0 @T @T @DT @RT(4)TASK @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 7 @F @F @F @F 
+
+@Var @RT(17)abLintabApplyPres @RT(0) @T @T @DERIVED 0 @T @T @DT @RT(13)ABLintabApply @RT(0) @T @T @UNKNOWN 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(19)mprActPresssureHydr @RT(0) @T @T @REFTO 0 @T @DT @RT(4)REAL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(10)TaskAnalog @RT(0) @T @T @RENAMED 0 @T @T @DT @RT(4)TASK @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 7 @F @F @F @F 
+
+@Var @RT(9)sv_speed1 @RT(0) @T @F @DT @RT(4)REAL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 8 @F @F @F @F 
+
+@Var @RT(9)sv_speed2 @RT(0) @T @F @DT @RT(4)REAL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 8 @F @F @F @F 
+
+@Var @RT(9)sv_speed3 @RT(0) @T @F @DT @RT(4)REAL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 8 @F @F @F @F 
+
+@Var @RT(9)sv_speed4 @RT(0) @T @F @DT @RT(4)REAL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 8 @F @F @F @F 
+
+@Var @RT(4)ai_0 @RT(0) @T @F @DT @RT(4)REAL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 8 @F @F @F @F 
+
+@Var @RT(4)ai_1 @RT(0) @T @F @DT @RT(4)REAL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 8 @F @F @F @F 
+
+@Var @RT(4)ai_2 @RT(0) @T @F @DT @RT(4)REAL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 8 @F @F @F @F 
+
+@Var @RT(4)ai_3 @RT(0) @T @F @DT @RT(4)REAL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 8 @F @F @F @F 
+
+@Var @RT(6)Speed1 @RT(0) @T @T @DERIVED 0 @F @RT(13)ABLintabApply @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(6)Speed2 @RT(0) @T @T @DERIVED 0 @T @T @DT @RT(13)ABLintabApply @RT(0) @T @T @UNKNOWN 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(6)Speed3 @RT(0) @T @T @DERIVED 0 @T @T @DT @RT(13)ABLintabApply @RT(0) @T @T @UNKNOWN 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(6)Speed4 @RT(0) @T @T @DERIVED 0 @T @T @DT @RT(13)ABLintabApply @RT(0) @T @T @UNKNOWN 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(10)sv_Lintab1 @RT(0) @T @T @DERIVED 0 @T @T @DT @RT(15)tsCalibMovement @RT(0) @T @T @UNKNOWN 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 8 @F @F @F @F 
+
+@Var @RT(10)sv_Lintab2 @RT(0) @T @T @DERIVED 0 @F @RT(15)tsCalibMovement @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 8 @F @F @F @F 
+
+@Var @RT(10)sv_Lintab3 @RT(0) @T @T @DERIVED 0 @T @T @DT @RT(15)tsCalibMovement @RT(0) @T @T @UNKNOWN 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 8 @F @F @F @F 
+
+@Var @RT(10)sv_Lintab4 @RT(0) @T @T @DERIVED 0 @T @T @DT @RT(15)tsCalibMovement @RT(0) @T @T @UNKNOWN 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 8 @F @F @F @F 
+
+@Var @RT(11)sv_Lintab10 @RT(0) @T @T @DERIVED 0 @T @T @DT @RT(16)KAPPL_LintabData @RT(0) @T @T @UNKNOWN 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 8 @F @F @F @F 
+
+@Var @RT(11)sv_Lintab20 @RT(0) @T @T @DERIVED 0 @T @T @DT @RT(16)KAPPL_LintabData @RT(0) @T @T @UNKNOWN 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 8 @F @F @F @F 
+
+@Var @RT(11)sv_Lintab30 @RT(0) @T @T @DERIVED 0 @T @T @DT @RT(16)KAPPL_LintabData @RT(0) @T @T @UNKNOWN 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 8 @F @F @F @F 
+
+@Var @RT(11)sv_Lintab40 @RT(0) @T @T @DERIVED 0 @T @T @DT @RT(16)KAPPL_LintabData @RT(0) @T @T @UNKNOWN 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 8 @F @F @F @F 
+
+@END_Dcl 
+
+@END_Export 
+
+@BEG_Body 
+
+10 
+
+@BEG_Export 
+
+@BEG_Algo 
+@PROCESS_ALGORITHM @RT(17)paMeasurePressure @SEQUENTIAL_FLOW_CHART 
+@RT(0) @RT(0) @RT(16)TaskInject(1000) @T @F 
+@END_Algo 
+
+@BEG_Dcl 
+@RT(16)DclTreeContainer 
+5 
+@Var @RT(17)abPressureMeasure @RT(0) @T @T @DERIVED 0 @T @T @DT @RT(11)ABMeasureAI @RT(0) @T @T @UNKNOWN 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(20)abSysPressureMeasure @RT(0) @T @T @DERIVED 0 @T @T @DT @RT(11)ABMeasureAI @RT(0) @T @T @UNKNOWN 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(23)bSysPresSensorAvailable @RT(0) @T @F @DT @RT(4)BOOL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(9)sEndPoint @RT(0) @T @F @DT @RT(10)STRING(64) @RT(0) @T @T @STRING 0 @F @RT(2)64 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(1)b @RT(0) @T @F @DT @RT(4)BOOL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 4 @F @F @F @F 
+
+@END_Dcl 
+
+@END_Export 
+
+@BEG_Export 
+
+@BEG_Algo 
+@PROCESS_ALGORITHM @RT(17)paMeasurePosition @SEQUENTIAL_FLOW_CHART 
+@RT(0) @RT(0) @RT(16)TaskInject(1000) @T @F 
+@END_Algo 
+
+@BEG_Dcl 
+@RT(16)DclTreeContainer 
+9 
+@Var @RT(17)abPositionMeasure @RT(0) @T @T @DERIVED 0 @T @T @DT @RT(11)ABMeasureAI @RT(0) @T @T @UNKNOWN 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(5)rSize @RT(0) @T @F @DT @RT(4)REAL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(18)screw size in mm^2 @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(10)dCycleTime @RT(0) @T @F @DT @RT(4)TIME @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(9)sEndPoint @RT(0) @T @F @DT @RT(10)STRING(64) @RT(0) @T @T @STRING 0 @F @RT(2)64 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(17)rScrewVelocityAbs @RT(0) @T @F @DT @RT(4)REAL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 4 @F @F @F @F 
+
+@Var @RT(17)rScrewPositionAbs @RT(0) @T @F @DT @RT(4)REAL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 4 @F @F @F @F 
+
+@Var @RT(1)b @RT(0) @T @F @DT @RT(4)BOOL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 4 @F @F @F @F 
+
+@Var @RT(1)s @RT(0) @T @T @DERIVED 0 @T @T @DT @RT(11)KSYS_Status @RT(0) @T @T @UNKNOWN 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(14)prAnalogOutput @RT(0) @T @T @REFTO 0 @T @DT @RT(4)REAL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@END_Dcl 
+
+@END_Export 
+
+@BEG_Export 
+
+@BEG_Algo 
+@PROCESS_ALGORITHM @RT(20)paMeasureSysPressure @SEQUENTIAL_FLOW_CHART 
+@RT(0) @RT(0) @RT(16)TaskInject(1000) @T @F 
+@END_Algo 
+
+@BEG_Dcl 
+@RT(16)DclTreeContainer 
+4 
+@Var @RT(17)abPressureMeasure @RT(0) @T @T @DERIVED 0 @T @T @DT @RT(11)ABMeasureAI @RT(0) @T @T @UNKNOWN 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(9)sEndPoint @RT(0) @T @F @DT @RT(10)STRING(99) @RT(0) @T @T @STRING 0 @F @RT(2)99 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(1)b @RT(0) @T @F @DT @RT(4)BOOL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 4 @F @F @F @F 
+
+@Var @RT(24)bPressureSensorAvailable @RT(0) @T @F @DT @RT(4)BOOL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@END_Dcl 
+
+@END_Export 
+
+@BEG_Export 
+
+@BEG_Algo 
+@POSTUPDATE_ALGORITHM @RT(13)pInjectActive @STRUCTURED_TEXT 
+@RT(0) @RT(16)sv_bInjectActive @RT(9)PU_Task_7 @F @F 
+@END_Algo 
+
+@BEG_Dcl 
+@RT(16)DclTreeContainer 
+0 
+@END_Dcl 
+
+@END_Export 
+
+@BEG_Export 
+
+@BEG_Algo 
+@PROCESS_ALGORITHM @RT(13)paPeakMeasure @SEQUENTIAL_FLOW_CHART 
+@RT(0) @RT(0) @RT(16)TaskInject(2000) @F @F 
+@END_Algo 
+
+@BEG_Dcl 
+@RT(16)DclTreeContainer 
+7 
+@Var @RT(14)fbPeakVelocity @RT(0) @T @T @DERIVED 0 @T @T @DT @RT(13)FBPeakMeasure @RT(0) @T @T @UNKNOWN 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(14)fbPeakPressure @RT(0) @T @T @DERIVED 0 @T @T @DT @RT(13)FBPeakMeasure @RT(0) @T @T @UNKNOWN 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(14)fbPeakPosition @RT(0) @T @T @DERIVED 0 @T @T @DT @RT(13)FBPeakMeasure @RT(0) @T @T @UNKNOWN 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(21)dStopMeasureDelayTime @RT(0) @T @F @DT @RT(4)TIME @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(6)T#50ms @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(16)rInjPeakPosition @RT(0) @T @F @DT @RT(4)REAL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(16)rInjPeakVelocity @RT(0) @T @F @DT @RT(4)REAL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(16)rInjPeakPressure @RT(0) @T @F @DT @RT(4)REAL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@END_Dcl 
+
+@END_Export 
+
+@BEG_Export 
+
+@BEG_Algo 
+@PROCESS_ALGORITHM @RT(23)paMeasurePressSpeedPump @SEQUENTIAL_FLOW_CHART 
+@RT(0) @RT(0) @RT(16)TaskAnalog(1000) @F @F 
+@END_Algo 
+
+@BEG_Dcl 
+@RT(16)DclTreeContainer 
+1 
+@Var @RT(1)b @RT(0) @T @F @DT @RT(4)BOOL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 4 @F @F @F @F 
+
+@END_Dcl 
+
+@END_Export 
+
+@BEG_Export 
+
+@BEG_Algo 
+@PROCESS_ALGORITHM @RT(22)paInitMeasureSpeedPump @STRUCTURED_TEXT 
+@RT(0) @RT(0) @RT(7)TaskMid @T @F 
+@END_Algo 
+
+@BEG_Dcl 
+@RT(16)DclTreeContainer 
+2 
+@Var @RT(1)s @RT(0) @T @T @DERIVED 0 @T @T @DT @RT(11)KSYS_Status @RT(0) @T @T @UNKNOWN 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(8)pOptions @RT(0) @T @T @REFTO 0 @F @DERIVED 0 @T @T @DT @RT(9)tOptionId @RT(0) @T @T @UNKNOWN 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@END_Dcl 
+
+@END_Export 
+
+@BEG_Export 
+
+@BEG_Algo 
+@PROCESS_ALGORITHM @RT(22)paInitDebugMeasurement @STRUCTURED_TEXT 
+@RT(0) @RT(0) @RT(8)TaskSlow @T @F 
+@END_Algo 
+
+@BEG_Dcl 
+@RT(16)DclTreeContainer 
+4 
+@Var @RT(6)fuName @RT(0) @T @F @DT @RT(11)STRING(255) @RT(0) @T @T @STRING 0 @F @RT(3)255 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(12)variableName @RT(0) @T @F @DT @RT(11)STRING(255) @RT(0) @T @T @STRING 0 @F @RT(3)255 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(8)swoState @RT(0) @T @T @DERIVED 0 @T @T @DT @RT(11)KSWO_Status @RT(0) @T @T @UNKNOWN 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(1)b @RT(0) @T @F @DT @RT(4)BOOL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@END_Dcl 
+
+@END_Export 
+
+@BEG_Export 
+
+@BEG_Algo 
+@PROCESS_ALGORITHM @RT(7)paSpeed @STRUCTURED_TEXT 
+@RT(0) @RT(0) @RT(10)TaskAnalog @T @F 
+@END_Algo 
+
+@BEG_Dcl 
+@RT(16)DclTreeContainer 
+0 
+@END_Dcl 
+
+@END_Export 
+
+@BEG_Export 
+
+@BEG_Algo 
+@PROCESS_ALGORITHM @RT(11)paSpeedInit @STRUCTURED_TEXT 
+@RT(0) @RT(0) @RT(10)TaskAnalog @T @F 
+@END_Algo 
+
+@BEG_Dcl 
+@RT(16)DclTreeContainer 
+0 
+@END_Dcl 
+
+@END_Export 
+
+@BEG_SfcBody 
+17 14 18 
+
+@BEG_SfcData 2 
+@StepSeq @RT(4)sseq @F 5 
+@Step @RT(7)S_Start @F @T @T @F @RT(0) @F 
+@AcbCont @RT(7)unnamed @F 1 
+@Acb @RT(26)ACheckPressSensorAvailable @F @F @RT(1)P @RT(0) @F @F @F @F 
+
+@AltBranch @RT(3)alt @F 2 
+@TransSeq @RT(4)tseq @F 1 
+@Trans @RT(7)TLinked @F @T @F @F @T @T @TL(2)
+sv_bPressureSensorAvailable
+
+@RT(7)TLinked @F 
+
+@TransSeq @RT(4)tseq @F 8 
+@Trans @RT(10)TNotLinked @F @T @F @F @T @T @TL(2)
+NOT sv_bPressureSensorAvailable
+
+@RT(10)TNotLinked @F 
+@Step @RT(18)S_CheckSysPressure @F @F @F @F @RT(0) @F 
+@AcbCont @RT(7)unnamed @F 1 
+@Acb @RT(20)ACheckSysPressSensor @F @F @RT(1)P @RT(0) @F @F @F @F 
+
+@AltBranch @RT(3)alt @F 2 
+@TransSeq @RT(4)tseq @F 1 
+@Trans @RT(15)TSysPressLinked @F @T @F @F @T @T @TL(2)
+bSysPresSensorAvailable
+
+@RT(15)TSysPressLinked @F 
+
+@TransSeq @RT(4)tseq @F 4 
+@Trans @RT(18)TSysPressNotLinked @F @T @F @F @T @T @TL(2)
+NOT bSysPresSensorAvailable
+
+@RT(18)TSysPressNotLinked @F 
+@Step @RT(6)S_Stop @F @F @F @F @RT(0) @F 
+@AcbCont @RT(7)unnamed @F 1 
+@Acb @RT(5)AStop @F @T @RT(1)P @RT(0) @F @F @T @TL(3)
+STOP_PROCESS_ALGORITHM();
+  
+
+@F 
+
+@Trans @RT(5)TStop @F @T @F @F @T @T @TL(2)
+TRUE
+
+@RT(5)TStop @F 
+@Goto @RT(7)S_Start @F @F 
+
+
+@Step @RT(17)S_InitSysPressure @F @F @F @F @RT(0) @F 
+@AcbCont @RT(7)unnamed @F 2 
+@Acb @RT(7)Action8 @F @T @RT(1)N @RT(0) @F @F @T @TL(2)
+sEndPoint := CONCAT(GET_MY_FU_NAME(),".ai_SysPressure");
+
+@F 
+@Acb @RT(23)AInitMeasureSysPressure @F @F @RT(1)P @RT(0) @F @F @T @F 
+
+@Trans @RT(17)TSysPressInitDone @F @T @F @F @T @T @TL(2)
+TRUE
+
+@RT(17)TSysPressInitDone @F 
+@Step @RT(20)S_MeasureSysPressure @F @F @T @F @RT(0) @F 
+@AcbCont @RT(7)unnamed @F 1 
+@Acb @RT(16)AMeasureSysPress @F @F @RT(1)N @RT(0) @F @F @T @F 
+
+@Trans @RT(12)TMeasureDone @F @T @F @F @T @T @TL(2)
+FALSE
+
+@RT(12)TMeasureDone @F 
+@Goto @RT(20)S_MeasureSysPressure @F @F 
+
+
+@Step @RT(6)S_Init @F @F @F @F @RT(0) @F 
+@AcbCont @RT(7)unnamed @F 2 
+@Acb @RT(7)Action9 @F @T @RT(1)N @RT(0) @F @F @T @TL(2)
+sEndPoint := CONCAT(GET_MY_FU_NAME(),".ai_Pressure");
+
+@F 
+@Acb @RT(17)AInitMeasureBlock @F @F @RT(1)P @RT(0) @F @F @F @F 
+
+@Trans @RT(9)TInitDone @F @T @F @F @T @T @TL(2)
+TRUE
+
+@RT(9)TInitDone @F 
+@Step @RT(9)S_Measure @F @F @F @F @RT(0) @F 
+@AcbCont @RT(7)unnamed @F 1 
+@Acb @RT(8)AMeasure @F @F @RT(1)N @RT(0) @F @F @F @F 
+
+@END_SfcData 
+@SaActions 6 
+@SaText @RT(26)ACheckPressSensorAvailable 1 @TL(2)
+sv_bPressureSensorAvailable := IS_LINKED(ai_Pressure);
+
+
+@SaText @RT(20)ACheckSysPressSensor 1 @TL(2)
+bSysPresSensorAvailable := IS_LINKED(ai_SysPressure);
+
+
+@SaText @RT(23)AInitMeasureSysPressure 1 @TL(17)
+(**************************************** WARNING ********************************************
+ *** The KEBA Kemro K2 System including software is not intended for safety control tasks! ***
+ ***                       For further information see Comment tab!                        ***
+ *********************************************************************************************)
+
+abSysPressureMeasure.aInit(sRawValue := sEndPoint,
+                           pLintabPointArray := @sv_SysPressureLintab.LintabPoints.Point,
+                           piUsedLintabPoints := @sv_SysPressureLintab.LintabPoints.uNoOfPoints,
+                           pInstanceCounter := @sv_InstanceCounter);
+    
+abSysPressureMeasure.aInitMonitoring(bEnable := sv_SysPresMonitorMeas.EnableMonitoring,
+                                     rLowLimit := sv_SysPresMonitorMeas.LowerLimit,
+                                     bLimitation := sv_SysPresMonitorMeas.Limitation,
+                                     rFailureFactor := sv_SysPresMonitorMeas.FailureFactor);
+
+abLintabApplyPres.aInit(pLintab := @sv_LintabOutFwdP);
+
+
+@SaText @RT(16)AMeasureSysPress 1 @TL(17)
+(**************************************** WARNING ********************************************
+ *** The KEBA Kemro K2 System including software is not intended for safety control tasks! ***
+ ***                       For further information see Comment tab!                        ***
+ *********************************************************************************************)
+
+// sys pressure:
+abSysPressureMeasure.aRunLight(bIdle := sv_bDeviceReady AND sv_bValveServoInj1Ready,
+                               bSensorError => sv_bSysPressureSensorError);           
+b := WRITE_SVREAL_DIRECT(sv_rActPressureHydr, abSysPressureMeasure.aRunLight.rValue);
+b := WRITE_SVREAL_DIRECT(sv_rActSysPressure, sv_rActPressureHydr);
+
+
+
+// specific pressure:
+abLintabApplyPres.aCalcInv(rY := sv_rActPressureHydr);               
+b := WRITE_SVREAL_DIRECT(sv_rActPressure, abLintabApplyPres.aCalcInv.rX);
+
+
+@SaText @RT(17)AInitMeasureBlock 1 @TL(17)
+(**************************************** WARNING ********************************************
+ *** The KEBA Kemro K2 System including software is not intended for safety control tasks! ***
+ ***                       For further information see Comment tab!                        ***
+ *********************************************************************************************)
+
+abPressureMeasure.aInit(sRawValue := sEndPoint,
+                        pLintabPointArray := @sv_PressureLintab.LintabPoints.Point,
+                        piUsedLintabPoints := @sv_PressureLintab.LintabPoints.uNoOfPoints,
+                        pInstanceCounter := @sv_InstanceCounter);
+
+abPressureMeasure.aInitMonitoring(bEnable := sv_PresMonitorMeas.EnableMonitoring,
+                                  rLowLimit := sv_PresMonitorMeas.LowerLimit,
+                                  bLimitation := sv_PresMonitorMeas.Limitation,
+                                  rFailureFactor := sv_PresMonitorMeas.FailureFactor);
+
+abLintabApplyPres.aInit(pLintab := @sv_LintabOutFwdP);
+
+
+@SaText @RT(8)AMeasure 1 @TL(14)
+(**************************************** WARNING ********************************************
+ *** The KEBA Kemro K2 System including software is not intended for safety control tasks! ***
+ ***                       For further information see Comment tab!                        ***
+ *********************************************************************************************)
+
+// pressure:
+abPressureMeasure.aRunLight(bIdle := sv_bDeviceReady AND sv_bValveServoInj1Ready,
+                            bSensorError => sv_bPressureSensorError);
+b := WRITE_SVREAL_DIRECT(sv_rActPressureHydr, abPressureMeasure.aRunLight.rValue);
+
+// specific pressure:
+abLintabApplyPres.aCalcInv(rY := sv_rActPressureHydr);
+b := WRITE_SVREAL_DIRECT(sv_rActPressure, abLintabApplyPres.aCalcInv.rX);
+
+
+@SaTrans 0 
+@SaExits 0 
+@END_SfcBody 
+
+@@@BEG_Comment@@@ 
+@TL(0)
+
+@@@END_Comment@@@ 
+
+@BEG_SfcBody 
+6 6 5 
+
+@BEG_SfcData 2 
+@StepSeq @RT(4)sseq @F 5 
+@Step @RT(7)S_Start @F @T @T @F @RT(0) @F 
+@AcbCont @RT(7)unnamed @F 0 
+
+@AltBranch @RT(3)alt @F 2 
+@TransSeq @RT(4)tseq @F 1 
+@Trans @RT(7)TLinked @F @T @F @F @T @T @TL(2)
+IS_LINKED(ai_Position)
+
+@RT(7)TLinked @F 
+
+@TransSeq @RT(4)tseq @F 4 
+@Trans @RT(10)TNotLinked @F @T @F @F @T @T @TL(2)
+NOT IS_LINKED(ai_Position)
+
+@RT(10)TNotLinked @F 
+@Step @RT(6)S_Stop @F @F @F @F @RT(0) @F 
+@AcbCont @RT(7)unnamed @F 1 
+@Acb @RT(5)AStop @F @T @RT(1)P @RT(0) @F @F @T @TL(2)
+STOP_PROCESS_ALGORITHM();
+
+@F 
+
+@Trans @RT(5)TStop @F @T @F @F @T @T @TL(2)
+TRUE
+
+@RT(5)TStop @F 
+@Goto @RT(7)S_Start @F @F 
+
+
+@Step @RT(6)S_Init @F @F @F @F @RT(0) @F 
+@AcbCont @RT(7)unnamed @F 1 
+@Acb @RT(17)AInitMeasureBlock @F @F @RT(1)P @RT(0) @F @F @F @F 
+
+@Trans @RT(9)TInitDone @F @T @F @F @T @T @TL(2)
+TRUE
+
+@RT(9)TInitDone @F 
+@Step @RT(9)S_Measure @F @F @F @F @RT(0) @F 
+@AcbCont @RT(7)unnamed @F 1 
+@Acb @RT(8)AMeasure @F @F @RT(1)N @RT(0) @F @F @F @F 
+
+@END_SfcData 
+@SaActions 2 
+@SaText @RT(8)AMeasure 1 @TL(22)
+(**************************************** WARNING ********************************************
+ *** The KEBA Kemro K2 System including software is not intended for safety control tasks! ***
+ ***                       For further information see Comment tab!                        ***
+ *********************************************************************************************)
+
+// calculate size of screw
+rSize := FCalcScrewSize(sv_rScrewDiameter);
+
+// position is multiplied by screw size to get volume position
+abPositionMeasure.aRun(bIdle := sv_bDeviceReady AND sv_bValveServoInj1Ready,
+                       rValue => rScrewPositionAbs,
+                       rVelocity => rScrewVelocityAbs,
+                       bSensorError => sv_bTransducerError);
+
+b := WRITE_SVREAL_DIRECT(sv_rScrewPositionAbs, rScrewPositionAbs);
+b := WRITE_SVREAL_DIRECT(sv_rScrewVelocityAbs, rScrewVelocityAbs);
+b := WRITE_SVREAL_DIRECT(sv_rScrewVelocity, (abPositionMeasure.aRun.rVelocity * rSize) / 1000.0);
+b := WRITE_SVREAL_DIRECT(sv_rScrewVelocityEstimateAbs, abPositionMeasure.aRun.rDiffValueEstimate * -1.0);
+
+// calculate specific screw position from absolute
+b := WRITE_SVREAL_DIRECT(sv_rScrewPosition, (sv_rScrewPositionAbs * rSize) / 1000.0);
+
+
+@SaText @RT(17)AInitMeasureBlock 1 @TL(32)
+(**************************************** WARNING ********************************************
+ *** The KEBA Kemro K2 System including software is not intended for safety control tasks! ***
+ ***                       For further information see Comment tab!                        ***
+ *********************************************************************************************)
+
+dCycleTime := GET_TASK_INTERVAL();
+sv_DerivationEstimateParam.dMeasCycleTime := dCycleTime;
+IF dCycleTime = T#2ms THEN
+   sv_DerivationEstimateParam.dT := T#60ms;
+ELSE
+   sv_DerivationEstimateParam.dT := MULTIME(dCycleTime,20);
+END_IF;
+
+prAnalogOutput := GET_SYNC_REFTO('ValveServoInj1.ao_Servo', T#0s, s);
+IF (s = KSYS_Status_OK) THEN
+   //activate derivation estimator if inject servovalve is available
+   sv_DerivationEstimateParam.bUseDerivationEstimator := TRUE;
+END_IF;
+
+sEndPoint := CONCAT(GET_MY_FU_NAME(),".ai_Position");
+
+abPositionMeasure.aInit(sRawValue := sEndPoint,
+                        pLintabPointArray := @sv_ScrewLintab.LintabPoints.Point,
+                        piUsedLintabPoints := @sv_ScrewLintab.LintabPoints.uNoOfPoints,
+                        pInstanceCounter := @sv_InstanceCounter,
+                        pDerivationEstimateParam := @sv_DerivationEstimateParam);
+
+abPositionMeasure.aInitMonitoring(bEnable := sv_ScrewMonitorMeas.EnableMonitoring,
+                                  rLowLimit := sv_ScrewMonitorMeas.LowerLimit,
+                                  bLimitation := sv_ScrewMonitorMeas.Limitation,
+                                  rFailureFactor := sv_ScrewMonitorMeas.FailureFactor);
+
+
+@SaTrans 0 
+@SaExits 0 
+@END_SfcBody 
+
+@@@BEG_Comment@@@ 
+@TL(0)
+
+@@@END_Comment@@@ 
+
+@BEG_SfcBody 
+7 6 5 
+
+@BEG_SfcData 2 
+@StepSeq @RT(4)sseq @F 5 
+@Step @RT(7)S_Start @F @T @T @F @RT(0) @F 
+@AcbCont @RT(7)unnamed @F 1 
+@Acb @RT(22)ACheckAvailableSensors @F @F @RT(1)P @RT(0) @F @F @F @F 
+
+@AltBranch @RT(3)alt @F 2 
+@TransSeq @RT(4)tseq @F 1 
+@Trans @RT(7)TLinked @F @T @F @F @T @T @TL(3)
+sv_bSysPressureSensorAvailable AND
+bPressureSensorAvailable
+
+@RT(7)TLinked @F 
+
+@TransSeq @RT(4)tseq @F 4 
+@Trans @RT(10)TNotLinked @F @T @F @F @T @T @TL(3)
+NOT (sv_bSysPressureSensorAvailable AND
+     bPressureSensorAvailable)
+
+@RT(10)TNotLinked @F 
+@Step @RT(6)S_Stop @F @F @F @F @RT(0) @F 
+@AcbCont @RT(7)unnamed @F 1 
+@Acb @RT(5)AStop @F @T @RT(1)P @RT(0) @F @F @T @TL(3)
+STOP_PROCESS_ALGORITHM();
+  
+
+@F 
+
+@Trans @RT(5)TStop @F @T @F @F @T @T @TL(2)
+TRUE
+
+@RT(5)TStop @F 
+@Goto @RT(7)S_Start @F @F 
+
+
+@Step @RT(6)S_Init @F @F @F @F @RT(0) @F 
+@AcbCont @RT(7)unnamed @F 2 
+@Acb @RT(7)Action6 @F @T @RT(1)N @RT(0) @F @F @T @TL(2)
+sEndPoint := CONCAT(GET_MY_FU_NAME(),".ai_SysPressure");
+
+@F 
+@Acb @RT(17)AInitMeasureBlock @F @F @RT(1)P @RT(0) @F @F @F @F 
+
+@Trans @RT(9)TInitDone @F @T @F @F @T @T @TL(2)
+TRUE
+
+@RT(9)TInitDone @F 
+@Step @RT(9)S_Measure @F @F @F @F @RT(0) @F 
+@AcbCont @RT(7)unnamed @F 1 
+@Acb @RT(8)AMeasure @F @F @RT(1)N @RT(0) @F @F @F @F 
+
+@END_SfcData 
+@SaActions 3 
+@SaText @RT(22)ACheckAvailableSensors 1 @TL(4)
+// use systempressure sensor only if injectpressure sensor is available
+sv_bSysPressureSensorAvailable := IS_LINKED(ai_SysPressure);
+bPressureSensorAvailable := IS_LINKED(ai_Pressure);
+
+
+@SaText @RT(17)AInitMeasureBlock 1 @TL(15)
+(**************************************** WARNING ********************************************
+ *** The KEBA Kemro K2 System including software is not intended for safety control tasks! ***
+ ***                       For further information see Comment tab!                        ***
+ *********************************************************************************************)
+
+abPressureMeasure.aInit(sRawValue := sEndPoint,
+                        pLintabPointArray := @sv_SysPressureLintab.LintabPoints.Point,
+                        piUsedLintabPoints := @sv_SysPressureLintab.LintabPoints.uNoOfPoints,
+                        pInstanceCounter := @sv_InstanceCounter);
+
+abPressureMeasure.aInitMonitoring(bEnable := sv_SysPresMonitorMeas.EnableMonitoring,
+                                  rLowLimit := sv_SysPresMonitorMeas.LowerLimit,
+                                  bLimitation := sv_SysPresMonitorMeas.Limitation,
+                                  rFailureFactor := sv_SysPresMonitorMeas.FailureFactor);
+
+
+@SaText @RT(8)AMeasure 1 @TL(10)
+(**************************************** WARNING ********************************************
+ *** The KEBA Kemro K2 System including software is not intended for safety control tasks! ***
+ ***                       For further information see Comment tab!                        ***
+ *********************************************************************************************)
+
+abPressureMeasure.aRunLight(bIdle := sv_bDeviceReady AND sv_bValveServoInj1Ready,
+                            bSensorError => sv_bSysPressureSensorError);
+
+b := WRITE_SVREAL_DIRECT(sv_rActSysPressure, abPressureMeasure.aRunLight.rValue);
+
+
+@SaTrans 0 
+@SaExits 0 
+@END_SfcBody 
+
+@@@BEG_Comment@@@ 
+@TL(0)
+
+@@@END_Comment@@@ 
+
+@BEG_Body 
+@TL(10)
+(**************************************** WARNING ********************************************
+ *** The KEBA Kemro K2 System including software is not intended for safety control tasks! ***
+ ***                       For further information see Comment tab!                        ***
+ *********************************************************************************************)
+
+IF sv_bInjectActive THEN
+   //starting peakvalue measurement
+   START_PROCESS_ALGORITHM(paPeakMeasure);
+END_IF;
+
+@END_Body 
+
+@@@BEG_Comment@@@ 
+@TL(0)
+
+@@@END_Comment@@@ 
+
+@BEG_SfcBody 
+6 4 4 
+
+@BEG_SfcData 2 
+@StepSeq @RT(4)sseq @F 1 
+@Loop @RT(4)loop @F 2 
+@StepSeq @RT(4)sseq @F 5 
+@Step @RT(7)MEASURE @F @T @F @F @RT(0) @F 
+@AcbCont @RT(7)unnamed @F 2 
+@Acb @RT(6)AReset @F @T @RT(1)P @RT(0) @F @F @T @TL(4)
+fbPeakVelocity(bReset := TRUE, rActVal := sv_rScrewVelocity);
+fbPeakPressure(bReset := TRUE, rActVal := sv_rActPressure);
+fbPeakPosition(bReset := TRUE, rActVal := sv_rScrewPosition);
+
+@F 
+@Acb @RT(5)APeak @F @F @RT(1)N @RT(0) @F @F @F @F 
+
+@Trans @RT(15)TInjectFinished @F @T @F @F @T @T @TL(2)
+NOT sv_bInjectActive
+
+@RT(15)TInjectFinished @F 
+@Step @RT(11)S_DelayStop @F @F @F @F @RT(0) @F 
+@AcbCont @RT(7)unnamed @F 2 
+@Acb @RT(5)APeak @F @F @RT(1)N @RT(0) @F @F @F @F 
+@Acb @RT(10)ACopyToSVs @F @T @RT(2)P0 @RT(0) @F @F @T @TL(4)
+sv_rInjPeakPosition := rInjPeakPosition;
+sv_rInjPeakPressure := rInjPeakPressure;
+sv_rInjPeakVelocity := rInjPeakVelocity;
+
+@F 
+
+@Trans @RT(14)TDelayFinished @F @T @F @F @T @T @TL(4)
+//delay for stopping measurement
+//because actual position still changes a little bit
+S_DelayStop.T > dStopMeasureDelayTime
+
+@RT(14)TDelayFinished @F 
+@Step @RT(4)STOP @F @F @F @F @RT(0) @F 
+@AcbCont @RT(7)unnamed @F 1 
+@Acb @RT(9)AStopAlgo @F @T @RT(1)P @RT(0) @F @F @T @TL(2)
+STOP_PROCESS_ALGORITHM();
+
+@F 
+
+
+@Trans @RT(16)TNextMeasurement @F @T @T @T @T @T @TL(2)
+TRUE
+
+@RT(16)TNextMeasurement @F 
+
+@END_SfcData 
+@SaActions 1 
+@SaText @RT(5)APeak 1 @TL(27)
+
+fbPeakVelocity ( 
+   rActVal := sv_rScrewVelocity,
+   bTrigger := TRUE,
+   bReset := FALSE,
+   bMinMax := FALSE,
+   rPeakVal => rInjPeakVelocity
+);
+
+
+fbPeakPressure ( 
+   rActVal := sv_rActPressure,
+   bTrigger := TRUE,
+   bReset := FALSE,
+   bMinMax := FALSE,
+   rPeakVal => rInjPeakPressure
+);
+
+
+fbPeakPosition ( 
+   rActVal := sv_rScrewPosition,
+   bTrigger := TRUE,
+   bReset := FALSE,
+   bMinMax := TRUE,
+   rPeakVal => rInjPeakPosition
+);
+
+
+@SaTrans 0 
+@SaExits 0 
+@END_SfcBody 
+
+@@@BEG_Comment@@@ 
+@TL(0)
+
+@@@END_Comment@@@ 
+
+@BEG_SfcBody 
+6 5 8 
+
+@BEG_SfcData 2 
+@StepSeq @RT(4)sseq @F 5 
+@Step @RT(7)S_Start @F @T @F @F @RT(0) @F 
+@AcbCont @RT(7)unnamed @F 0 
+
+@Trans @RT(6)TStart @F @T @F @F @T @T @TL(3)
+TRUE
+
+
+@RT(7)TLinked @F 
+@Step @RT(6)S_Init @F @F @F @F @RT(0) @F 
+@AcbCont @RT(7)unnamed @F 1 
+@Acb @RT(17)AInitMeasureBlock @F @F @RT(1)P @RT(0) @F @F @F @F 
+
+@Trans @RT(9)TInitDone @F @T @F @F @T @T @TL(2)
+TRUE
+
+@RT(9)TInitDone @F 
+@Step @RT(9)S_Measure @F @F @F @F @RT(0) @F 
+@AcbCont @RT(7)unnamed @F 2 
+@Acb @RT(8)AMeasure @F @F @RT(1)N @RT(0) @F @F @F @F 
+@Acb @RT(15)ACopyPressValue @F @F @RT(1)N @RT(0) @F @F @T @F 
+
+@END_SfcData 
+@SaActions 3 
+@SaText @RT(15)ACopyPressValue 1 @TL(8)
+(**************************************** WARNING ********************************************
+ *** The KEBA Kemro K2 System including software is not intended for safety control tasks! ***
+ ***                       For further information see Comment tab!                        ***
+ *********************************************************************************************)
+
+//copy press value 
+b := WRITE_SVREAL_DIRECT(sv_rActPressureHydr, mprActPresssureHydr^);
+
+
+@SaText @RT(8)AMeasure 1 @TL(8)
+(**************************************** WARNING ********************************************
+ *** The KEBA Kemro K2 System including software is not intended for safety control tasks! ***
+ ***                       For further information see Comment tab!                        ***
+ *********************************************************************************************)
+
+abLintabApplyPres.aCalcInv(rY := mprActPresssureHydr^); 
+b := WRITE_SVREAL_DIRECT(sv_rActPressure, abLintabApplyPres.aCalcInv.rX);
+
+
+@SaText @RT(17)AInitMeasureBlock 1 @TL(8)
+(**************************************** WARNING ********************************************
+ *** The KEBA Kemro K2 System including software is not intended for safety control tasks! ***
+ ***                       For further information see Comment tab!                        ***
+ *********************************************************************************************)
+
+//initialize applying of pressure specifix/absolute calculation lintab
+abLintabApplyPres.aInit(pLintab := @sv_LintabOutFwdP);
+
+
+@SaTrans 0 
+@SaExits 0 
+@END_SfcBody 
+
+@@@BEG_Comment@@@ 
+@TL(0)
+
+@@@END_Comment@@@ 
+
+@BEG_Body 
+@TL(15)
+(**************************************** WARNING ********************************************
+ *** The KEBA Kemro K2 System including software is not intended for safety control tasks! ***
+ ***                       For further information see Comment tab!                        ***
+ *********************************************************************************************)
+
+mprActPresssureHydr := GET_SYNC_REFTO('Pump1.sv_rActPressureHydr',T#0ms, s);   
+pOptions := GET_SYNC_REFTO('Pump1.sv_Options',T#0ms, s);               //get the pointer to option of pump
+
+//Check if the speed pump exists
+IF (pOptions <> EMPTY) AND ((pOptions^ = 16#101) OR (pOptions^ = 16#103) OR (pOptions^ = 16#105)) AND NOT (IS_LINKED(ai_Pressure)) THEN   
+    START_PROCESS_ALGORITHM(paMeasurePressSpeedPump); 
+END_IF;  
+
+STOP_PROCESS_ALGORITHM();
+
+@END_Body 
+
+@@@BEG_Comment@@@ 
+@TL(0)
+
+@@@END_Comment@@@ 
+
+@BEG_Body 
+@TL(38)
+(**************************************** WARNING ********************************************
+ *** The KEBA Kemro K2 System including software is not intended for safety control tasks! ***
+ ***                       For further information see Comment tab!                        ***
+ *********************************************************************************************)
+
+fuName := GET_MY_FU_NAME();
+variableName := CONCAT(fuName,'.ScrewPosition ccm');
+swoState := KSWO_AddVariable(Task := TaskInject,
+                             Name := variableName,
+                             Variable := sv_rScrewPosition);    
+b := FAddToScopeGroup(Task := TaskInject, 
+                      Name := variableName, 
+                      GroupId := cScopeGroupInject);
+variableName := CONCAT(fuName,'.ActVelocity ccm/s');
+swoState := KSWO_AddVariable(Task := TaskInject,
+                             Name := variableName,
+                             Variable := sv_rScrewVelocity);
+b := FAddToScopeGroup(Task := TaskInject, 
+                      Name := variableName, 
+                      GroupId := cScopeGroupInject);
+variableName := CONCAT(fuName,'.ScrewPosition mm');
+swoState := KSWO_AddVariable(Task := TaskInject,
+                             Name := variableName,
+                             Variable := sv_rScrewPositionAbs);        
+variableName := CONCAT(fuName,'.ActVelocity mm/s');
+swoState := KSWO_AddVariable(Task := TaskInject,
+                             Name := variableName,
+                             Variable := sv_rScrewVelocityAbs);
+variableName := CONCAT(fuName,'.ActPressure bar');
+swoState := KSWO_AddVariable(Task := TaskInject,
+                             Name := variableName,
+                             Variable := sv_rActPressure);
+b := FAddToScopeGroup(Task := TaskInject, 
+                      Name := variableName, 
+                      GroupId := cScopeGroupInject);
+
+STOP_PROCESS_ALGORITHM();
+
+@END_Body 
+
+@@@BEG_Comment@@@ 
+@TL(0)
+
+@@@END_Comment@@@ 
+
+@BEG_Body 
+@TL(16)
+//sv_Lintab1.pLintab := @sv_Lintab10;
+Speed1.aInit(pLintab := sv_Lintab1.pLintab);
+Speed1.aCalc(rX :=ai_0,
+            rY => sv_speed1);
+//sv_Lintab2.pLintab := @sv_Lintab20;
+//Speed2.aInit(pLintab := sv_Lintab2.pLintab);
+Speed2.aCalc(rX :=ai_1,
+            rY => sv_speed2);
+//Speed3.aInit(pLintab := sv_Lintab3.pLintab);
+Speed3.aCalc(rX :=ai_2,
+            rY => sv_speed3);
+//sv_Lintab4.pLintab := @sv_Lintab40;
+//Speed4.aInit(pLintab := sv_Lintab4.pLintab);
+Speed4.aCalc(rX :=ai_3,
+            rY => sv_speed4);
+
+@END_Body 
+
+@@@BEG_Comment@@@ 
+@TL(0)
+
+@@@END_Comment@@@ 
+
+@BEG_Body 
+@TL(6)
+Speed1.aInit(pLintab := sv_Lintab1.pLintab);
+Speed2.aInit(pLintab := sv_Lintab2.pLintab);
+Speed3.aInit(pLintab := sv_Lintab3.pLintab);
+Speed4.aInit(pLintab := sv_Lintab4.pLintab);
+STOP_PROCESS_ALGORITHM();
+
+@END_Body 
+
+@@@BEG_Comment@@@ 
+@TL(0)
+
+@@@END_Comment@@@ 
+@END_Body 
+
+@END_Contents 

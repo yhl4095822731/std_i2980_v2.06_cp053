@@ -1,0 +1,91 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<base:CompositeWidget xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xmlns:base="http://www.keba.at/viewedit.model.base" name="PumpVoltageLimitPanel" category="Composite" id="c148c16b-77db-4182-9767-ee222278f0c1">
+  <attributes xsi:type="base:DelegatingAttribute" name="PreferredSize" type="resolution" section="layout" layoutContainerNeeded="true">
+    <references attributeName="PreferredSize" widgetInstance="//@container"/>
+  </attributes>
+  <attributes xsi:type="base:DelegatingAttribute" name="VariablePressMax" type="variable" section="basic">
+    <references attributeName="VariableLeft" widgetInstance="//@container/@widgetInstances.0/@widgetInstances.1/@widgetInstances.0"/>
+  </attributes>
+  <attributes xsi:type="base:DelegatingAttribute" name="VariableVelMax" type="variable" section="basic">
+    <references attributeName="VariableRight" widgetInstance="//@container/@widgetInstances.0/@widgetInstances.1/@widgetInstances.0"/>
+  </attributes>
+  <attributes xsi:type="base:DelegatingAttribute" name="VariablePressMin" type="variable" section="basic">
+    <references attributeName="VariableLeft" widgetInstance="//@container/@widgetInstances.0/@widgetInstances.2/@widgetInstances.0"/>
+  </attributes>
+  <attributes xsi:type="base:DelegatingAttribute" name="VariableVelMin" type="variable" section="basic">
+    <references attributeName="VariableRight" widgetInstance="//@container/@widgetInstances.0/@widgetInstances.2/@widgetInstances.0"/>
+  </attributes>
+  <attributes xsi:type="base:DelegatingAttribute" name="Idx" type="integer" section="basic">
+    <references attributeName="IntegerAttribute" widgetInstance="//@container/@widgetInstances.1"/>
+  </attributes>
+  <container widgetId="kvs.panel" name="PumpVoltageLimitPanel_container" compositeWidgetID="c148c16b-77db-4182-9767-ee222278f0c1" isCompositeRoot="true">
+    <resolution width="330" height="120"/>
+    <position/>
+    <attributeValues key="PreferredSize" value="330, 120"/>
+    <widgetInstances xsi:type="base:ContainerWidgetInstance" widgetId="keplast.kvs.borderpanelsmall" name="borderPanel1" compositeWidgetID="c148c16b-77db-4182-9767-ee222278f0c1" layoutConstraint="CENTER">
+      <resolution width="330" height="120"/>
+      <position/>
+      <attributeValues key="Title" value="Pump"/>
+      <widgetInstances xsi:type="base:ContainerWidgetInstance" widgetId="kvs.panel" name="containerHeader" compositeWidgetID="c148c16b-77db-4182-9767-ee222278f0c1" layoutConstraint="null">
+        <resolution width="324" height="21"/>
+        <position x="3" y="33"/>
+        <widgetInstances widgetId="kvs.label" name="labelPressure" compositeWidgetID="c148c16b-77db-4182-9767-ee222278f0c1" layoutConstraint="null">
+          <resolution width="64" height="21"/>
+          <position x="158"/>
+          <attributeValues key="Text" value="Press."/>
+          <attributeValues key="PreferredSize" value="64, 21"/>
+        </widgetInstances>
+        <widgetInstances widgetId="kvs.label" name="labelVelocity" compositeWidgetID="c148c16b-77db-4182-9767-ee222278f0c1" layoutConstraint="null">
+          <resolution width="64" height="21"/>
+          <position x="222"/>
+          <attributeValues key="Text" value="Vel."/>
+          <attributeValues key="PreferredSize" value="64, 21"/>
+        </widgetInstances>
+        <widgetInstances xsi:type="base:ContainerWidgetInstance" widgetId="kvs.panel" name="containerSpace1" compositeWidgetID="c148c16b-77db-4182-9767-ee222278f0c1" layoutConstraint="null">
+          <resolution width="38" height="21"/>
+          <position x="286"/>
+          <attributeValues key="PreferredSize" value="38, 21"/>
+          <layout layoutID="kvs.layout.PercentLayout" name="PercentLayout"/>
+        </widgetInstances>
+        <layout layoutID="kvs.layout.FlowLayout" name="FlowLayout">
+          <attributeValues key="Hgap" value="0"/>
+          <attributeValues key="Vgap" value="0"/>
+          <attributeValues key="Alignment" value="RIGHT"/>
+        </layout>
+      </widgetInstances>
+      <widgetInstances xsi:type="base:ContainerWidgetInstance" widgetId="kvs.panel" name="containerVoltageMax" compositeWidgetID="c148c16b-77db-4182-9767-ee222278f0c1" layoutConstraint="null">
+        <resolution width="324" height="29"/>
+        <position x="3" y="54"/>
+        <widgetInstances widgetId="keplast.kvs.twonumfieldtext" name="twoNumFieldtextVoltageMax" compositeWidgetID="c148c16b-77db-4182-9767-ee222278f0c1" layoutConstraint="null">
+          <resolution width="324" height="29"/>
+          <position/>
+          <attributeValues key="RemoveUnitLeft" value="true"/>
+          <attributeValues key="Text" value="Max. voltage AO"/>
+          <attributeValues key="_TextWidth" value="122"/>
+        </widgetInstances>
+        <layout layoutID="kvs.layout.GridLayout" name="GridLayout"/>
+      </widgetInstances>
+      <widgetInstances xsi:type="base:ContainerWidgetInstance" widgetId="kvs.panel" name="containerVoltageMin" compositeWidgetID="c148c16b-77db-4182-9767-ee222278f0c1" layoutConstraint="null">
+        <resolution width="324" height="29"/>
+        <position x="3" y="83"/>
+        <widgetInstances widgetId="keplast.kvs.twonumfieldtext" name="twoNumFieldtextVoltageMin" compositeWidgetID="c148c16b-77db-4182-9767-ee222278f0c1" layoutConstraint="null">
+          <resolution width="324" height="29"/>
+          <position/>
+          <attributeValues key="RemoveUnitLeft" value="true"/>
+          <attributeValues key="Text" value="Min. voltage AO"/>
+          <attributeValues key="_TextWidth" value="122"/>
+        </widgetInstances>
+        <layout layoutID="kvs.layout.GridLayout" name="GridLayout"/>
+      </widgetInstances>
+      <layout layoutID="kvs.layout.VerticalFlowLayout" name="VerticalFlowLayout">
+        <attributeValues key="Hgap" value="0"/>
+        <attributeValues key="Vgap" value="0"/>
+      </layout>
+    </widgetInstances>
+    <widgetInstances widgetId="keplast.kvs.helper.compwidgetattributehelper" name="compWidgetAttributeHelper1" compositeWidgetID="c148c16b-77db-4182-9767-ee222278f0c1" layoutConstraint="NORTH">
+      <resolution width="1" height="1"/>
+      <position x="1" y="1"/>
+    </widgetInstances>
+    <layout layoutID="kvs.layout.BorderLayout" name="BorderLayout"/>
+  </container>
+</base:CompositeWidget>

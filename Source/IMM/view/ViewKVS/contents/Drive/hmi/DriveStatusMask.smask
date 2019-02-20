@@ -1,0 +1,92 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<base:Mask xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xmlns:base="http://www.keba.at/viewedit.model.base" widgetId="kvs.mask" name="DriveStatusMask">
+  <resolution width="684" height="476"/>
+  <position x="1" y="1"/>
+  <attributeValues key="Background" value="30,30,30"/>
+  <attributeValues key="Icon" value="Drive/hmi/images/SpeedPumpMon.gif"/>
+  <attributeValues key="Title" value="Drive Monitor"/>
+  <attributeValues key="DisplayLevel" value="8"/>
+  <widgetInstances xsi:type="base:MultiPageWidgetInstance" widgetId="keplast.kvs.tabpanelplast" name="tabPanelPlast1" layoutConstraint="CENTER">
+    <resolution width="684" height="476"/>
+    <position/>
+    <attributeValues key="Tabs" value="Master, Tab4; Slave1, Tab5; Slave2, Tab6"/>
+    <attributeValues key="ActivePage" value="0"/>
+    <attributeValues key="SelectedPage" value="0"/>
+    <pages widgetId="keplast.kvs.tabpanelplast.container" name="Tab4">
+      <resolution width="684" height="446"/>
+      <position/>
+      <attributeValues key="HelpSubID" value="master"/>
+      <widgetInstances xsi:type="base:CompositeWidgetInstance" widgetId="00d2e7ff-2188-424a-860f-293b97dd8f5c" name="driveStatusPanelMaster" layoutConstraint="CENTER">
+        <resolution width="684" height="440"/>
+        <position/>
+        <attributeValues key="VariableActDriveTemp" value="Pump1.sv_iAmplifierTempMaster"/>
+        <attributeValues key="VariableActMotorTemp" value="Pump1.sv_rMotorTempMaster"/>
+        <attributeValues key="VariableActBrakeResPower" value="Pump1.sv_rRelEnergyBrakeResMaster"/>
+        <attributeValues key="VariableActVelocity" value="Pump1.sv_rActVelocityMaster"/>
+        <attributeValues key="VariableActTorque" value="Pump1.sv_rMotorTorqueMaster"/>
+        <attributeValues key="VariableStatusWord" value="Pump1.sv_iDriveStatusMaster"/>
+        <attributeValues key="VariableControlMode" value="Pump1.sv_iControlModeMaster"/>
+        <attributeValues key="VariableDriveName" value="Pump1.sv_sDrvID_Master"/>
+        <attributeValues key="VariableFwVersion" value="Pump1.sv_sRevisionMaster"/>
+        <attributeValues key="VariablePLCVersion" value="Pump1.sv_sPLCVersionMaster"/>
+        <attributeValues key="VariablePackage" value="Pump1.sv_iPackageMaster"/>
+        <attributeValues key="VariableActCurrent" value="Pump1.sv_rActCurrentMaster"/>
+      </widgetInstances>
+      <layout layoutID="kvs.layout.BorderLayout" name="BorderLayout"/>
+    </pages>
+    <pages widgetId="keplast.kvs.tabpanelplast.container" name="Tab5">
+      <resolution width="684" height="446"/>
+      <position/>
+      <attributeValues key="HelpSubID" value="slave1"/>
+      <dynamicAttributes key="Create">
+        <value function="hasSpeedPumpAndOneSlave : UserFunctions" equal="true" unequal="false"/>
+      </dynamicAttributes>
+      <widgetInstances xsi:type="base:CompositeWidgetInstance" widgetId="00d2e7ff-2188-424a-860f-293b97dd8f5c" name="driveStatusPanelSlave1" layoutConstraint="CENTER">
+        <resolution width="684" height="440"/>
+        <position/>
+        <attributeValues key="VariableActDriveTemp" value="Pump1.sv_iAmplifierTempSlave1"/>
+        <attributeValues key="VariableActMotorTemp" value="Pump1.sv_rMotorTempSlave1"/>
+        <attributeValues key="VariableActBrakeResPower" value="Pump1.sv_rRelEnergyBrakeResSlave1"/>
+        <attributeValues key="VariableActVelocity" value="Pump1.sv_rActVelocitySlave1"/>
+        <attributeValues key="VariableActTorque" value="Pump1.sv_rMotorTorqueSlave1"/>
+        <attributeValues key="VariableStatusWord" value="Pump1.sv_iDriveStatusSlave1"/>
+        <attributeValues key="VariableDriveName" value="Pump1.sv_sDrvID_Slave1"/>
+        <attributeValues key="VariableFwVersion" value="Pump1.sv_sRevisionSlave1"/>
+        <attributeValues key="VariableActCurrent" value="Pump1.sv_rActCurrentSlave1"/>
+        <attributeValues key="VariablePLCVersion" value="Pump1.sv_sPLCVersionSlave1"/>
+        <attributeValues key="VariablePackage" value="Pump1.sv_iPackageSlave1"/>
+        <attributeValues key="VariableControlMode" value="Pump1.sv_iControlModeSlave1"/>
+      </widgetInstances>
+      <layout layoutID="kvs.layout.BorderLayout" name="BorderLayout"/>
+    </pages>
+    <pages widgetId="keplast.kvs.tabpanelplast.container" name="Tab6">
+      <resolution width="684" height="446"/>
+      <position/>
+      <attributeValues key="HelpSubID" value="slave2"/>
+      <dynamicAttributes key="Create">
+        <value function="hasSpeedPumpAndTwoSlaves : UserFunctions" equal="true" unequal="false"/>
+      </dynamicAttributes>
+      <widgetInstances xsi:type="base:CompositeWidgetInstance" widgetId="00d2e7ff-2188-424a-860f-293b97dd8f5c" name="driveStatusPanelSlave2" layoutConstraint="CENTER">
+        <resolution width="684" height="440"/>
+        <position/>
+        <attributeValues key="VariableActDriveTemp" value="Pump1.sv_iAmplifierTempSlave2"/>
+        <attributeValues key="VariableActMotorTemp" value="Pump1.sv_rMotorTempSlave2"/>
+        <attributeValues key="VariableActBrakeResPower" value="Pump1.sv_rRelEnergyBrakeResSlave2"/>
+        <attributeValues key="VariableActVelocity" value="Pump1.sv_rActVelocitySlave2"/>
+        <attributeValues key="VariableActTorque" value="Pump1.sv_rMotorTorqueSlave2"/>
+        <attributeValues key="VariableStatusWord" value="Pump1.sv_iDriveStatusSlave2"/>
+        <attributeValues key="VariableDriveName" value="Pump1.sv_sDrvID_Slave2"/>
+        <attributeValues key="VariableFwVersion" value="Pump1.sv_sRevisionSlave2"/>
+        <attributeValues key="VariableControlMode" value="Pump1.sv_iControlModeSlave2"/>
+        <attributeValues key="VariableActCurrent" value="Pump1.sv_rActCurrentSlave2"/>
+        <attributeValues key="VariablePLCVersion" value="Pump1.sv_sPLCVersionSlave2"/>
+        <attributeValues key="VariablePackage" value="Pump1.sv_iPackageSlave2"/>
+      </widgetInstances>
+      <layout layoutID="kvs.layout.BorderLayout" name="BorderLayout"/>
+    </pages>
+    <layout layoutID="kvs.layout.xylayout" name="null"/>
+    <contentPanePosition y="30"/>
+    <contentPaneResolution width="684" height="446"/>
+  </widgetInstances>
+  <layout layoutID="kvs.layout.BorderLayout" name="BorderLayout"/>
+</base:Mask>

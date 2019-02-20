@@ -1,0 +1,1910 @@
+(*
+@h    ! WARNING !
+@h    The Kemro K2 system (including software) only meets category B according to EN 954-1,
+@h    thus it is not intended for usage in safety-relevant control applications in the field 
+@h    of personal safety (e.g. emergency stop).
+@h    To implement potentially necessary safety-relevant control tasks, always use additional 
+@h    external safety devices that are intended for the particular purpose, and meet the necessary 
+@h    functional safety.
+@h    For further information see EN 954-1 (EN ISO 13849-1) and/or the K2-x00 user manual, chapter 
+@h    "CE conformity, directives and standards".
+
+Algorithm block for executing the shake movement.
+Depending on the active movement (fwd or bwd) the locklist is checked for lock aborts
+or lock resumes for the movement.
+*)
+
+IMPORT_OVER_LISTFILE
+ GET_MY_FU_NAME
+, WRITE_SVREAL_DIRECT
+, WRITE_SV_DIRECT
+, cLockGroupClampingUnit
+, cLockGroupMotor
+, cMoveBwd
+, cMoveAll
+, nHalfAutomatic
+, cLockGroupSafetyGateMold
+, tsMoveData
+, KAPPL_VisProfile
+, tsSetTimes
+, tnOperationMode
+, tsActTimes
+, ABMoveFwd
+, ABMoveBwd
+, ABLockList
+, tsMoveCtrl
+, tsVelPre
+, tnEjectorMode
+, ABMovementRegister
+, TON
+, FBDebugTrace2
+
+END_IMPORT
+
+ALGORITHM_BLOCK ABMoveShake #DUMMY_EDIT_BLOCK
+
+SYSTEM_VAR
+ sv_MoveShake : tsMoveData;
+ sv_iShakeCounter : DINT;
+ sv_rBwdInterruptPosition : REAL;
+ sv_EjectorBwdVisShake : KAPPL_VisProfile;
+ sv_EjectorBwdVis : KAPPL_VisProfile;
+ sv_EjectorFwdTimesSet : tsSetTimes;
+ sv_bEjectorFwd : BOOL;
+ sv_bEjectorBwd : BOOL;
+ sv_EjectorFwdVisShake : KAPPL_VisProfile;
+ sv_rMaxSpeedFwd : REAL (* maximum speed for injection *);
+ sv_rMaxSpeedBwd : REAL (* maximum speed for decompression *);
+ sv_rMaxPressureFwd : REAL (* maximum force for injection *);
+ sv_rMaxPressureBwd : REAL (* maximum force for decompression *);
+ sv_rVelocity : REAL;
+ sv_rPressure : REAL;
+ sv_OperationMode : tnOperationMode;
+ sv_EjectorShakeTimesAct : tsActTimes;
+ sv_dCalculatedDurationShakeFwd : TIME (* Calculated duration for ejector shake fwd (1 count) *);
+ sv_dCalculatedDurationShakeBwd : TIME (* Calculated duration for ejector shake bwd (1 count) *);
+ sv_dCalculatedDurationShake : TIME (* Calculated duration for complete ejector shake *);
+ sv_rBwdCalcDurationStartPos : REAL (* Start position for calculation of ejector bwd duration *);
+ sv_bInitDone : BOOL;
+ sv_dShakeBwdTime : TIME (* chad(CR_0038565) *);
+ sv_dShakeBwdTimeAct : TIME (* chad(CR_0038565) *);
+ sv_bTransducerAvailable : BOOL (* chad(CR_0038565) *);
+ sv_ConstFwdVisLS : tsVelPre (* chad(CR_0038565) *);
+ sv_ConstBwdVisLS : tsVelPre (* chad(CR_0038565) *);
+ sv_rVelocityAbs : REAL;
+ sv_EjectorMode : tnEjectorMode (* chad(CR_0038565) *);
+ sv_bVerticalMachine : BOOL;
+END_VAR
+
+SYSTEM_OBJECT
+ PU_Task_13 : TASK;
+ PU_Task_3 : TASK;
+ erEjectorNotBackward : ALARM;
+ erEjectorNotForward : ALARM;
+END_OBJECT
+
+VAR_EXTERNAL
+ g_MoveCtrl : tsMoveCtrl;
+END_VAR
+
+VAR
+ abMoveFwd : ABMoveFwd;
+ abMoveBwd : ABMoveBwd;
+ abLockList : ABLockList;
+ abMoveBwdShake : ABMoveBwd;
+ bMoveBwdReady : BOOL;
+END_VAR
+
+ALGORITHM aRegister
+
+
+VAR
+ abMovementRegister : ABMovementRegister;
+END_VAR
+#BEGIN_EDIT_BLOCK
+(**************************************** WARNING ********************************************
+ *** The KEBA Kemro K2 System including software is not intended for safety control tasks! ***
+ ***                       For further information see Comment tab!                        ***
+ *********************************************************************************************)
+
+IF sv_bVerticalMachine THEN
+   //for a vertical machine the ejector can also be operated while mold is closed(depending on mode)
+   //ejector can be inserted after mold close
+   //-> the automatic safety check could forbid ejector operation in manual mode while mold is open
+   sv_MoveShake.iSafetyIdentifier := 0;
+END_IF;
+
+// movement registration
+sv_MoveShake.LockGroups[1] := cLockGroupClampingUnit;
+sv_MoveShake.LockGroups[2] := cLockGroupMotor;
+sv_MoveShake.LockGroups[3] := cLockGroupSafetyGateMold;
+sv_MoveShake.LockGroups[4] := cLockGroupRotateEjectPos;
+
+sv_MoveShake.pdActiveTimeAct := @sv_EjectorShakeTimesAct.dActMoveTime;
+sv_MoveShake.pdTimeLimit := @sv_EjectorFwdTimesSet.dMaxMoveTime;
+sv_MoveShake.pbPosReached := @sv_bEjectorBwd;
+sv_MoveShake.Alarm.AlarmId := erEjectorNotBackward;
+sv_MoveShake.sIconPath := CONCAT(GET_MY_FU_NAME(), '\hmi\images\movEjectShake.gif');
+
+abMovementRegister.aRegister(@sv_MoveShake);
+
+
+
+;#END_EDIT_BLOCK END_ALGORITHM
+
+ALGORITHM aRun
+
+
+VAR_OUTPUT
+ bReady : BOOL;
+END_VAR
+
+VAR_TEMP
+ b : BOOL;
+END_VAR
+
+VAR
+ iShakeCounter : DINT;
+ rSaveFwdPreOutputVel : REAL;
+ rSaveFwdPreOutputPress : REAL;
+ rSaveBwdPreOutputVel : REAL;
+ rSaveBwdPreOutputPress : REAL;
+ iIndexEndValue : UDINT;
+ bResumed : BOOL (* movement was resumed *);
+ rConfKN : REAL;
+ rConfVel : REAL;
+ fbTimer : TON;
+ dMaxMoveTime : TIME := T#999.9s;
+ bAbort : BOOL (* movement must be aborted *);
+ bContinue : BOOL (* continue shake sequence *);
+ fbBwdTimer : TON (* used for shake bwd when no transducer *);
+ bBwdToShakePos : BOOL;
+ iShakeCounterSet : DINT (* set shake counter (copied at the beginning of shake) *);
+ fbDebugTrace2 : FBDebugTrace2;
+END_VAR
+
+(* IecGraph-Code *)
+
+(* init step *)
+INITIAL_STEP S_Start:
+AStartCond (P);
+END_STEP
+
+
+(* steps *)
+STEP S_CheckLockFwd:
+ACheckBeforeFwd (N);
+END_STEP
+
+ACTION ACheckBeforeFwd: #BEGIN_EDIT_BLOCK
+// check if the ejector fwd movement is locked
+abLockList.aCheck(MoveDir := cMoveFwd, MoveId := cMoveAll);
+bResumed := abLockList.aCheck.bLocked AND NOT abLockList.aCheck.bAbort;
+bAbort := abLockList.aCheck.bAbort;
+
+;#END_EDIT_BLOCK END_ACTION (*ACheckBeforeFwd*)
+STEP S_MoveFwd:
+Action35 (N);
+AMoveFwd (N);
+END_STEP
+
+ACTION Action35: #BEGIN_EDIT_BLOCK
+//chad(CR_0038565)
+IF NOT sv_bTransducerAvailable THEN
+   IF (ABS(sv_rVelocityAbs - sv_ConstFwdVisLS.Velocity.Output.rOutputValue) < 0.1) THEN
+      b := WRITE_SVREAL_DIRECT(sv_ConstBwdVisLS.Pressure.PreOutput.rOutputValue, sv_ConstFwdVisLS.Pressure.Output.rOutputValue);
+      b := WRITE_SVREAL_DIRECT(sv_ConstBwdVisLS.Velocity.PreOutput.rOutputValue, sv_ConstFwdVisLS.Velocity.Output.rOutputValue);
+   END_IF;
+END_IF;
+
+;#END_EDIT_BLOCK END_ACTION (*Action35*)
+STEP S_CheckFwdResumed:
+Action15 (P);
+END_STEP
+
+ACTION Action15: #BEGIN_EDIT_BLOCK
+bContinue := NOT g_MoveCtrl.bStop AND NOT bAbort AND NOT bResumed; 
+
+;#END_EDIT_BLOCK END_ACTION (*Action15*)
+STEP S_CheckIfFwd:
+END_STEP
+
+STEP S_GetBwdTargetPos:
+AIncreaseCounter (P);
+END_STEP
+
+ACTION AIncreaseCounter: #BEGIN_EDIT_BLOCK
+iShakeCounter := iShakeCounter + 1;
+fbTimer(IN := TRUE,
+        PT := dMaxMoveTime);
+sv_EjectorShakeTimesAct.dActMoveTime := fbTimer.ET;
+
+;#END_EDIT_BLOCK END_ACTION (*AIncreaseCounter*)
+STEP S_CheckLockBwd:
+ACheckBeforeBwd (N);
+END_STEP
+
+ACTION ACheckBeforeBwd: #BEGIN_EDIT_BLOCK
+// check if the ejector bwd movement is locked
+abLockList.aCheck(MoveDir := cMoveBwd, MoveId := cMoveAll);
+
+
+;#END_EDIT_BLOCK END_ACTION (*ACheckBeforeBwd*)
+STEP S_TransAvailable:
+Action38 (P);
+END_STEP
+
+ACTION Action38: #BEGIN_EDIT_BLOCK
+bBwdToShakePos := (iShakeCounter < iShakeCounterSet);
+
+;#END_EDIT_BLOCK END_ACTION (*Action38*)
+STEP S_MoveBwd:
+ACheckDuringBwd (N);
+ACpy_Fwd_to_Bwd (P);
+ABackward (N);
+END_STEP
+
+ACTION ACheckDuringBwd: #BEGIN_EDIT_BLOCK
+// checking if  ejector bwd movement is locked
+abLockList.aCheck(MoveDir := cMoveBwd, MoveId := cMoveAll);
+bResumed := abLockList.aCheck.bLocked AND NOT g_MoveCtrl.bStop;
+
+;#END_EDIT_BLOCK END_ACTION (*ACheckDuringBwd*)
+STEP S_MoveBwdConst:
+AClearBwdTimer (P);
+ACheckDuringBwdConst (N);
+Action36 (N);
+ABackwardConst (N);
+END_STEP
+
+ACTION AClearBwdTimer: #BEGIN_EDIT_BLOCK
+//chad(CR_0038565) - clear bwd timer
+fbBwdTimer(IN := FALSE);
+
+;#END_EDIT_BLOCK END_ACTION (*AClearBwdTimer*)
+ACTION ACheckDuringBwdConst: #BEGIN_EDIT_BLOCK
+// checking if  ejector bwd movement is locked
+abLockList.aCheck(MoveDir := cMoveBwd, MoveId := cMoveAll);
+bResumed := abLockList.aCheck.bLocked AND NOT g_MoveCtrl.bStop;
+
+//chad(CR_0038565)
+IF sv_EjectorMode = nVibrate THEN   //only for shake mode
+    fbBwdTimer(IN := TRUE, PT := sv_dShakeBwdTime);
+END_IF;
+b := WRITE_SV_DIRECT(sv_dShakeBwdTimeAct, fbBwdTimer.ET);
+
+;#END_EDIT_BLOCK END_ACTION (*ACheckDuringBwdConst*)
+ACTION Action36: #BEGIN_EDIT_BLOCK
+//chad(CR_0038565)
+IF (ABS(sv_rVelocityAbs - sv_ConstBwdVisLS.Velocity.Output.rOutputValue) < 0.1) THEN
+    b := WRITE_SVREAL_DIRECT(sv_ConstFwdVisLS.Pressure.PreOutput.rOutputValue, sv_ConstBwdVisLS.Pressure.Output.rOutputValue);
+    b := WRITE_SVREAL_DIRECT(sv_ConstFwdVisLS.Velocity.PreOutput.rOutputValue, sv_ConstBwdVisLS.Velocity.Output.rOutputValue);
+END_IF;
+
+;#END_EDIT_BLOCK END_ACTION (*Action36*)
+STEP S_CheckResume:
+END_STEP
+
+STEP S_DecideNext:
+END_STEP
+
+STEP Step29:
+ACpy_Bwd_to_Fwd (P);
+END_STEP
+
+STEP S_Ready:
+AReady (P);
+END_STEP
+
+ACTION AReady: #BEGIN_EDIT_BLOCK
+sv_rPressure := 0.0;
+sv_rVelocity := 0.0;
+
+IF sv_bTransducerAvailable THEN
+    sv_EjectorFwdVisShake.rPreOutputVel   := rSaveFwdPreOutputVel;
+    sv_EjectorFwdVisShake.rPreOutputPress := rSaveFwdPreOutputPress;
+    sv_EjectorBwdVis.rPreOutputVel   := rSaveBwdPreOutputVel;
+    sv_EjectorBwdVis.rPreOutputPress := rSaveBwdPreOutputPress;  
+ELSE
+    sv_ConstFwdVisLS.Velocity.PreOutput.rOutputValue := rSaveFwdPreOutputVel;
+    sv_ConstFwdVisLS.Pressure.PreOutput.rOutputValue := rSaveFwdPreOutputPress;
+    sv_ConstBwdVisLS.Velocity.PreOutput.rOutputValue := rSaveBwdPreOutputVel;
+    sv_ConstBwdVisLS.Pressure.PreOutput.rOutputValue := rSaveBwdPreOutputPress;  
+END_IF;
+
+bReady := TRUE;
+fbDebugTrace2(nDeviceState, 'Ejector shaking Ready');
+sv_rBwdInterruptPosition := 0.0;
+
+;#END_EDIT_BLOCK END_ACTION (*AReady*)
+
+(* transitions *)
+GO_ON_TRANSITION TMoveFwd (* TMoveFwd *) FROM S_Start TO S_CheckLockFwd :=  #BEGIN_EDIT_BLOCK
+NOT sv_bEjectorFwd
+;#END_EDIT_BLOCK
+END_TRANSITION
+
+GO_ON_TRANSITION TMoveFwdDone (* TMoveFwdDone *) FROM S_Start TO S_CheckIfFwd :=  #BEGIN_EDIT_BLOCK
+sv_bEjectorFwd
+;#END_EDIT_BLOCK
+END_TRANSITION
+
+GO_ON_TRANSITION TFwdNotLocked (* Trans18 *) FROM S_CheckLockFwd TO S_MoveFwd :=  #BEGIN_EDIT_BLOCK
+NOT abLockList.aCheck.bLocked
+;#END_EDIT_BLOCK
+END_TRANSITION
+
+GO_ON_TRANSITION TStop (* Trans19 *) FROM S_CheckLockFwd TO S_Ready :=  #BEGIN_EDIT_BLOCK
+bAbort OR g_MoveCtrl.bStop
+;#END_EDIT_BLOCK
+END_TRANSITION
+
+GO_ON_TRANSITION TFwdReady (* TFwdReady *) FROM S_MoveFwd TO S_CheckFwdResumed :=  #BEGIN_EDIT_BLOCK
+abMoveFwd.aRun.bReady
+;#END_EDIT_BLOCK
+END_TRANSITION
+
+GO_ON_TRANSITION TFwdResumed (* Trans21 *) FROM S_CheckFwdResumed TO S_CheckLockFwd :=  #BEGIN_EDIT_BLOCK
+bResumed
+;#END_EDIT_BLOCK
+END_TRANSITION
+
+GO_ON_TRANSITION TContinue (* Trans20 *) FROM S_CheckFwdResumed TO S_CheckIfFwd :=  #BEGIN_EDIT_BLOCK
+bContinue
+;#END_EDIT_BLOCK
+END_TRANSITION
+
+GO_ON_TRANSITION TFwdAborted (* Trans22 *) FROM S_CheckFwdResumed TO S_Ready :=  #BEGIN_EDIT_BLOCK
+bAbort OR g_MoveCtrl.bStop
+;#END_EDIT_BLOCK
+END_TRANSITION
+
+GO_ON_TRANSITION TEjectorIsFwd (* TEjectorIsFwd *) FROM S_CheckIfFwd TO S_GetBwdTargetPos :=  #BEGIN_EDIT_BLOCK
+sv_bEjectorFwd
+;#END_EDIT_BLOCK
+END_TRANSITION
+
+GO_ON_TRANSITION TEjectorIsNotFwd (* TEjectorIsNotFwd *) FROM S_CheckIfFwd TO S_Ready :=  #BEGIN_EDIT_BLOCK
+g_MoveCtrl.bStop
+;#END_EDIT_BLOCK
+END_TRANSITION
+
+GO_ON_TRANSITION Trans27 (* Trans27 *) FROM S_GetBwdTargetPos TO S_CheckLockBwd :=  #BEGIN_EDIT_BLOCK
+TRUE
+;#END_EDIT_BLOCK
+END_TRANSITION
+
+GO_ON_TRANSITION Trans29 (* Trans29 *) FROM S_CheckLockBwd TO S_TransAvailable :=  #BEGIN_EDIT_BLOCK
+((NOT abLockList.aCheck.bLocked) OR g_MoveCtrl.bStop)
+AND NOT ((iShakeCounter = iShakeCounterSet) AND
+sv_OperationMode >= nHalfAutomatic)
+;#END_EDIT_BLOCK
+END_TRANSITION
+
+GO_ON_TRANSITION Trans30 (* Trans27 *) FROM S_TransAvailable TO S_MoveBwd :=  #BEGIN_EDIT_BLOCK
+//chad(CR_0038565)
+sv_bTransducerAvailable
+;#END_EDIT_BLOCK
+END_TRANSITION
+
+GO_ON_TRANSITION TBwdReady (* Trans29 *) FROM S_MoveBwd TO S_CheckResume :=  #BEGIN_EDIT_BLOCK
+bMoveBwdReady
+;#END_EDIT_BLOCK
+END_TRANSITION
+
+GO_ON_TRANSITION Trans28 (* Trans28 *) FROM S_TransAvailable TO S_MoveBwdConst :=  #BEGIN_EDIT_BLOCK
+//chad(CR_0038565)
+NOT sv_bTransducerAvailable
+;#END_EDIT_BLOCK
+END_TRANSITION
+
+GO_ON_TRANSITION TBwdConstReady (* Trans30 *) FROM S_MoveBwdConst TO S_CheckResume :=  #BEGIN_EDIT_BLOCK
+bMoveBwdReady
+;#END_EDIT_BLOCK
+END_TRANSITION
+
+GO_ON_TRANSITION LastShakeDone (* LastShakeDone *) FROM S_CheckLockBwd TO S_Ready :=  #BEGIN_EDIT_BLOCK
+(iShakeCounter = iShakeCounterSet) AND
+sv_OperationMode >= nHalfAutomatic
+;#END_EDIT_BLOCK
+END_TRANSITION
+
+GO_ON_TRANSITION TResume (* TResume *) FROM S_CheckResume TO S_CheckLockBwd :=  #BEGIN_EDIT_BLOCK
+bResumed
+;#END_EDIT_BLOCK
+END_TRANSITION
+
+GO_ON_TRANSITION Trans16 (* Trans16 *) FROM S_CheckResume TO S_DecideNext :=  #BEGIN_EDIT_BLOCK
+NOT bResumed
+;#END_EDIT_BLOCK
+END_TRANSITION
+
+GO_ON_TRANSITION TShakingReady (* TShakingReady *) FROM S_DecideNext TO S_Ready :=  #BEGIN_EDIT_BLOCK
+iShakeCounter >= iShakeCounterSet
+;#END_EDIT_BLOCK
+END_TRANSITION
+
+TRANSITION TRepeat (* TRepeat *) FROM S_DecideNext TO Step29 :=  #BEGIN_EDIT_BLOCK
+iShakeCounter < iShakeCounterSet
+;#END_EDIT_BLOCK
+END_TRANSITION
+
+GO_ON_TRANSITION Trans35 (* Trans35 *) FROM Step29 TO S_CheckLockFwd :=  #BEGIN_EDIT_BLOCK
+TRUE
+;#END_EDIT_BLOCK
+END_TRANSITION
+
+TRANSITION TReady (* TReady *) FROM S_Ready TO S_Start :=  #BEGIN_EDIT_BLOCK
+TRUE
+;#END_EDIT_BLOCK
+END_TRANSITION
+
+(* end IecGraph-Code *)
+(* sfc-code *)
+
+(* stand alone actions *)
+ACTION ACpy_Bwd_to_Fwd: #BEGIN_EDIT_BLOCK
+IF sv_bTransducerAvailable THEN
+   iIndexEndValue := sv_EjectorBwdVisShake.Profile.iNoOfPoints+1;
+
+   // PreOutput should use the same systempressure
+   // Ejector uses KN instead of Bar
+   sv_EjectorFwdVisShake.rPreOutputPress := 1.0/rConfKN  * sv_EjectorBwdVisShake.Profile.Points[iIndexEndValue].rPressure;
+   
+   // PreOutput should use the same flow of oil which causes different
+   // velocities fwd and bwd in mm/s
+   sv_EjectorFwdVisShake.rPreOutputVel   := 1.0/rConfVel * sv_EjectorBwdVisShake.Profile.Points[iIndexEndValue].rVelocity;
+END_IF;
+
+
+
+
+
+
+
+;#END_EDIT_BLOCK END_ACTION (*ACpy_Bwd_to_Fwd*)
+ACTION ABackward: #BEGIN_EDIT_BLOCK
+fbTimer(IN := TRUE,
+        PT := dMaxMoveTime);
+b := WRITE_SV_DIRECT(sv_EjectorShakeTimesAct.dActMoveTime, fbTimer.ET);
+IF NOT bBwdToShakePos THEN
+   abMoveBwd.aRun(bStop := g_MoveCtrl.bStop OR bResumed);
+   bMoveBwdReady := abMoveBwd.aRun.bReady;
+ELSE
+   abMoveBwdShake.aRun(bStop := g_MoveCtrl.bStop OR bResumed);
+   bMoveBwdReady := abMoveBwdShake.aRun.bReady;
+END_IF;
+
+
+
+
+;#END_EDIT_BLOCK END_ACTION (*ABackward*)
+ACTION AStartCond: #BEGIN_EDIT_BLOCK
+bReady := FALSE;
+fbDebugTrace2(nDeviceState, 'Ejector shaking Started');
+
+//copy shake counter to avoid problems
+//if counter is modified during shake is active
+iShakeCounterSet := sv_iShakeCounter;
+
+IF sv_rMaxPressureFwd <> 0.0 THEN
+    rConfKN := sv_rMaxPressureBwd / sv_rMaxPressureFwd;
+ELSE
+    rConfKN := 1.0;
+END_IF;
+IF sv_rMaxSpeedFwd <> 0.0 THEN
+    rConfVel := sv_rMaxSpeedBwd / sv_rMaxSpeedFwd;
+ELSE
+    rConfVel := 1.0;
+END_IF;
+
+iShakeCounter := 0;
+
+IF sv_bTransducerAvailable THEN //chad(CR_0038565)
+    rSaveFwdPreOutputVel   := sv_EjectorFwdVisShake.rPreOutputVel;
+    rSaveFwdPreOutputPress := sv_EjectorFwdVisShake.rPreOutputPress;
+    rSaveBwdPreOutputVel   := sv_EjectorBwdVis.rPreOutputVel;
+    rSaveBwdPreOutputPress := sv_EjectorBwdVis.rPreOutputPress;
+    iIndexEndValue := sv_EjectorFwdVisShake.Profile.iNoOfPoints+1;
+    // PreOutput should use the same systempressure
+    // Ejector uses KN instead of Bar
+    sv_EjectorBwdVis.rPreOutputPress := rConfKN * sv_EjectorFwdVisShake.Profile.Points[iIndexEndValue].rPressure;
+
+
+    // PreOutput should use the same flow of oil which causes different
+    // velocities fwd and bwd in mm/s
+    sv_EjectorBwdVis.rPreOutputVel   := rConfVel* sv_EjectorFwdVisShake.Profile.Points[iIndexEndValue].rVelocity;
+
+    IF (iShakeCounterSet <= 1) THEN
+        sv_rBwdInterruptPosition := 0.0;
+    ELSE
+        sv_rBwdInterruptPosition := 1.0;
+    END_IF;
+
+ELSE
+    //chad(CR_0038565)- settings backup
+    rSaveFwdPreOutputVel   := sv_ConstFwdVisLS.Velocity.PreOutput.rOutputValue;
+    rSaveFwdPreOutputPress := sv_ConstFwdVisLS.Pressure.PreOutput.rOutputValue;
+    rSaveBwdPreOutputVel   := sv_ConstBwdVisLS.Velocity.PreOutput.rOutputValue;
+    rSaveBwdPreOutputPress := sv_ConstBwdVisLS.Pressure.PreOutput.rOutputValue;
+END_IF;
+
+// time for shake
+fbTimer(IN := FALSE);
+
+;#END_EDIT_BLOCK END_ACTION (*AStartCond*)
+ACTION AMoveFwd: #BEGIN_EDIT_BLOCK
+(**************************************** WARNING ********************************************
+ *** The KEBA Kemro K2 System including software is not intended for safety control tasks! ***
+ ***                       For further information see Comment tab!                        ***
+ *********************************************************************************************)
+
+//checking locklist during fwd movement
+abLockList.aCheck(MoveDir := cMoveFwd, MoveId := cMoveAll);
+bResumed := abLockList.aCheck.bLocked AND NOT abLockList.aCheck.bAbort;
+bAbort := abLockList.aCheck.bAbort;
+
+//call block for fwd movement
+abMoveFwd.aRun(bStop := g_MoveCtrl.bStop OR bAbort OR bResumed);
+fbTimer(IN := TRUE, PT := dMaxMoveTime);
+b := WRITE_SV_DIRECT(sv_EjectorShakeTimesAct.dActMoveTime, fbTimer.ET);
+
+;#END_EDIT_BLOCK END_ACTION (*AMoveFwd*)
+ACTION ABackwardConst: #BEGIN_EDIT_BLOCK
+//chad(CR_0038565)
+fbTimer(IN := TRUE,
+        PT := dMaxMoveTime);
+b := WRITE_SV_DIRECT(sv_EjectorShakeTimesAct.dActMoveTime, fbTimer.ET);
+IF NOT bBwdToShakePos THEN
+   abMoveBwd.aRun(bStop := g_MoveCtrl.bStop OR bResumed);
+   bMoveBwdReady := abMoveBwd.aRun.bReady;
+ELSE
+   abMoveBwdShake.aRun(bStop := g_MoveCtrl.bStop OR bResumed OR fbBwdTimer.Q);
+   bMoveBwdReady := abMoveBwdShake.aRun.bReady;
+END_IF;
+
+;#END_EDIT_BLOCK END_ACTION (*ABackwardConst*)
+ACTION ACpy_Fwd_to_Bwd: #BEGIN_EDIT_BLOCK
+ iIndexEndValue := sv_EjectorFwdVisShake.Profile.iNoOfPoints+1;
+
+// PreOutput should use the same systempressure
+// Ejector uses KN instead of Bar
+ sv_EjectorBwdVisShake.rPreOutputPress := rConfKN  * sv_EjectorFwdVisShake.Profile.Points[iIndexEndValue].rPressure;
+ sv_EjectorBwdVis.rPreOutputPress      := sv_EjectorBwdVisShake.rPreOutputPress;
+
+
+// PreOutput should use the same flow of oil which causes different
+// velocities fwd and bwd in mm/s
+ sv_EjectorBwdVisShake.rPreOutputVel   := rConfVel * sv_EjectorFwdVisShake.Profile.Points[iIndexEndValue].rVelocity;
+ sv_EjectorBwdVis.rPreOutputVel        := sv_EjectorBwdVisShake.rPreOutputVel;
+
+;#END_EDIT_BLOCK END_ACTION (*ACpy_Fwd_to_Bwd*)
+(* end sfc-code *)
+
+
+END_ALGORITHM
+
+ALGORITHM aInit
+
+
+VAR_INPUT
+ pFwdProfile : REFTO KAPPL_VisProfile;
+ pBwdProfile : REFTO KAPPL_VisProfile;
+ pBwdShakeProfile : REFTO KAPPL_VisProfile;
+ prShakeFwdCalcDurStartPos : REFTO REAL;
+END_VAR
+#BEGIN_EDIT_BLOCK
+(**************************************** WARNING ********************************************
+ *** The KEBA Kemro K2 System including software is not intended for safety control tasks! ***
+ ***                       For further information see Comment tab!                        ***
+ *********************************************************************************************)
+
+abMoveFwd.aInit(pProfile := pFwdProfile,
+                pdCalculatedDuration := @sv_dCalculatedDurationShakeFwd,
+                prCalcDurationStartPosition := prShakeFwdCalcDurStartPos);
+                
+abMoveBwd.aInit(pProfile := pBwdProfile);
+
+abMoveBwdShake.aInit(pProfile := pBwdShakeProfile,
+                     pdCalculatedDuration := @sv_dCalculatedDurationShakeBwd,
+                     prCalcDurationStartPosition := @sv_rBwdCalcDurationStartPos);
+
+
+;#END_EDIT_BLOCK END_ALGORITHM
+
+POSTUPDATE_ALGORITHM pReCalcShakeDuration ON PU_Task_13 WITH sv_iShakeCounter, sv_dCalculatedDurationShakeFwd, sv_dCalculatedDurationShakeBwd, sv_bInitDone
+
+#BEGIN_EDIT_BLOCK
+(**************************************** WARNING ********************************************
+ *** The KEBA Kemro K2 System including software is not intended for safety control tasks! ***
+ ***                       For further information see Comment tab!                        ***
+ *********************************************************************************************)
+
+//Create sum of each shake movement
+sv_dCalculatedDurationShake := MULTIME(sv_dCalculatedDurationShakeFwd + sv_dCalculatedDurationShakeBwd, sv_iShakeCounter - 1); 
+
+                                      
+
+
+;#END_EDIT_BLOCK END_ALGORITHM
+
+POSTUPDATE_ALGORITHM pOpMode ON PU_Task_3 WITH sv_OperationMode
+
+#BEGIN_EDIT_BLOCK
+(**************************************** WARNING ********************************************
+ *** The KEBA Kemro K2 System including software is not intended for safety control tasks! ***
+ ***                       For further information see Comment tab!                        ***
+ *********************************************************************************************)
+
+IF sv_OperationMode > nManual THEN
+   //in HA and FA the shake movement is ready at the fwd endposition
+   sv_MoveShake.pbPosReached := @sv_bEjectorFwd;
+   sv_MoveShake.Alarm.AlarmId := erEjectorNotForward;
+ELSE
+   //shake is ready at bwd position
+   sv_MoveShake.pbPosReached := @sv_bEjectorBwd;
+   sv_MoveShake.Alarm.AlarmId := erEjectorNotBackward;
+END_IF;
+
+
+;#END_EDIT_BLOCK END_ALGORITHM
+
+
+
+END_ALGORITHM_BLOCK
+
+
+
+#END_OF_IEC_PART
+
+@Puma @IecEditor 6 113 @Pou 25 
+@@@BEG_Comment@@@
+@h    ! WARNING !
+@h    The Kemro K2 system (including software) only meets category B according to EN 954-1,
+@h    thus it is not intended for usage in safety-relevant control applications in the field 
+@h    of personal safety (e.g. emergency stop).
+@h    To implement potentially necessary safety-relevant control tasks, always use additional 
+@h    external safety devices that are intended for the particular purpose, and meet the necessary 
+@h    functional safety.
+@h    For further information see EN 954-1 (EN ISO 13849-1) and/or the K2-x00 user manual, chapter 
+@h    "CE conformity, directives and standards".
+
+Algorithm block for executing the shake movement.
+Depending on the active movement (fwd or bwd) the locklist is checked for lock aborts
+or lock resumes for the movement.
+@@@END_Comment@@@
+
+@BEG_Contents 
+
+@BEG_Func 
+@RT(17)FuncTreeContainer 
+3 
+@Var @RT(14)GET_MY_FU_NAME @RT(0) @T @T @DERIVED 0 @F @RT(22)KEBA_STANDARD_FUNCTION @F 
+@T 
+@BEG_Attrib 
+0 @RT(0) @RT(0) 
+@END_Attrib 
+1 1 @F @F @F @F 
+
+@Var @RT(19)WRITE_SVREAL_DIRECT @RT(0) @T @T @DERIVED 0 @F @RT(22)KEBA_STANDARD_FUNCTION @F 
+@T 
+@BEG_Attrib 
+0 @RT(0) @RT(0) 
+@END_Attrib 
+1 1 @F @F @F @F 
+
+@Var @RT(15)WRITE_SV_DIRECT @RT(0) @T @T @DERIVED 0 @F @RT(22)KEBA_STANDARD_FUNCTION @F 
+@T 
+@BEG_Attrib 
+0 @RT(0) @RT(0) 
+@END_Attrib 
+1 1 @F @F @F @F 
+
+@END_Func 
+
+@BEG_Const 
+@RT(18)ConstTreeContainer 
+6 
+@Var @RT(22)cLockGroupClampingUnit @RT(0) @T @F @DT @RT(4)DINT @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+0 @RT(2)65 @RT(29)Members: Mold, Ejector, Cores 
+@END_Attrib 
+1 1 @F @F @F @F 
+
+@Var @RT(15)cLockGroupMotor @RT(0) @T @F @DT @RT(4)DINT @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+0 @RT(2)69 @RT(56)Members: Mold, Ejector, Cores, Injection, Plast, Purge,  
+@END_Attrib 
+1 1 @F @F @F @F 
+
+@Var @RT(8)cMoveBwd @RT(0) @T @F @DT @RT(4)DINT @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+0 @RT(2)11 @RT(17)movement backward 
+@END_Attrib 
+1 1 @F @F @F @F 
+
+@Var @RT(8)cMoveAll @RT(0) @T @F @DT @RT(4)DINT @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+0 @RT(13)cMaxMoveIdent @RT(32)all movements (for evLockUnlock) 
+@END_Attrib 
+1 1 @F @F @F @F 
+
+@Var @RT(14)nHalfAutomatic @RT(0) @T @T @DERIVED 0 @F @RT(15)tnOperationMode @F 
+@T 
+@BEG_Attrib 
+0 @RT(1)2 @RT(34)confirmation every cycle necessary 
+@END_Attrib 
+1 1 @F @F @F @F 
+
+@Var @RT(24)cLockGroupSafetyGateMold @RT(0) @T @F @DT @RT(4)DINT @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+0 @RT(2)61 @RT(73)Members: Mold Close, Mold Hight Forward, Auto Mold Hight, Core In, Inject 
+@END_Attrib 
+1 1 @F @F @F @F 
+
+@END_Const 
+
+@BEG_Export 
+
+@BEG_Kind 
+@ALGORITHM_BLOCK @RT(11)ABMoveShake @STRUCTURED_TEXT 
+@RT(0) @RT(0) @RT(0) 
+@END_Kind 
+
+@BEG_Dcl 
+@RT(16)DclTreeContainer 
+40 
+@Var @RT(12)sv_MoveShake @RT(0) @T @T @DERIVED 0 @T @T @DT @RT(10)tsMoveData @RT(0) @T @T @UNKNOWN 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 8 @F @F @F @F 
+
+@Var @RT(16)sv_iShakeCounter @RT(0) @T @F @DT @RT(4)DINT @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 8 @F @F @F @F 
+
+@Var @RT(24)sv_rBwdInterruptPosition @RT(0) @T @F @DT @RT(4)REAL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 8 @F @F @F @F 
+
+@Var @RT(21)sv_EjectorBwdVisShake @RT(0) @T @T @DERIVED 0 @T @T @DT @RT(16)KAPPL_VisProfile @RT(0) @T @T @UNKNOWN 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 8 @F @F @F @F 
+
+@Var @RT(16)sv_EjectorBwdVis @RT(0) @T @T @DERIVED 0 @T @T @DT @RT(16)KAPPL_VisProfile @RT(0) @T @T @UNKNOWN 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 8 @F @F @F @F 
+
+@Var @RT(21)sv_EjectorFwdTimesSet @RT(0) @T @T @DERIVED 0 @T @T @DT @RT(10)tsSetTimes @RT(0) @T @T @UNKNOWN 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 8 @F @F @F @F 
+
+@Var @RT(14)sv_bEjectorFwd @RT(0) @T @F @DT @RT(4)BOOL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 8 @F @F @F @F 
+
+@Var @RT(14)sv_bEjectorBwd @RT(0) @T @F @DT @RT(4)BOOL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 8 @F @F @F @F 
+
+@Var @RT(21)sv_EjectorFwdVisShake @RT(0) @T @T @DERIVED 0 @T @T @DT @RT(16)KAPPL_VisProfile @RT(0) @T @T @UNKNOWN 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 8 @F @F @F @F 
+
+@Var @RT(15)sv_rMaxSpeedFwd @RT(0) @T @F @DT @RT(4)REAL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(27)maximum speed for injection @RT(0) 
+@END_Attrib 
+1 8 @F @F @F @F 
+
+@Var @RT(15)sv_rMaxSpeedBwd @RT(0) @T @F @DT @RT(4)REAL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(31)maximum speed for decompression @RT(0) 
+@END_Attrib 
+1 8 @F @F @F @F 
+
+@Var @RT(18)sv_rMaxPressureFwd @RT(0) @T @F @DT @RT(4)REAL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(27)maximum force for injection @RT(0) 
+@END_Attrib 
+1 8 @F @F @F @F 
+
+@Var @RT(18)sv_rMaxPressureBwd @RT(0) @T @F @DT @RT(4)REAL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(31)maximum force for decompression @RT(0) 
+@END_Attrib 
+1 8 @F @F @F @F 
+
+@Var @RT(12)sv_rVelocity @RT(0) @T @F @DT @RT(4)REAL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 8 @F @F @F @F 
+
+@Var @RT(12)sv_rPressure @RT(0) @T @F @DT @RT(4)REAL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 8 @F @F @F @F 
+
+@Var @RT(16)sv_OperationMode @RT(0) @T @T @DERIVED 0 @T @T @DT @RT(15)tnOperationMode @RT(0) @T @T @UNKNOWN 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 8 @F @F @F @F 
+
+@Var @RT(23)sv_EjectorShakeTimesAct @RT(0) @T @T @DERIVED 0 @T @T @DT @RT(10)tsActTimes @RT(0) @T @T @UNKNOWN 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 8 @F @F @F @F 
+
+@Var @RT(9)abMoveFwd @RT(0) @T @T @DERIVED 0 @T @T @DT @RT(9)ABMoveFwd @RT(0) @T @T @UNKNOWN 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(9)abMoveBwd @RT(0) @T @T @DERIVED 0 @T @T @DT @RT(9)ABMoveBwd @RT(0) @T @T @UNKNOWN 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(10)abLockList @RT(0) @T @T @DERIVED 0 @T @T @DT @RT(10)ABLockList @RT(0) @T @T @UNKNOWN 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(14)abMoveBwdShake @RT(0) @T @T @DERIVED 0 @T @T @DT @RT(9)ABMoveBwd @RT(0) @T @T @UNKNOWN 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(13)bMoveBwdReady @RT(0) @T @F @DT @RT(4)BOOL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(30)sv_dCalculatedDurationShakeFwd @RT(0) @T @F @DT @RT(4)TIME @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(51)Calculated duration for ejector shake fwd (1 count) @RT(0) 
+@END_Attrib 
+1 8 @F @F @F @F 
+
+@Var @RT(30)sv_dCalculatedDurationShakeBwd @RT(0) @T @F @DT @RT(4)TIME @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(51)Calculated duration for ejector shake bwd (1 count) @RT(0) 
+@END_Attrib 
+1 8 @F @F @F @F 
+
+@Var @RT(27)sv_dCalculatedDurationShake @RT(0) @T @F @DT @RT(4)TIME @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(46)Calculated duration for complete ejector shake @RT(0) 
+@END_Attrib 
+1 8 @F @F @F @F 
+
+@Var @RT(27)sv_rBwdCalcDurationStartPos @RT(0) @T @F @DT @RT(4)REAL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(54)Start position for calculation of ejector bwd duration @RT(0) 
+@END_Attrib 
+1 8 @F @F @F @F 
+
+@Var @RT(12)sv_bInitDone @RT(0) @T @F @DT @RT(4)BOOL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 8 @F @F @F @F 
+
+@Var @RT(10)PU_Task_13 @RT(0) @T @T @RENAMED 0 @T @T @DT @RT(4)TASK @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 7 @F @F @F @F 
+
+@Var @RT(10)g_MoveCtrl @RT(0) @T @T @DERIVED 0 @T @T @DT @RT(10)tsMoveCtrl @RT(0) @T @T @UNKNOWN 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 6 @F @F @F @F 
+
+@Var @RT(16)sv_dShakeBwdTime @RT(0) @T @F @DT @RT(4)TIME @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(16)chad(CR_0038565) @RT(0) 
+@END_Attrib 
+1 8 @F @F @F @F 
+
+@Var @RT(19)sv_dShakeBwdTimeAct @RT(0) @T @F @DT @RT(4)TIME @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(16)chad(CR_0038565) @RT(0) 
+@END_Attrib 
+1 8 @F @F @F @F 
+
+@Var @RT(23)sv_bTransducerAvailable @RT(0) @T @F @DT @RT(4)BOOL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(16)chad(CR_0038565) @RT(0) 
+@END_Attrib 
+1 8 @F @F @F @F 
+
+@Var @RT(16)sv_ConstFwdVisLS @RT(0) @T @T @DERIVED 0 @T @T @DT @RT(8)tsVelPre @RT(0) @T @T @UNKNOWN 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(16)chad(CR_0038565) @RT(0) 
+@END_Attrib 
+1 8 @F @F @F @F 
+
+@Var @RT(16)sv_ConstBwdVisLS @RT(0) @T @T @DERIVED 0 @T @T @DT @RT(8)tsVelPre @RT(0) @T @T @UNKNOWN 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(16)chad(CR_0038565) @RT(0) 
+@END_Attrib 
+1 8 @F @F @F @F 
+
+@Var @RT(15)sv_rVelocityAbs @RT(0) @T @F @DT @RT(4)REAL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 8 @F @F @F @F 
+
+@Var @RT(14)sv_EjectorMode @RT(0) @T @T @DERIVED 0 @T @T @DT @RT(13)tnEjectorMode @RT(0) @T @T @UNKNOWN 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(16)chad(CR_0038565) @RT(0) 
+@END_Attrib 
+1 8 @F @F @F @F 
+
+@Var @RT(19)sv_bVerticalMachine @RT(0) @T @T @RENAMED 0 @T @T @DT @RT(4)BOOL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 8 @F @F @F @F 
+
+@Var @RT(9)PU_Task_3 @RT(0) @T @T @RENAMED 0 @T @T @DT @RT(4)TASK @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 7 @F @F @F @F 
+
+@Var @RT(20)erEjectorNotBackward @RT(0) @T @F @DT @RT(5)ALARM @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 7 @F @F @F @F 
+
+@Var @RT(19)erEjectorNotForward @RT(0) @T @F @DT @RT(5)ALARM @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 7 @F @F @F @F 
+
+@END_Dcl 
+
+@END_Export 
+
+@BEG_Body 
+
+5 
+
+@BEG_Export 
+
+@BEG_Algo 
+@ALGORITHM @RT(9)aRegister @STRUCTURED_TEXT 
+@RT(0) @RT(0) @RT(0) @F @F 
+@END_Algo 
+
+@BEG_Dcl 
+@RT(16)DclTreeContainer 
+1 
+@Var @RT(18)abMovementRegister @RT(0) @T @T @DERIVED 0 @T @T @DT @RT(18)ABMovementRegister @RT(0) @T @T @UNKNOWN 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@END_Dcl 
+
+@END_Export 
+
+@BEG_Export 
+
+@BEG_Algo 
+@ALGORITHM @RT(4)aRun @SEQUENTIAL_FLOW_CHART 
+@RT(0) @RT(0) @RT(0) @F @F 
+@END_Algo 
+
+@BEG_Dcl 
+@RT(16)DclTreeContainer 
+19 
+@Var @RT(6)bReady @RT(0) @T @F @DT @RT(4)BOOL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 3 @F @F @F @F 
+
+@Var @RT(13)iShakeCounter @RT(0) @T @F @DT @RT(4)DINT @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(20)rSaveFwdPreOutputVel @RT(0) @T @F @DT @RT(4)REAL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(22)rSaveFwdPreOutputPress @RT(0) @T @F @DT @RT(4)REAL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(20)rSaveBwdPreOutputVel @RT(0) @T @F @DT @RT(4)REAL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(22)rSaveBwdPreOutputPress @RT(0) @T @F @DT @RT(4)REAL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(14)iIndexEndValue @RT(0) @T @F @DT @RT(5)UDINT @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(8)bResumed @RT(0) @T @F @DT @RT(4)BOOL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(20)movement was resumed @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(7)rConfKN @RT(0) @T @F @DT @RT(4)REAL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(8)rConfVel @RT(0) @T @F @DT @RT(4)REAL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(7)fbTimer @RT(0) @T @T @DERIVED 0 @T @T @DT @RT(3)TON @RT(0) @T @T @UNKNOWN 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(12)dMaxMoveTime @RT(0) @T @F @DT @RT(4)TIME @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(8)T#999.9s @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(6)bAbort @RT(0) @T @F @DT @RT(4)BOOL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(24)movement must be aborted @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(9)bContinue @RT(0) @T @F @DT @RT(4)BOOL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(23)continue shake sequence @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(10)fbBwdTimer @RT(0) @T @T @DERIVED 0 @T @T @DT @RT(3)TON @RT(0) @T @T @UNKNOWN 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(37)used for shake bwd when no transducer @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(14)bBwdToShakePos @RT(0) @T @F @DT @RT(4)BOOL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(16)iShakeCounterSet @RT(0) @T @F @DT @RT(4)DINT @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(52)set shake counter (copied at the beginning of shake) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(13)fbDebugTrace2 @RT(0) @T @T @DERIVED 0 @T @T @DT @RT(13)FBDebugTrace2 @RT(0) @T @T @UNKNOWN 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(1)b @RT(0) @T @F @DT @RT(4)BOOL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 4 @F @F @F @F 
+
+@END_Dcl 
+
+@END_Export 
+
+@BEG_Export 
+
+@BEG_Algo 
+@ALGORITHM @RT(5)aInit @STRUCTURED_TEXT 
+@RT(0) @RT(0) @RT(0) @F @F 
+@END_Algo 
+
+@BEG_Dcl 
+@RT(16)DclTreeContainer 
+4 
+@Var @RT(11)pFwdProfile @RT(0) @T @T @REFTO 0 @F @DERIVED 0 @T @T @DT @RT(16)KAPPL_VisProfile @RT(0) @T @T @UNKNOWN 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 1 @F @F @F @F 
+
+@Var @RT(11)pBwdProfile @RT(0) @T @T @REFTO 0 @F @DERIVED 0 @T @T @DT @RT(16)KAPPL_VisProfile @RT(0) @T @T @UNKNOWN 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 1 @F @F @F @F 
+
+@Var @RT(16)pBwdShakeProfile @RT(0) @T @T @REFTO 0 @F @DERIVED 0 @T @T @DT @RT(16)KAPPL_VisProfile @RT(0) @T @T @UNKNOWN 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 1 @F @F @F @F 
+
+@Var @RT(25)prShakeFwdCalcDurStartPos @RT(0) @T @T @REFTO 0 @T @DT @RT(4)REAL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 1 @F @F @F @F 
+
+@END_Dcl 
+
+@END_Export 
+
+@BEG_Export 
+
+@BEG_Algo 
+@POSTUPDATE_ALGORITHM @RT(20)pReCalcShakeDuration @STRUCTURED_TEXT 
+@RT(0) @RT(94)sv_iShakeCounter, sv_dCalculatedDurationShakeFwd, sv_dCalculatedDurationShakeBwd, sv_bInitDone @RT(10)PU_Task_13 @F @F 
+@END_Algo 
+
+@BEG_Dcl 
+@RT(16)DclTreeContainer 
+0 
+@END_Dcl 
+
+@END_Export 
+
+@BEG_Export 
+
+@BEG_Algo 
+@POSTUPDATE_ALGORITHM @RT(7)pOpMode @STRUCTURED_TEXT 
+@RT(0) @RT(16)sv_OperationMode @RT(9)PU_Task_3 @F @F 
+@END_Algo 
+
+@BEG_Dcl 
+@RT(16)DclTreeContainer 
+0 
+@END_Dcl 
+
+@END_Export 
+
+@BEG_Body 
+@TL(27)
+(**************************************** WARNING ********************************************
+ *** The KEBA Kemro K2 System including software is not intended for safety control tasks! ***
+ ***                       For further information see Comment tab!                        ***
+ *********************************************************************************************)
+
+IF sv_bVerticalMachine THEN
+   //for a vertical machine the ejector can also be operated while mold is closed(depending on mode)
+   //ejector can be inserted after mold close
+   //-> the automatic safety check could forbid ejector operation in manual mode while mold is open
+   sv_MoveShake.iSafetyIdentifier := 0;
+END_IF;
+
+// movement registration
+sv_MoveShake.LockGroups[1] := cLockGroupClampingUnit;
+sv_MoveShake.LockGroups[2] := cLockGroupMotor;
+sv_MoveShake.LockGroups[3] := cLockGroupSafetyGateMold;
+sv_MoveShake.LockGroups[4] := cLockGroupRotateEjectPos;
+
+sv_MoveShake.pdActiveTimeAct := @sv_EjectorShakeTimesAct.dActMoveTime;
+sv_MoveShake.pdTimeLimit := @sv_EjectorFwdTimesSet.dMaxMoveTime;
+sv_MoveShake.pbPosReached := @sv_bEjectorBwd;
+sv_MoveShake.Alarm.AlarmId := erEjectorNotBackward;
+sv_MoveShake.sIconPath := CONCAT(GET_MY_FU_NAME(), '\hmi\images\movEjectShake.gif');
+
+abMovementRegister.aRegister(@sv_MoveShake);
+
+
+@END_Body 
+
+@@@BEG_Comment@@@ 
+@TL(0)
+
+@@@END_Comment@@@ 
+
+@BEG_SfcBody 
+40 32 39 
+
+@BEG_SfcData 2 
+@StepSeq @RT(4)sseq @F 1 
+@Loop @RT(4)loop @F 2 
+@StepSeq @RT(4)sseq @F 13 
+@Step @RT(7)S_Start @F @T @F @F @RT(0) @F 
+@AcbCont @RT(7)unnamed @F 1 
+@Acb @RT(10)AStartCond @F @F @RT(1)P @RT(0) @F @F @F @F 
+
+@AltBranch @RT(3)alt @F 2 
+@TransSeq @RT(4)tseq @F 1 
+@Trans @RT(8)TMoveFwd @F @T @F @F @T @F @TL(2)
+NOT sv_bEjectorFwd
+
+@RT(8)TMoveFwd @F 
+
+@TransSeq @RT(4)tseq @F 2 
+@Trans @RT(12)TMoveFwdDone @F @T @F @F @T @F @TL(2)
+sv_bEjectorFwd
+
+@RT(12)TMoveFwdDone @F 
+@Goto @RT(12)S_CheckIfFwd @F @F 
+
+
+@Loop @RT(4)loop @F 2 
+@StepSeq @RT(3)seq @F 5 
+@Step @RT(14)S_CheckLockFwd @F @F @T @F @RT(0) @F 
+@AcbCont @RT(7)unnamed @F 1 
+@Acb @RT(15)ACheckBeforeFwd @F @T @RT(1)N @RT(0) @F @F @T @TL(5)
+// check if the ejector fwd movement is locked
+abLockList.aCheck(MoveDir := cMoveFwd, MoveId := cMoveAll);
+bResumed := abLockList.aCheck.bLocked AND NOT abLockList.aCheck.bAbort;
+bAbort := abLockList.aCheck.bAbort;
+
+@F 
+
+@AltBranch @RT(3)alt @F 2 
+@TransSeq @RT(4)tseq @F 1 
+@Trans @RT(13)TFwdNotLocked @F @T @F @F @T @F @TL(2)
+NOT abLockList.aCheck.bLocked
+
+@RT(7)Trans18 @F 
+
+@TransSeq @RT(4)tseq @F 2 
+@Trans @RT(5)TStop @F @T @F @F @T @F @TL(2)
+bAbort OR g_MoveCtrl.bStop
+
+@RT(7)Trans19 @F 
+@Goto @RT(7)S_Ready @F @F 
+
+
+@Step @RT(9)S_MoveFwd @F @F @F @F @RT(0) @F 
+@AcbCont @RT(7)unnamed @F 2 
+@Acb @RT(8)Action35 @F @T @RT(1)N @RT(0) @F @F @T @TL(8)
+//chad(CR_0038565)
+IF NOT sv_bTransducerAvailable THEN
+   IF (ABS(sv_rVelocityAbs - sv_ConstFwdVisLS.Velocity.Output.rOutputValue) < 0.1) THEN
+      b := WRITE_SVREAL_DIRECT(sv_ConstBwdVisLS.Pressure.PreOutput.rOutputValue, sv_ConstFwdVisLS.Pressure.Output.rOutputValue);
+      b := WRITE_SVREAL_DIRECT(sv_ConstBwdVisLS.Velocity.PreOutput.rOutputValue, sv_ConstFwdVisLS.Velocity.Output.rOutputValue);
+   END_IF;
+END_IF;
+
+@F 
+@Acb @RT(8)AMoveFwd @F @F @RT(1)N @RT(0) @F @F @F @F 
+
+@Trans @RT(9)TFwdReady @F @T @F @F @T @F @TL(2)
+abMoveFwd.aRun.bReady
+
+@RT(9)TFwdReady @F 
+@Step @RT(17)S_CheckFwdResumed @F @F @F @F @RT(0) @F 
+@AcbCont @RT(7)unnamed @F 1 
+@Acb @RT(8)Action15 @F @T @RT(1)P @RT(0) @F @F @T @TL(2)
+bContinue := NOT g_MoveCtrl.bStop AND NOT bAbort AND NOT bResumed; 
+
+@F 
+
+
+@Trans @RT(11)TFwdResumed @F @T @T @T @T @F @TL(2)
+bResumed
+
+@RT(7)Trans21 @F 
+
+@AltBranch @RT(3)alt @F 2 
+@TransSeq @RT(4)tseq @F 1 
+@Trans @RT(9)TContinue @F @T @F @F @T @F @TL(2)
+bContinue
+
+@RT(7)Trans20 @F 
+
+@TransSeq @RT(4)tseq @F 2 
+@Trans @RT(11)TFwdAborted @F @T @F @F @T @F @TL(2)
+bAbort OR g_MoveCtrl.bStop
+
+@RT(7)Trans22 @F 
+@Goto @RT(7)S_Ready @F @F 
+
+
+@Step @RT(12)S_CheckIfFwd @F @F @T @F @RT(0) @F 
+@AcbCont @RT(7)unnamed @F 0 
+
+@AltBranch @RT(3)alt @F 2 
+@TransSeq @RT(4)tseq @F 1 
+@Trans @RT(13)TEjectorIsFwd @F @T @F @F @T @F @TL(2)
+sv_bEjectorFwd
+
+@RT(13)TEjectorIsFwd @F 
+
+@TransSeq @RT(4)tseq @F 2 
+@Trans @RT(16)TEjectorIsNotFwd @F @T @F @F @T @F @TL(2)
+g_MoveCtrl.bStop
+
+@RT(16)TEjectorIsNotFwd @F 
+@Goto @RT(7)S_Ready @F @F 
+
+
+@Step @RT(17)S_GetBwdTargetPos @F @F @F @F @RT(0) @F 
+@AcbCont @RT(7)unnamed @F 1 
+@Acb @RT(16)AIncreaseCounter @F @T @RT(1)P @RT(0) @F @F @T @TL(5)
+iShakeCounter := iShakeCounter + 1;
+fbTimer(IN := TRUE,
+        PT := dMaxMoveTime);
+sv_EjectorShakeTimesAct.dActMoveTime := fbTimer.ET;
+
+@F 
+
+@Trans @RT(7)Trans27 @F @T @F @F @T @F @TL(2)
+TRUE
+
+@RT(7)Trans27 @F 
+@Loop @RT(4)loop @F 2 
+@StepSeq @RT(4)sseq @F 3 
+@Step @RT(14)S_CheckLockBwd @F @F @F @F @RT(0) @F 
+@AcbCont @RT(7)unnamed @F 1 
+@Acb @RT(15)ACheckBeforeBwd @F @T @RT(1)N @RT(0) @F @F @T @TL(4)
+// check if the ejector bwd movement is locked
+abLockList.aCheck(MoveDir := cMoveBwd, MoveId := cMoveAll);
+
+
+@F 
+
+@AltBranch @RT(3)alt @F 2 
+@TransSeq @RT(4)tseq @F 3 
+@Trans @RT(7)Trans29 @F @T @F @F @T @F @TL(4)
+((NOT abLockList.aCheck.bLocked) OR g_MoveCtrl.bStop)
+AND NOT ((iShakeCounter = iShakeCounterSet) AND
+sv_OperationMode >= nHalfAutomatic)
+
+@RT(7)Trans29 @F 
+@Step @RT(16)S_TransAvailable @F @F @F @F @RT(0) @F 
+@AcbCont @RT(7)unnamed @F 1 
+@Acb @RT(8)Action38 @F @T @RT(1)P @RT(0) @F @F @T @TL(2)
+bBwdToShakePos := (iShakeCounter < iShakeCounterSet);
+
+@F 
+
+@AltBranch @RT(3)alt @F 2 
+@TransSeq @RT(4)tseq @F 3 
+@Trans @RT(7)Trans30 @F @T @F @F @T @F @TL(3)
+//chad(CR_0038565)
+sv_bTransducerAvailable
+
+@RT(7)Trans27 @F 
+@Step @RT(9)S_MoveBwd @F @F @F @F @RT(0) @F 
+@AcbCont @RT(7)unnamed @F 3 
+@Acb @RT(15)ACheckDuringBwd @F @T @RT(1)N @RT(0) @F @F @T @TL(4)
+// checking if  ejector bwd movement is locked
+abLockList.aCheck(MoveDir := cMoveBwd, MoveId := cMoveAll);
+bResumed := abLockList.aCheck.bLocked AND NOT g_MoveCtrl.bStop;
+
+@F 
+@Acb @RT(15)ACpy_Fwd_to_Bwd @F @F @RT(1)P @RT(0) @F @F @F @F 
+@Acb @RT(9)ABackward @F @F @RT(1)N @RT(0) @F @F @F @F 
+
+@Trans @RT(9)TBwdReady @F @T @F @F @T @F @TL(2)
+bMoveBwdReady
+
+@RT(7)Trans29 @F 
+
+@TransSeq @RT(4)tseq @F 3 
+@Trans @RT(7)Trans28 @F @T @F @F @T @F @TL(3)
+//chad(CR_0038565)
+NOT sv_bTransducerAvailable
+
+@RT(7)Trans28 @F 
+@Step @RT(14)S_MoveBwdConst @F @F @F @F @RT(0) @F 
+@AcbCont @RT(7)unnamed @F 4 
+@Acb @RT(14)AClearBwdTimer @F @T @RT(1)P @RT(0) @F @F @T @TL(3)
+//chad(CR_0038565) - clear bwd timer
+fbBwdTimer(IN := FALSE);
+
+@F 
+@Acb @RT(20)ACheckDuringBwdConst @F @T @RT(1)N @RT(0) @F @F @T @TL(10)
+// checking if  ejector bwd movement is locked
+abLockList.aCheck(MoveDir := cMoveBwd, MoveId := cMoveAll);
+bResumed := abLockList.aCheck.bLocked AND NOT g_MoveCtrl.bStop;
+
+//chad(CR_0038565)
+IF sv_EjectorMode = nVibrate THEN   //only for shake mode
+    fbBwdTimer(IN := TRUE, PT := sv_dShakeBwdTime);
+END_IF;
+b := WRITE_SV_DIRECT(sv_dShakeBwdTimeAct, fbBwdTimer.ET);
+
+@F 
+@Acb @RT(8)Action36 @F @T @RT(1)N @RT(0) @F @F @T @TL(6)
+//chad(CR_0038565)
+IF (ABS(sv_rVelocityAbs - sv_ConstBwdVisLS.Velocity.Output.rOutputValue) < 0.1) THEN
+    b := WRITE_SVREAL_DIRECT(sv_ConstFwdVisLS.Pressure.PreOutput.rOutputValue, sv_ConstBwdVisLS.Pressure.Output.rOutputValue);
+    b := WRITE_SVREAL_DIRECT(sv_ConstFwdVisLS.Velocity.PreOutput.rOutputValue, sv_ConstBwdVisLS.Velocity.Output.rOutputValue);
+END_IF;
+
+@F 
+@Acb @RT(14)ABackwardConst @F @F @RT(1)N @RT(0) @F @F @F @T @TL(1)
+chad(CR_0038565)
+
+
+@Trans @RT(14)TBwdConstReady @F @T @F @F @T @F @TL(2)
+bMoveBwdReady
+
+@RT(7)Trans30 @F 
+
+
+
+@TransSeq @RT(4)tseq @F 2 
+@Trans @RT(13)LastShakeDone @F @T @F @F @T @F @TL(3)
+(iShakeCounter = iShakeCounterSet) AND
+sv_OperationMode >= nHalfAutomatic
+
+@RT(13)LastShakeDone @F 
+@Goto @RT(7)S_Ready @F @F 
+
+
+@Step @RT(13)S_CheckResume @F @F @F @F @RT(0) @F 
+@AcbCont @RT(7)unnamed @F 0 
+
+
+@Trans @RT(7)TResume @F @T @T @T @T @F @TL(2)
+bResumed
+
+@RT(7)TResume @F 
+
+@Trans @RT(7)Trans16 @F @T @F @F @T @F @TL(2)
+NOT bResumed
+
+@RT(7)Trans16 @F 
+@Step @RT(12)S_DecideNext @F @F @F @F @RT(0) @F 
+@AcbCont @RT(7)unnamed @F 0 
+
+@AltBranch @RT(3)alt @F 2 
+@TransSeq @RT(4)tseq @F 1 
+@Trans @RT(13)TShakingReady @F @T @F @F @T @F @TL(2)
+iShakeCounter >= iShakeCounterSet
+
+@RT(13)TShakingReady @F 
+
+@TransSeq @RT(4)tseq @F 4 
+@Trans @RT(7)TRepeat @F @T @F @F @T @T @TL(2)
+iShakeCounter < iShakeCounterSet
+
+@RT(7)TRepeat @F 
+@Step @RT(6)Step29 @F @F @F @F @RT(0) @F 
+@AcbCont @RT(7)unnamed @F 1 
+@Acb @RT(15)ACpy_Bwd_to_Fwd @F @F @RT(1)P @RT(0) @F @F @F @F 
+
+@Trans @RT(7)Trans35 @F @T @F @F @T @F @TL(2)
+TRUE
+
+@RT(7)Trans35 @F 
+@Goto @RT(14)S_CheckLockFwd @F @F 
+
+
+@Step @RT(7)S_Ready @F @F @T @F @RT(0) @F 
+@AcbCont @RT(7)unnamed @F 1 
+@Acb @RT(6)AReady @F @T @RT(1)P @RT(0) @F @F @T @TL(19)
+sv_rPressure := 0.0;
+sv_rVelocity := 0.0;
+
+IF sv_bTransducerAvailable THEN
+    sv_EjectorFwdVisShake.rPreOutputVel   := rSaveFwdPreOutputVel;
+    sv_EjectorFwdVisShake.rPreOutputPress := rSaveFwdPreOutputPress;
+    sv_EjectorBwdVis.rPreOutputVel   := rSaveBwdPreOutputVel;
+    sv_EjectorBwdVis.rPreOutputPress := rSaveBwdPreOutputPress;  
+ELSE
+    sv_ConstFwdVisLS.Velocity.PreOutput.rOutputValue := rSaveFwdPreOutputVel;
+    sv_ConstFwdVisLS.Pressure.PreOutput.rOutputValue := rSaveFwdPreOutputPress;
+    sv_ConstBwdVisLS.Velocity.PreOutput.rOutputValue := rSaveBwdPreOutputVel;
+    sv_ConstBwdVisLS.Pressure.PreOutput.rOutputValue := rSaveBwdPreOutputPress;  
+END_IF;
+
+bReady := TRUE;
+fbDebugTrace2(nDeviceState, 'Ejector shaking Ready');
+sv_rBwdInterruptPosition := 0.0;
+
+@F 
+
+
+@Trans @RT(6)TReady @F @T @T @T @T @T @TL(2)
+TRUE
+
+@RT(6)TReady @F 
+
+@END_SfcData 
+@SaActions 6 
+@SaText @RT(15)ACpy_Bwd_to_Fwd 1 @TL(18)
+IF sv_bTransducerAvailable THEN
+   iIndexEndValue := sv_EjectorBwdVisShake.Profile.iNoOfPoints+1;
+
+   // PreOutput should use the same systempressure
+   // Ejector uses KN instead of Bar
+   sv_EjectorFwdVisShake.rPreOutputPress := 1.0/rConfKN  * sv_EjectorBwdVisShake.Profile.Points[iIndexEndValue].rPressure;
+   
+   // PreOutput should use the same flow of oil which causes different
+   // velocities fwd and bwd in mm/s
+   sv_EjectorFwdVisShake.rPreOutputVel   := 1.0/rConfVel * sv_EjectorBwdVisShake.Profile.Points[iIndexEndValue].rVelocity;
+END_IF;
+
+
+
+
+
+
+
+
+@SaText @RT(9)ABackward 1 @TL(14)
+fbTimer(IN := TRUE,
+        PT := dMaxMoveTime);
+b := WRITE_SV_DIRECT(sv_EjectorShakeTimesAct.dActMoveTime, fbTimer.ET);
+IF NOT bBwdToShakePos THEN
+   abMoveBwd.aRun(bStop := g_MoveCtrl.bStop OR bResumed);
+   bMoveBwdReady := abMoveBwd.aRun.bReady;
+ELSE
+   abMoveBwdShake.aRun(bStop := g_MoveCtrl.bStop OR bResumed);
+   bMoveBwdReady := abMoveBwdShake.aRun.bReady;
+END_IF;
+
+
+
+
+
+@SaText @RT(10)AStartCond 1 @TL(52)
+bReady := FALSE;
+fbDebugTrace2(nDeviceState, 'Ejector shaking Started');
+
+//copy shake counter to avoid problems
+//if counter is modified during shake is active
+iShakeCounterSet := sv_iShakeCounter;
+
+IF sv_rMaxPressureFwd <> 0.0 THEN
+    rConfKN := sv_rMaxPressureBwd / sv_rMaxPressureFwd;
+ELSE
+    rConfKN := 1.0;
+END_IF;
+IF sv_rMaxSpeedFwd <> 0.0 THEN
+    rConfVel := sv_rMaxSpeedBwd / sv_rMaxSpeedFwd;
+ELSE
+    rConfVel := 1.0;
+END_IF;
+
+iShakeCounter := 0;
+
+IF sv_bTransducerAvailable THEN //chad(CR_0038565)
+    rSaveFwdPreOutputVel   := sv_EjectorFwdVisShake.rPreOutputVel;
+    rSaveFwdPreOutputPress := sv_EjectorFwdVisShake.rPreOutputPress;
+    rSaveBwdPreOutputVel   := sv_EjectorBwdVis.rPreOutputVel;
+    rSaveBwdPreOutputPress := sv_EjectorBwdVis.rPreOutputPress;
+    iIndexEndValue := sv_EjectorFwdVisShake.Profile.iNoOfPoints+1;
+    // PreOutput should use the same systempressure
+    // Ejector uses KN instead of Bar
+    sv_EjectorBwdVis.rPreOutputPress := rConfKN * sv_EjectorFwdVisShake.Profile.Points[iIndexEndValue].rPressure;
+
+
+    // PreOutput should use the same flow of oil which causes different
+    // velocities fwd and bwd in mm/s
+    sv_EjectorBwdVis.rPreOutputVel   := rConfVel* sv_EjectorFwdVisShake.Profile.Points[iIndexEndValue].rVelocity;
+
+    IF (iShakeCounterSet <= 1) THEN
+        sv_rBwdInterruptPosition := 0.0;
+    ELSE
+        sv_rBwdInterruptPosition := 1.0;
+    END_IF;
+
+ELSE
+    //chad(CR_0038565)- settings backup
+    rSaveFwdPreOutputVel   := sv_ConstFwdVisLS.Velocity.PreOutput.rOutputValue;
+    rSaveFwdPreOutputPress := sv_ConstFwdVisLS.Pressure.PreOutput.rOutputValue;
+    rSaveBwdPreOutputVel   := sv_ConstBwdVisLS.Velocity.PreOutput.rOutputValue;
+    rSaveBwdPreOutputPress := sv_ConstBwdVisLS.Pressure.PreOutput.rOutputValue;
+END_IF;
+
+// time for shake
+fbTimer(IN := FALSE);
+
+
+@SaText @RT(8)AMoveFwd 1 @TL(15)
+(**************************************** WARNING ********************************************
+ *** The KEBA Kemro K2 System including software is not intended for safety control tasks! ***
+ ***                       For further information see Comment tab!                        ***
+ *********************************************************************************************)
+
+//checking locklist during fwd movement
+abLockList.aCheck(MoveDir := cMoveFwd, MoveId := cMoveAll);
+bResumed := abLockList.aCheck.bLocked AND NOT abLockList.aCheck.bAbort;
+bAbort := abLockList.aCheck.bAbort;
+
+//call block for fwd movement
+abMoveFwd.aRun(bStop := g_MoveCtrl.bStop OR bAbort OR bResumed);
+fbTimer(IN := TRUE, PT := dMaxMoveTime);
+b := WRITE_SV_DIRECT(sv_EjectorShakeTimesAct.dActMoveTime, fbTimer.ET);
+
+
+@SaText @RT(14)ABackwardConst 1 @TL(12)
+//chad(CR_0038565)
+fbTimer(IN := TRUE,
+        PT := dMaxMoveTime);
+b := WRITE_SV_DIRECT(sv_EjectorShakeTimesAct.dActMoveTime, fbTimer.ET);
+IF NOT bBwdToShakePos THEN
+   abMoveBwd.aRun(bStop := g_MoveCtrl.bStop OR bResumed);
+   bMoveBwdReady := abMoveBwd.aRun.bReady;
+ELSE
+   abMoveBwdShake.aRun(bStop := g_MoveCtrl.bStop OR bResumed OR fbBwdTimer.Q);
+   bMoveBwdReady := abMoveBwdShake.aRun.bReady;
+END_IF;
+
+
+@SaText @RT(15)ACpy_Fwd_to_Bwd 1 @TL(13)
+ iIndexEndValue := sv_EjectorFwdVisShake.Profile.iNoOfPoints+1;
+
+// PreOutput should use the same systempressure
+// Ejector uses KN instead of Bar
+ sv_EjectorBwdVisShake.rPreOutputPress := rConfKN  * sv_EjectorFwdVisShake.Profile.Points[iIndexEndValue].rPressure;
+ sv_EjectorBwdVis.rPreOutputPress      := sv_EjectorBwdVisShake.rPreOutputPress;
+
+
+// PreOutput should use the same flow of oil which causes different
+// velocities fwd and bwd in mm/s
+ sv_EjectorBwdVisShake.rPreOutputVel   := rConfVel * sv_EjectorFwdVisShake.Profile.Points[iIndexEndValue].rVelocity;
+ sv_EjectorBwdVis.rPreOutputVel        := sv_EjectorBwdVisShake.rPreOutputVel;
+
+
+@SaTrans 0 
+@SaExits 0 
+@END_SfcBody 
+
+@@@BEG_Comment@@@ 
+@TL(0)
+
+@@@END_Comment@@@ 
+
+@BEG_Body 
+@TL(15)
+(**************************************** WARNING ********************************************
+ *** The KEBA Kemro K2 System including software is not intended for safety control tasks! ***
+ ***                       For further information see Comment tab!                        ***
+ *********************************************************************************************)
+
+abMoveFwd.aInit(pProfile := pFwdProfile,
+                pdCalculatedDuration := @sv_dCalculatedDurationShakeFwd,
+                prCalcDurationStartPosition := prShakeFwdCalcDurStartPos);
+                
+abMoveBwd.aInit(pProfile := pBwdProfile);
+
+abMoveBwdShake.aInit(pProfile := pBwdShakeProfile,
+                     pdCalculatedDuration := @sv_dCalculatedDurationShakeBwd,
+                     prCalcDurationStartPosition := @sv_rBwdCalcDurationStartPos);
+
+@END_Body 
+
+@@@BEG_Comment@@@ 
+@TL(0)
+
+@@@END_Comment@@@ 
+
+@BEG_Body 
+@TL(10)
+(**************************************** WARNING ********************************************
+ *** The KEBA Kemro K2 System including software is not intended for safety control tasks! ***
+ ***                       For further information see Comment tab!                        ***
+ *********************************************************************************************)
+
+//Create sum of each shake movement
+sv_dCalculatedDurationShake := MULTIME(sv_dCalculatedDurationShakeFwd + sv_dCalculatedDurationShakeBwd, sv_iShakeCounter - 1); 
+
+                                      
+
+@END_Body 
+
+@@@BEG_Comment@@@ 
+@TL(0)
+
+@@@END_Comment@@@ 
+
+@BEG_Body 
+@TL(15)
+(**************************************** WARNING ********************************************
+ *** The KEBA Kemro K2 System including software is not intended for safety control tasks! ***
+ ***                       For further information see Comment tab!                        ***
+ *********************************************************************************************)
+
+IF sv_OperationMode > nManual THEN
+   //in HA and FA the shake movement is ready at the fwd endposition
+   sv_MoveShake.pbPosReached := @sv_bEjectorFwd;
+   sv_MoveShake.Alarm.AlarmId := erEjectorNotForward;
+ELSE
+   //shake is ready at bwd position
+   sv_MoveShake.pbPosReached := @sv_bEjectorBwd;
+   sv_MoveShake.Alarm.AlarmId := erEjectorNotBackward;
+END_IF;
+
+@END_Body 
+
+@@@BEG_Comment@@@ 
+@TL(0)
+
+@@@END_Comment@@@ 
+@END_Body 
+
+@END_Contents 

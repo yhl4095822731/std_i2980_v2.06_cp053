@@ -1,0 +1,861 @@
+(*
+@h    ! WARNING !
+@h    The Kemro K2 system (including software) only meets category B according to EN 954-1,
+@h    thus it is not intended for usage in safety-relevant control applications in the field 
+@h    of personal safety (e.g. emergency stop).
+@h    To implement potentially necessary safety-relevant control tasks, always use additional 
+@h    external safety devices that are intended for the particular purpose, and meet the necessary 
+@h    functional safety.
+@h    For further information see EN 954-1 (EN ISO 13849-1) and/or the K2-x00 user manual, chapter 
+@h    "CE conformity, directives and standards".
+
+This algortihm block reacts on protect events that happen during half or fullauto cycle.
+The reaction depends on the selector on the mask (sv_bOpenAfterProtect).
+If the selector is true and the operation mode changed to manual (becausse of protect error),
+the block sends a startrequest for mold open movement.
+If the selector is false, no start request is sent and the mold will not open automatically.
+It is possible to try mold close again (for several times) after mold protect error occurs.
+This "mold protect retry" - function is also implemented in this block
+*)
+
+IMPORT_OVER_LISTFILE
+ START_PROCESS_ALGORITHM
+, GET_SYNC_REFTO
+, cCompCentralCoordination
+, cMoveBwd
+, tevProtect
+, tevStartRequest
+, tsDeviceId
+, tnOperationMode
+, tevStopRequest
+, tsStartedMoveData
+, tsDataActionsEnable
+, tevProtectData
+, tevStopRequestData
+, tevStartRequestData
+, KSYS_Status
+, TON
+
+END_IMPORT
+
+ALGORITHM_BLOCK ABProtectReaction #DUMMY_EDIT_BLOCK
+
+SYSTEM_VAR
+ sv_DeviceId : tsDeviceId;
+ sv_bOpenAfterProtect : BOOL;
+ sv_OperationMode : tnOperationMode;
+ sv_bODCCombinedMoveActive : BOOL;
+ sv_bSkipCycleStartCond : BOOL;
+ sv_iActMoldProtectRetry : DINT;
+ sv_iSetMoldProtectRetry : DINT;
+ sv_bMoldOpen : BOOL;
+ sv_bRecalcPendingOrActive : BOOL;
+ sv_bAutoCycleRunning : BOOL;
+ sv_StartedMovements : tsStartedMoveData;
+ sv_DataActionsEnable : tsDataActionsEnable (* set enabled state of actions load/save mold/machinedata *);
+END_VAR
+
+SYSTEM_OBJECT
+ evProtect : tevProtect;
+ evStartRequest : tevStartRequest;
+ EV_Task_3 : TASK;
+ TaskMid : TASK;
+ erStartCycleAfterProtectFailed : ALARM;
+ evStopRequest : tevStopRequest;
+END_OBJECT
+
+VAR
+ mOpModeBeforeProtect : tnOperationMode;
+END_VAR
+
+EVENT_ALGORITHM evaProtect ON EV_Task_3 WITH evProtect
+
+
+VAR_INPUT
+ evProtectData : tevProtectData;
+END_VAR
+
+VAR
+ evStopRequestData : tevStopRequestData;
+END_VAR
+#BEGIN_EDIT_BLOCK
+(**************************************** WARNING ********************************************
+ *** The KEBA Kemro K2 System including software is not intended for safety control tasks! ***
+ ***                       For further information see Comment tab!                        ***
+ *********************************************************************************************)
+
+IF NOT sv_bOpenAfterProtect THEN
+   //mold should not open automatically after protect
+   RETURN;
+END_IF;
+
+mOpModeBeforeProtect := sv_OperationMode;
+
+IF (evProtectData.DeviceIdReceiver = sv_DeviceId) THEN
+   //protect error happened -> send stop request for mold close
+   evStopRequestData.DeviceId := sv_DeviceId;
+   evStopRequestData.MoveDir := cMoveFwd; 
+   evStopRequestData.MoveId := cMoveFwd;
+   SET_EVENT(evStopRequest, evStopRequestData);
+   
+   //disable loading of machine data, mold data and sequence data during mold protect retry
+   sv_DataActionsEnable.bMoldDataLoad := FALSE;
+   sv_DataActionsEnable.bMachineDataLoad := FALSE;
+   sv_DataActionsEnable.bSequenceDataLoad := FALSE;
+   
+   //request mold open
+   START_PROCESS_ALGORITHM(paRequestMoldOpen);
+END_IF;
+
+
+;#END_EDIT_BLOCK END_ALGORITHM
+
+PROCESS_ALGORITHM paRequestMoldOpen ON TaskMid
+
+
+VAR
+ evStartRequestData : tevStartRequestData;
+ status : KSYS_Status;
+ pDemandedOperationMode : REFTO tnOperationMode;
+ bStartCycleAgain : BOOL;
+ fbTONRecalc : TON := (PT:=t#20ms);
+END_VAR
+
+(* IecGraph-Code *)
+
+(* init step *)
+INITIAL_STEP S_Init:
+AInit (P);
+END_STEP
+
+
+(* steps *)
+STEP S_WaitDeviceAndSequencerReady:
+END_STEP
+
+STEP S_WaitInterpreterReady:
+Action19 (P);
+Action20 (N);
+END_STEP
+
+ACTION Action19: #BEGIN_EDIT_BLOCK
+fbTONRecalc(IN := FALSE);
+
+;#END_EDIT_BLOCK END_ACTION (*Action19*)
+ACTION Action20: #BEGIN_EDIT_BLOCK
+fbTONRecalc(IN := NOT sv_bRecalcPendingOrActive);
+
+;#END_EDIT_BLOCK END_ACTION (*Action20*)
+STEP S_RequestMoldOpen:
+ARequestMoldOpen (P);
+Action16 (P);
+END_STEP
+
+ACTION ARequestMoldOpen: #BEGIN_EDIT_BLOCK
+//send start request for mold open movement 
+evStartRequestData.DeviceId := sv_DeviceId;
+evStartRequestData.MoveDir := cMoveBwd; 
+evStartRequestData.MoveId := cMoveBwd;
+SET_EVENT(evStartRequest, evStartRequestData);
+
+;#END_EDIT_BLOCK END_ACTION (*ARequestMoldOpen*)
+ACTION Action16: #BEGIN_EDIT_BLOCK
+IF (sv_iSetMoldProtectRetry = 0) OR (mOpModeBeforeProtect <= nManual) OR
+  (sv_iActMoldProtectRetry >= sv_iSetMoldProtectRetry) THEN
+   bStartCycleAgain := FALSE;
+ELSE
+   bStartCycleAgain := TRUE;
+END_IF;
+
+;#END_EDIT_BLOCK END_ACTION (*Action16*)
+STEP S_WaitMoldOpen:
+END_STEP
+
+STEP S_CheckMoldOpen:
+END_STEP
+
+STEP S_SwitchOpMode:
+ARequestOpMode (P);
+END_STEP
+
+ACTION ARequestOpMode: #BEGIN_EDIT_BLOCK
+sv_bSkipCycleStartCond := TRUE;
+pDemandedOperationMode^ := mOpModeBeforeProtect;
+
+;#END_EDIT_BLOCK END_ACTION (*ARequestOpMode*)
+STEP S_OpModeOk:
+Action13 (P);
+END_STEP
+
+ACTION Action13: #BEGIN_EDIT_BLOCK
+//switching opmode ok -> because of sv_bSkipCycleStartCond cycle should start immediately
+sv_iActMoldProtectRetry := sv_iActMoldProtectRetry + 1;
+
+;#END_EDIT_BLOCK END_ACTION (*Action13*)
+STEP S_Error:
+AError (P);
+END_STEP
+
+ACTION AError: #BEGIN_EDIT_BLOCK
+SET_ALARM(erStartCycleAfterProtectFailed);
+
+;#END_EDIT_BLOCK END_ACTION (*AError*)
+STEP S_End:
+Action14 (P);
+END_STEP
+
+ACTION Action14: #BEGIN_EDIT_BLOCK
+sv_bSkipCycleStartCond := FALSE;
+
+//enable loading of machine data, mold data and sequence data
+sv_DataActionsEnable.bMoldDataLoad := TRUE;
+sv_DataActionsEnable.bMachineDataLoad := TRUE;
+sv_DataActionsEnable.bSequenceDataLoad := TRUE;
+STOP_PROCESS_ALGORITHM();
+
+;#END_EDIT_BLOCK END_ACTION (*Action14*)
+
+(* transitions *)
+GO_ON_TRANSITION TInitDone (* Trans9 *) FROM S_Init TO S_WaitDeviceAndSequencerReady :=  #BEGIN_EDIT_BLOCK
+TRUE
+;#END_EDIT_BLOCK
+END_TRANSITION
+
+GO_ON_TRANSITION TMoldAndSequencerReady (* Trans1 *) FROM S_WaitDeviceAndSequencerReady TO S_WaitInterpreterReady :=  #BEGIN_EDIT_BLOCK
+//Wait until the movement and the whole sequencer has finished
+//Note: sv_bAutoCycleRunning or sv_bODCCombinedMoveActive might already
+//be FALSE while other (parallel) movements are still ramping down
+NOT sv_bAutoCycleRunning AND NOT sv_bODCCombinedMoveActive
+AND (sv_StartedMovements.iStartedMovements = 0)
+;#END_EDIT_BLOCK
+END_TRANSITION
+
+GO_ON_TRANSITION TInterpreterReady (* Trans7 *) FROM S_WaitInterpreterReady TO S_RequestMoldOpen :=  #BEGIN_EDIT_BLOCK
+//After all movements are ramped down, the ODC might start a recalculation of the sequence.
+//(see ABODC.pu-pStartedMovements)
+//So we wait before starting movements until any pending recalculation has finished.
+fbTONRecalc.Q
+;#END_EDIT_BLOCK
+END_TRANSITION
+
+GO_ON_TRANSITION TNoStart (* Trans11 *) FROM S_RequestMoldOpen TO S_End :=  #BEGIN_EDIT_BLOCK
+NOT bStartCycleAgain
+;#END_EDIT_BLOCK
+END_TRANSITION
+
+GO_ON_TRANSITION TStartAgain (* Trans12 *) FROM S_RequestMoldOpen TO S_WaitMoldOpen :=  #BEGIN_EDIT_BLOCK
+bStartCycleAgain
+;#END_EDIT_BLOCK
+END_TRANSITION
+
+GO_ON_TRANSITION Trans17 (* Trans17 *) FROM S_WaitMoldOpen TO S_CheckMoldOpen :=  #BEGIN_EDIT_BLOCK
+S_WaitMoldOpen.T > t#300ms AND NOT sv_bODCCombinedMoveActive
+;#END_EDIT_BLOCK
+END_TRANSITION
+
+GO_ON_TRANSITION TMoldOpen (* Trans11 *) FROM S_CheckMoldOpen TO S_SwitchOpMode :=  #BEGIN_EDIT_BLOCK
+sv_bMoldOpen
+
+;#END_EDIT_BLOCK
+END_TRANSITION
+
+GO_ON_TRANSITION TMoldNotOpen (* Trans18 *) FROM S_CheckMoldOpen TO S_Error :=  #BEGIN_EDIT_BLOCK
+NOT sv_bMoldOpen
+;#END_EDIT_BLOCK
+END_TRANSITION
+
+TRANSITION TOpModeChanged (* Trans13 *) FROM S_SwitchOpMode TO S_OpModeOk :=  #BEGIN_EDIT_BLOCK
+sv_OperationMode = mOpModeBeforeProtect
+;#END_EDIT_BLOCK
+END_TRANSITION
+
+TRANSITION Trans15 (* Trans15 *) FROM S_OpModeOk TO S_End :=  #BEGIN_EDIT_BLOCK
+TRUE
+;#END_EDIT_BLOCK
+END_TRANSITION
+
+TRANSITION TOpModeNotChanged (* Trans16 *) FROM S_SwitchOpMode TO S_Error :=  #BEGIN_EDIT_BLOCK
+S_SwitchOpMode.T >= t#300ms
+;#END_EDIT_BLOCK
+END_TRANSITION
+
+GO_ON_TRANSITION Trans166 (* Trans16 *) FROM S_Error TO S_End :=  #BEGIN_EDIT_BLOCK
+TRUE
+;#END_EDIT_BLOCK
+END_TRANSITION
+
+TRANSITION Trans10 (* Trans10 *) FROM S_End TO S_WaitDeviceAndSequencerReady :=  #BEGIN_EDIT_BLOCK
+TRUE
+;#END_EDIT_BLOCK
+END_TRANSITION
+
+(* end IecGraph-Code *)
+(* sfc-code *)
+
+(* stand alone actions *)
+ACTION AInit: #BEGIN_EDIT_BLOCK
+(**************************************** WARNING ********************************************
+ *** The KEBA Kemro K2 System including software is not intended for safety control tasks! ***
+ ***                       For further information see Comment tab!                        ***
+ *********************************************************************************************)
+
+pDemandedOperationMode := GET_SYNC_REFTO('OperationMode1.sv_DemandedOperationMode', T#0s, status);
+
+;#END_EDIT_BLOCK END_ACTION (*AInit*)
+(* end sfc-code *)
+
+
+END_ALGORITHM
+
+
+
+END_ALGORITHM_BLOCK
+
+
+
+#END_OF_IEC_PART
+
+@Puma @IecEditor 6 97 @Pou 25 
+@@@BEG_Comment@@@
+@h    ! WARNING !
+@h    The Kemro K2 system (including software) only meets category B according to EN 954-1,
+@h    thus it is not intended for usage in safety-relevant control applications in the field 
+@h    of personal safety (e.g. emergency stop).
+@h    To implement potentially necessary safety-relevant control tasks, always use additional 
+@h    external safety devices that are intended for the particular purpose, and meet the necessary 
+@h    functional safety.
+@h    For further information see EN 954-1 (EN ISO 13849-1) and/or the K2-x00 user manual, chapter 
+@h    "CE conformity, directives and standards".
+
+This algortihm block reacts on protect events that happen during half or fullauto cycle.
+The reaction depends on the selector on the mask (sv_bOpenAfterProtect).
+If the selector is true and the operation mode changed to manual (becausse of protect error),
+the block sends a startrequest for mold open movement.
+If the selector is false, no start request is sent and the mold will not open automatically.
+It is possible to try mold close again (for several times) after mold protect error occurs.
+This "mold protect retry" - function is also implemented in this block
+@@@END_Comment@@@
+
+@BEG_Contents 
+
+@BEG_Func 
+@RT(17)FuncTreeContainer 
+2 
+@Var @RT(23)START_PROCESS_ALGORITHM @RT(0) @T @T @DERIVED 0 @F @RT(23)KEBA_STANDARD_PROCEDURE @F 
+@T 
+@BEG_Attrib 
+0 @RT(0) @RT(0) 
+@END_Attrib 
+1 1 @F @F @F @F 
+
+@Var @RT(14)GET_SYNC_REFTO @RT(0) @T @T @DERIVED 0 @F @RT(22)KEBA_STANDARD_FUNCTION @F 
+@T 
+@BEG_Attrib 
+0 @RT(0) @RT(0) 
+@END_Attrib 
+1 1 @F @F @F @F 
+
+@END_Func 
+
+@BEG_Const 
+@RT(18)ConstTreeContainer 
+2 
+@Var @RT(24)cCompCentralCoordination @RT(0) @T @F @DT @RT(4)DINT @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+0 @RT(3)106 @RT(29)Component CentralCoordination 
+@END_Attrib 
+1 1 @F @F @F @F 
+
+@Var @RT(8)cMoveBwd @RT(0) @T @F @DT @RT(4)DINT @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+0 @RT(2)11 @RT(17)movement backward 
+@END_Attrib 
+1 1 @F @F @F @F 
+
+@END_Const 
+
+@BEG_Export 
+
+@BEG_Kind 
+@ALGORITHM_BLOCK @RT(17)ABProtectReaction @STRUCTURED_TEXT 
+@RT(0) @RT(0) @RT(0) 
+@END_Kind 
+
+@BEG_Dcl 
+@RT(16)DclTreeContainer 
+19 
+@Var @RT(9)evProtect @RT(0) @T @T @DERIVED 0 @T @T @DT @RT(10)tevProtect @RT(0) @T @T @UNKNOWN 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 7 @F @F @F @F 
+
+@Var @RT(14)evStartRequest @RT(0) @T @T @DERIVED 0 @T @T @DT @RT(15)tevStartRequest @RT(0) @T @T @UNKNOWN 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 7 @F @F @F @F 
+
+@Var @RT(9)EV_Task_3 @RT(0) @T @F @DT @RT(4)TASK @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 7 @F @F @F @F 
+
+@Var @RT(7)TaskMid @RT(0) @T @F @DT @RT(4)TASK @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 7 @F @F @F @F 
+
+@Var @RT(11)sv_DeviceId @RT(0) @T @T @DERIVED 0 @T @T @DT @RT(10)tsDeviceId @RT(0) @T @T @UNKNOWN 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 8 @F @F @F @F 
+
+@Var @RT(20)sv_bOpenAfterProtect @RT(0) @T @F @DT @RT(4)BOOL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 8 @F @F @F @F 
+
+@Var @RT(16)sv_OperationMode @RT(0) @T @T @DERIVED 0 @T @T @DT @RT(15)tnOperationMode @RT(0) @T @T @UNKNOWN 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 8 @F @F @F @F 
+
+@Var @RT(20)mOpModeBeforeProtect @RT(0) @T @T @DERIVED 0 @T @T @DT @RT(15)tnOperationMode @RT(0) @T @T @UNKNOWN 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(25)sv_bODCCombinedMoveActive @RT(0) @T @F @DT @RT(4)BOOL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 8 @F @F @F @F 
+
+@Var @RT(22)sv_bSkipCycleStartCond @RT(0) @T @F @DT @RT(4)BOOL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 8 @F @F @F @F 
+
+@Var @RT(23)sv_iActMoldProtectRetry @RT(0) @T @F @DT @RT(4)DINT @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 8 @F @F @F @F 
+
+@Var @RT(23)sv_iSetMoldProtectRetry @RT(0) @T @F @DT @RT(4)DINT @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 8 @F @F @F @F 
+
+@Var @RT(12)sv_bMoldOpen @RT(0) @T @F @DT @RT(4)BOOL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 8 @F @F @F @F 
+
+@Var @RT(30)erStartCycleAfterProtectFailed @RT(0) @T @F @DT @RT(5)ALARM @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 7 @F @F @F @F 
+
+@Var @RT(13)evStopRequest @RT(0) @T @T @DERIVED 0 @T @T @DT @RT(14)tevStopRequest @RT(0) @T @T @UNKNOWN 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 7 @F @F @F @F 
+
+@Var @RT(25)sv_bRecalcPendingOrActive @RT(0) @T @F @DT @RT(4)BOOL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 8 @F @F @F @F 
+
+@Var @RT(20)sv_bAutoCycleRunning @RT(0) @T @T @RENAMED 0 @T @T @DT @RT(4)BOOL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 8 @F @F @F @F 
+
+@Var @RT(19)sv_StartedMovements @RT(0) @T @T @DERIVED 0 @T @T @DT @RT(17)tsStartedMoveData @RT(0) @T @T @UNKNOWN 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 8 @F @F @F @F 
+
+@Var @RT(20)sv_DataActionsEnable @RT(0) @T @T @DERIVED 0 @F @RT(19)tsDataActionsEnable @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(55)set enabled state of actions load/save mold/machinedata @RT(0) 
+@END_Attrib 
+1 8 @F @F @F @F 
+
+@END_Dcl 
+
+@END_Export 
+
+@BEG_Body 
+
+2 
+
+@BEG_Export 
+
+@BEG_Algo 
+@EVENT_ALGORITHM @RT(10)evaProtect @STRUCTURED_TEXT 
+@RT(0) @RT(9)evProtect @RT(9)EV_Task_3 @F @F 
+@END_Algo 
+
+@BEG_Dcl 
+@RT(16)DclTreeContainer 
+2 
+@Var @RT(13)evProtectData @RT(0) @T @T @DERIVED 0 @T @T @DT @RT(14)tevProtectData @RT(0) @T @T @UNKNOWN 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 1 @F @F @F @F 
+
+@Var @RT(17)evStopRequestData @RT(0) @T @T @DERIVED 0 @T @T @DT @RT(18)tevStopRequestData @RT(0) @T @T @UNKNOWN 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@END_Dcl 
+
+@END_Export 
+
+@BEG_Export 
+
+@BEG_Algo 
+@PROCESS_ALGORITHM @RT(17)paRequestMoldOpen @SEQUENTIAL_FLOW_CHART 
+@RT(0) @RT(0) @RT(7)TaskMid @F @F 
+@END_Algo 
+
+@BEG_Dcl 
+@RT(16)DclTreeContainer 
+5 
+@Var @RT(18)evStartRequestData @RT(0) @T @T @DERIVED 0 @T @T @DT @RT(19)tevStartRequestData @RT(0) @T @T @UNKNOWN 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(6)status @RT(0) @T @T @DERIVED 0 @T @T @DT @RT(11)KSYS_Status @RT(0) @T @T @UNKNOWN 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(22)pDemandedOperationMode @RT(0) @T @T @REFTO 0 @F @DERIVED 0 @T @T @DT @RT(15)tnOperationMode @RT(0) @T @T @UNKNOWN 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(16)bStartCycleAgain @RT(0) @T @F @DT @RT(4)BOOL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(11)fbTONRecalc @RT(0) @T @T @DERIVED 0 @T @T @DT @RT(3)TON @RT(0) @T @T @UNKNOWN 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(12)(PT:=t#20ms) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@END_Dcl 
+
+@END_Export 
+
+@BEG_Body 
+@TL(28)
+(**************************************** WARNING ********************************************
+ *** The KEBA Kemro K2 System including software is not intended for safety control tasks! ***
+ ***                       For further information see Comment tab!                        ***
+ *********************************************************************************************)
+
+IF NOT sv_bOpenAfterProtect THEN
+   //mold should not open automatically after protect
+   RETURN;
+END_IF;
+
+mOpModeBeforeProtect := sv_OperationMode;
+
+IF (evProtectData.DeviceIdReceiver = sv_DeviceId) THEN
+   //protect error happened -> send stop request for mold close
+   evStopRequestData.DeviceId := sv_DeviceId;
+   evStopRequestData.MoveDir := cMoveFwd; 
+   evStopRequestData.MoveId := cMoveFwd;
+   SET_EVENT(evStopRequest, evStopRequestData);
+   
+   //disable loading of machine data, mold data and sequence data during mold protect retry
+   sv_DataActionsEnable.bMoldDataLoad := FALSE;
+   sv_DataActionsEnable.bMachineDataLoad := FALSE;
+   sv_DataActionsEnable.bSequenceDataLoad := FALSE;
+   
+   //request mold open
+   START_PROCESS_ALGORITHM(paRequestMoldOpen);
+END_IF;
+
+@END_Body 
+
+@@@BEG_Comment@@@ 
+@TL(0)
+
+@@@END_Comment@@@ 
+
+@BEG_SfcBody 
+18 15 19 
+
+@BEG_SfcData 2 
+@StepSeq @RT(4)sseq @F 3 
+@Step @RT(6)S_Init @F @T @F @F @RT(0) @F 
+@AcbCont @RT(7)unnamed @F 1 
+@Acb @RT(5)AInit @F @F @RT(1)P @RT(0) @F @F @F @F 
+
+@Trans @RT(9)TInitDone @F @T @F @F @T @F @TL(2)
+TRUE
+
+@RT(6)Trans9 @F 
+@Loop @RT(4)loop @F 2 
+@StepSeq @RT(3)seq @F 7 
+@Step @RT(29)S_WaitDeviceAndSequencerReady @F @F @F @F @RT(0) @F 
+@AcbCont @RT(7)unnamed @F 0 
+
+@Trans @RT(22)TMoldAndSequencerReady @F @T @F @F @T @F @TL(6)
+//Wait until the movement and the whole sequencer has finished
+//Note: sv_bAutoCycleRunning or sv_bODCCombinedMoveActive might already
+//be FALSE while other (parallel) movements are still ramping down
+NOT sv_bAutoCycleRunning AND NOT sv_bODCCombinedMoveActive
+AND (sv_StartedMovements.iStartedMovements = 0)
+
+@RT(6)Trans1 @F 
+@Step @RT(22)S_WaitInterpreterReady @F @F @F @F @RT(0) @F 
+@AcbCont @RT(7)unnamed @F 2 
+@Acb @RT(8)Action19 @F @T @RT(1)P @RT(0) @F @F @T @TL(2)
+fbTONRecalc(IN := FALSE);
+
+@F 
+@Acb @RT(8)Action20 @F @T @RT(1)N @RT(0) @F @F @T @TL(2)
+fbTONRecalc(IN := NOT sv_bRecalcPendingOrActive);
+
+@F 
+
+@Trans @RT(17)TInterpreterReady @F @T @F @F @T @F @TL(5)
+//After all movements are ramped down, the ODC might start a recalculation of the sequence.
+//(see ABODC.pu-pStartedMovements)
+//So we wait before starting movements until any pending recalculation has finished.
+fbTONRecalc.Q
+
+@RT(6)Trans7 @F 
+@Step @RT(17)S_RequestMoldOpen @F @F @F @F @RT(0) @F 
+@AcbCont @RT(7)unnamed @F 2 
+@Acb @RT(16)ARequestMoldOpen @F @T @RT(1)P @RT(0) @F @F @T @TL(6)
+//send start request for mold open movement 
+evStartRequestData.DeviceId := sv_DeviceId;
+evStartRequestData.MoveDir := cMoveBwd; 
+evStartRequestData.MoveId := cMoveBwd;
+SET_EVENT(evStartRequest, evStartRequestData);
+
+@F 
+@Acb @RT(8)Action16 @F @T @RT(1)P @RT(0) @F @F @T @TL(7)
+IF (sv_iSetMoldProtectRetry = 0) OR (mOpModeBeforeProtect <= nManual) OR
+  (sv_iActMoldProtectRetry >= sv_iSetMoldProtectRetry) THEN
+   bStartCycleAgain := FALSE;
+ELSE
+   bStartCycleAgain := TRUE;
+END_IF;
+
+@F 
+
+@AltBranch @RT(3)alt @F 2 
+@TransSeq @RT(4)tseq @F 1 
+@Trans @RT(8)TNoStart @F @T @F @F @T @F @TL(2)
+NOT bStartCycleAgain
+
+@RT(7)Trans11 @F 
+
+@TransSeq @RT(4)tseq @F 7 
+@Trans @RT(11)TStartAgain @F @T @F @F @T @F @TL(2)
+bStartCycleAgain
+
+@RT(7)Trans12 @F 
+@Step @RT(14)S_WaitMoldOpen @F @F @F @F @RT(0) @F 
+@AcbCont @RT(7)unnamed @F 0 
+
+@Trans @RT(7)Trans17 @F @T @F @F @T @F @TL(2)
+S_WaitMoldOpen.T > t#300ms AND NOT sv_bODCCombinedMoveActive
+
+@RT(7)Trans17 @F 
+@Step @RT(15)S_CheckMoldOpen @F @F @F @F @RT(0) @F 
+@AcbCont @RT(7)unnamed @F 0 
+
+@AltBranch @RT(3)alt @F 2 
+@TransSeq @RT(4)tseq @F 1 
+@Trans @RT(9)TMoldOpen @F @T @F @F @T @F @TL(3)
+sv_bMoldOpen
+
+
+@RT(7)Trans11 @F 
+
+@TransSeq @RT(4)tseq @F 2 
+@Trans @RT(12)TMoldNotOpen @F @T @F @F @T @F @TL(2)
+NOT sv_bMoldOpen
+
+@RT(7)Trans18 @F 
+@Goto @RT(7)S_Error @F @F 
+
+
+@Step @RT(14)S_SwitchOpMode @F @F @F @F @RT(0) @F 
+@AcbCont @RT(7)unnamed @F 1 
+@Acb @RT(14)ARequestOpMode @F @T @RT(1)P @RT(0) @F @F @T @TL(3)
+sv_bSkipCycleStartCond := TRUE;
+pDemandedOperationMode^ := mOpModeBeforeProtect;
+
+@F 
+
+@AltBranch @RT(3)alt @F 2 
+@TransSeq @RT(4)tseq @F 3 
+@Trans @RT(14)TOpModeChanged @F @T @F @F @T @T @TL(2)
+sv_OperationMode = mOpModeBeforeProtect
+
+@RT(7)Trans13 @F 
+@Step @RT(10)S_OpModeOk @F @F @F @F @RT(0) @F 
+@AcbCont @RT(7)unnamed @F 1 
+@Acb @RT(8)Action13 @F @T @RT(1)P @RT(0) @F @F @T @TL(3)
+//switching opmode ok -> because of sv_bSkipCycleStartCond cycle should start immediately
+sv_iActMoldProtectRetry := sv_iActMoldProtectRetry + 1;
+
+@F 
+
+@Trans @RT(7)Trans15 @F @T @F @F @T @T @TL(2)
+TRUE
+
+@RT(7)Trans15 @F 
+
+@TransSeq @RT(4)tseq @F 4 
+@Trans @RT(17)TOpModeNotChanged @F @T @F @F @T @T @TL(2)
+S_SwitchOpMode.T >= t#300ms
+
+@RT(7)Trans16 @F 
+@Step @RT(7)S_Error @F @F @T @F @RT(0) @F 
+@AcbCont @RT(7)unnamed @F 1 
+@Acb @RT(6)AError @F @T @RT(1)P @RT(0) @F @F @T @TL(2)
+SET_ALARM(erStartCycleAfterProtectFailed);
+
+@F 
+
+@Trans @RT(8)Trans166 @F @T @F @F @T @F @TL(2)
+TRUE
+
+@RT(7)Trans16 @F 
+@Goto @RT(5)S_End @F @F 
+
+
+
+
+@Step @RT(5)S_End @F @F @T @F @RT(0) @F 
+@AcbCont @RT(7)unnamed @F 1 
+@Acb @RT(8)Action14 @F @T @RT(1)P @RT(0) @F @F @T @TL(8)
+sv_bSkipCycleStartCond := FALSE;
+
+//enable loading of machine data, mold data and sequence data
+sv_DataActionsEnable.bMoldDataLoad := TRUE;
+sv_DataActionsEnable.bMachineDataLoad := TRUE;
+sv_DataActionsEnable.bSequenceDataLoad := TRUE;
+STOP_PROCESS_ALGORITHM();
+
+@F 
+
+
+@Trans @RT(7)Trans10 @F @T @T @T @T @T @TL(2)
+TRUE
+
+@RT(7)Trans10 @F 
+
+@END_SfcData 
+@SaActions 1 
+@SaText @RT(5)AInit 1 @TL(7)
+(**************************************** WARNING ********************************************
+ *** The KEBA Kemro K2 System including software is not intended for safety control tasks! ***
+ ***                       For further information see Comment tab!                        ***
+ *********************************************************************************************)
+
+pDemandedOperationMode := GET_SYNC_REFTO('OperationMode1.sv_DemandedOperationMode', T#0s, status);
+
+
+@SaTrans 0 
+@SaExits 0 
+@END_SfcBody 
+
+@@@BEG_Comment@@@ 
+@TL(0)
+
+@@@END_Comment@@@ 
+@END_Body 
+
+@END_Contents 

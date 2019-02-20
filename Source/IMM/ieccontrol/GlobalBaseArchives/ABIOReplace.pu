@@ -1,0 +1,2055 @@
+IMPORT_OVER_LISTFILE
+ SET_ALARM
+, FGetCatConfigValueString
+, cCAT_ROOT_IO
+, cEP_EMPTY
+, cEP_NONE
+, cEP_DEFECT
+, cEP_REPLACE
+, KCAT_RetCode
+, tsIOReplaceDevices
+, tsIOReplaceEndpoints
+, tsIOReplaceChangedInfo
+, KCAT_GenericDataFlags
+, KCAT_HandleData
+, tsIOReplaceEndpointAttributes
+, KCAT_NameData
+, ABFiFoString
+, KCAT_Status
+, KFILE_Open_Data
+
+END_IMPORT
+
+ALGORITHM_BLOCK ABIOReplace #DUMMY_EDIT_BLOCK
+
+SYSTEM_VAR
+ sv_bInitDone : BOOL;
+ sv_IOReplaceDevices : tsIOReplaceDevices;
+ sv_TriggerCnt : INT;
+ sv_IOReplaceEndpoints : tsIOReplaceEndpoints;
+ sv_IOReplaceSelectedDeviceIdx : DINT;
+ sv_IOReplaceChangedEndpoint : tsIOReplaceChangedInfo;
+END_VAR
+
+SYSTEM_OBJECT
+ TaskSlow : TASK;
+ PU_Task_7 : TASK;
+ erIOR_ReassignNotAllowed : ALARM;
+ erIOR_NoValidEPIndex : ALARM;
+ erIOR_NoFreeToFreeMapping : ALARM;
+ erIOR_EPAttributesNotMatching : ALARM;
+ erIOR_EPChangesMade : ALARM;
+END_OBJECT
+
+VAR
+ xxxData : DINT;
+ xxxFlags : DWORD;
+ _KCAT_RetCode : KCAT_RetCode;
+ msCfgFile : STRING(255);
+END_VAR
+
+FUNCTION fGetDeviceNumber : STRING(12)
+ #DUMMY_EDIT_BLOCK
+
+VAR_INPUT
+ pDeviceHandle : REFERENCE;
+END_VAR
+
+VAR
+ _KCAT_GDFlags : KCAT_GenericDataFlags := KCAT_GDFlag_NoFlag;
+ sDataSerialNumber : STRING(255);
+END_VAR
+#BEGIN_EDIT_BLOCK
+(**************************************** WARNING ********************************************
+ *** The KEBA Kemro K2 System including software is not intended for safety control tasks! ***
+ ***                       For further information see Comment tab!                        ***
+ *********************************************************************************************)
+
+IF (KCAT_GetGenericData(Handle := pDeviceHandle, Selector := KCAT_GDSelector_SerialNumber, Flags := _KCAT_GDFlags, Data := sDataSerialNumber) = KCAT_RetCode_OK) THEN
+
+   fGetDeviceNumber := sDataSerialNumber;
+
+ELSE
+   fGetDeviceNumber := '';
+   
+END_IF;
+
+
+;#END_EDIT_BLOCK END_FUNCTION
+
+FUNCTION fGetDeviceInfoModified : BOOL
+ #DUMMY_EDIT_BLOCK
+
+VAR_INPUT
+ sDeviceHWPath : STRING(255);
+END_VAR
+
+VAR
+ _KCAT_HandleData : KCAT_HandleData;
+ iBuffer : DINT := 0;
+END_VAR
+#BEGIN_EDIT_BLOCK
+(**************************************** WARNING ********************************************
+ *** The KEBA Kemro K2 System including software is not intended for safety control tasks! ***
+ ***                       For further information see Comment tab!                        ***
+ *********************************************************************************************)
+
+_KCAT_HandleData := KCAT_GetHandle(Name := CONCAT(sDeviceHWPath, '.bModified'));
+IF (_KCAT_HandleData.Status = KCAT_Status_OK) THEN
+   _KCAT_HandleData.Status := KCAT_GetValue(Handle := _KCAT_HandleData.Handle, Buffer := iBuffer);
+
+END_IF;
+fGetDeviceInfoModified := (iBuffer = 1);
+
+
+;#END_EDIT_BLOCK END_FUNCTION
+
+FUNCTION fCheckValidEP : BOOL
+ #DUMMY_EDIT_BLOCK
+
+VAR_INPUT
+ sEndpointHWPath : STRING(255);
+END_VAR
+
+VAR
+ _KCAT_HandleData : KCAT_HandleData;
+END_VAR
+#BEGIN_EDIT_BLOCK
+(**************************************** WARNING ********************************************
+ *** The KEBA Kemro K2 System including software is not intended for safety control tasks! ***
+ ***                       For further information see Comment tab!                        ***
+ *********************************************************************************************)
+
+_KCAT_HandleData := KCAT_GetHandle(Name := sEndpointHWPath);
+fCheckValidEP := (_KCAT_HandleData.Status = KCAT_Status_OK);
+
+
+;#END_EDIT_BLOCK END_FUNCTION
+
+FUNCTION fGetSVName : STRING(255)
+ #DUMMY_EDIT_BLOCK
+
+VAR_INPUT
+ sHWPath : STRING(255);
+END_VAR
+
+VAR
+ _KCAT_HandleData : KCAT_HandleData;
+ sBuffer : STRING(255);
+END_VAR
+#BEGIN_EDIT_BLOCK
+(**************************************** WARNING ********************************************
+ *** The KEBA Kemro K2 System including software is not intended for safety control tasks! ***
+ ***                       For further information see Comment tab!                        ***
+ *********************************************************************************************)
+
+_KCAT_HandleData := KCAT_GetHandle(Name := CONCAT(sHWPath, '.name'));
+IF (_KCAT_HandleData.Status = KCAT_Status_OK) THEN
+   _KCAT_HandleData.Status := KCAT_GetValue(Handle := _KCAT_HandleData.Handle, Buffer := sBuffer);
+
+END_IF;
+
+fGetSVName := sBuffer;
+
+
+;#END_EDIT_BLOCK END_FUNCTION
+
+FUNCTION fGetApplState : STRING(255)
+ #DUMMY_EDIT_BLOCK
+
+VAR_INPUT
+ sEndpointHWPath : STRING(255);
+END_VAR
+
+VAR
+ _KCAT_HandleData : KCAT_HandleData;
+ sBuffer : STRING(255) := '';
+END_VAR
+#BEGIN_EDIT_BLOCK
+(**************************************** WARNING ********************************************
+ *** The KEBA Kemro K2 System including software is not intended for safety control tasks! ***
+ ***                       For further information see Comment tab!                        ***
+ *********************************************************************************************)
+
+// possible values: 'DEFECT', 'REPLACE_xxx'
+_KCAT_HandleData := KCAT_GetHandle(Name := CONCAT(sEndpointHWPath, '.sApplState'));
+IF (_KCAT_HandleData.Status = KCAT_Status_OK) THEN
+   _KCAT_HandleData.Status := KCAT_GetValue(Handle := _KCAT_HandleData.Handle, Buffer := sBuffer);
+
+END_IF;
+fGetApplState := sBuffer;
+
+
+;#END_EDIT_BLOCK END_FUNCTION
+
+FUNCTION fGetAttributes : tsIOReplaceEndpointAttributes
+ #DUMMY_EDIT_BLOCK
+
+VAR_INPUT
+ sEndpointHWPath : STRING(255);
+END_VAR
+
+VAR
+ _KCAT_HandleData : KCAT_HandleData;
+ // sBuffer : STRING(255) := '';
+END_VAR
+#BEGIN_EDIT_BLOCK
+(**************************************** WARNING ********************************************
+ *** The KEBA Kemro K2 System including software is not intended for safety control tasks! ***
+ ***                       For further information see Comment tab!                        ***
+ *********************************************************************************************)
+
+_KCAT_HandleData := KCAT_GetHandle(Name := CONCAT(sEndpointHWPath, '.sIsolated'));
+IF (_KCAT_HandleData.Status = KCAT_Status_OK) THEN
+   _KCAT_HandleData.Status := KCAT_GetValue(Handle := _KCAT_HandleData.Handle, Buffer := fGetAttributes.sIsolated);
+
+END_IF;
+
+_KCAT_HandleData := KCAT_GetHandle(Name := CONCAT(sEndpointHWPath, '.sCurrent'));
+IF (_KCAT_HandleData.Status = KCAT_Status_OK) THEN
+   _KCAT_HandleData.Status := KCAT_GetValue(Handle := _KCAT_HandleData.Handle, Buffer := fGetAttributes.sCurrent);
+
+END_IF;
+
+_KCAT_HandleData := KCAT_GetHandle(Name := CONCAT(sEndpointHWPath, '.sRange'));
+IF (_KCAT_HandleData.Status = KCAT_Status_OK) THEN
+   _KCAT_HandleData.Status := KCAT_GetValue(Handle := _KCAT_HandleData.Handle, Buffer := fGetAttributes.sRange);
+
+END_IF;
+
+_KCAT_HandleData := KCAT_GetHandle(Name := CONCAT(sEndpointHWPath, '.sSensorType'));
+IF (_KCAT_HandleData.Status = KCAT_Status_OK) THEN
+   _KCAT_HandleData.Status := KCAT_GetValue(Handle := _KCAT_HandleData.Handle, Buffer := fGetAttributes.sSensorType);
+
+END_IF;
+
+
+;#END_EDIT_BLOCK END_FUNCTION
+
+FUNCTION fCheckAttributes : BOOL
+ #DUMMY_EDIT_BLOCK
+
+VAR_INPUT
+ sEndpointHWPathFree : STRING(255);
+ sEndpointHWPathDef : STRING(255);
+END_VAR
+
+VAR
+ AttrFree : tsIOReplaceEndpointAttributes;
+ AttrDef : tsIOReplaceEndpointAttributes;
+ bResult : BOOL;
+END_VAR
+#BEGIN_EDIT_BLOCK
+(**************************************** WARNING ********************************************
+ *** The KEBA Kemro K2 System including software is not intended for safety control tasks! ***
+ ***                       For further information see Comment tab!                        ***
+ *********************************************************************************************)
+
+// PossibleAttributes (strings)
+// sIsolated   ... 0(TRUE) / 1(FALSE)
+// sCurrent    ... 0A5 / 2A
+// sRange      ... 0-10V / +-10V
+// sSensorType ... SingleEnded / Differential
+
+AttrDef := fGetAttributes(sEndpointHWPathDef);
+AttrFree := fGetAttributes(sEndpointHWPathFree);
+
+// compare sIsolated
+bResult := (AttrDef.sIsolated = AttrFree.sIsolated);
+
+// compare sCurrent
+IF AttrDef.sCurrent <> AttrFree.sCurrent THEN
+   bResult := bResult AND (AttrFree.sCurrent = '2A');
+
+END_IF;
+
+// compare sRange
+bResult := bResult AND (AttrDef.sRange = AttrFree.sRange);
+
+// compare sSensorType
+bResult := bResult AND (AttrDef.sSensorType = AttrFree.sSensorType);
+
+// return result
+fCheckAttributes := bResult;
+
+
+;#END_EDIT_BLOCK END_FUNCTION
+
+ALGORITHM aGetIoDevices
+
+
+VAR_TEMP
+ i : DINT;
+END_VAR
+
+VAR
+ _KCAT_HandleData : KCAT_HandleData;
+ _KCAT_NameData : KCAT_NameData;
+ bFirst : BOOL;
+ sPath : STRING(255);
+ abFiFo : ABFiFoString;
+ dummy : DINT;
+END_VAR
+#BEGIN_EDIT_BLOCK
+(**************************************** WARNING ********************************************
+ *** The KEBA Kemro K2 System including software is not intended for safety control tasks! ***
+ ***                       For further information see Comment tab!                        ***
+ *********************************************************************************************)
+
+// set root for cat browsing
+sPath := cCAT_ROOT_IO;
+
+WHILE sPath <> '' DO
+   _KCAT_HandleData := KCAT_GetHandle(sPath);
+
+   bFirst := TRUE;
+   WHILE _KCAT_HandleData.Status = KCAT_Status_OK DO
+      IF bFirst THEN
+         bFirst := FALSE;
+         _KCAT_HandleData := KCAT_GetFirstIoHandle(_KCAT_HandleData.Handle);
+      ELSE
+         _KCAT_HandleData := KCAT_GetNextIoHandle(_KCAT_HandleData.Handle);
+      END_IF;
+
+      IF (_KCAT_HandleData.Status = KCAT_Status_OK) THEN
+         _KCAT_RetCode := KCAT_GetGenericData(_KCAT_HandleData.Handle, KCAT_GDSelector_NodeType, xxxFlags, xxxData);
+         _KCAT_NameData := KCAT_GetName(_KCAT_HandleData.Handle);
+ 
+(* Katalog Knotentypen *)
+// 100..199 Prozessdaten(Endpunkte)
+// 200..299 Busse
+// 300..999 Baugruppen
+         IF ((xxxData >= 200) AND (xxxData < 1000)) THEN
+            abFiFo.aWrite(_KCAT_NameData.Name);
+            IF (xxxData >= 300) AND (xxxData <= 999) THEN
+               IF (xxxData <> 342) THEN // 342 ... exception for devices in range with no endpoints BL210x
+                  IF i < cDEVICE_MAX_COUNT THEN
+                     i := i + 1;
+                     sv_IOReplaceDevices.Device[i].sHWPath := _KCAT_NameData.Name;
+                     sv_IOReplaceDevices.Device[i].sSerialNumber := fGetDeviceNumber(_KCAT_HandleData.Handle);;
+                     sv_IOReplaceDevices.Device[i].bModified := fGetDeviceInfoModified(_KCAT_NameData.Name);
+                     sv_IOReplaceDevices.iCnt := i;
+                  ELSE
+                     dummy := Print('*** list overflow in ABIOReplace.pu - aGetIoDevices ***');
+                     RETURN;
+                  END_IF;                  
+               END_IF;
+
+            END_IF;
+
+         END_IF;
+
+      END_IF;
+
+   END_WHILE;
+
+   IF abFiFo.fIsEmpty() THEN
+      sPath := '';
+
+   ELSE
+      sPath := abFiFo.fRead();
+
+   END_IF;
+
+END_WHILE;
+
+
+;#END_EDIT_BLOCK END_ALGORITHM
+
+ALGORITHM aGetIoDeviceEndpoints
+
+
+VAR_INPUT
+ sDeviceHWPath : STRING(255);
+END_VAR
+
+VAR_TEMP
+ sSVName : STRING(255);
+ sApplState : STRING(255);
+ iTmpIdx : DINT;
+ ii : DINT;
+ iTmp : DINT;
+END_VAR
+
+VAR
+ _KCAT_HandleData : KCAT_HandleData;
+ _KCAT_NameData : KCAT_NameData;
+ _KCAT_Status : KCAT_Status;
+ bFirst : BOOL;
+ sTmp : STRING(255);
+ empty_IOReplaceEndpoints : tsIOReplaceEndpoints;
+END_VAR
+#BEGIN_EDIT_BLOCK
+(**************************************** WARNING ********************************************
+ *** The KEBA Kemro K2 System including software is not intended for safety control tasks! ***
+ ***                       For further information see Comment tab!                        ***
+ *********************************************************************************************)
+
+IF sDeviceHWPath = '' THEN // empty or not valid
+   RETURN;
+
+END_IF;
+
+sv_IOReplaceEndpoints.sDeviceHWPath := "";
+sv_IOReplaceEndpoints := empty_IOReplaceEndpoints; // clear previous data
+//sv_IOReplaceEndpoints.sDeviceHWPath := sDeviceHWPath;
+_KCAT_HandleData := KCAT_GetHandle(sDeviceHWPath);
+bFirst := TRUE;
+WHILE _KCAT_HandleData.Status = KCAT_Status_OK DO
+   IF bFirst THEN
+      bFirst := FALSE;
+      _KCAT_HandleData := KCAT_GetFirstIoHandle(_KCAT_HandleData.Handle);
+
+   ELSE
+      _KCAT_HandleData := KCAT_GetNextIoHandle(_KCAT_HandleData.Handle);
+
+   END_IF;
+
+   IF (_KCAT_HandleData.Status = KCAT_Status_OK) THEN
+       _KCAT_RetCode := KCAT_GetGenericData(_KCAT_HandleData.Handle, KCAT_GDSelector_NodeType, xxxFlags, xxxData);
+
+//(* Catalog node types *)
+// 100 digital Inputs..(DI)
+// 101 digital Outputs.(DO)
+// 102 analog Inputs...(AI, TI)
+// 103 analog Outputs..(AO)
+// 112 velocity Inputs.(VI) ... actually not used
+
+      IF (xxxData >= 100) AND (xxxData <= 103) THEN
+         // get index(max to 9999)
+         _KCAT_NameData := KCAT_GetName(_KCAT_HandleData.Handle);
+         sTmp := RIGHT(_KCAT_NameData.Name, 4);
+         iTmpIdx := STRING_TO_DINT(DELETE(sTmp, FIND(sTmp, ':'), 1));
+
+         // TYP[0..2] ... A, D, T
+         FOR ii := GET_LOW_BOUND(sv_IOReplaceEndpoints.TYP) TO GET_HIGH_BOUND(sv_IOReplaceEndpoints.TYP) BY 1 DO
+            // DIR[0] ... Input
+            IF (FIND(_KCAT_NameData.Name, CONCAT('.', sv_IOReplaceEndpoints.TYP[ii][0].sType, ':') ) > 0) AND // search for ':XX.'
+               (sv_IOReplaceEndpoints.TYP[ii][0].iCnt < GET_HIGH_BOUND(sv_IOReplaceEndpoints.TYP[ii][0].EP)) THEN
+
+               IF (sv_IOReplaceEndpoints.TYP[ii][0].iCnt = cEP_NONE) THEN sv_IOReplaceEndpoints.TYP[ii][0].iCnt := 0; END_IF;
+
+               sSVName := fGetSVName(_KCAT_NameData.Name);
+               sApplState := fGetApplState(_KCAT_NameData.Name);
+               IF (sSVName = '') OR (LEFT(sApplState, LEN(cEP_REPLACE)) = cEP_REPLACE) THEN // if free or replaced
+                  sv_IOReplaceEndpoints.TYP[ii][0].iCnt := sv_IOReplaceEndpoints.TYP[ii][0].iCnt + 1; // inc counter
+                  sv_IOReplaceEndpoints.TYP[ii][0].EP[sv_IOReplaceEndpoints.TYP[ii][0].iCnt].iIdx := iTmpIdx; // save endpoint index
+                  sv_IOReplaceEndpoints.TYP[ii][0].EP[sv_IOReplaceEndpoints.TYP[ii][0].iCnt].sVarName := fGetSVName(_KCAT_NameData.Name);
+                  IF sSVName <> '' THEN
+                     sv_IOReplaceEndpoints.TYP[ii][0].EP[sv_IOReplaceEndpoints.TYP[ii][0].iCnt].iIdxOld := STRING_TO_DINT(DELETE(sApplState, 8, 1));  // cut off keyword and save old index
+                     sv_IOReplaceEndpoints.bModified := TRUE;
+
+                  END_IF;
+
+               END_IF;
+
+               EXIT; // exit for
+
+            // DIR[1] ... Output
+            ELSIF (ii <> 2) AND // exception for TYP[2]DIR[1] ... TO
+                  (FIND(_KCAT_NameData.Name, CONCAT('.', sv_IOReplaceEndpoints.TYP[ii][1].sType, ':') ) > 0) AND // search for ':XX.'
+                  (sv_IOReplaceEndpoints.TYP[ii][1].iCnt < GET_HIGH_BOUND(sv_IOReplaceEndpoints.TYP[ii][1].EP)) THEN
+
+               IF (sv_IOReplaceEndpoints.TYP[ii][1].iCnt = cEP_NONE) THEN sv_IOReplaceEndpoints.TYP[ii][1].iCnt := 0; END_IF;
+
+               sSVName := fGetSVName(_KCAT_NameData.Name);
+               sApplState := fGetApplState(_KCAT_NameData.Name);
+               IF (sSVName = '') OR (LEFT(sApplState, 8) = 'REPLACE_') THEN // if free or replaced
+                  sv_IOReplaceEndpoints.TYP[ii][1].iCnt := sv_IOReplaceEndpoints.TYP[ii][1].iCnt + 1; // inc counter
+                  sv_IOReplaceEndpoints.TYP[ii][1].EP[sv_IOReplaceEndpoints.TYP[ii][1].iCnt].iIdx := iTmpIdx; // save endpoint index
+                  sv_IOReplaceEndpoints.TYP[ii][1].EP[sv_IOReplaceEndpoints.TYP[ii][1].iCnt].sVarName := fGetSVName(_KCAT_NameData.Name);
+                  IF sSVName <> '' THEN
+                     sv_IOReplaceEndpoints.TYP[ii][1].EP[sv_IOReplaceEndpoints.TYP[ii][1].iCnt].iIdxOld := STRING_TO_DINT(DELETE(sApplState, 8, 1)); // cut off keyword and save old index
+                     sv_IOReplaceEndpoints.bModified := TRUE;
+                  END_IF;
+               END_IF;
+               EXIT; // exit for
+            END_IF;
+         END_FOR;
+      END_IF;
+   END_IF;
+END_WHILE;
+
+sv_IOReplaceEndpoints.sDeviceHWPath := sDeviceHWPath;
+
+// set device modified flag
+IF sv_IOReplaceDevices.Device[sv_IOReplaceSelectedDeviceIdx].bModified <> sv_IOReplaceEndpoints.bModified THEN
+   sv_IOReplaceDevices.Device[sv_IOReplaceSelectedDeviceIdx].bModified := sv_IOReplaceEndpoints.bModified; // write back to device list
+   IF sv_IOReplaceEndpoints.bModified THEN // set bModified
+      _KCAT_HandleData := KCAT_GetHandle(sv_IOReplaceEndpoints.sDeviceHWPath);
+      iTmp := BOOL_TO_DINT(TRUE);
+      _KCAT_Status := KCAT_AddValue(_KCAT_HandleData.Handle, 'bModified', KCAT_Type_DINT, iTmp);
+      _KCAT_HandleData := KCAT_GetHandle(CONCAT(sv_IOReplaceEndpoints.sDeviceHWPath, '.bModified'));
+      _KCAT_Status := KCAT_AddCatRetain(_KCAT_HandleData.Handle);
+
+   ELSE // remove bModified
+      _KCAT_HandleData := KCAT_GetHandle(CONCAT(sv_IOReplaceEndpoints.sDeviceHWPath, '.bModified'));
+      _KCAT_Status := KCAT_RemoveCatRetain(_KCAT_HandleData.Handle);
+      _KCAT_Status := KCAT_RemoveDir(_KCAT_HandleData.Handle);
+
+   END_IF;
+
+END_IF;
+
+
+;#END_EDIT_BLOCK END_ALGORITHM
+
+(*
+@h    ! WARNING !
+@h    The Kemro K2 system (including software) only meets category B according to EN 954-1,
+@h    thus it is not intended for usage in safety-relevant control applications in the field 
+@h    of personal safety (e.g. emergency stop).
+@h    To implement potentially necessary safety-relevant control tasks, always use additional 
+@h    external safety devices that are intended for the particular purpose, and meet the necessary 
+@h    functional safety.
+@h    For further information see EN 954-1 (EN ISO 13849-1) and/or the K2-x00 user manual, chapter 
+@h    "CE conformity, directives and standards".
+
+this process algorithm will be called after startup (AUTOSTART)
+*)
+
+PROCESS_ALGORITHM paInit ON TaskSlow AUTOSTART
+
+
+VAR
+ sApplPath : STRING(255);
+END_VAR
+#BEGIN_EDIT_BLOCK
+(**************************************** WARNING ********************************************
+ *** The KEBA Kemro K2 System including software is not intended for safety control tasks! ***
+ ***                       For further information see Comment tab!                        ***
+ *********************************************************************************************)
+
+IF NOT sv_bInitDone THEN
+   RETURN;
+END_IF;
+
+//get configfile name
+sApplPath := FGetCatConfigValueString('System.applPath', '/harddisk0/');
+msCfgFile := CONCAT(sApplPath, '/application/control/config/ioReplaced.cfg'); 
+
+// init: fill devicelist
+aGetIoDevices();
+STOP_PROCESS_ALGORITHM();
+
+
+;#END_EDIT_BLOCK END_ALGORITHM
+
+POSTUPDATE_ALGORITHM pIoDeviceSelectionChanged ON PU_Task_7 WITH sv_IOReplaceSelectedDeviceIdx
+
+#BEGIN_EDIT_BLOCK
+(**************************************** WARNING ********************************************
+ *** The KEBA Kemro K2 System including software is not intended for safety control tasks! ***
+ ***                       For further information see Comment tab!                        ***
+ *********************************************************************************************)
+
+// save performance by getting io endpoints only when other device is selected
+aGetIoDeviceEndpoints(sv_IOReplaceDevices.Device[sv_IOReplaceSelectedDeviceIdx].sHWPath);
+
+
+;#END_EDIT_BLOCK END_ALGORITHM
+
+POSTUPDATE_ALGORITHM pEndpointReplaced ON PU_Task_7 WITH sv_TriggerCnt
+
+
+VAR_TEMP
+ sHWPathEPFree : STRING(255);
+ sHWPathEPDef : STRING(255);
+ sTmp : STRING(255);
+ iTYP : DINT;
+ iDIR : DINT;
+ iEP : DINT;
+ iIdxOldSaved : DINT;
+END_VAR
+
+VAR
+ _KCAT_HandleData : KCAT_HandleData;
+ _KCAT_Status : KCAT_Status;
+ WrittenChars : DINT;
+ sFullFreeEP : STRING(255);
+ CfgFile : KFILE_Open_Data;
+END_VAR
+#BEGIN_EDIT_BLOCK
+(**************************************** WARNING ********************************************
+ *** The KEBA Kemro K2 System including software is not intended for safety control tasks! ***
+ ***                       For further information see Comment tab!                        ***
+ *********************************************************************************************)
+
+// set WATCHDOG cause of changes
+iTYP := sv_IOReplaceChangedEndpoint.iTYP; // copy to tmp cause of long names
+iDIR := sv_IOReplaceChangedEndpoint.iDIR;
+iEP := sv_IOReplaceChangedEndpoint.iEP;
+iIdxOldSaved := sv_IOReplaceChangedEndpoint.iIdxOldSaved;
+
+sHWPathEPDef := CONCAT(sv_IOReplaceEndpoints.sDeviceHWPath, '.', sv_IOReplaceEndpoints.TYP[iTYP][iDIR].sType, ':'); // string bis ..YYY.XX:' 
+
+IF (sv_IOReplaceEndpoints.TYP[iTYP][iDIR].EP[iEP].iIdxOld = cEP_EMPTY) THEN // restore
+   sHWPathEPFree := CONCAT(sHWPathEPDef, DINT_TO_STRING(sv_IOReplaceEndpoints.TYP[iTYP][iDIR].EP[iEP].iIdx));
+   sHWPathEPDef := CONCAT(sHWPathEPDef, DINT_TO_STRING(iIdxOldSaved));
+   _KCAT_HandleData := KCAT_GetHandle(CONCAT(sHWPathEPFree, '.sApplState'));
+   _KCAT_Status := KCAT_RemoveCatRetain(_KCAT_HandleData.Handle);
+   _KCAT_Status := KCAT_RemoveDir(_KCAT_HandleData.Handle);
+
+   _KCAT_HandleData := KCAT_GetHandle(CONCAT(sHWPathEPFree, '.name'));
+   _KCAT_Status := KCAT_RemoveCatRetain(_KCAT_HandleData.Handle);
+   _KCAT_Status := KCAT_RemoveDir(_KCAT_HandleData.Handle);
+
+   _KCAT_HandleData := KCAT_GetHandle(CONCAT(sHWPathEPDef, '.sApplState'));
+   _KCAT_Status := KCAT_RemoveCatRetain(_KCAT_HandleData.Handle);
+   _KCAT_Status := KCAT_RemoveDir(_KCAT_HandleData.Handle);
+
+   _KCAT_HandleData := KCAT_GetHandle(CONCAT(sHWPathEPDef, '.name'));
+   _KCAT_Status := KCAT_RemoveCatRetain(_KCAT_HandleData.Handle);
+   sTmp := sv_IOReplaceEndpoints.TYP[iTYP][iDIR].EP[iEP].sVarName;
+   _KCAT_Status := KCAT_SetValue(_KCAT_HandleData.Handle, sTmp);
+
+ELSIF (iIdxOldSaved <> cEP_EMPTY) THEN // reassignment (old and old_saved not empty)
+   SET_ALARM(Name := erIOR_ReassignNotAllowed);
+   sv_IOReplaceEndpoints.TYP[iTYP][iDIR].EP[iEP].iIdxOld := iIdxOldSaved; // reset iIdxOld
+   RETURN;
+
+ELSIF NOT (fCheckValidEP(CONCAT(sHWPathEPDef, DINT_TO_STRING(sv_IOReplaceEndpoints.TYP[iTYP][iDIR].EP[iEP].iIdxOld)))) THEN // no valid endpoint index
+   SET_ALARM(Name := erIOR_NoValidEPIndex);
+   sv_IOReplaceEndpoints.TYP[iTYP][iDIR].EP[iEP].iIdxOld := iIdxOldSaved; // reset iIdxOld
+   RETURN;
+
+ELSIF (fGetSVName(CONCAT(sHWPathEPDef, DINT_TO_STRING(sv_IOReplaceEndpoints.TYP[iTYP][iDIR].EP[iEP].iIdxOld))) = '') THEN // new ep has no variable name
+   SET_ALARM(Name := erIOR_NoFreeToFreeMapping);
+   sv_IOReplaceEndpoints.TYP[iTYP][iDIR].EP[iEP].iIdxOld := iIdxOldSaved; // reset iIdxOld
+   RETURN;
+
+ELSIF NOT(fCheckAttributes(CONCAT(sHWPathEPDef, DINT_TO_STRING(sv_IOReplaceEndpoints.TYP[iTYP][iDIR].EP[iEP].iIdx)), 
+                        CONCAT(sHWPathEPDef, DINT_TO_STRING(sv_IOReplaceEndpoints.TYP[iTYP][iDIR].EP[iEP].iIdxOld)))) THEN // not matching attributes
+   SET_ALARM(Name := erIOR_EPAttributesNotMatching);
+   sv_IOReplaceEndpoints.TYP[iTYP][iDIR].EP[iEP].iIdxOld := iIdxOldSaved; // reset iIdxOld
+   RETURN;
+
+ELSE // replace
+   sHWPathEPFree := CONCAT(sHWPathEPDef, DINT_TO_STRING(sv_IOReplaceEndpoints.TYP[iTYP][iDIR].EP[iEP].iIdx));
+   sHWPathEPDef := CONCAT(sHWPathEPDef, DINT_TO_STRING(sv_IOReplaceEndpoints.TYP[iTYP][iDIR].EP[iEP].iIdxOld));
+   
+    // data for free ep
+    _KCAT_HandleData := KCAT_GetHandle(sHWPathEPFree);
+    sTmp := CONCAT(cEP_REPLACE, '_', DINT_TO_STRING(sv_IOReplaceEndpoints.TYP[iTYP][iDIR].EP[iEP].iIdxOld));
+    _KCAT_Status := KCAT_AddValue(_KCAT_HandleData.Handle, 'sApplState', KCAT_Type_STRING, sTmp); // replace_xx
+
+    sTmp := fGetSVName(sHWPathEPDef);
+    _KCAT_Status := KCAT_AddValue(_KCAT_HandleData.Handle, 'name', KCAT_Type_STRING, sTmp); // sv_name
+
+    _KCAT_HandleData := KCAT_GetHandle(CONCAT(sHWPathEPFree, '.sApplState'));
+    _KCAT_Status := KCAT_AddCatRetain(_KCAT_HandleData.Handle);
+    _KCAT_HandleData := KCAT_GetHandle(CONCAT(sHWPathEPFree, '.name'));
+    _KCAT_Status := KCAT_AddCatRetain(_KCAT_HandleData.Handle);
+
+    //data for defect ep
+    _KCAT_HandleData := KCAT_GetHandle(CONCAT(sHWPathEPDef, '.name'));
+    sTmp := CONCAT(sTmp, '_', cEP_DEFECT);
+
+    _KCAT_Status := KCAT_SetValue(_KCAT_HandleData.Handle, sTmp); // sv_name_defect
+
+    _KCAT_Status := KCAT_AddCatRetain(_KCAT_HandleData.Handle);
+
+    _KCAT_HandleData := KCAT_GetHandle(sHWPathEPDef);
+    sTmp := cEP_DEFECT;
+    _KCAT_Status := KCAT_AddValue(_KCAT_HandleData.Handle, 'sApplState', KCAT_Type_STRING, sTmp); // defect
+
+    _KCAT_HandleData := KCAT_GetHandle(CONCAT(sHWPathEPDef, '.sApplState'));
+    _KCAT_Status := KCAT_AddCatRetain(_KCAT_HandleData.Handle);
+      
+   //create new config - file because the CatRetain cant add the Entry 
+   //when the Cataloge Node is not avaliable
+   (* Opens for reading and writing, if file doesn't exist, it will be created, its contents will not be deleted *)
+      CfgFile := KFILE_Open(Name := msCfgFile, Mode := KFILE_Mode_AppendCreate);
+      IF CfgFile.Status = KFILE_Status_OK THEN
+        sFullFreeEP := CONCAT('[',sHWPathEPFree,']','$N');
+        //not using KFILE_WriteString, because it appends a \0 to the text
+        WrittenChars := KFILE_Write(Token := CfgFile.Token, Buffer := sFullFreeEP, Length := LEN(sFullFreeEP));                         
+      END_IF;
+   (* close file *)
+   CfgFile.Status := KFILE_Close(CfgFile.Token);
+
+END_IF;
+
+SET_ALARM(Name := erIOR_EPChangesMade); // endpoint replaced
+
+aGetIoDeviceEndpoints(sv_IOReplaceEndpoints.sDeviceHWPath); // refresh endpoints
+
+
+;#END_EDIT_BLOCK END_ALGORITHM
+
+
+
+END_ALGORITHM_BLOCK
+
+
+
+#END_OF_IEC_PART
+
+@Puma @IecEditor 6 107 @Pou 25 
+@@@BEG_Comment@@@
+
+@@@END_Comment@@@
+
+@BEG_Contents 
+
+@BEG_Func 
+@RT(17)FuncTreeContainer 
+2 
+@Var @RT(9)SET_ALARM @RT(0) @T @T @DERIVED 0 @F @RT(23)KEBA_STANDARD_PROCEDURE @F 
+@T 
+@BEG_Attrib 
+0 @RT(0) @RT(0) 
+@END_Attrib 
+1 1 @F @F @F @F 
+
+@Var @RT(24)FGetCatConfigValueString @RT(0) @T @T @DERIVED 0 @F @RT(8)FUNCTION @F 
+@T 
+@BEG_Attrib 
+0 @RT(0) @RT(0) 
+@END_Attrib 
+1 1 @F @F @F @F 
+
+@END_Func 
+
+@BEG_Const 
+@RT(18)ConstTreeContainer 
+5 
+@Var @RT(12)cCAT_ROOT_IO @RT(0) @T @F @DT @RT(9)STRING(2) @RT(0) @T @T @STRING 0 @F @RT(1)2 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+0 @RT(4)'IO' @RT(15)Catalog IO Root 
+@END_Attrib 
+1 1 @F @F @F @F 
+
+@Var @RT(9)cEP_EMPTY @RT(0) @T @F @DT @RT(4)DINT @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+0 @RT(2)-1 @RT(31)Value for not replaced Endpoint 
+@END_Attrib 
+1 1 @F @F @F @F 
+
+@Var @RT(8)cEP_NONE @RT(0) @T @F @DT @RT(4)DINT @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+0 @RT(2)-1 @RT(37)Value for cnt when no Endpoint exists 
+@END_Attrib 
+1 1 @F @F @F @F 
+
+@Var @RT(10)cEP_DEFECT @RT(0) @T @F @DT @RT(11)STRING(255) @RT(0) @T @T @STRING 0 @F @RT(3)255 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+0 @RT(8)'DEFECT' @RT(48)String attached to varname when marked as defect 
+@END_Attrib 
+1 1 @F @F @F @F 
+
+@Var @RT(11)cEP_REPLACE @RT(0) @T @F @DT @RT(11)STRING(255) @RT(0) @T @T @STRING 0 @F @RT(3)255 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+0 @RT(9)'REPLACE' @RT(57)Substring in applstate when endpoint replaces another one 
+@END_Attrib 
+1 1 @F @F @F @F 
+
+@END_Const 
+
+@BEG_Export 
+
+@BEG_Kind 
+@ALGORITHM_BLOCK @RT(11)ABIOReplace @STRUCTURED_TEXT 
+@RT(0) @RT(0) @RT(0) 
+@END_Kind 
+
+@BEG_Dcl 
+@RT(16)DclTreeContainer 
+17 
+@Var @RT(8)TaskSlow @RT(0) @T @T @RENAMED 0 @T @T @DT @RT(4)TASK @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 7 @F @F @F @F 
+
+@Var @RT(9)PU_Task_7 @RT(0) @T @T @RENAMED 0 @T @T @DT @RT(4)TASK @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 7 @F @F @F @F 
+
+@Var @RT(12)sv_bInitDone @RT(0) @T @T @RENAMED 0 @T @T @DT @RT(4)BOOL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 8 @F @F @F @F 
+
+@Var @RT(7)xxxData @RT(0) @T @F @DT @RT(4)DINT @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(8)xxxFlags @RT(0) @T @F @DT @RT(5)DWORD @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(13)_KCAT_RetCode @RT(0) @T @T @DERIVED 0 @T @T @DT @RT(12)KCAT_RetCode @RT(0) @T @T @UNKNOWN 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(19)sv_IOReplaceDevices @RT(0) @T @T @DERIVED 0 @T @T @DT @RT(18)tsIOReplaceDevices @RT(0) @T @T @UNKNOWN 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 8 @F @F @F @F 
+
+@Var @RT(13)sv_TriggerCnt @RT(0) @T @F @DT @RT(3)INT @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 8 @F @F @F @F 
+
+@Var @RT(21)sv_IOReplaceEndpoints @RT(0) @T @T @DERIVED 0 @T @T @DT @RT(20)tsIOReplaceEndpoints @RT(0) @T @T @UNKNOWN 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 8 @F @F @F @F 
+
+@Var @RT(29)sv_IOReplaceSelectedDeviceIdx @RT(0) @T @F @DT @RT(4)DINT @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 8 @F @F @F @F 
+
+@Var @RT(27)sv_IOReplaceChangedEndpoint @RT(0) @T @T @DERIVED 0 @T @T @DT @RT(22)tsIOReplaceChangedInfo @RT(0) @T @T @UNKNOWN 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 8 @F @F @F @F 
+
+@Var @RT(24)erIOR_ReassignNotAllowed @RT(0) @T @F @DT @RT(5)ALARM @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 7 @F @F @F @F 
+
+@Var @RT(20)erIOR_NoValidEPIndex @RT(0) @T @F @DT @RT(5)ALARM @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 7 @F @F @F @F 
+
+@Var @RT(25)erIOR_NoFreeToFreeMapping @RT(0) @T @F @DT @RT(5)ALARM @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 7 @F @F @F @F 
+
+@Var @RT(29)erIOR_EPAttributesNotMatching @RT(0) @T @F @DT @RT(5)ALARM @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 7 @F @F @F @F 
+
+@Var @RT(19)erIOR_EPChangesMade @RT(0) @T @F @DT @RT(5)ALARM @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 7 @F @F @F @F 
+
+@Var @RT(9)msCfgFile @RT(0) @T @F @DT @RT(11)STRING(255) @RT(0) @T @T @STRING 0 @F @RT(3)255 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@END_Dcl 
+
+@END_Export 
+
+@BEG_Body 
+
+12 
+
+@BEG_Export 
+
+@BEG_Algo 
+@FUNCTION @RT(16)fGetDeviceNumber @STRUCTURED_TEXT 
+@RT(10)STRING(12) @RT(0) @RT(0) @F @F 
+@END_Algo 
+
+@BEG_Dcl 
+@RT(16)DclTreeContainer 
+3 
+@Var @RT(13)pDeviceHandle @RT(0) @T @F @DT @RT(9)REFERENCE @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 1 @F @F @F @F 
+
+@Var @RT(13)_KCAT_GDFlags @RT(0) @T @T @DERIVED 0 @T @T @DT @RT(21)KCAT_GenericDataFlags @RT(0) @T @T @UNKNOWN 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(18)KCAT_GDFlag_NoFlag @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(17)sDataSerialNumber @RT(0) @T @F @DT @RT(11)STRING(255) @RT(0) @T @T @STRING 0 @F @RT(3)255 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@END_Dcl 
+
+@END_Export 
+
+@BEG_Export 
+
+@BEG_Algo 
+@FUNCTION @RT(22)fGetDeviceInfoModified @STRUCTURED_TEXT 
+@RT(4)BOOL @RT(0) @RT(0) @F @F 
+@END_Algo 
+
+@BEG_Dcl 
+@RT(16)DclTreeContainer 
+3 
+@Var @RT(13)sDeviceHWPath @RT(0) @T @F @DT @RT(11)STRING(255) @RT(0) @T @T @STRING 0 @F @RT(3)255 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 1 @F @F @F @F 
+
+@Var @RT(16)_KCAT_HandleData @RT(0) @T @T @DERIVED 0 @T @T @DT @RT(15)KCAT_HandleData @RT(0) @T @T @UNKNOWN 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(7)iBuffer @RT(0) @T @F @DT @RT(4)DINT @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(1)0 @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@END_Dcl 
+
+@END_Export 
+
+@BEG_Export 
+
+@BEG_Algo 
+@FUNCTION @RT(13)fCheckValidEP @STRUCTURED_TEXT 
+@RT(4)BOOL @RT(0) @RT(0) @F @F 
+@END_Algo 
+
+@BEG_Dcl 
+@RT(16)DclTreeContainer 
+2 
+@Var @RT(15)sEndpointHWPath @RT(0) @T @F @DT @RT(11)STRING(255) @RT(0) @T @T @STRING 0 @F @RT(3)255 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 1 @F @F @F @F 
+
+@Var @RT(16)_KCAT_HandleData @RT(0) @T @T @DERIVED 0 @T @T @DT @RT(15)KCAT_HandleData @RT(0) @T @T @UNKNOWN 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@END_Dcl 
+
+@END_Export 
+
+@BEG_Export 
+
+@BEG_Algo 
+@FUNCTION @RT(10)fGetSVName @STRUCTURED_TEXT 
+@RT(11)STRING(255) @RT(0) @RT(0) @F @F 
+@END_Algo 
+
+@BEG_Dcl 
+@RT(16)DclTreeContainer 
+3 
+@Var @RT(7)sHWPath @RT(0) @T @F @DT @RT(11)STRING(255) @RT(0) @T @T @STRING 0 @F @RT(3)255 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 1 @F @F @F @F 
+
+@Var @RT(16)_KCAT_HandleData @RT(0) @T @T @DERIVED 0 @T @T @DT @RT(15)KCAT_HandleData @RT(0) @T @T @UNKNOWN 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(7)sBuffer @RT(0) @T @F @DT @RT(11)STRING(255) @RT(0) @T @T @STRING 0 @F @RT(3)255 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@END_Dcl 
+
+@END_Export 
+
+@BEG_Export 
+
+@BEG_Algo 
+@FUNCTION @RT(13)fGetApplState @STRUCTURED_TEXT 
+@RT(11)STRING(255) @RT(0) @RT(0) @F @F 
+@END_Algo 
+
+@BEG_Dcl 
+@RT(16)DclTreeContainer 
+3 
+@Var @RT(15)sEndpointHWPath @RT(0) @T @F @DT @RT(11)STRING(255) @RT(0) @T @T @STRING 0 @F @RT(3)255 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 1 @F @F @F @F 
+
+@Var @RT(16)_KCAT_HandleData @RT(0) @T @T @DERIVED 0 @T @T @DT @RT(15)KCAT_HandleData @RT(0) @T @T @UNKNOWN 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(7)sBuffer @RT(0) @T @F @DT @RT(11)STRING(255) @RT(0) @T @T @STRING 0 @F @RT(3)255 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(2)'' @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@END_Dcl 
+
+@END_Export 
+
+@BEG_Export 
+
+@BEG_Algo 
+@FUNCTION @RT(14)fGetAttributes @STRUCTURED_TEXT 
+@RT(29)tsIOReplaceEndpointAttributes @RT(0) @RT(0) @F @F 
+@END_Algo 
+
+@BEG_Dcl 
+@RT(16)DclTreeContainer 
+3 
+@Var @RT(15)sEndpointHWPath @RT(0) @T @F @DT @RT(11)STRING(255) @RT(0) @T @T @STRING 0 @F @RT(3)255 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 1 @F @F @F @F 
+
+@Var @RT(16)_KCAT_HandleData @RT(0) @T @T @DERIVED 0 @T @T @DT @RT(15)KCAT_HandleData @RT(0) @T @T @UNKNOWN 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(7)sBuffer @RT(0) @T @F @DT @RT(11)STRING(255) @RT(0) @T @T @STRING 0 @F @RT(3)255 @F 
+@F @T 
+@T 
+@BEG_Attrib 
+3 @RT(2)'' @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@END_Dcl 
+
+@END_Export 
+
+@BEG_Export 
+
+@BEG_Algo 
+@FUNCTION @RT(16)fCheckAttributes @STRUCTURED_TEXT 
+@RT(4)BOOL @RT(0) @RT(0) @F @F 
+@END_Algo 
+
+@BEG_Dcl 
+@RT(16)DclTreeContainer 
+5 
+@Var @RT(19)sEndpointHWPathFree @RT(0) @T @F @DT @RT(11)STRING(255) @RT(0) @T @T @STRING 0 @F @RT(3)255 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 1 @F @F @F @F 
+
+@Var @RT(18)sEndpointHWPathDef @RT(0) @T @F @DT @RT(11)STRING(255) @RT(0) @T @T @STRING 0 @F @RT(3)255 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 1 @F @F @F @F 
+
+@Var @RT(8)AttrFree @RT(0) @T @T @DERIVED 0 @T @T @DT @RT(29)tsIOReplaceEndpointAttributes @RT(0) @T @T @UNKNOWN 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(7)AttrDef @RT(0) @T @T @DERIVED 0 @T @T @DT @RT(29)tsIOReplaceEndpointAttributes @RT(0) @T @T @UNKNOWN 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(7)bResult @RT(0) @T @F @DT @RT(4)BOOL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@END_Dcl 
+
+@END_Export 
+
+@BEG_Export 
+
+@BEG_Algo 
+@ALGORITHM @RT(13)aGetIoDevices @STRUCTURED_TEXT 
+@RT(0) @RT(0) @RT(0) @F @F 
+@END_Algo 
+
+@BEG_Dcl 
+@RT(16)DclTreeContainer 
+7 
+@Var @RT(16)_KCAT_HandleData @RT(0) @T @T @DERIVED 0 @T @T @DT @RT(15)KCAT_HandleData @RT(0) @T @T @UNKNOWN 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(14)_KCAT_NameData @RT(0) @T @T @DERIVED 0 @T @T @DT @RT(13)KCAT_NameData @RT(0) @T @T @UNKNOWN 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(6)bFirst @RT(0) @T @F @DT @RT(4)BOOL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(5)sPath @RT(0) @T @F @DT @RT(11)STRING(255) @RT(0) @T @T @STRING 0 @F @RT(3)255 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(6)abFiFo @RT(0) @T @T @DERIVED 0 @T @T @DT @RT(12)ABFiFoString @RT(0) @T @T @UNKNOWN 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(1)i @RT(0) @T @F @DT @RT(4)DINT @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 4 @F @F @F @F 
+
+@Var @RT(5)dummy @RT(0) @T @F @DT @RT(4)DINT @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@END_Dcl 
+
+@END_Export 
+
+@BEG_Export 
+
+@BEG_Algo 
+@ALGORITHM @RT(21)aGetIoDeviceEndpoints @STRUCTURED_TEXT 
+@RT(0) @RT(0) @RT(0) @F @F 
+@END_Algo 
+
+@BEG_Dcl 
+@RT(16)DclTreeContainer 
+12 
+@Var @RT(16)_KCAT_HandleData @RT(0) @T @T @DERIVED 0 @T @T @DT @RT(15)KCAT_HandleData @RT(0) @T @T @UNKNOWN 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(14)_KCAT_NameData @RT(0) @T @T @DERIVED 0 @T @T @DT @RT(13)KCAT_NameData @RT(0) @T @T @UNKNOWN 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(12)_KCAT_Status @RT(0) @T @T @DERIVED 0 @T @T @DT @RT(11)KCAT_Status @RT(0) @T @T @UNKNOWN 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(6)bFirst @RT(0) @T @F @DT @RT(4)BOOL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(4)sTmp @RT(0) @T @F @DT @RT(11)STRING(255) @RT(0) @T @T @STRING 0 @F @RT(3)255 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(7)sSVName @RT(0) @T @F @DT @RT(11)STRING(255) @RT(0) @T @T @STRING 0 @F @RT(3)255 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 4 @F @F @F @F 
+
+@Var @RT(10)sApplState @RT(0) @T @F @DT @RT(11)STRING(255) @RT(0) @T @T @STRING 0 @F @RT(3)255 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 4 @F @F @F @F 
+
+@Var @RT(7)iTmpIdx @RT(0) @T @F @DT @RT(4)DINT @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 4 @F @F @F @F 
+
+@Var @RT(24)empty_IOReplaceEndpoints @RT(0) @T @T @DERIVED 0 @T @T @DT @RT(20)tsIOReplaceEndpoints @RT(0) @T @T @UNKNOWN 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(13)sDeviceHWPath @RT(0) @T @F @DT @RT(11)STRING(255) @RT(0) @T @T @STRING 0 @F @RT(3)255 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 1 @F @F @F @F 
+
+@Var @RT(2)ii @RT(0) @T @F @DT @RT(4)DINT @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 4 @F @F @F @F 
+
+@Var @RT(4)iTmp @RT(0) @T @F @DT @RT(4)DINT @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 4 @F @F @F @F 
+
+@END_Dcl 
+
+@END_Export 
+
+@BEG_Export 
+
+@BEG_Algo 
+@PROCESS_ALGORITHM @RT(6)paInit @STRUCTURED_TEXT 
+@RT(0) @RT(0) @RT(8)TaskSlow @T @F 
+@END_Algo 
+
+@BEG_Dcl 
+@RT(16)DclTreeContainer 
+1 
+@Var @RT(9)sApplPath @RT(0) @T @F @DT @RT(11)STRING(255) @RT(0) @T @T @STRING 0 @F @RT(3)255 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@END_Dcl 
+
+@END_Export 
+
+@BEG_Export 
+
+@BEG_Algo 
+@POSTUPDATE_ALGORITHM @RT(25)pIoDeviceSelectionChanged @STRUCTURED_TEXT 
+@RT(0) @RT(29)sv_IOReplaceSelectedDeviceIdx @RT(9)PU_Task_7 @F @F 
+@END_Algo 
+
+@BEG_Dcl 
+@RT(16)DclTreeContainer 
+0 
+@END_Dcl 
+
+@END_Export 
+
+@BEG_Export 
+
+@BEG_Algo 
+@POSTUPDATE_ALGORITHM @RT(17)pEndpointReplaced @STRUCTURED_TEXT 
+@RT(0) @RT(13)sv_TriggerCnt @RT(9)PU_Task_7 @F @F 
+@END_Algo 
+
+@BEG_Dcl 
+@RT(16)DclTreeContainer 
+12 
+@Var @RT(16)_KCAT_HandleData @RT(0) @T @T @DERIVED 0 @T @T @DT @RT(15)KCAT_HandleData @RT(0) @T @T @UNKNOWN 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(13)sHWPathEPFree @RT(0) @T @F @DT @RT(11)STRING(255) @RT(0) @T @T @STRING 0 @F @RT(3)255 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 4 @F @F @F @F 
+
+@Var @RT(12)sHWPathEPDef @RT(0) @T @F @DT @RT(11)STRING(255) @RT(0) @T @T @STRING 0 @F @RT(3)255 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 4 @F @F @F @F 
+
+@Var @RT(12)_KCAT_Status @RT(0) @T @T @DERIVED 0 @T @T @DT @RT(11)KCAT_Status @RT(0) @T @T @UNKNOWN 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(4)sTmp @RT(0) @T @F @DT @RT(11)STRING(255) @RT(0) @T @T @STRING 0 @F @RT(3)255 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 4 @F @F @F @F 
+
+@Var @RT(4)iTYP @RT(0) @T @F @DT @RT(4)DINT @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 4 @F @F @F @F 
+
+@Var @RT(4)iDIR @RT(0) @T @F @DT @RT(4)DINT @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 4 @F @F @F @F 
+
+@Var @RT(3)iEP @RT(0) @T @F @DT @RT(4)DINT @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 4 @F @F @F @F 
+
+@Var @RT(12)iIdxOldSaved @RT(0) @T @F @DT @RT(4)DINT @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 4 @F @F @F @F 
+
+@Var @RT(12)WrittenChars @RT(0) @T @F @DT @RT(4)DINT @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(11)sFullFreeEP @RT(0) @T @F @DT @RT(11)STRING(255) @RT(0) @T @T @STRING 0 @F @RT(3)255 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(7)CfgFile @RT(0) @T @T @DERIVED 0 @T @T @DT @RT(15)KFILE_Open_Data @RT(0) @T @T @UNKNOWN 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@END_Dcl 
+
+@END_Export 
+
+@BEG_Body 
+@TL(14)
+(**************************************** WARNING ********************************************
+ *** The KEBA Kemro K2 System including software is not intended for safety control tasks! ***
+ ***                       For further information see Comment tab!                        ***
+ *********************************************************************************************)
+
+IF (KCAT_GetGenericData(Handle := pDeviceHandle, Selector := KCAT_GDSelector_SerialNumber, Flags := _KCAT_GDFlags, Data := sDataSerialNumber) = KCAT_RetCode_OK) THEN
+
+   fGetDeviceNumber := sDataSerialNumber;
+
+ELSE
+   fGetDeviceNumber := '';
+   
+END_IF;
+
+@END_Body 
+
+@@@BEG_Comment@@@ 
+@TL(0)
+
+@@@END_Comment@@@ 
+
+@BEG_Body 
+@TL(12)
+(**************************************** WARNING ********************************************
+ *** The KEBA Kemro K2 System including software is not intended for safety control tasks! ***
+ ***                       For further information see Comment tab!                        ***
+ *********************************************************************************************)
+
+_KCAT_HandleData := KCAT_GetHandle(Name := CONCAT(sDeviceHWPath, '.bModified'));
+IF (_KCAT_HandleData.Status = KCAT_Status_OK) THEN
+   _KCAT_HandleData.Status := KCAT_GetValue(Handle := _KCAT_HandleData.Handle, Buffer := iBuffer);
+
+END_IF;
+fGetDeviceInfoModified := (iBuffer = 1);
+
+@END_Body 
+
+@@@BEG_Comment@@@ 
+@TL(0)
+
+@@@END_Comment@@@ 
+
+@BEG_Body 
+@TL(8)
+(**************************************** WARNING ********************************************
+ *** The KEBA Kemro K2 System including software is not intended for safety control tasks! ***
+ ***                       For further information see Comment tab!                        ***
+ *********************************************************************************************)
+
+_KCAT_HandleData := KCAT_GetHandle(Name := sEndpointHWPath);
+fCheckValidEP := (_KCAT_HandleData.Status = KCAT_Status_OK);
+
+@END_Body 
+
+@@@BEG_Comment@@@ 
+@TL(0)
+
+@@@END_Comment@@@ 
+
+@BEG_Body 
+@TL(13)
+(**************************************** WARNING ********************************************
+ *** The KEBA Kemro K2 System including software is not intended for safety control tasks! ***
+ ***                       For further information see Comment tab!                        ***
+ *********************************************************************************************)
+
+_KCAT_HandleData := KCAT_GetHandle(Name := CONCAT(sHWPath, '.name'));
+IF (_KCAT_HandleData.Status = KCAT_Status_OK) THEN
+   _KCAT_HandleData.Status := KCAT_GetValue(Handle := _KCAT_HandleData.Handle, Buffer := sBuffer);
+
+END_IF;
+
+fGetSVName := sBuffer;
+
+@END_Body 
+
+@@@BEG_Comment@@@ 
+@TL(0)
+
+@@@END_Comment@@@ 
+
+@BEG_Body 
+@TL(13)
+(**************************************** WARNING ********************************************
+ *** The KEBA Kemro K2 System including software is not intended for safety control tasks! ***
+ ***                       For further information see Comment tab!                        ***
+ *********************************************************************************************)
+
+// possible values: 'DEFECT', 'REPLACE_xxx'
+_KCAT_HandleData := KCAT_GetHandle(Name := CONCAT(sEndpointHWPath, '.sApplState'));
+IF (_KCAT_HandleData.Status = KCAT_Status_OK) THEN
+   _KCAT_HandleData.Status := KCAT_GetValue(Handle := _KCAT_HandleData.Handle, Buffer := sBuffer);
+
+END_IF;
+fGetApplState := sBuffer;
+
+@END_Body 
+
+@@@BEG_Comment@@@ 
+@TL(0)
+
+@@@END_Comment@@@ 
+
+@BEG_Body 
+@TL(29)
+(**************************************** WARNING ********************************************
+ *** The KEBA Kemro K2 System including software is not intended for safety control tasks! ***
+ ***                       For further information see Comment tab!                        ***
+ *********************************************************************************************)
+
+_KCAT_HandleData := KCAT_GetHandle(Name := CONCAT(sEndpointHWPath, '.sIsolated'));
+IF (_KCAT_HandleData.Status = KCAT_Status_OK) THEN
+   _KCAT_HandleData.Status := KCAT_GetValue(Handle := _KCAT_HandleData.Handle, Buffer := fGetAttributes.sIsolated);
+
+END_IF;
+
+_KCAT_HandleData := KCAT_GetHandle(Name := CONCAT(sEndpointHWPath, '.sCurrent'));
+IF (_KCAT_HandleData.Status = KCAT_Status_OK) THEN
+   _KCAT_HandleData.Status := KCAT_GetValue(Handle := _KCAT_HandleData.Handle, Buffer := fGetAttributes.sCurrent);
+
+END_IF;
+
+_KCAT_HandleData := KCAT_GetHandle(Name := CONCAT(sEndpointHWPath, '.sRange'));
+IF (_KCAT_HandleData.Status = KCAT_Status_OK) THEN
+   _KCAT_HandleData.Status := KCAT_GetValue(Handle := _KCAT_HandleData.Handle, Buffer := fGetAttributes.sRange);
+
+END_IF;
+
+_KCAT_HandleData := KCAT_GetHandle(Name := CONCAT(sEndpointHWPath, '.sSensorType'));
+IF (_KCAT_HandleData.Status = KCAT_Status_OK) THEN
+   _KCAT_HandleData.Status := KCAT_GetValue(Handle := _KCAT_HandleData.Handle, Buffer := fGetAttributes.sSensorType);
+
+END_IF;
+
+@END_Body 
+
+@@@BEG_Comment@@@ 
+@TL(0)
+
+@@@END_Comment@@@ 
+
+@BEG_Body 
+@TL(32)
+(**************************************** WARNING ********************************************
+ *** The KEBA Kemro K2 System including software is not intended for safety control tasks! ***
+ ***                       For further information see Comment tab!                        ***
+ *********************************************************************************************)
+
+// PossibleAttributes (strings)
+// sIsolated   ... 0(TRUE) / 1(FALSE)
+// sCurrent    ... 0A5 / 2A
+// sRange      ... 0-10V / +-10V
+// sSensorType ... SingleEnded / Differential
+
+AttrDef := fGetAttributes(sEndpointHWPathDef);
+AttrFree := fGetAttributes(sEndpointHWPathFree);
+
+// compare sIsolated
+bResult := (AttrDef.sIsolated = AttrFree.sIsolated);
+
+// compare sCurrent
+IF AttrDef.sCurrent <> AttrFree.sCurrent THEN
+   bResult := bResult AND (AttrFree.sCurrent = '2A');
+
+END_IF;
+
+// compare sRange
+bResult := bResult AND (AttrDef.sRange = AttrFree.sRange);
+
+// compare sSensorType
+bResult := bResult AND (AttrDef.sSensorType = AttrFree.sSensorType);
+
+// return result
+fCheckAttributes := bResult;
+
+@END_Body 
+
+@@@BEG_Comment@@@ 
+@TL(0)
+
+@@@END_Comment@@@ 
+
+@BEG_Body 
+@TL(62)
+(**************************************** WARNING ********************************************
+ *** The KEBA Kemro K2 System including software is not intended for safety control tasks! ***
+ ***                       For further information see Comment tab!                        ***
+ *********************************************************************************************)
+
+// set root for cat browsing
+sPath := cCAT_ROOT_IO;
+
+WHILE sPath <> '' DO
+   _KCAT_HandleData := KCAT_GetHandle(sPath);
+
+   bFirst := TRUE;
+   WHILE _KCAT_HandleData.Status = KCAT_Status_OK DO
+      IF bFirst THEN
+         bFirst := FALSE;
+         _KCAT_HandleData := KCAT_GetFirstIoHandle(_KCAT_HandleData.Handle);
+      ELSE
+         _KCAT_HandleData := KCAT_GetNextIoHandle(_KCAT_HandleData.Handle);
+      END_IF;
+
+      IF (_KCAT_HandleData.Status = KCAT_Status_OK) THEN
+         _KCAT_RetCode := KCAT_GetGenericData(_KCAT_HandleData.Handle, KCAT_GDSelector_NodeType, xxxFlags, xxxData);
+         _KCAT_NameData := KCAT_GetName(_KCAT_HandleData.Handle);
+ 
+(* Katalog Knotentypen *)
+// 100..199 Prozessdaten(Endpunkte)
+// 200..299 Busse
+// 300..999 Baugruppen
+         IF ((xxxData >= 200) AND (xxxData < 1000)) THEN
+            abFiFo.aWrite(_KCAT_NameData.Name);
+            IF (xxxData >= 300) AND (xxxData <= 999) THEN
+               IF (xxxData <> 342) THEN // 342 ... exception for devices in range with no endpoints BL210x
+                  IF i < cDEVICE_MAX_COUNT THEN
+                     i := i + 1;
+                     sv_IOReplaceDevices.Device[i].sHWPath := _KCAT_NameData.Name;
+                     sv_IOReplaceDevices.Device[i].sSerialNumber := fGetDeviceNumber(_KCAT_HandleData.Handle);;
+                     sv_IOReplaceDevices.Device[i].bModified := fGetDeviceInfoModified(_KCAT_NameData.Name);
+                     sv_IOReplaceDevices.iCnt := i;
+                  ELSE
+                     dummy := Print('*** list overflow in ABIOReplace.pu - aGetIoDevices ***');
+                     RETURN;
+                  END_IF;                  
+               END_IF;
+
+            END_IF;
+
+         END_IF;
+
+      END_IF;
+
+   END_WHILE;
+
+   IF abFiFo.fIsEmpty() THEN
+      sPath := '';
+
+   ELSE
+      sPath := abFiFo.fRead();
+
+   END_IF;
+
+END_WHILE;
+
+@END_Body 
+
+@@@BEG_Comment@@@ 
+@TL(0)
+
+@@@END_Comment@@@ 
+
+@BEG_Body 
+@TL(111)
+(**************************************** WARNING ********************************************
+ *** The KEBA Kemro K2 System including software is not intended for safety control tasks! ***
+ ***                       For further information see Comment tab!                        ***
+ *********************************************************************************************)
+
+IF sDeviceHWPath = '' THEN // empty or not valid
+   RETURN;
+
+END_IF;
+
+sv_IOReplaceEndpoints.sDeviceHWPath := "";
+sv_IOReplaceEndpoints := empty_IOReplaceEndpoints; // clear previous data
+//sv_IOReplaceEndpoints.sDeviceHWPath := sDeviceHWPath;
+_KCAT_HandleData := KCAT_GetHandle(sDeviceHWPath);
+bFirst := TRUE;
+WHILE _KCAT_HandleData.Status = KCAT_Status_OK DO
+   IF bFirst THEN
+      bFirst := FALSE;
+      _KCAT_HandleData := KCAT_GetFirstIoHandle(_KCAT_HandleData.Handle);
+
+   ELSE
+      _KCAT_HandleData := KCAT_GetNextIoHandle(_KCAT_HandleData.Handle);
+
+   END_IF;
+
+   IF (_KCAT_HandleData.Status = KCAT_Status_OK) THEN
+       _KCAT_RetCode := KCAT_GetGenericData(_KCAT_HandleData.Handle, KCAT_GDSelector_NodeType, xxxFlags, xxxData);
+
+//(* Catalog node types *)
+// 100 digital Inputs..(DI)
+// 101 digital Outputs.(DO)
+// 102 analog Inputs...(AI, TI)
+// 103 analog Outputs..(AO)
+// 112 velocity Inputs.(VI) ... actually not used
+
+      IF (xxxData >= 100) AND (xxxData <= 103) THEN
+         // get index(max to 9999)
+         _KCAT_NameData := KCAT_GetName(_KCAT_HandleData.Handle);
+         sTmp := RIGHT(_KCAT_NameData.Name, 4);
+         iTmpIdx := STRING_TO_DINT(DELETE(sTmp, FIND(sTmp, ':'), 1));
+
+         // TYP[0..2] ... A, D, T
+         FOR ii := GET_LOW_BOUND(sv_IOReplaceEndpoints.TYP) TO GET_HIGH_BOUND(sv_IOReplaceEndpoints.TYP) BY 1 DO
+            // DIR[0] ... Input
+            IF (FIND(_KCAT_NameData.Name, CONCAT('.', sv_IOReplaceEndpoints.TYP[ii][0].sType, ':') ) > 0) AND // search for ':XX.'
+               (sv_IOReplaceEndpoints.TYP[ii][0].iCnt < GET_HIGH_BOUND(sv_IOReplaceEndpoints.TYP[ii][0].EP)) THEN
+
+               IF (sv_IOReplaceEndpoints.TYP[ii][0].iCnt = cEP_NONE) THEN sv_IOReplaceEndpoints.TYP[ii][0].iCnt := 0; END_IF;
+
+               sSVName := fGetSVName(_KCAT_NameData.Name);
+               sApplState := fGetApplState(_KCAT_NameData.Name);
+               IF (sSVName = '') OR (LEFT(sApplState, LEN(cEP_REPLACE)) = cEP_REPLACE) THEN // if free or replaced
+                  sv_IOReplaceEndpoints.TYP[ii][0].iCnt := sv_IOReplaceEndpoints.TYP[ii][0].iCnt + 1; // inc counter
+                  sv_IOReplaceEndpoints.TYP[ii][0].EP[sv_IOReplaceEndpoints.TYP[ii][0].iCnt].iIdx := iTmpIdx; // save endpoint index
+                  sv_IOReplaceEndpoints.TYP[ii][0].EP[sv_IOReplaceEndpoints.TYP[ii][0].iCnt].sVarName := fGetSVName(_KCAT_NameData.Name);
+                  IF sSVName <> '' THEN
+                     sv_IOReplaceEndpoints.TYP[ii][0].EP[sv_IOReplaceEndpoints.TYP[ii][0].iCnt].iIdxOld := STRING_TO_DINT(DELETE(sApplState, 8, 1));  // cut off keyword and save old index
+                     sv_IOReplaceEndpoints.bModified := TRUE;
+
+                  END_IF;
+
+               END_IF;
+
+               EXIT; // exit for
+
+            // DIR[1] ... Output
+            ELSIF (ii <> 2) AND // exception for TYP[2]DIR[1] ... TO
+                  (FIND(_KCAT_NameData.Name, CONCAT('.', sv_IOReplaceEndpoints.TYP[ii][1].sType, ':') ) > 0) AND // search for ':XX.'
+                  (sv_IOReplaceEndpoints.TYP[ii][1].iCnt < GET_HIGH_BOUND(sv_IOReplaceEndpoints.TYP[ii][1].EP)) THEN
+
+               IF (sv_IOReplaceEndpoints.TYP[ii][1].iCnt = cEP_NONE) THEN sv_IOReplaceEndpoints.TYP[ii][1].iCnt := 0; END_IF;
+
+               sSVName := fGetSVName(_KCAT_NameData.Name);
+               sApplState := fGetApplState(_KCAT_NameData.Name);
+               IF (sSVName = '') OR (LEFT(sApplState, 8) = 'REPLACE_') THEN // if free or replaced
+                  sv_IOReplaceEndpoints.TYP[ii][1].iCnt := sv_IOReplaceEndpoints.TYP[ii][1].iCnt + 1; // inc counter
+                  sv_IOReplaceEndpoints.TYP[ii][1].EP[sv_IOReplaceEndpoints.TYP[ii][1].iCnt].iIdx := iTmpIdx; // save endpoint index
+                  sv_IOReplaceEndpoints.TYP[ii][1].EP[sv_IOReplaceEndpoints.TYP[ii][1].iCnt].sVarName := fGetSVName(_KCAT_NameData.Name);
+                  IF sSVName <> '' THEN
+                     sv_IOReplaceEndpoints.TYP[ii][1].EP[sv_IOReplaceEndpoints.TYP[ii][1].iCnt].iIdxOld := STRING_TO_DINT(DELETE(sApplState, 8, 1)); // cut off keyword and save old index
+                     sv_IOReplaceEndpoints.bModified := TRUE;
+                  END_IF;
+               END_IF;
+               EXIT; // exit for
+            END_IF;
+         END_FOR;
+      END_IF;
+   END_IF;
+END_WHILE;
+
+sv_IOReplaceEndpoints.sDeviceHWPath := sDeviceHWPath;
+
+// set device modified flag
+IF sv_IOReplaceDevices.Device[sv_IOReplaceSelectedDeviceIdx].bModified <> sv_IOReplaceEndpoints.bModified THEN
+   sv_IOReplaceDevices.Device[sv_IOReplaceSelectedDeviceIdx].bModified := sv_IOReplaceEndpoints.bModified; // write back to device list
+   IF sv_IOReplaceEndpoints.bModified THEN // set bModified
+      _KCAT_HandleData := KCAT_GetHandle(sv_IOReplaceEndpoints.sDeviceHWPath);
+      iTmp := BOOL_TO_DINT(TRUE);
+      _KCAT_Status := KCAT_AddValue(_KCAT_HandleData.Handle, 'bModified', KCAT_Type_DINT, iTmp);
+      _KCAT_HandleData := KCAT_GetHandle(CONCAT(sv_IOReplaceEndpoints.sDeviceHWPath, '.bModified'));
+      _KCAT_Status := KCAT_AddCatRetain(_KCAT_HandleData.Handle);
+
+   ELSE // remove bModified
+      _KCAT_HandleData := KCAT_GetHandle(CONCAT(sv_IOReplaceEndpoints.sDeviceHWPath, '.bModified'));
+      _KCAT_Status := KCAT_RemoveCatRetain(_KCAT_HandleData.Handle);
+      _KCAT_Status := KCAT_RemoveDir(_KCAT_HandleData.Handle);
+
+   END_IF;
+
+END_IF;
+
+@END_Body 
+
+@@@BEG_Comment@@@ 
+@TL(0)
+
+@@@END_Comment@@@ 
+
+@BEG_Body 
+@TL(17)
+(**************************************** WARNING ********************************************
+ *** The KEBA Kemro K2 System including software is not intended for safety control tasks! ***
+ ***                       For further information see Comment tab!                        ***
+ *********************************************************************************************)
+
+IF NOT sv_bInitDone THEN
+   RETURN;
+END_IF;
+
+//get configfile name
+sApplPath := FGetCatConfigValueString('System.applPath', '/harddisk0/');
+msCfgFile := CONCAT(sApplPath, '/application/control/config/ioReplaced.cfg'); 
+
+// init: fill devicelist
+aGetIoDevices();
+STOP_PROCESS_ALGORITHM();
+
+@END_Body 
+
+@@@BEG_Comment@@@ 
+@TL(11)
+@h    ! WARNING !
+@h    The Kemro K2 system (including software) only meets category B according to EN 954-1,
+@h    thus it is not intended for usage in safety-relevant control applications in the field 
+@h    of personal safety (e.g. emergency stop).
+@h    To implement potentially necessary safety-relevant control tasks, always use additional 
+@h    external safety devices that are intended for the particular purpose, and meet the necessary 
+@h    functional safety.
+@h    For further information see EN 954-1 (EN ISO 13849-1) and/or the K2-x00 user manual, chapter 
+@h    "CE conformity, directives and standards".
+
+this process algorithm will be called after startup (AUTOSTART)
+@@@END_Comment@@@ 
+
+@BEG_Body 
+@TL(8)
+(**************************************** WARNING ********************************************
+ *** The KEBA Kemro K2 System including software is not intended for safety control tasks! ***
+ ***                       For further information see Comment tab!                        ***
+ *********************************************************************************************)
+
+// save performance by getting io endpoints only when other device is selected
+aGetIoDeviceEndpoints(sv_IOReplaceDevices.Device[sv_IOReplaceSelectedDeviceIdx].sHWPath);
+
+@END_Body 
+
+@@@BEG_Comment@@@ 
+@TL(0)
+
+@@@END_Comment@@@ 
+
+@BEG_Body 
+@TL(104)
+(**************************************** WARNING ********************************************
+ *** The KEBA Kemro K2 System including software is not intended for safety control tasks! ***
+ ***                       For further information see Comment tab!                        ***
+ *********************************************************************************************)
+
+// set WATCHDOG cause of changes
+iTYP := sv_IOReplaceChangedEndpoint.iTYP; // copy to tmp cause of long names
+iDIR := sv_IOReplaceChangedEndpoint.iDIR;
+iEP := sv_IOReplaceChangedEndpoint.iEP;
+iIdxOldSaved := sv_IOReplaceChangedEndpoint.iIdxOldSaved;
+
+sHWPathEPDef := CONCAT(sv_IOReplaceEndpoints.sDeviceHWPath, '.', sv_IOReplaceEndpoints.TYP[iTYP][iDIR].sType, ':'); // string bis ..YYY.XX:' 
+
+IF (sv_IOReplaceEndpoints.TYP[iTYP][iDIR].EP[iEP].iIdxOld = cEP_EMPTY) THEN // restore
+   sHWPathEPFree := CONCAT(sHWPathEPDef, DINT_TO_STRING(sv_IOReplaceEndpoints.TYP[iTYP][iDIR].EP[iEP].iIdx));
+   sHWPathEPDef := CONCAT(sHWPathEPDef, DINT_TO_STRING(iIdxOldSaved));
+   _KCAT_HandleData := KCAT_GetHandle(CONCAT(sHWPathEPFree, '.sApplState'));
+   _KCAT_Status := KCAT_RemoveCatRetain(_KCAT_HandleData.Handle);
+   _KCAT_Status := KCAT_RemoveDir(_KCAT_HandleData.Handle);
+
+   _KCAT_HandleData := KCAT_GetHandle(CONCAT(sHWPathEPFree, '.name'));
+   _KCAT_Status := KCAT_RemoveCatRetain(_KCAT_HandleData.Handle);
+   _KCAT_Status := KCAT_RemoveDir(_KCAT_HandleData.Handle);
+
+   _KCAT_HandleData := KCAT_GetHandle(CONCAT(sHWPathEPDef, '.sApplState'));
+   _KCAT_Status := KCAT_RemoveCatRetain(_KCAT_HandleData.Handle);
+   _KCAT_Status := KCAT_RemoveDir(_KCAT_HandleData.Handle);
+
+   _KCAT_HandleData := KCAT_GetHandle(CONCAT(sHWPathEPDef, '.name'));
+   _KCAT_Status := KCAT_RemoveCatRetain(_KCAT_HandleData.Handle);
+   sTmp := sv_IOReplaceEndpoints.TYP[iTYP][iDIR].EP[iEP].sVarName;
+   _KCAT_Status := KCAT_SetValue(_KCAT_HandleData.Handle, sTmp);
+
+ELSIF (iIdxOldSaved <> cEP_EMPTY) THEN // reassignment (old and old_saved not empty)
+   SET_ALARM(Name := erIOR_ReassignNotAllowed);
+   sv_IOReplaceEndpoints.TYP[iTYP][iDIR].EP[iEP].iIdxOld := iIdxOldSaved; // reset iIdxOld
+   RETURN;
+
+ELSIF NOT (fCheckValidEP(CONCAT(sHWPathEPDef, DINT_TO_STRING(sv_IOReplaceEndpoints.TYP[iTYP][iDIR].EP[iEP].iIdxOld)))) THEN // no valid endpoint index
+   SET_ALARM(Name := erIOR_NoValidEPIndex);
+   sv_IOReplaceEndpoints.TYP[iTYP][iDIR].EP[iEP].iIdxOld := iIdxOldSaved; // reset iIdxOld
+   RETURN;
+
+ELSIF (fGetSVName(CONCAT(sHWPathEPDef, DINT_TO_STRING(sv_IOReplaceEndpoints.TYP[iTYP][iDIR].EP[iEP].iIdxOld))) = '') THEN // new ep has no variable name
+   SET_ALARM(Name := erIOR_NoFreeToFreeMapping);
+   sv_IOReplaceEndpoints.TYP[iTYP][iDIR].EP[iEP].iIdxOld := iIdxOldSaved; // reset iIdxOld
+   RETURN;
+
+ELSIF NOT(fCheckAttributes(CONCAT(sHWPathEPDef, DINT_TO_STRING(sv_IOReplaceEndpoints.TYP[iTYP][iDIR].EP[iEP].iIdx)), 
+                        CONCAT(sHWPathEPDef, DINT_TO_STRING(sv_IOReplaceEndpoints.TYP[iTYP][iDIR].EP[iEP].iIdxOld)))) THEN // not matching attributes
+   SET_ALARM(Name := erIOR_EPAttributesNotMatching);
+   sv_IOReplaceEndpoints.TYP[iTYP][iDIR].EP[iEP].iIdxOld := iIdxOldSaved; // reset iIdxOld
+   RETURN;
+
+ELSE // replace
+   sHWPathEPFree := CONCAT(sHWPathEPDef, DINT_TO_STRING(sv_IOReplaceEndpoints.TYP[iTYP][iDIR].EP[iEP].iIdx));
+   sHWPathEPDef := CONCAT(sHWPathEPDef, DINT_TO_STRING(sv_IOReplaceEndpoints.TYP[iTYP][iDIR].EP[iEP].iIdxOld));
+   
+    // data for free ep
+    _KCAT_HandleData := KCAT_GetHandle(sHWPathEPFree);
+    sTmp := CONCAT(cEP_REPLACE, '_', DINT_TO_STRING(sv_IOReplaceEndpoints.TYP[iTYP][iDIR].EP[iEP].iIdxOld));
+    _KCAT_Status := KCAT_AddValue(_KCAT_HandleData.Handle, 'sApplState', KCAT_Type_STRING, sTmp); // replace_xx
+
+    sTmp := fGetSVName(sHWPathEPDef);
+    _KCAT_Status := KCAT_AddValue(_KCAT_HandleData.Handle, 'name', KCAT_Type_STRING, sTmp); // sv_name
+
+    _KCAT_HandleData := KCAT_GetHandle(CONCAT(sHWPathEPFree, '.sApplState'));
+    _KCAT_Status := KCAT_AddCatRetain(_KCAT_HandleData.Handle);
+    _KCAT_HandleData := KCAT_GetHandle(CONCAT(sHWPathEPFree, '.name'));
+    _KCAT_Status := KCAT_AddCatRetain(_KCAT_HandleData.Handle);
+
+    //data for defect ep
+    _KCAT_HandleData := KCAT_GetHandle(CONCAT(sHWPathEPDef, '.name'));
+    sTmp := CONCAT(sTmp, '_', cEP_DEFECT);
+
+    _KCAT_Status := KCAT_SetValue(_KCAT_HandleData.Handle, sTmp); // sv_name_defect
+
+    _KCAT_Status := KCAT_AddCatRetain(_KCAT_HandleData.Handle);
+
+    _KCAT_HandleData := KCAT_GetHandle(sHWPathEPDef);
+    sTmp := cEP_DEFECT;
+    _KCAT_Status := KCAT_AddValue(_KCAT_HandleData.Handle, 'sApplState', KCAT_Type_STRING, sTmp); // defect
+
+    _KCAT_HandleData := KCAT_GetHandle(CONCAT(sHWPathEPDef, '.sApplState'));
+    _KCAT_Status := KCAT_AddCatRetain(_KCAT_HandleData.Handle);
+      
+   //create new config - file because the CatRetain cant add the Entry 
+   //when the Cataloge Node is not avaliable
+   (* Opens for reading and writing, if file doesn't exist, it will be created, its contents will not be deleted *)
+      CfgFile := KFILE_Open(Name := msCfgFile, Mode := KFILE_Mode_AppendCreate);
+      IF CfgFile.Status = KFILE_Status_OK THEN
+        sFullFreeEP := CONCAT('[',sHWPathEPFree,']','$N');
+        //not using KFILE_WriteString, because it appends a \0 to the text
+        WrittenChars := KFILE_Write(Token := CfgFile.Token, Buffer := sFullFreeEP, Length := LEN(sFullFreeEP));                         
+      END_IF;
+   (* close file *)
+   CfgFile.Status := KFILE_Close(CfgFile.Token);
+
+END_IF;
+
+SET_ALARM(Name := erIOR_EPChangesMade); // endpoint replaced
+
+aGetIoDeviceEndpoints(sv_IOReplaceEndpoints.sDeviceHWPath); // refresh endpoints
+
+@END_Body 
+
+@@@BEG_Comment@@@ 
+@TL(0)
+
+@@@END_Comment@@@ 
+@END_Body 
+
+@END_Contents 

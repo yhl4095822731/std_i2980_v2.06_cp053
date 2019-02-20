@@ -1,0 +1,1008 @@
+(*
+@h    ! WARNING !
+@h    The Kemro K2 system (including software) only meets category B according to EN 954-1,
+@h    thus it is not intended for usage in safety-relevant control applications in the field 
+@h    of personal safety (e.g. emergency stop).
+@h    To implement potentially necessary safety-relevant control tasks, always use additional 
+@h    external safety devices that are intended for the particular purpose, and meet the necessary 
+@h    functional safety.
+@h    For further information see EN 954-1 (EN ISO 13849-1) and/or the K2-x00 user manual, chapter 
+@h    "CE conformity, directives and standards".
+
+handles job list and job data
+
+@FunctionID: A-VAR-8
+@FunctionID: A-VAR-9
+TIG 3.7
+*)
+
+IMPORT_OVER_LISTFILE
+ GET_RUNTIME
+, tsTIGHmi
+, tsTIG
+, ABPartList
+, TON
+
+END_IMPORT
+
+ALGORITHM_BLOCK ABJob #DUMMY_EDIT_BLOCK
+
+SYSTEM_VAR
+ sv_TIGHmi : tsTIGHmi;
+ sv_TIG : tsTIG;
+ sv_Test : BOOL;
+END_VAR
+
+SYSTEM_OBJECT
+ TaskVis : TASK;
+END_OBJECT
+
+VAR
+ mbTextsChanged : BOOL;
+ cnt : DINT;
+ leerstring : STRING(255);
+ abPartList : ABPartList;
+END_VAR
+
+(*
+@h    ! WARNING !
+@h    The Kemro K2 system (including software) only meets category B according to EN 954-1,
+@h    thus it is not intended for usage in safety-relevant control applications in the field 
+@h    of personal safety (e.g. emergency stop).
+@h    To implement potentially necessary safety-relevant control tasks, always use additional 
+@h    external safety devices that are intended for the particular purpose, and meet the necessary 
+@h    functional safety.
+@h    For further information see EN 954-1 (EN ISO 13849-1) and/or the K2-x00 user manual, chapter 
+@h    "CE conformity, directives and standards".
+
+initialization of block
+
+
+*)
+
+ALGORITHM aInit
+
+#BEGIN_EDIT_BLOCK
+(**************************************** WARNING ********************************************
+ *** The KEBA Kemro K2 System including software is not intended for safety control tasks! ***
+ ***                       For further information see Comment tab!                        ***
+ *********************************************************************************************)
+
+START_PROCESS_ALGORITHM(paRun);
+
+
+
+;#END_EDIT_BLOCK END_ALGORITHM
+
+(*
+@h    ! WARNING !
+@h    The Kemro K2 system (including software) only meets category B according to EN 954-1,
+@h    thus it is not intended for usage in safety-relevant control applications in the field 
+@h    of personal safety (e.g. emergency stop).
+@h    To implement potentially necessary safety-relevant control tasks, always use additional 
+@h    external safety devices that are intended for the particular purpose, and meet the necessary 
+@h    functional safety.
+@h    For further information see EN 954-1 (EN ISO 13849-1) and/or the K2-x00 user manual, chapter 
+@h    "CE conformity, directives and standards".
+
+simulation routine
+*)
+
+PROCESS_ALGORITHM paTest ON TaskVis AUTOSTART
+
+
+VAR_TEMP
+ i : DINT;
+END_VAR
+
+VAR
+ iLang : DINT;
+ bAnzHigh : BOOL;
+ bMehr : BOOL;
+ iLastJobID : DINT;
+ sLang : STRING(255);
+ s1 : STRING(255);
+ s2 : STRING(255);
+ s3 : STRING(255);
+ s4 : STRING(255);
+ init : BOOL;
+ meminit : BOOL;
+ doMemTest : BOOL;
+END_VAR
+#BEGIN_EDIT_BLOCK
+(**************************************** WARNING ********************************************
+ *** The KEBA Kemro K2 System including software is not intended for safety control tasks! ***
+ ***                       For further information see Comment tab!                        ***
+ *********************************************************************************************)
+
+IF NOT sv_Test THEN
+   RETURN;
+END_IF;
+IF NOT init THEN
+           init:=TRUE;
+   FOR i:=1 TO 255 DO
+      leerstring:=CONCAT(leerstring, " ");   
+   END_FOR;
+END_IF;
+
+
+IF doMemTest THEN 
+   IF NOT meminit THEN 
+      FOR i := 1 TO 20 DO
+         sv_TIG.productionData.yScrapText[i].iNumber := 10000+i;
+         sv_TIG.productionData.yScrapText[i].sText :=CONCAT( "scraptext ",DINT_TO_STRING(i));
+      END_FOR;
+      FOR i:=1 TO 8 DO 
+         sv_TIG.job.jobData.yJobArticle[i].sArticleName := CONCAT("test artikel ",DINT_TO_STRING(i));
+      END_FOR;
+      meminit:=TRUE;
+      cnt:=300; 
+   END_IF;
+   
+   cnt := cnt -1; 
+   IF cnt = 250 THEN                                   // artikel kurz
+        sv_TIG.job.jobData.yJobArticle[3].sArticleName:="";
+   END_IF;
+   IF cnt = 200 THEN // scrap kurz
+      sv_TIG.productionData.yScrapText[3].sText := "";
+   END_IF;
+   IF cnt = 150 THEN // scrap lang 
+      sv_TIG.productionData.yScrapText[3].sText := "adsfads";      
+   END_IF;
+   IF cnt = 100 THEN // artikel lang 
+          sv_TIG.job.jobData.yJobArticle[3].sArticleName:="asdfasdfasf";
+   END_IF;
+      IF cnt = 50 THEN // scrap kurz
+      sv_TIG.productionData.yScrapText[3].sText := "";
+   END_IF;
+
+   IF cnt=0 THEN 
+        sv_TIG.job.jobData.yJobArticle[3].sArticleName:="asfassdfa";   
+       sv_TIG.productionData.yScrapText[3].sText := "adsfads";      
+            
+     cnt := 300; 
+   END_IF;
+   
+   
+   RETURN; 
+ELSE
+   IF meminit THEN 
+            sv_TIG.productionData.yScrapText[1].iNumber := 1;
+      meminit :=FALSE;  
+   END_IF;
+END_IF;
+
+
+
+IF iLang = 0 THEN
+   sLang := ""; 
+ELSE 
+   sLang := "EN_";
+END_IF;
+   bMehr := FALSE;   
+   IF bAnzHigh THEN
+      cnt := 10; 
+   ELSE
+      cnt := 5;
+      FOR i:=cnt+1 TO 10 DO
+         sv_TIG.job.yJobList[i].iJobID := 0;         
+      END_FOR;
+   END_IF;
+   FOR i:=1 TO cnt DO
+      IF bAnzHigh THEN
+          bMehr := ((i MOD 5) = 0);
+      END_IF;
+      
+      IF bMehr THEN
+         s1 := CONCAT(sLang, "ArticleMehr_", DINT_TO_STRING(10000+i));                  
+         sv_TIG.job.yJobList[i].sJobArticle := s1;
+         sv_TIG.job.yJobList[i].iJobID := iLastJobID;
+         sv_TIG.job.yJobList[i].sJobMould := ""  ;
+         sv_TIG.job.yJobList[i].sJobName := "";
+        
+      ELSE
+
+         s2:=CONCAT(sLang, "Article_", DINT_TO_STRING(10000+i));;                  
+         sv_TIG.job.yJobList[i].sJobArticle := s2;
+         iLastJobID := i + 10000;
+         sv_TIG.job.yJobList[i].iJobID := iLastJobID;
+
+         s3:=CONCAT(sLang, "Mould_", DINT_TO_STRING(10000+i));;                  ;
+         sv_TIG.job.yJobList[i].sJobMould := s3;
+
+         s4:=CONCAT(sLang, "Name_", DINT_TO_STRING(10000+i));                                 ;
+         sv_TIG.job.yJobList[i].sJobName := s4;
+      END_IF;
+
+   END_FOR;
+
+
+
+
+;#END_EDIT_BLOCK END_ALGORITHM
+
+(*
+@h    ! WARNING !
+@h    The Kemro K2 system (including software) only meets category B according to EN 954-1,
+@h    thus it is not intended for usage in safety-relevant control applications in the field 
+@h    of personal safety (e.g. emergency stop).
+@h    To implement potentially necessary safety-relevant control tasks, always use additional 
+@h    external safety devices that are intended for the particular purpose, and meet the necessary 
+@h    functional safety.
+@h    For further information see EN 954-1 (EN ISO 13849-1) and/or the K2-x00 user manual, chapter 
+@h    "CE conformity, directives and standards".
+
+cyclic part
+
+*)
+
+PROCESS_ALGORITHM paRun ON TaskVis
+
+#BEGIN_EDIT_BLOCK
+(**************************************** WARNING ********************************************
+ *** The KEBA Kemro K2 System including software is not intended for safety control tasks! ***
+ ***                       For further information see Comment tab!                        ***
+ *********************************************************************************************)
+// TODO: not cyclic (performance)
+sv_TIGHmi.job.jobData.JobSetBegin := STRING_TO_DT(sv_TIG.job.jobData.JobSetBegin);
+sv_TIGHmi.job.jobData.JobSetEnd := STRING_TO_DT(sv_TIG.job.jobData.JobSetEnd);
+sv_TIGHmi.job.jobData.JobActBegin := STRING_TO_DT(sv_TIG.job.jobData.JobActBegin);
+sv_TIGHmi.job.jobData.JobActEnd := STRING_TO_DT(sv_TIG.job.jobData.JobActEnd);
+sv_TIGHmi.job.jobData.JobDelivery := STRING_TO_DT(sv_TIG.job.jobData.JobDelivery);
+
+
+
+
+
+
+
+
+;#END_EDIT_BLOCK END_ALGORITHM
+
+(*
+@h    ! WARNING !
+@h    The Kemro K2 system (including software) only meets category B according to EN 954-1,
+@h    thus it is not intended for usage in safety-relevant control applications in the field 
+@h    of personal safety (e.g. emergency stop).
+@h    To implement potentially necessary safety-relevant control tasks, always use additional 
+@h    external safety devices that are intended for the particular purpose, and meet the necessary 
+@h    functional safety.
+@h    For further information see EN 954-1 (EN ISO 13849-1) and/or the K2-x00 user manual, chapter 
+@h    "CE conformity, directives and standards".
+
+listener for job list texts changed
+*)
+
+POSTUPDATE_ALGORITHM pTextsChanged ON TaskVis WITH sv_TIG.job.yJobList
+
+#BEGIN_EDIT_BLOCK
+(**************************************** WARNING ********************************************
+ *** The KEBA Kemro K2 System including software is not intended for safety control tasks! ***
+ ***                       For further information see Comment tab!                        ***
+ *********************************************************************************************)
+
+mbTextsChanged := TRUE;
+START_PROCESS_ALGORITHM(paTextsChanged);
+
+
+;#END_EDIT_BLOCK END_ALGORITHM
+
+(*
+@h    ! WARNING !
+@h    The Kemro K2 system (including software) only meets category B according to EN 954-1,
+@h    thus it is not intended for usage in safety-relevant control applications in the field 
+@h    of personal safety (e.g. emergency stop).
+@h    To implement potentially necessary safety-relevant control tasks, always use additional 
+@h    external safety devices that are intended for the particular purpose, and meet the necessary 
+@h    functional safety.
+@h    For further information see EN 954-1 (EN ISO 13849-1) and/or the K2-x00 user manual, chapter 
+@h    "CE conformity, directives and standards".
+
+calculate new list length, set list changed flag
+*)
+
+PROCESS_ALGORITHM paTextsChanged ON TaskVis
+
+
+VAR_TEMP
+ i : DINT;
+END_VAR
+
+VAR
+ fbTonChanged : TON;
+ iStep : DINT;
+ time : TIME;
+ s : STRING(255);
+ dummy : DINT;
+ iArrayLen : DINT;
+END_VAR
+#BEGIN_EDIT_BLOCK
+(**************************************** WARNING ********************************************
+ *** The KEBA Kemro K2 System including software is not intended for safety control tasks! ***
+ ***                       For further information see Comment tab!                        ***
+ *********************************************************************************************)
+
+IF iStep = 0 THEN
+   iArrayLen := GET_HIGH_BOUND(sv_TIG.job.yJobList);
+
+   mbTextsChanged := FALSE;
+   fbTonChanged(NOT mbTextsChanged, T#3s); // delay reading of texts
+   
+   
+   IF fbTonChanged.Q THEN
+      time := GET_RUNTIME();
+      fbTonChanged(IN := FALSE);
+//      sv_TIGHmi.job.iJobListTextsLength := iArrayLen;       // maximum
+      FOR i:=1 TO iArrayLen DO
+        IF (sv_TIG.job.yJobList[i].iJobID = 0) THEN 
+          iArrayLen := i-1;
+          EXIT;                              // -------------------       BREAK FOR LOOP        ------------------------
+        END_IF;
+      END_FOR;
+      sv_TIGHmi.job.iJobListTextsLength := iArrayLen;
+      sv_TIGHmi.job.bJobListTextsChanged := TRUE; 
+      iStep:=10; 
+   END_IF;
+  
+END_IF;
+
+IF iStep = 10 THEN
+   IF (sv_TIGHmi.job.bJobListTextsChanged = FALSE) THEN // hmi read texts done
+      time := GET_RUNTIME() - time;
+      s := CONCAT('joblist texts changed: ', TIME_TO_STRING(time));
+      dummy := Print(s);
+      
+      iStep := 0;      
+      IF NOT mbTextsChanged THEN // if texts changed again by tig do not stop and continue with step 0 to trigger reading of texts again
+         STOP_PROCESS_ALGORITHM();
+      END_IF;   
+   END_IF;
+END_IF;
+    
+
+
+;#END_EDIT_BLOCK END_ALGORITHM
+
+
+
+END_ALGORITHM_BLOCK
+
+
+
+#END_OF_IEC_PART
+
+@Puma @IecEditor 6 68 @Pou 25 
+@@@BEG_Comment@@@
+@h    ! WARNING !
+@h    The Kemro K2 system (including software) only meets category B according to EN 954-1,
+@h    thus it is not intended for usage in safety-relevant control applications in the field 
+@h    of personal safety (e.g. emergency stop).
+@h    To implement potentially necessary safety-relevant control tasks, always use additional 
+@h    external safety devices that are intended for the particular purpose, and meet the necessary 
+@h    functional safety.
+@h    For further information see EN 954-1 (EN ISO 13849-1) and/or the K2-x00 user manual, chapter 
+@h    "CE conformity, directives and standards".
+
+handles job list and job data
+
+@FunctionID: A-VAR-8
+@FunctionID: A-VAR-9
+TIG 3.7
+@@@END_Comment@@@
+
+@BEG_Contents 
+
+@BEG_Func 
+@RT(17)FuncTreeContainer 
+1 
+@Var @RT(11)GET_RUNTIME @RT(0) @T @F @DT @RT(0) @RT(0) @T @T @UNKNOWN 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+0 @RT(0) @RT(0) 
+@END_Attrib 
+1 1 @F @F @F @F 
+
+@END_Func 
+
+@BEG_Const 
+@RT(18)ConstTreeContainer 
+0 
+@END_Const 
+
+@BEG_Export 
+
+@BEG_Kind 
+@ALGORITHM_BLOCK @RT(5)ABJob @STRUCTURED_TEXT 
+@RT(0) @RT(0) @RT(0) 
+@END_Kind 
+
+@BEG_Dcl 
+@RT(16)DclTreeContainer 
+8 
+@Var @RT(7)TaskVis @RT(0) @T @F @DT @RT(4)TASK @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 7 @F @F @F @F 
+
+@Var @RT(9)sv_TIGHmi @RT(0) @T @T @DERIVED 0 @T @T @DT @RT(8)tsTIGHmi @RT(0) @T @T @UNKNOWN 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 8 @F @F @F @F 
+
+@Var @RT(6)sv_TIG @RT(0) @T @T @DERIVED 0 @T @T @DT @RT(5)tsTIG @RT(0) @T @T @UNKNOWN 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 8 @F @F @F @F 
+
+@Var @RT(7)sv_Test @RT(0) @T @F @DT @RT(4)BOOL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 8 @F @F @F @F 
+
+@Var @RT(14)mbTextsChanged @RT(0) @T @F @DT @RT(4)BOOL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(3)cnt @RT(0) @T @F @DT @RT(4)DINT @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(10)leerstring @RT(0) @T @F @DT @RT(11)STRING(255) @RT(0) @T @T @STRING 0 @F @RT(3)255 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(10)abPartList @RT(0) @T @T @DERIVED 0 @T @T @DT @RT(10)ABPartList @RT(0) @T @T @UNKNOWN 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@END_Dcl 
+
+@END_Export 
+
+@BEG_Body 
+
+5 
+
+@BEG_Export 
+
+@BEG_Algo 
+@ALGORITHM @RT(5)aInit @STRUCTURED_TEXT 
+@RT(0) @RT(0) @RT(0) @F @F 
+@END_Algo 
+
+@BEG_Dcl 
+@RT(16)DclTreeContainer 
+0 
+@END_Dcl 
+
+@END_Export 
+
+@BEG_Export 
+
+@BEG_Algo 
+@PROCESS_ALGORITHM @RT(6)paTest @STRUCTURED_TEXT 
+@RT(0) @RT(0) @RT(7)TaskVis @T @F 
+@END_Algo 
+
+@BEG_Dcl 
+@RT(16)DclTreeContainer 
+13 
+@Var @RT(5)iLang @RT(0) @T @F @DT @RT(4)DINT @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(8)bAnzHigh @RT(0) @T @F @DT @RT(4)BOOL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(5)bMehr @RT(0) @T @F @DT @RT(4)BOOL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(1)i @RT(0) @T @F @DT @RT(4)DINT @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 4 @F @F @F @F 
+
+@Var @RT(10)iLastJobID @RT(0) @T @F @DT @RT(4)DINT @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(5)sLang @RT(0) @T @F @DT @RT(11)STRING(255) @RT(0) @T @T @STRING 0 @F @RT(3)255 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(2)s1 @RT(0) @T @F @DT @RT(11)STRING(255) @RT(0) @T @T @STRING 0 @F @RT(3)255 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(2)s2 @RT(0) @T @F @DT @RT(11)STRING(255) @RT(0) @T @T @STRING 0 @F @RT(3)255 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(2)s3 @RT(0) @T @F @DT @RT(11)STRING(255) @RT(0) @T @T @STRING 0 @F @RT(3)255 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(2)s4 @RT(0) @T @F @DT @RT(11)STRING(255) @RT(0) @T @T @STRING 0 @F @RT(3)255 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(4)init @RT(0) @T @F @DT @RT(4)BOOL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(7)meminit @RT(0) @T @F @DT @RT(4)BOOL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(9)doMemTest @RT(0) @T @F @DT @RT(4)BOOL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@END_Dcl 
+
+@END_Export 
+
+@BEG_Export 
+
+@BEG_Algo 
+@PROCESS_ALGORITHM @RT(5)paRun @STRUCTURED_TEXT 
+@RT(0) @RT(0) @RT(7)TaskVis @F @F 
+@END_Algo 
+
+@BEG_Dcl 
+@RT(16)DclTreeContainer 
+0 
+@END_Dcl 
+
+@END_Export 
+
+@BEG_Export 
+
+@BEG_Algo 
+@POSTUPDATE_ALGORITHM @RT(13)pTextsChanged @STRUCTURED_TEXT 
+@RT(0) @RT(19)sv_TIG.job.yJobList @RT(7)TaskVis @F @F 
+@END_Algo 
+
+@BEG_Dcl 
+@RT(16)DclTreeContainer 
+0 
+@END_Dcl 
+
+@END_Export 
+
+@BEG_Export 
+
+@BEG_Algo 
+@PROCESS_ALGORITHM @RT(14)paTextsChanged @STRUCTURED_TEXT 
+@RT(0) @RT(0) @RT(7)TaskVis @F @F 
+@END_Algo 
+
+@BEG_Dcl 
+@RT(16)DclTreeContainer 
+7 
+@Var @RT(12)fbTonChanged @RT(0) @T @T @DERIVED 0 @T @T @DT @RT(3)TON @RT(0) @T @T @UNKNOWN 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(5)iStep @RT(0) @T @F @DT @RT(4)DINT @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(4)time @RT(0) @T @F @DT @RT(4)TIME @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(1)i @RT(0) @T @F @DT @RT(4)DINT @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 4 @F @F @F @F 
+
+@Var @RT(1)s @RT(0) @T @F @DT @RT(11)STRING(255) @RT(0) @T @T @STRING 0 @F @RT(3)255 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(5)dummy @RT(0) @T @F @DT @RT(4)DINT @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(9)iArrayLen @RT(0) @T @F @DT @RT(4)DINT @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@END_Dcl 
+
+@END_Export 
+
+@BEG_Body 
+@TL(8)
+(**************************************** WARNING ********************************************
+ *** The KEBA Kemro K2 System including software is not intended for safety control tasks! ***
+ ***                       For further information see Comment tab!                        ***
+ *********************************************************************************************)
+
+START_PROCESS_ALGORITHM(paRun);
+
+
+@END_Body 
+
+@@@BEG_Comment@@@ 
+@TL(13)
+@h    ! WARNING !
+@h    The Kemro K2 system (including software) only meets category B according to EN 954-1,
+@h    thus it is not intended for usage in safety-relevant control applications in the field 
+@h    of personal safety (e.g. emergency stop).
+@h    To implement potentially necessary safety-relevant control tasks, always use additional 
+@h    external safety devices that are intended for the particular purpose, and meet the necessary 
+@h    functional safety.
+@h    For further information see EN 954-1 (EN ISO 13849-1) and/or the K2-x00 user manual, chapter 
+@h    "CE conformity, directives and standards".
+
+initialization of block
+
+
+@@@END_Comment@@@ 
+
+@BEG_Body 
+@TL(108)
+(**************************************** WARNING ********************************************
+ *** The KEBA Kemro K2 System including software is not intended for safety control tasks! ***
+ ***                       For further information see Comment tab!                        ***
+ *********************************************************************************************)
+
+IF NOT sv_Test THEN
+   RETURN;
+END_IF;
+IF NOT init THEN
+           init:=TRUE;
+   FOR i:=1 TO 255 DO
+      leerstring:=CONCAT(leerstring, " ");   
+   END_FOR;
+END_IF;
+
+
+IF doMemTest THEN 
+   IF NOT meminit THEN 
+      FOR i := 1 TO 20 DO
+         sv_TIG.productionData.yScrapText[i].iNumber := 10000+i;
+         sv_TIG.productionData.yScrapText[i].sText :=CONCAT( "scraptext ",DINT_TO_STRING(i));
+      END_FOR;
+      FOR i:=1 TO 8 DO 
+         sv_TIG.job.jobData.yJobArticle[i].sArticleName := CONCAT("test artikel ",DINT_TO_STRING(i));
+      END_FOR;
+      meminit:=TRUE;
+      cnt:=300; 
+   END_IF;
+   
+   cnt := cnt -1; 
+   IF cnt = 250 THEN                                   // artikel kurz
+        sv_TIG.job.jobData.yJobArticle[3].sArticleName:="";
+   END_IF;
+   IF cnt = 200 THEN // scrap kurz
+      sv_TIG.productionData.yScrapText[3].sText := "";
+   END_IF;
+   IF cnt = 150 THEN // scrap lang 
+      sv_TIG.productionData.yScrapText[3].sText := "adsfads";      
+   END_IF;
+   IF cnt = 100 THEN // artikel lang 
+          sv_TIG.job.jobData.yJobArticle[3].sArticleName:="asdfasdfasf";
+   END_IF;
+      IF cnt = 50 THEN // scrap kurz
+      sv_TIG.productionData.yScrapText[3].sText := "";
+   END_IF;
+
+   IF cnt=0 THEN 
+        sv_TIG.job.jobData.yJobArticle[3].sArticleName:="asfassdfa";   
+       sv_TIG.productionData.yScrapText[3].sText := "adsfads";      
+            
+     cnt := 300; 
+   END_IF;
+   
+   
+   RETURN; 
+ELSE
+   IF meminit THEN 
+            sv_TIG.productionData.yScrapText[1].iNumber := 1;
+      meminit :=FALSE;  
+   END_IF;
+END_IF;
+
+
+
+IF iLang = 0 THEN
+   sLang := ""; 
+ELSE 
+   sLang := "EN_";
+END_IF;
+   bMehr := FALSE;   
+   IF bAnzHigh THEN
+      cnt := 10; 
+   ELSE
+      cnt := 5;
+      FOR i:=cnt+1 TO 10 DO
+         sv_TIG.job.yJobList[i].iJobID := 0;         
+      END_FOR;
+   END_IF;
+   FOR i:=1 TO cnt DO
+      IF bAnzHigh THEN
+          bMehr := ((i MOD 5) = 0);
+      END_IF;
+      
+      IF bMehr THEN
+         s1 := CONCAT(sLang, "ArticleMehr_", DINT_TO_STRING(10000+i));                  
+         sv_TIG.job.yJobList[i].sJobArticle := s1;
+         sv_TIG.job.yJobList[i].iJobID := iLastJobID;
+         sv_TIG.job.yJobList[i].sJobMould := ""  ;
+         sv_TIG.job.yJobList[i].sJobName := "";
+        
+      ELSE
+
+         s2:=CONCAT(sLang, "Article_", DINT_TO_STRING(10000+i));;                  
+         sv_TIG.job.yJobList[i].sJobArticle := s2;
+         iLastJobID := i + 10000;
+         sv_TIG.job.yJobList[i].iJobID := iLastJobID;
+
+         s3:=CONCAT(sLang, "Mould_", DINT_TO_STRING(10000+i));;                  ;
+         sv_TIG.job.yJobList[i].sJobMould := s3;
+
+         s4:=CONCAT(sLang, "Name_", DINT_TO_STRING(10000+i));                                 ;
+         sv_TIG.job.yJobList[i].sJobName := s4;
+      END_IF;
+
+   END_FOR;
+
+
+
+@END_Body 
+
+@@@BEG_Comment@@@ 
+@TL(11)
+@h    ! WARNING !
+@h    The Kemro K2 system (including software) only meets category B according to EN 954-1,
+@h    thus it is not intended for usage in safety-relevant control applications in the field 
+@h    of personal safety (e.g. emergency stop).
+@h    To implement potentially necessary safety-relevant control tasks, always use additional 
+@h    external safety devices that are intended for the particular purpose, and meet the necessary 
+@h    functional safety.
+@h    For further information see EN 954-1 (EN ISO 13849-1) and/or the K2-x00 user manual, chapter 
+@h    "CE conformity, directives and standards".
+
+simulation routine
+@@@END_Comment@@@ 
+
+@BEG_Body 
+@TL(17)
+(**************************************** WARNING ********************************************
+ *** The KEBA Kemro K2 System including software is not intended for safety control tasks! ***
+ ***                       For further information see Comment tab!                        ***
+ *********************************************************************************************)
+// TODO: not cyclic (performance)
+sv_TIGHmi.job.jobData.JobSetBegin := STRING_TO_DT(sv_TIG.job.jobData.JobSetBegin);
+sv_TIGHmi.job.jobData.JobSetEnd := STRING_TO_DT(sv_TIG.job.jobData.JobSetEnd);
+sv_TIGHmi.job.jobData.JobActBegin := STRING_TO_DT(sv_TIG.job.jobData.JobActBegin);
+sv_TIGHmi.job.jobData.JobActEnd := STRING_TO_DT(sv_TIG.job.jobData.JobActEnd);
+sv_TIGHmi.job.jobData.JobDelivery := STRING_TO_DT(sv_TIG.job.jobData.JobDelivery);
+
+
+
+
+
+
+
+@END_Body 
+
+@@@BEG_Comment@@@ 
+@TL(12)
+@h    ! WARNING !
+@h    The Kemro K2 system (including software) only meets category B according to EN 954-1,
+@h    thus it is not intended for usage in safety-relevant control applications in the field 
+@h    of personal safety (e.g. emergency stop).
+@h    To implement potentially necessary safety-relevant control tasks, always use additional 
+@h    external safety devices that are intended for the particular purpose, and meet the necessary 
+@h    functional safety.
+@h    For further information see EN 954-1 (EN ISO 13849-1) and/or the K2-x00 user manual, chapter 
+@h    "CE conformity, directives and standards".
+
+cyclic part
+
+@@@END_Comment@@@ 
+
+@BEG_Body 
+@TL(8)
+(**************************************** WARNING ********************************************
+ *** The KEBA Kemro K2 System including software is not intended for safety control tasks! ***
+ ***                       For further information see Comment tab!                        ***
+ *********************************************************************************************)
+
+mbTextsChanged := TRUE;
+START_PROCESS_ALGORITHM(paTextsChanged);
+
+@END_Body 
+
+@@@BEG_Comment@@@ 
+@TL(11)
+@h    ! WARNING !
+@h    The Kemro K2 system (including software) only meets category B according to EN 954-1,
+@h    thus it is not intended for usage in safety-relevant control applications in the field 
+@h    of personal safety (e.g. emergency stop).
+@h    To implement potentially necessary safety-relevant control tasks, always use additional 
+@h    external safety devices that are intended for the particular purpose, and meet the necessary 
+@h    functional safety.
+@h    For further information see EN 954-1 (EN ISO 13849-1) and/or the K2-x00 user manual, chapter 
+@h    "CE conformity, directives and standards".
+
+listener for job list texts changed
+@@@END_Comment@@@ 
+
+@BEG_Body 
+@TL(43)
+(**************************************** WARNING ********************************************
+ *** The KEBA Kemro K2 System including software is not intended for safety control tasks! ***
+ ***                       For further information see Comment tab!                        ***
+ *********************************************************************************************)
+
+IF iStep = 0 THEN
+   iArrayLen := GET_HIGH_BOUND(sv_TIG.job.yJobList);
+
+   mbTextsChanged := FALSE;
+   fbTonChanged(NOT mbTextsChanged, T#3s); // delay reading of texts
+   
+   
+   IF fbTonChanged.Q THEN
+      time := GET_RUNTIME();
+      fbTonChanged(IN := FALSE);
+//      sv_TIGHmi.job.iJobListTextsLength := iArrayLen;       // maximum
+      FOR i:=1 TO iArrayLen DO
+        IF (sv_TIG.job.yJobList[i].iJobID = 0) THEN 
+          iArrayLen := i-1;
+          EXIT;                              // -------------------       BREAK FOR LOOP        ------------------------
+        END_IF;
+      END_FOR;
+      sv_TIGHmi.job.iJobListTextsLength := iArrayLen;
+      sv_TIGHmi.job.bJobListTextsChanged := TRUE; 
+      iStep:=10; 
+   END_IF;
+  
+END_IF;
+
+IF iStep = 10 THEN
+   IF (sv_TIGHmi.job.bJobListTextsChanged = FALSE) THEN // hmi read texts done
+      time := GET_RUNTIME() - time;
+      s := CONCAT('joblist texts changed: ', TIME_TO_STRING(time));
+      dummy := Print(s);
+      
+      iStep := 0;      
+      IF NOT mbTextsChanged THEN // if texts changed again by tig do not stop and continue with step 0 to trigger reading of texts again
+         STOP_PROCESS_ALGORITHM();
+      END_IF;   
+   END_IF;
+END_IF;
+    
+
+@END_Body 
+
+@@@BEG_Comment@@@ 
+@TL(11)
+@h    ! WARNING !
+@h    The Kemro K2 system (including software) only meets category B according to EN 954-1,
+@h    thus it is not intended for usage in safety-relevant control applications in the field 
+@h    of personal safety (e.g. emergency stop).
+@h    To implement potentially necessary safety-relevant control tasks, always use additional 
+@h    external safety devices that are intended for the particular purpose, and meet the necessary 
+@h    functional safety.
+@h    For further information see EN 954-1 (EN ISO 13849-1) and/or the K2-x00 user manual, chapter 
+@h    "CE conformity, directives and standards".
+
+calculate new list length, set list changed flag
+@@@END_Comment@@@ 
+@END_Body 
+
+@END_Contents 

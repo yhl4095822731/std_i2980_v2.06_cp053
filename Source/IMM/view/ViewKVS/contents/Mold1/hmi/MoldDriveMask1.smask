@@ -1,0 +1,105 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<base:Mask xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xmlns:base="http://www.keba.at/viewedit.model.base" widgetId="kvs.mask" name="MoldDriveMask1">
+  <resolution width="714" height="476"/>
+  <position x="1" y="1"/>
+  <attributeValues key="Title" value="Mold drive"/>
+  <attributeValues key="Icon" value="Mold1/hmi/images/iconMoldDrive.gif"/>
+  <layout layoutID="kvs.layout.BorderLayout" name="BorderLayout"/>
+  <widgetInstances xsi:type="base:MultiPageWidgetInstance" widgetId="keplast.kvs.tabpanelplast" name="tabPanelPlast1" layoutConstraint="CENTER">
+    <resolution width="714" height="476"/>
+    <position/>
+    <attributeValues key="SelectedPage" value="2"/>
+    <attributeValues key="Tabs" value="Mold close chart, Tab1; Mold open chart, Tab3; Drive info, Tab5; Motor cooling, Tab4"/>
+    <pages widgetId="keplast.kvs.tabpanelplast.container" name="Tab1">
+      <resolution width="714" height="446"/>
+      <position/>
+      <attributeValues key="HelpSubID" value="closeChart"/>
+      <layout layoutID="kvs.layout.BorderLayout" name="BorderLayout"/>
+      <widgetInstances widgetId="keplast.kvs.mschart" name="msChartMoldClose" layoutConstraint="CENTER">
+        <resolution width="714" height="400"/>
+        <position/>
+        <attributeValues key="MsProfileData" value="DriveChartMold"/>
+      </widgetInstances>
+      <widgetInstances xsi:type="base:CompositeWidgetInstance" widgetId="d15380cc-a761-460c-9aa1-9d851df99905" name="chartKeyPanelMoldClose" layoutConstraint="SOUTH">
+        <resolution width="714" height="40"/>
+        <position y="400"/>
+      </widgetInstances>
+    </pages>
+    <pages widgetId="keplast.kvs.tabpanelplast.container" name="Tab3">
+      <resolution width="714" height="446"/>
+      <position/>
+      <attributeValues key="HelpSubID" value="openChart"/>
+      <layout layoutID="kvs.layout.BorderLayout" name="BorderLayout"/>
+      <widgetInstances widgetId="keplast.kvs.mschart" name="msChartMoldOpen" layoutConstraint="CENTER">
+        <resolution width="714" height="400"/>
+        <position/>
+        <attributeValues key="MsProfileData" value="DriveChartMold"/>
+      </widgetInstances>
+      <widgetInstances xsi:type="base:CompositeWidgetInstance" widgetId="d15380cc-a761-460c-9aa1-9d851df99905" name="chartKeyPanelMoldOpen" layoutConstraint="SOUTH">
+        <resolution width="714" height="40"/>
+        <position y="400"/>
+      </widgetInstances>
+    </pages>
+    <pages widgetId="keplast.kvs.tabpanelplast.container" name="Tab5">
+      <resolution width="714" height="446"/>
+      <position/>
+      <attributeValues key="HelpSubID" value="driveInfo"/>
+      <layout layoutID="kvs.layout.BorderLayout" name="BorderLayout"/>
+      <widgetInstances xsi:type="base:CompositeWidgetInstance" widgetId="00d2e7ff-2188-424a-860f-293b97dd8f5c" name="driveStatusPanel1" layoutConstraint="CENTER">
+        <resolution width="714" height="376"/>
+        <position/>
+        <attributeValues key="VariableStatusWord" value="Mold1.sv_iDriveStatus"/>
+        <attributeValues key="VariableFwVersion" value="Mold1.sv_sRevision"/>
+        <attributeValues key="VariableDriveName" value="Mold1.sv_sDrvID"/>
+        <attributeValues key="VariableActPosition" value="Mold1.sv_rMoldPosition"/>
+        <attributeValues key="VariableActVelocity" value="Mold1.sv_rToggleLeverVelocity"/>
+        <attributeValues key="VariableActTorque" value="Mold1.sv_rActTorque"/>
+        <attributeValues key="VariableActDriveTemp" value="Mold1.sv_iAmplifierTemp"/>
+        <attributeValues key="VariableActMotorTemp" value="Mold1.sv_rMotorTemp"/>
+        <attributeValues key="VariablePLCVersion" value="Mold1.sv_sPLCVersion"/>
+        <attributeValues key="VariableActCurrent" value="Mold1.sv_rActCurrent"/>
+      </widgetInstances>
+      <widgetInstances xsi:type="base:CompositeWidgetInstance" widgetId="3f4be1f1-f4c0-46dd-baed-09f74828f227" name="driveReferencingPanel1" layoutConstraint="SOUTH">
+        <resolution width="714" height="64"/>
+        <position y="376"/>
+        <attributeValues key="VariableRefStartRequest" value="Mold1.sv_Servo.RefData.bStartRequest"/>
+        <attributeValues key="VariableRefState" value="Mold1.sv_Servo.RefData.State"/>
+        <attributeValues key="VariableRefOffsetMotor" value="Mold1.sv_rReferenceMotorOffset"/>
+        <attributeValues key="VariableRefOffsetPos" value="Mold1.sv_rReferencePosOffset"/>
+        <dynamicAttributes key="Visible">
+          <value function="n1_GT_const : ViewEditFunctions" equal="true" unequal="false">
+            <parameter key="1" value="kvariable;Mold1.sv_Servo.RefData.RefPointType"/>
+            <parameter key="2" value="double;0.0"/>
+          </value>
+        </dynamicAttributes>
+      </widgetInstances>
+    </pages>
+    <pages widgetId="keplast.kvs.tabpanelplast.container" name="Tab4">
+      <resolution width="714" height="446"/>
+      <position/>
+      <attributeValues key="HelpSubID" value="motorCooling"/>
+      <dynamicAttributes key="Create">
+        <value function="doesVariableExist : UserFunctions" equal="true" unequal="false">
+          <parameter key="1" value="variableasstring;PlastFunctionUtils.createVariableString(&quot;Mold1.do_MotorCool&quot;)"/>
+        </value>
+      </dynamicAttributes>
+      <layout layoutID="kvs.layout.BorderLayout" name="BorderLayout"/>
+      <widgetInstances xsi:type="base:CompositeWidgetInstance" widgetId="139aee72-7f1d-4a2b-bc73-00ae7dedd12d" name="motorCoolingPanel1" layoutConstraint="NORTH">
+        <resolution width="684" height="440"/>
+        <position/>
+        <attributeValues key="VariableActTemp" value="Mold1.sv_rMotorTemp"/>
+        <attributeValues key="VariableCoolOnTemp" value="Mold1.sv_rMotorCoolOnTemp"/>
+        <attributeValues key="VariableCoolOffTemp" value="Mold1.sv_rMotorCoolOffTemp"/>
+        <dynamicAttributes key="Visible">
+          <value function="n1_GT_const : ViewEditFunctions" equal="true" unequal="false">
+            <parameter key="1" value="kvariable;Mold1.sv_Servo.ServoState.OperationState"/>
+            <parameter key="2" value="double;0.0"/>
+          </value>
+        </dynamicAttributes>
+      </widgetInstances>
+    </pages>
+    <layout layoutID="kvs.layout.xylayout" name="null"/>
+    <contentPanePosition y="30"/>
+    <contentPaneResolution width="714" height="446"/>
+  </widgetInstances>
+</base:Mask>

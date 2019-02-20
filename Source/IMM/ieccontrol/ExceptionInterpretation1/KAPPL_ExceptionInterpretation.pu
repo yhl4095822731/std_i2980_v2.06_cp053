@@ -1,0 +1,3456 @@
+IMPORT_OVER_LISTFILE
+ SET_ALARM
+, LEFT
+, UDINT_TO_DINT
+, SET_MAXIMUM_ACTIVE_INTERVAL
+, GET_TASK_NAME
+, FCreateExceptionVersion
+, STOP_TASK
+, KMSG_AttachMsgEvent
+, KMSG_GetMsgDataValues
+, KMSG_GetMsgParamType
+, KMSG_GetMsgParam
+, KMSG_GetNrMsgs
+, KSYS_BPAPI_VAR_READ
+, KERROR_Component_ErrorKind_Warn
+, KMSG_Class_All
+, cErrorKind_Info
+, cErrorKind_Error
+, KMSG_Class_ErrorFatal
+, KMSG_Class_Error
+, KMSG_Class_ErrorMinor
+, KERROR_General_Event
+, KMSG_Event
+, KERROR_Appl_OLC_Event
+, KERROR_Appl_Event
+, KERROR_Time_Event
+, KERROR_FWResource_Event
+, KERROR_FWTask_OLC_Event
+, KERROR_FWTask_Event
+, ABWatchDog
+, KERROR_Handler
+, tnOperationMode
+, KMSG_Class
+, KERROR_Component_ErrorKind
+, KMSG_MsgData
+, KMSG_Status
+, KMSG_ParamType
+, tyAlarmParams
+, KERROR_Status
+, FBErrorHandler
+, ABCPUTemperature
+, KERROR_General_Data
+, KERROR_Component
+, KMSG_DataValues
+, KERROR_Appl_Kind
+, KERROR_Appl_Data
+, KERROR_Appl_OLC_Data
+, KERROR_Time_Data
+, KERROR_FWResource_Data
+, KERROR_FWTask_Kind
+, KERROR_FWTask_Data
+, KERROR_FWTask_OLC_Data
+, KMSG_Browser
+, KSYS_BPApiState
+, KCAT_HandleData
+, KCAT_Status
+, KSYS_Status
+
+END_IMPORT
+
+ALGORITHM_BLOCK KAPPL_ExceptionInterpretation #DUMMY_EDIT_BLOCK
+
+SYSTEM_VAR
+ sv_OperationMode : tnOperationMode;
+ sv_bCFRemoved : BOOL;
+END_VAR
+
+SYSTEM_OBJECT
+ evGeneralError : KERROR_General_Event;
+ evGeneralErrorOLC : KMSG_Event;
+ evApplErrorOLC : KERROR_Appl_OLC_Event;
+ evApplError : KERROR_Appl_Event;
+ evTimeError : KERROR_Time_Event;
+ evFWResourceError : KERROR_FWResource_Event;
+ evFWTaskErrorOLC : KERROR_FWTask_OLC_Event;
+ evFWTaskError : KERROR_FWTask_Event;
+ erApplicationException : ALARM;
+ erApplicationExceptionOLC : ALARM;
+ erTimeException : ALARM;
+ erFWResourceException : ALARM;
+ erFWTaskException : ALARM;
+ erFWTaskExceptionOLC : ALARM;
+ TaskSlow : TASK;
+ TaskException : TASK;
+ TaskInject : TASK;
+ TaskAnalog : TASK;
+ TaskSequencer : TASK;
+ TaskMid : TASK;
+ TaskHeating : TASK;
+ PU_Task_3 : TASK;
+ PU_Task_7 : TASK;
+ PU_Task_13 : TASK;
+ EV_Task_1 : TASK;
+ EV_Task_3 : TASK;
+ EV_Task_7 : TASK;
+ TaskSim : TASK;
+ Task10ms : TASK;
+ erGeneralException : ALARM;
+ erRestartAfterCFRemoved : ALARM;
+ erSMARTDataNotAvailable : ALARM;
+END_OBJECT
+
+VAR_EXTERNAL
+ g_bLinux : BOOL;
+END_VAR
+
+VAR
+ abWatchdog : ABWatchDog;
+ abError : KERROR_Handler;
+ mevGeneralError : KERROR_General_Event;
+ mevGeneralErrorOLC : KMSG_Event;
+ mevApplErrorOLC : KERROR_Appl_OLC_Event;
+ mevFWTaskError : KERROR_FWTask_Event;
+ mevFWTaskErrorOLC : KERROR_FWTask_OLC_Event;
+ mevApplError : KERROR_Appl_Event;
+ mbEventsAssigned : BOOL;
+END_VAR
+
+ALGORITHM aGetMessageKind
+
+
+VAR_INPUT
+ MsgClass : KMSG_Class;
+END_VAR
+
+VAR_OUTPUT
+ ErrorKind : INT;
+END_VAR
+#BEGIN_EDIT_BLOCK
+(**************************************** WARNING ********************************************
+ *** The KEBA Kemro K2 System including software is not intended for safety control tasks! ***
+ ***                       For further information see Comment tab!                        ***
+ *********************************************************************************************)
+
+IF MsgClass = KMSG_Class_Error THEN
+   ErrorKind := cErrorKind_Error;
+ELSIF MsgClass = KMSG_Class_ErrorMinor THEN  
+   ErrorKind := cErrorKind_Error;
+ELSIF MsgClass = KMSG_Class_ErrorFatal THEN
+   ErrorKind := cErrorKind_Error;
+ELSIF MsgClass = KMSG_Class_Info THEN
+   ErrorKind := cErrorKind_Info;
+ELSIF MsgClass = KMSG_Class_Warning THEN
+   ErrorKind := cErrorKind_Warning;
+ELSE
+   ErrorKind := 0; //unknown kind
+END_IF;
+
+
+;#END_EDIT_BLOCK END_ALGORITHM
+
+ALGORITHM aGetErrorKind
+
+
+VAR_INPUT
+ ErrorClass : KERROR_Component_ErrorKind;
+END_VAR
+
+VAR_OUTPUT
+ ErrorKind : INT;
+END_VAR
+#BEGIN_EDIT_BLOCK
+(**************************************** WARNING ********************************************
+ *** The KEBA Kemro K2 System including software is not intended for safety control tasks! ***
+ ***                       For further information see Comment tab!                        ***
+ *********************************************************************************************)
+
+IF ErrorClass = KERROR_Component_ErrorKind_Error THEN
+   ErrorKind := cErrorKind_Error;
+ELSIF ErrorClass = KERROR_Component_ErrorKind_Info THEN
+   ErrorKind := cErrorKind_Info;
+ELSIF ErrorClass = KERROR_Component_ErrorKind_Warn THEN
+   ErrorKind := cErrorKind_Warning;
+ELSE
+   ErrorKind := 0;
+END_IF;
+
+
+;#END_EDIT_BLOCK END_ALGORITHM
+
+ALGORITHM aGetMessageParams
+
+
+VAR_IN_OUT
+ msgData : KMSG_MsgData;
+END_VAR
+
+VAR_OUTPUT
+ MessageParams : tyAlarmParams;
+END_VAR
+
+VAR_TEMP
+ i : DINT;
+END_VAR
+
+VAR
+ status : KMSG_Status;
+ paramType : KMSG_ParamType;
+ DintValue : DINT;
+ LintValue : LINT;
+ RealValue : REAL;
+ LrealValue : LREAL;
+ StringValue : STRING(255);
+ sTmp : STRING(255);
+END_VAR
+#BEGIN_EDIT_BLOCK
+(**************************************** WARNING ********************************************
+ *** The KEBA Kemro K2 System including software is not intended for safety control tasks! ***
+ ***                       For further information see Comment tab!                        ***
+ *********************************************************************************************)
+
+MessageParams[1] := '';
+MessageParams[2] := '';
+MessageParams[3] := '';
+MessageParams[4] := '';
+
+FOR i := 0 TO 3 DO
+
+   status := KMSG_GetMsgParamType(ParamNr := i,
+                        MsgData := msgData,
+                        MsgParamType := paramType);
+   
+   CASE paramType OF
+      KMSG_Param_DINT:
+         status := KMSG_GetMsgParam(i, msgData, DintValue);
+         sTmp := DINT_TO_STRING(DintValue);
+      
+      KMSG_Param_LINT:
+         status := KMSG_GetMsgParam(i, msgData, LintValue);
+         sTmp := LINT_TO_STRING(LintValue);
+      
+      KMSG_Param_REAL:
+         status := KMSG_GetMsgParam(i, msgData, RealValue);
+         sTmp := REAL_TO_STRING(RealValue);
+      
+      KMSG_Param_LREAL:
+         status := KMSG_GetMsgParam(i, msgData, LrealValue);
+         sTmp := LREAL_TO_STRING(LrealValue);
+      
+      KMSG_Param_STRING:
+         status := KMSG_GetMsgParam(i, msgData, StringValue);
+         sTmp := StringValue;
+   ELSE
+      sTmp := '';
+   END_CASE;
+     
+   MessageParams[(i+1)] := sTmp;
+ 
+END_FOR;
+
+
+;#END_EDIT_BLOCK END_ALGORITHM
+
+(*
+@h    ! WARNING !
+@h    The Kemro K2 system (including software) only meets category B according to EN 954-1,
+@h    thus it is not intended for usage in safety-relevant control applications in the field 
+@h    of personal safety (e.g. emergency stop).
+@h    To implement potentially necessary safety-relevant control tasks, always use additional 
+@h    external safety devices that are intended for the particular purpose, and meet the necessary 
+@h    functional safety.
+@h    For further information see EN 954-1 (EN ISO 13849-1) and/or the K2-x00 user manual, chapter 
+@h    "CE conformity, directives and standards".
+
+*)
+
+ALGORITHM aStopRealTimeTasks
+
+
+VAR
+ dummy : DINT;
+END_VAR
+#BEGIN_EDIT_BLOCK
+(**************************************** WARNING ********************************************
+ *** The KEBA Kemro K2 System including software is not intended for safety control tasks! ***
+ ***                       For further information see Comment tab!                        ***
+ *********************************************************************************************)
+
+// We ran into an unrecoverable problem and want to avoid any futher trouble.
+// -> Stop IEC tasks to make sure:
+// * No additional errors happen
+// * Machine functions are not continuing while the IO system is frozen
+
+// Stop all tasks <= IEC priority 13.
+// Do NOT stop TaskException which is necessary for error handling.
+// Do NOT stop tasks with lower priority, especially TaskKVB, TaskVis and TaskVisLow which should continue 
+// to allow showing the actual status on KVB systems.
+
+STOP_TASK(TaskInject);
+STOP_TASK(TaskAnalog);
+STOP_TASK(TaskSequencer);
+STOP_TASK(TaskMid);
+STOP_TASK(TaskSlow);
+STOP_TASK(TaskHeating);
+STOP_TASK(PU_Task_3);
+STOP_TASK(PU_Task_7);
+STOP_TASK(PU_Task_13);
+STOP_TASK(EV_Task_1);
+STOP_TASK(EV_Task_3);
+STOP_TASK(EV_Task_7); 
+STOP_TASK(TaskSim);
+STOP_TASK(Task10ms);
+
+dummy := Print('!!!!! KAPPL_ExceptionInterpretation.aStopRealTimeTasks: high priority IEC Tasks stopped!');
+
+
+;#END_EDIT_BLOCK END_ALGORITHM
+
+ALGORITHM aGeneralError
+
+
+VAR_INPUT
+ iCompNr : DINT (* component number *);
+ iErrorNr : DINT (* error number *);
+ iErrorKind : INT (* error kind (error, info, warning) *);
+ ErrorParams : tyAlarmParams;
+ Error : KERROR_Handler;
+END_VAR
+
+VAR_IN_OUT
+ MessageData : KMSG_MsgData;
+END_VAR
+
+VAR
+ ErrorState : KERROR_Status;
+ MsgState : KMSG_Status;
+ fbErrorHandler : FBErrorHandler;
+ abCPUTemperature : ABCPUTemperature;
+END_VAR
+#BEGIN_EDIT_BLOCK
+(**************************************** WARNING ********************************************
+ *** The KEBA Kemro K2 System including software is not intended for safety control tasks! ***
+ ***                       For further information see Comment tab!                        ***
+ *********************************************************************************************)
+
+abWatchdog.aGet();
+fbErrorHandler(iComponentNr := iCompNr,
+               iErrorNr := iErrorNr,
+               iErrorKind := iErrorKind,
+               AlarmParameters := ErrorParams);
+
+IF fbErrorHandler.bOpenWatchdog THEN
+   
+   IF abWatchdog.aGet.bState THEN
+      // opening Watchdog if not already opened
+      abWatchdog.aOpen();
+   END_IF;
+   
+   IF g_bLinux THEN
+      MsgState := KMSG_QuitError(MessageData);
+   ELSE
+      ErrorState := Error.QuittError();
+   END_IF;
+   
+   aStopRealTimeTasks();
+END_IF;
+
+IF (iCompNr = 6338) THEN
+   IF (iErrorNr = 108) THEN
+      // cpu temp high -> start polling
+      abCPUTemperature.aStart();
+   ELSIF (iErrorNr = 137) THEN
+      // cpu temp ok -> stop polling
+      abCPUTemperature.aStop();
+   END_IF;
+END_IF;
+
+
+;#END_EDIT_BLOCK END_ALGORITHM
+
+EVENT_ALGORITHM evaGeneralError ON TaskException WITH mevGeneralError
+
+
+VAR_INPUT
+ evGeneralErrorData : KERROR_General_Data;
+END_VAR
+
+VAR
+ Status : KERROR_Status;
+ ErrorData : KERROR_Component;
+ ErrorKind : KERROR_Component_ErrorKind;
+ ErrorParams : tyAlarmParams;
+ iErrorKind : INT;
+END_VAR
+#BEGIN_EDIT_BLOCK
+(**************************************** WARNING ********************************************
+ *** The KEBA Kemro K2 System including software is not intended for safety control tasks! ***
+ ***                       For further information see Comment tab!                        ***
+ *********************************************************************************************)
+
+// receive the GeneralErrorEvent call the errorhandler and quit the error
+IF abError.GetError(evGeneralErrorData) = KERROR_Status_OK THEN
+   //call the errorhandler for error-filtering and reaction
+   
+   // read Errorinfo from errorbuffer
+   ErrorData := abError.GetErrorNr();   
+   ErrorKind := abError.GetErrorKind();
+   
+   aGetErrorKind(ErrorClass := ErrorKind,
+                 ErrorKind => iErrorKind);
+   
+   ErrorParams[1] := FGetErrorParam(abError,abError.GetFirstParamType());
+   ErrorParams[2] := FGetErrorParam(abError,abError.GetNextParamType());
+   ErrorParams[3] := FGetErrorParam(abError,abError.GetNextParamType());
+   ErrorParams[4] := FGetErrorParam(abError,abError.GetNextParamType());
+   
+   aGeneralError(iCompNr := ErrorData.ComponentNr,
+                 iErrorNr := ErrorData.Number,
+                 iErrorKind := iErrorKind,
+                 ErrorParams := ErrorParams,
+                 Error := abError);
+   
+END_IF;    
+
+Status := abError.QuittError();
+   
+
+
+;#END_EDIT_BLOCK END_ALGORITHM
+
+EVENT_ALGORITHM evaGeneralErrorOLC ON TaskException WITH mevGeneralErrorOLC
+
+
+VAR_INPUT
+ evGeneralErrorData : KMSG_MsgData;
+END_VAR
+
+VAR
+ status : KMSG_Status;
+ msgData : KMSG_MsgData;
+ dataValues : KMSG_DataValues;
+ iErrorKind : INT;
+ MessageParams : tyAlarmParams;
+ bRuntimeError : BOOL;
+ bApplicationError : BOOL;
+END_VAR
+#BEGIN_EDIT_BLOCK
+(**************************************** WARNING ********************************************
+ *** The KEBA Kemro K2 System including software is not intended for safety control tasks! ***
+ ***                       For further information see Comment tab!                        ***
+ *********************************************************************************************)
+
+//save message data
+msgData := evGeneralErrorData;
+
+status := KMSG_GetMsgDataValues(MsgData := msgData,
+                      DataValues := dataValues);
+
+//quit error immediately after getting the according data
+//to avoid "Error quit time exceeded"  
+status := KMSG_QuitError(msgData);
+
+//get message kind
+aGetMessageKind(MsgClass := dataValues.MsgClass,
+                ErrorKind => iErrorKind);
+
+//get message params
+aGetMessageParams(msgData := msgData,
+                  MessageParams => MessageParams);
+
+IF (dataValues.CompNr = 3500) THEN
+   bRuntimeError := (dataValues.MsgNr = 10898) OR (dataValues.MsgNr = 10899);
+   bApplicationError := (dataValues.MsgNr >=  40115) AND (dataValues.MsgNr <= 40118);
+ELSE
+   bRuntimeError := FALSE;
+   bApplicationError := FALSE;
+END_IF;
+
+
+IF bRuntimeError OR bApplicationError THEN
+   //IRT - error which is also provided by a different event -> only set erGeneralException
+   SET_ALARM(Name := erGeneralException,
+             SubID1 := dataValues.CompNr,
+             SubID2 := dataValues.MsgNr,
+             SubID3 := 0,
+             SubID4 := 0);
+ELSE
+   aGeneralError(iCompNr := dataValues.CompNr,
+                 iErrorNr := dataValues.MsgNr,
+                 iErrorKind := iErrorKind,
+                 ErrorParams := MessageParams,
+                 MessageData := msgData);
+END_IF;
+
+
+;#END_EDIT_BLOCK END_ALGORITHM
+
+ALGORITHM aApplicationError
+
+
+VAR_INPUT
+ ExceptionKind : KERROR_Appl_Kind;
+ sFunctionUnit : STRING(31);
+ CodeOffset : UDINT;
+ FrameOffset : UDINT;
+ CodeIndex : UDINT;
+END_VAR
+
+VAR
+ sErrorKind : STRING(31);
+ dummy : DINT;
+ i1 : DINT;
+ i2 : DINT;
+ i3 : DINT;
+END_VAR
+#BEGIN_EDIT_BLOCK
+(**************************************** WARNING ********************************************
+ *** The KEBA Kemro K2 System including software is not intended for safety control tasks! ***
+ ***                       For further information see Comment tab!                        ***
+ *********************************************************************************************)
+
+//handle application exception
+CASE ExceptionKind OF
+   //get errorkind
+   KERROR_Appl_Kind_Division:          sErrorKind:= 'division';
+   KERROR_Appl_Kind_NullPointer:       sErrorKind:= 'nullpointer';
+   KERROR_Appl_Kind_OutOfRange:        sErrorKind:= 'out of range';
+   KERROR_Appl_Kind_StackOverflow:     sErrorKind:= 'stack overflow';
+   KERROR_Appl_Kind_EmptyEvent:        sErrorKind:= 'empty event';
+   KERROR_Appl_Kind_FloatingPoint:     sErrorKind:= 'floating point';
+   KERROR_Appl_Kind_SFCError:          sErrorKind:= 'SFC error';
+   KERROR_Appl_Kind_EventQueueFull:    sErrorKind:= 'event queue full';
+   KERROR_Appl_Kind_LinkError:         sErrorKind:= 'link error';
+ELSE    
+   sErrorKind:= 'unknown ErrorKind';
+END_CASE;
+
+i1:= UDINT_TO_DINT(CodeOffset);
+i2 := UDINT_TO_DINT(FrameOffset);
+
+IF g_bLinux THEN
+   SET_ALARM(Name := erApplicationExceptionOLC,
+         Param1 := sFunctionUnit,
+         SubID1 := CodeOffset,
+         SubID2 := FrameOffset,
+         SubID3 := CodeIndex,
+         Param2 := sErrorKind);
+   
+   i3 := UDINT_TO_DINT(CodeIndex);
+   dummy := Print('FU: %s, CodeOffset/FrameOffset/CodeIndex: %d/%d/%d',sFunctionUnit,i1,i2,i3);
+ELSE
+   SET_ALARM(Name := erApplicationException,
+         Param1 := sFunctionUnit,
+         SubID1 := CodeOffset,
+         SubID2 := FrameOffset,
+         Param2 := sErrorKind);
+   
+   dummy := Print('FU: %s, CodeOffset/FrameOffset: %d/%d',sFunctionUnit,i1,i2);
+END_IF;
+                       
+abWatchdog.aGet();
+IF abWatchdog.aGet.bState THEN
+   // opening Watchdog if not already opened
+   dummy := Print('!!!!! Open watchdog because of evApplError (%s) !!!!!', sErrorKind);   
+   abWatchdog.aOpen();
+END_IF;
+
+aStopRealTimeTasks();
+
+
+;#END_EDIT_BLOCK END_ALGORITHM
+
+EVENT_ALGORITHM evaApplicationError ON TaskException WITH mevApplError
+
+
+VAR_INPUT
+ erApplicationExceptionData : KERROR_Appl_Data;
+END_VAR
+#BEGIN_EDIT_BLOCK
+(**************************************** WARNING ********************************************
+ *** The KEBA Kemro K2 System including software is not intended for safety control tasks! ***
+ ***                       For further information see Comment tab!                        ***
+ *********************************************************************************************)
+
+//handle application error event
+aApplicationError(ExceptionKind := erApplicationExceptionData.Kind,
+                  sFunctionUnit := erApplicationExceptionData.FunctionalUnit,
+                  CodeOffset := erApplicationExceptionData.CodeOffset,
+                  FrameOffset := erApplicationExceptionData.FrameOffset);
+
+
+;#END_EDIT_BLOCK END_ALGORITHM
+
+EVENT_ALGORITHM evaApplicationErrorOLC ON TaskException WITH mevApplErrorOLC
+
+
+VAR_INPUT
+ erApplicationExceptionData : KERROR_Appl_OLC_Data;
+END_VAR
+#BEGIN_EDIT_BLOCK
+(**************************************** WARNING ********************************************
+ *** The KEBA Kemro K2 System including software is not intended for safety control tasks! ***
+ ***                       For further information see Comment tab!                        ***
+ *********************************************************************************************)
+
+//handle application error event
+aApplicationError(ExceptionKind := erApplicationExceptionData.Kind,
+                  sFunctionUnit := erApplicationExceptionData.FunctionalUnit,
+                  CodeOffset := erApplicationExceptionData.CodeOffset,
+                  FrameOffset := erApplicationExceptionData.FrameOffset,
+                  CodeIndex := erApplicationExceptionData.CodeIndex);
+
+
+;#END_EDIT_BLOCK END_ALGORITHM
+
+EVENT_ALGORITHM evaTimeError ON TaskException WITH evTimeError
+
+
+VAR_INPUT
+ evTimeErrorData : KERROR_Time_Data;
+END_VAR
+
+VAR
+ sAlarmText : STRING(255);
+ iAlarmCounter : DINT;
+ dummy : DINT;
+END_VAR
+#BEGIN_EDIT_BLOCK
+(**************************************** WARNING ********************************************
+ *** The KEBA Kemro K2 System including software is not intended for safety control tasks! ***
+ ***                       For further information see Comment tab!                        ***
+ *********************************************************************************************)
+
+//get taskname
+sAlarmText := GET_TASK_NAME(evTimeErrorData.Task);
+
+//get kind of timeException
+CASE evTimeErrorData.Kind OF
+   KERROR_Time_Kind_CycleOverflow: sAlarmText := CONCAT('Kind: CycleOverflow, Task: ',sAlarmText);
+   KERROR_Time_Kind_CountOverflow: sAlarmText := CONCAT('Kind: CountOverflow, Task: ',sAlarmText);
+END_CASE;
+
+iAlarmCounter := iAlarmCounter + 1; // -> SubID, if there are more than 1 errors only 1 alarm would be set
+
+SET_ALARM(Name := erTimeException,
+          Param1 := sAlarmText,
+          SubID1 :=  iAlarmCounter);
+
+abWatchdog.aGet();
+IF abWatchdog.aGet.bState THEN
+   // opening Watchdog if not already opened
+   dummy := Print('!!!!! Open watchdog because of evTimeError (%s) !!!!!', sAlarmText);
+   abWatchdog.aOpen();
+END_IF;
+         
+//state:=SET_WVEVENT(9999);  //seting WV Event to trigger WindView profile
+
+aStopRealTimeTasks();
+
+
+
+
+;#END_EDIT_BLOCK END_ALGORITHM
+
+EVENT_ALGORITHM evaFWResourceError ON TaskException WITH evFWResourceError
+
+
+VAR_INPUT
+ evaFWResourceErrorData : KERROR_FWResource_Data;
+END_VAR
+
+VAR
+ sAlarmText : STRING(255);
+ dummy : DINT;
+END_VAR
+#BEGIN_EDIT_BLOCK
+(**************************************** WARNING ********************************************
+ *** The KEBA Kemro K2 System including software is not intended for safety control tasks! ***
+ ***                       For further information see Comment tab!                        ***
+ *********************************************************************************************)
+
+//receiving the FirmwareResourceError
+
+CASE evaFWResourceErrorData.Kind OF
+   //getting errorKind 
+   KERROR_FWResource_Kind_Exc: sAlarmText := 'Processor';
+   KERROR_FWResource_Kind_IRT: sAlarmText := 'IEC-Control';
+   KERROR_FWResource_Kind_FW:  sAlarmText := 'Firmware';
+ELSE
+   sAlarmText := 'unknown ErrorKind';
+END_CASE;
+
+SET_ALARM(Name := erFWResourceException,
+          Param1 := sAlarmText);
+
+abWatchdog.aGet();
+IF abWatchdog.aGet.bState THEN
+   // opening Watchdog if not already opened
+   dummy := Print('!!!!! Open watchdog because of evFWResourceError (Kind: %s) !!!!!', sAlarmText);
+   abWatchdog.aOpen();
+END_IF;
+
+aStopRealTimeTasks();
+
+
+
+;#END_EDIT_BLOCK END_ALGORITHM
+
+ALGORITHM aFWTaskError
+
+
+VAR_INPUT
+ ErrorKind : KERROR_FWTask_Kind;
+ sFunctionUnit : STRING(31);
+ CodeOffset : UDINT;
+ FrameOffset : UDINT;
+ CodeIndex : UDINT;
+END_VAR
+
+VAR
+ sAlarmText : STRING(50);
+ dummy : DINT;
+END_VAR
+#BEGIN_EDIT_BLOCK
+(**************************************** WARNING ********************************************
+ *** The KEBA Kemro K2 System including software is not intended for safety control tasks! ***
+ ***                       For further information see Comment tab!                        ***
+ *********************************************************************************************)
+
+//handle FW task error
+CASE ErrorKind OF
+   //getting errorKind 
+   KERROR_FWTask_Kind_IEC: sAlarmText := 'IEC Generation';
+   KERROR_FWTask_Kind_SFC: sAlarmText := 'SFC Generation';
+   KERROR_FWTask_Kind_Exc: sAlarmText := 'Processor';
+   KERROR_FWTask_Kind_IRT: sAlarmText := 'IEC-Control';
+   KERROR_FWTask_Kind_FW:  sAlarmText := 'Internal Firmware';
+ELSE
+    sAlarmText := 'unknown ErrorKind';
+END_CASE;
+
+IF g_bLinux THEN
+   SET_ALARM(Name := erFWTaskExceptionOLC,
+            Param1 := sFunctionUnit, 
+            SubID1 := CodeOffset,
+            SubID2 := FrameOffset,
+            SubID3 := CodeIndex,
+            Param2 := sAlarmText);
+ELSE
+   SET_ALARM(Name := erFWTaskException,
+          Param1 := sFunctionUnit, 
+          SubID1 := CodeOffset,
+          SubID2 := FrameOffset,
+          Param2 := sAlarmText);      
+END_IF;
+
+
+abWatchdog.aGet();
+IF abWatchdog.aGet.bState THEN
+   // opening Watchdog if not already opened
+   dummy := Print('!!!!! Open watchdog because of evFWTaskError (Kind: %s) in FU %s !!!!!', sAlarmText, sFunctionUnit);
+   IF g_bLinux THEN
+      dummy := Print('!!!!! CodeOffset: %i FrameOffset: %i CodeIndex: %i !!!!!',CodeOffset, FrameOffset, CodeIndex);
+   ELSE
+      dummy := Print('!!!!! CodeOffset: %i FrameOffset: %i !!!!!',CodeOffset, FrameOffset);   
+   END_IF; 
+   
+   abWatchdog.aOpen();
+END_IF;
+
+aStopRealTimeTasks();
+
+
+;#END_EDIT_BLOCK END_ALGORITHM
+
+EVENT_ALGORITHM evaFWTaskError ON TaskException WITH mevFWTaskError
+
+
+VAR_INPUT
+ evaFWTaskErrorData : KERROR_FWTask_Data;
+END_VAR
+#BEGIN_EDIT_BLOCK
+(**************************************** WARNING ********************************************
+ *** The KEBA Kemro K2 System including software is not intended for safety control tasks! ***
+ ***                       For further information see Comment tab!                        ***
+ *********************************************************************************************)
+
+//handle FirmwareTaskError
+aFWTaskError(ErrorKind := evaFWTaskErrorData.Kind,
+             sFunctionUnit := evaFWTaskErrorData.FunctionalUnit,
+             CodeOffset := evaFWTaskErrorData.CodeOffset,
+             FrameOffset := evaFWTaskErrorData.FrameOffset);
+
+
+;#END_EDIT_BLOCK END_ALGORITHM
+
+EVENT_ALGORITHM evaFWTaskErrorOLC ON TaskException WITH mevFWTaskErrorOLC
+
+
+VAR_INPUT
+ evaFWTaskErrorData : KERROR_FWTask_OLC_Data;
+END_VAR
+#BEGIN_EDIT_BLOCK
+(**************************************** WARNING ********************************************
+ *** The KEBA Kemro K2 System including software is not intended for safety control tasks! ***
+ ***                       For further information see Comment tab!                        ***
+ *********************************************************************************************)
+
+//handle FirmwareTaskError
+aFWTaskError(ErrorKind := evaFWTaskErrorData.Kind,
+             sFunctionUnit := evaFWTaskErrorData.FunctionalUnit,
+             CodeOffset := evaFWTaskErrorData.CodeOffset,
+             FrameOffset := evaFWTaskErrorData.FrameOffset,
+             CodeIndex := evaFWTaskErrorData.CodeIndex);
+
+
+;#END_EDIT_BLOCK END_ALGORITHM
+
+PROCESS_ALGORITHM paReadStartupErrors ON TaskSlow
+
+
+VAR
+ Status : KERROR_Status;
+ ErrorData : KERROR_Component;
+ ErrorKind : KERROR_Component_ErrorKind;
+ ErrorParams : tyAlarmParams;
+ iErrorKind : INT;
+END_VAR
+#BEGIN_EDIT_BLOCK
+(**************************************** WARNING ********************************************
+ *** The KEBA Kemro K2 System including software is not intended for safety control tasks! ***
+ ***                       For further information see Comment tab!                        ***
+ *********************************************************************************************)
+
+// initialisation of the GeneralExceptionHandling 
+Status := abError.GetLastError();
+WHILE Status = KERROR_Status_OK DO  // reading all errors that occured during boot (iec not running)
+   
+   // read Errorinfo from errorbuffer
+   ErrorData := abError.GetErrorNr();   
+   ErrorKind := abError.GetErrorKind();
+   
+   aGetErrorKind(ErrorClass := ErrorKind,
+                 ErrorKind => iErrorKind);
+   
+   ErrorParams[1] := FGetErrorParam(abError,abError.GetFirstParamType());
+   ErrorParams[2] := FGetErrorParam(abError,abError.GetNextParamType());
+   ErrorParams[3] := FGetErrorParam(abError,abError.GetNextParamType());
+   ErrorParams[4] := FGetErrorParam(abError,abError.GetNextParamType());
+   
+   aGeneralError(iCompNr := ErrorData.ComponentNr,
+                 iErrorNr := ErrorData.Number,
+                 iErrorKind := iErrorKind,
+                 ErrorParams := ErrorParams,
+                 Error := abError);
+ 
+   // reading next error
+   Status := abError.GetPrevError();
+END_WHILE;
+ 
+STOP_PROCESS_ALGORITHM();   
+
+
+;#END_EDIT_BLOCK END_ALGORITHM
+
+PROCESS_ALGORITHM paReadStartupMessages ON TaskSlow
+
+
+VAR
+ msgData : KMSG_MsgData;
+ dataValues : KMSG_DataValues;
+ iErrorKind : INT;
+ MessageParams : tyAlarmParams;
+ status : KMSG_Status;
+ MsgBrowser : KMSG_Browser;
+ iSmartState : SINT;
+ state : KSYS_BPApiState;
+ sDeviceName : STRING(255);
+END_VAR
+#BEGIN_EDIT_BLOCK
+(**************************************** WARNING ********************************************
+ *** The KEBA Kemro K2 System including software is not intended for safety control tasks! ***
+ ***                       For further information see Comment tab!                        ***
+ *********************************************************************************************)
+
+// get first message
+status := MsgBrowser.GetFirstMsg(MsgClass := KMSG_Class_All,
+                                MsgData := msgData);
+
+
+WHILE status = KMSG_Status_OK DO  
+ 
+   status := KMSG_GetMsgDataValues(MsgData := msgData,
+                      DataValues := dataValues);
+   
+   //get message kind
+   aGetMessageKind(MsgClass := dataValues.MsgClass,
+                ErrorKind => iErrorKind);
+      
+   //get message params
+   aGetMessageParams(msgData := msgData,
+                     MessageParams => MessageParams);
+   
+   aGeneralError(iCompNr := dataValues.CompNr,
+               iErrorNr := dataValues.MsgNr,
+               iErrorKind := iErrorKind,
+               ErrorParams := MessageParams,
+               MessageData := msgData);
+ 
+   // read next message
+   status := MsgBrowser.GetNextMsg(MsgData := msgData);
+
+END_WHILE;
+
+state := KSYS_BPAPI_VAR_TXTREAD('SYS.HW.TypeLabel.deviceName', sDeviceName);
+IF (sDeviceName <> 'PCSimulation') THEN
+   state := KSYS_BPAPI_VAR_READ('SYS.HW.Storage.PhysicalDevices.sda.smartState', iSmartState);
+   IF (state <> 0) OR (iSmartState = 3) THEN
+      SET_ALARM(Name := erSMARTDataNotAvailable);
+   END_IF;      
+END_IF;
+ 
+STOP_PROCESS_ALGORITHM();
+
+
+;#END_EDIT_BLOCK END_ALGORITHM
+
+PROCESS_ALGORITHM paInit ON TaskMid AUTOSTART
+
+
+VAR
+ b : BOOL;
+END_VAR
+#BEGIN_EDIT_BLOCK
+(**************************************** WARNING ********************************************
+ *** The KEBA Kemro K2 System including software is not intended for safety control tasks! ***
+ ***                       For further information see Comment tab!                        ***
+ *********************************************************************************************)
+
+b := FCreateExceptionVersion();
+
+//check if last reboot was triggered by application because of a removed CF
+IF sv_bCFRemoved THEN
+   SET_ALARM(Name := erRestartAfterCFRemoved);
+   sv_bCFRemoved := FALSE;
+END_IF;
+
+IF g_bLinux THEN      
+   START_PROCESS_ALGORITHM(paReadStartupMessages);
+ELSE
+   START_PROCESS_ALGORITHM(paReadStartupErrors);
+END_IF;
+
+STOP_PROCESS_ALGORITHM();
+
+
+;#END_EDIT_BLOCK END_ALGORITHM
+
+ALGORITHM aAssignEvents
+
+
+VAR
+ StatusName : KCAT_HandleData;
+ Status : KCAT_Status;
+ sValue : STRING(255);
+ MsgClasses : DWORD;
+ status : KMSG_Status;
+ handle : REFERENCE;
+END_VAR
+#BEGIN_EDIT_BLOCK
+(**************************************** WARNING ********************************************
+ *** The KEBA Kemro K2 System including software is not intended for safety control tasks! ***
+ ***                       For further information see Comment tab!                        ***
+ *********************************************************************************************)
+
+//assigning of error events must be done immediately after startup because
+//otherwise application errors which happen very early will not be handled!
+
+StatusName := KCAT_GetHandle('UOS.System');
+IF StatusName.Status = KCAT_Status_OK THEN
+   Status := KCAT_GetValue(Handle := StatusName.Handle, Buffer := sValue);
+   IF (sValue = 'Linux') THEN
+      g_bLinux := TRUE;
+   END_IF;
+END_IF;
+
+IF g_bLinux THEN
+   
+   //activate event algorithms and attach error event
+   mevGeneralErrorOLC := evGeneralErrorOLC;
+   mevApplErrorOLC := evApplErrorOLC;
+   mevFWTaskErrorOLC := evFWTaskErrorOLC;
+   
+   MsgClasses := KMSG_Class_ErrorFatal OR KMSG_Class_Error OR KMSG_Class_ErrorMinor OR 
+                 KMSG_Class_Warning OR KMSG_Class_Info; 
+   
+   status := KMSG_AttachMsgEvent(MsgClass := MsgClasses,
+                              CompNrBegin := 0,
+                              CompNrEnd := 0,
+                              MsgNrBegin := 0,
+                              MsgNrEnd := 0,
+                              MsgEvent := evGeneralErrorOLC,
+                              Handle := handle);
+   
+ELSE
+   mevGeneralError := evGeneralError;
+   mevApplError := evApplError;
+   mevFWTaskError := evFWTaskError;  
+END_IF;
+
+//initialize watchdog
+abWatchdog.aClose();
+
+mbEventsAssigned := TRUE;
+
+
+;#END_EDIT_BLOCK END_ALGORITHM
+
+PROCESS_ALGORITHM paTaskInject ON TaskInject(0) AUTOSTART
+
+#BEGIN_EDIT_BLOCK
+(**************************************** WARNING ********************************************
+ *** The KEBA Kemro K2 System including software is not intended for safety control tasks! ***
+ ***                       For further information see Comment tab!                        ***
+ *********************************************************************************************)
+
+IF NOT mbEventsAssigned THEN
+   aAssignEvents();   
+END_IF;
+
+STOP_PROCESS_ALGORITHM();
+
+
+
+
+;#END_EDIT_BLOCK END_ALGORITHM
+
+PROCESS_ALGORITHM paTaskAnalog ON TaskAnalog(0) AUTOSTART
+
+#BEGIN_EDIT_BLOCK
+(**************************************** WARNING ********************************************
+ *** The KEBA Kemro K2 System including software is not intended for safety control tasks! ***
+ ***                       For further information see Comment tab!                        ***
+ *********************************************************************************************)
+
+IF NOT mbEventsAssigned THEN
+   aAssignEvents();
+END_IF;
+
+STOP_PROCESS_ALGORITHM();
+
+
+;#END_EDIT_BLOCK END_ALGORITHM
+
+POSTUPDATE_ALGORITHM pOpMode ON PU_Task_7 WITH sv_OperationMode
+
+
+VAR
+ s : KSYS_Status;
+END_VAR
+#BEGIN_EDIT_BLOCK
+(**************************************** WARNING ********************************************
+ *** The KEBA Kemro K2 System including software is not intended for safety control tasks! ***
+ ***                       For further information see Comment tab!                        ***
+ *********************************************************************************************)
+
+IF (sv_OperationMode = nManual) AND sv_bCFRemoved THEN
+   //operation mode changed to manual
+   //-> trigger a restart of the system
+   s := RESTART_SYSTEM();
+END_IF;
+
+
+;#END_EDIT_BLOCK END_ALGORITHM
+
+
+
+END_ALGORITHM_BLOCK
+
+
+
+#END_OF_IEC_PART
+
+@Puma @IecEditor 6 97 @Pou 25 
+@@@BEG_Comment@@@
+
+@@@END_Comment@@@
+
+@BEG_Contents 
+
+@BEG_Func 
+@RT(17)FuncTreeContainer 
+13 
+@Var @RT(9)SET_ALARM @RT(0) @T @T @DERIVED 0 @F @RT(23)KEBA_STANDARD_PROCEDURE @F 
+@T 
+@BEG_Attrib 
+0 @RT(0) @RT(0) 
+@END_Attrib 
+1 1 @F @F @F @F 
+
+@Var @RT(4)LEFT @RT(0) @T @T @DERIVED 0 @F @RT(21)KEBA_BUILTIN_FUNCTION @F 
+@T 
+@BEG_Attrib 
+0 @RT(0) @RT(0) 
+@END_Attrib 
+1 1 @F @F @F @F 
+
+@Var @RT(13)UDINT_TO_DINT @RT(0) @T @T @DERIVED 0 @F @RT(21)KEBA_BUILTIN_FUNCTION @F 
+@T 
+@BEG_Attrib 
+0 @RT(0) @RT(0) 
+@END_Attrib 
+1 1 @F @F @F @F 
+
+@Var @RT(27)SET_MAXIMUM_ACTIVE_INTERVAL @RT(0) @T @T @DERIVED 0 @F @RT(22)KEBA_STANDARD_FUNCTION @F 
+@T 
+@BEG_Attrib 
+0 @RT(0) @RT(0) 
+@END_Attrib 
+1 1 @F @F @F @F 
+
+@Var @RT(13)GET_TASK_NAME @RT(0) @T @T @DERIVED 0 @F @RT(22)KEBA_STANDARD_FUNCTION @F 
+@T 
+@BEG_Attrib 
+0 @RT(0) @RT(0) 
+@END_Attrib 
+1 1 @F @F @F @F 
+
+@Var @RT(23)FCreateExceptionVersion @RT(0) @T @T @DERIVED 0 @F @RT(8)FUNCTION @F 
+@T 
+@BEG_Attrib 
+0 @RT(0) @RT(0) 
+@END_Attrib 
+1 1 @F @F @F @F 
+
+@Var @RT(9)STOP_TASK @RT(0) @T @T @DERIVED 0 @F @RT(23)KEBA_STANDARD_PROCEDURE @F 
+@T 
+@BEG_Attrib 
+0 @RT(0) @RT(0) 
+@END_Attrib 
+1 1 @F @F @F @F 
+
+@Var @RT(19)KMSG_AttachMsgEvent @RT(0) @T @T @DERIVED 0 @F @RT(22)KEBA_STANDARD_FUNCTION @F 
+@T 
+@BEG_Attrib 
+0 @RT(0) @RT(0) 
+@END_Attrib 
+1 1 @F @F @F @F 
+
+@Var @RT(21)KMSG_GetMsgDataValues @RT(0) @T @T @DERIVED 0 @F @RT(22)KEBA_STANDARD_FUNCTION @F 
+@T 
+@BEG_Attrib 
+0 @RT(0) @RT(0) 
+@END_Attrib 
+1 1 @F @F @F @F 
+
+@Var @RT(20)KMSG_GetMsgParamType @RT(0) @T @T @DERIVED 0 @F @RT(22)KEBA_STANDARD_FUNCTION @F 
+@T 
+@BEG_Attrib 
+0 @RT(0) @RT(0) 
+@END_Attrib 
+1 1 @F @F @F @F 
+
+@Var @RT(16)KMSG_GetMsgParam @RT(0) @T @T @DERIVED 0 @F @RT(22)KEBA_STANDARD_FUNCTION @F 
+@T 
+@BEG_Attrib 
+0 @RT(0) @RT(0) 
+@END_Attrib 
+1 1 @F @F @F @F 
+
+@Var @RT(14)KMSG_GetNrMsgs @RT(0) @T @T @DERIVED 0 @F @RT(22)KEBA_STANDARD_FUNCTION @F 
+@T 
+@BEG_Attrib 
+0 @RT(0) @RT(0) 
+@END_Attrib 
+1 1 @F @F @F @F 
+
+@Var @RT(19)KSYS_BPAPI_VAR_READ @RT(0) @T @T @DERIVED 0 @F @RT(40)KEBA_STANDARD_FUNCTION : KSYS_BPApiState @F 
+@T 
+@BEG_Attrib 
+0 @RT(0) @RT(0) 
+@END_Attrib 
+1 1 @F @F @F @F 
+
+@END_Func 
+
+@BEG_Const 
+@RT(18)ConstTreeContainer 
+7 
+@Var @RT(31)KERROR_Component_ErrorKind_Warn @RT(0) @T @T @DERIVED 0 @F @RT(26)KERROR_Component_ErrorKind @F 
+@T 
+@BEG_Attrib 
+0 @RT(1)2 @RT(0) 
+@END_Attrib 
+1 1 @F @F @F @F 
+
+@Var @RT(14)KMSG_Class_All @RT(0) @T @F @DT @RT(5)DWORD @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+0 @RT(11)16#0000FFFF @RT(36)all classes from class 1 to class 16 
+@END_Attrib 
+1 1 @F @F @F @F 
+
+@Var @RT(15)cErrorKind_Info @RT(0) @T @F @DT @RT(3)INT @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+0 @RT(1)2 @RT(0) 
+@END_Attrib 
+1 1 @F @F @F @F 
+
+@Var @RT(16)cErrorKind_Error @RT(0) @T @F @DT @RT(3)INT @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+0 @RT(1)1 @RT(0) 
+@END_Attrib 
+1 1 @F @F @F @F 
+
+@Var @RT(21)KMSG_Class_ErrorFatal @RT(0) @T @F @DT @RT(5)DWORD @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+0 @RT(4)16#1 @RT(7)Class 1 
+@END_Attrib 
+1 1 @F @F @F @F 
+
+@Var @RT(16)KMSG_Class_Error @RT(0) @T @F @DT @RT(5)DWORD @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+0 @RT(4)16#2 @RT(7)Class 2 
+@END_Attrib 
+1 1 @F @F @F @F 
+
+@Var @RT(21)KMSG_Class_ErrorMinor @RT(0) @T @F @DT @RT(5)DWORD @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+0 @RT(4)16#4 @RT(7)Class 3 
+@END_Attrib 
+1 1 @F @F @F @F 
+
+@END_Const 
+
+@BEG_Export 
+
+@BEG_Kind 
+@ALGORITHM_BLOCK @RT(29)KAPPL_ExceptionInterpretation @STRUCTURED_TEXT 
+@RT(0) @RT(0) @RT(0) 
+@END_Kind 
+
+@BEG_Dcl 
+@RT(16)DclTreeContainer 
+44 
+@Var @RT(14)evGeneralError @RT(0) @T @T @DERIVED 0 @T @T @DT @RT(20)KERROR_General_Event @RT(0) @T @T @UNKNOWN 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 7 @F @F @F @F 
+
+@Var @RT(17)evGeneralErrorOLC @RT(0) @T @T @DERIVED 0 @T @T @DT @RT(10)KMSG_Event @RT(0) @T @T @UNKNOWN 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 7 @F @F @F @F 
+
+@Var @RT(14)evApplErrorOLC @RT(0) @T @T @DERIVED 0 @T @T @DT @RT(21)KERROR_Appl_OLC_Event @RT(0) @T @T @UNKNOWN 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 7 @F @F @F @F 
+
+@Var @RT(11)evApplError @RT(0) @T @T @DERIVED 0 @T @T @DT @RT(17)KERROR_Appl_Event @RT(0) @T @T @UNKNOWN 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 7 @F @F @F @F 
+
+@Var @RT(11)evTimeError @RT(0) @T @T @DERIVED 0 @T @T @DT @RT(17)KERROR_Time_Event @RT(0) @T @T @UNKNOWN 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 7 @F @F @F @F 
+
+@Var @RT(17)evFWResourceError @RT(0) @T @T @DERIVED 0 @T @T @DT @RT(23)KERROR_FWResource_Event @RT(0) @T @T @UNKNOWN 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 7 @F @F @F @F 
+
+@Var @RT(16)evFWTaskErrorOLC @RT(0) @T @T @DERIVED 0 @T @T @DT @RT(23)KERROR_FWTask_OLC_Event @RT(0) @T @T @UNKNOWN 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 7 @F @F @F @F 
+
+@Var @RT(13)evFWTaskError @RT(0) @T @T @DERIVED 0 @T @T @DT @RT(19)KERROR_FWTask_Event @RT(0) @T @T @UNKNOWN 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 7 @F @F @F @F 
+
+@Var @RT(22)erApplicationException @RT(0) @T @F @DT @RT(5)ALARM @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 7 @F @F @F @F 
+
+@Var @RT(25)erApplicationExceptionOLC @RT(0) @T @F @DT @RT(5)ALARM @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 7 @F @F @F @F 
+
+@Var @RT(10)abWatchdog @RT(0) @T @T @DERIVED 0 @T @T @DT @RT(10)ABWatchDog @RT(0) @T @T @UNKNOWN 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(15)erTimeException @RT(0) @T @F @DT @RT(5)ALARM @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 7 @F @F @F @F 
+
+@Var @RT(21)erFWResourceException @RT(0) @T @F @DT @RT(5)ALARM @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 7 @F @F @F @F 
+
+@Var @RT(17)erFWTaskException @RT(0) @T @F @DT @RT(5)ALARM @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 7 @F @F @F @F 
+
+@Var @RT(20)erFWTaskExceptionOLC @RT(0) @T @F @DT @RT(5)ALARM @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 7 @F @F @F @F 
+
+@Var @RT(8)TaskSlow @RT(0) @T @F @DT @RT(4)TASK @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 7 @F @F @F @F 
+
+@Var @RT(13)TaskException @RT(0) @T @F @DT @RT(4)TASK @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 7 @F @F @F @F 
+
+@Var @RT(10)TaskInject @RT(0) @T @T @RENAMED 0 @T @T @DT @RT(4)TASK @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 7 @F @F @F @F 
+
+@Var @RT(10)TaskAnalog @RT(0) @T @T @RENAMED 0 @T @T @DT @RT(4)TASK @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 7 @F @F @F @F 
+
+@Var @RT(13)TaskSequencer @RT(0) @T @T @RENAMED 0 @T @T @DT @RT(4)TASK @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 7 @F @F @F @F 
+
+@Var @RT(7)TaskMid @RT(0) @T @T @RENAMED 0 @T @T @DT @RT(4)TASK @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 7 @F @F @F @F 
+
+@Var @RT(11)TaskHeating @RT(0) @T @T @RENAMED 0 @T @T @DT @RT(4)TASK @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 7 @F @F @F @F 
+
+@Var @RT(9)PU_Task_3 @RT(0) @T @T @RENAMED 0 @T @T @DT @RT(4)TASK @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 7 @F @F @F @F 
+
+@Var @RT(9)PU_Task_7 @RT(0) @T @T @RENAMED 0 @T @T @DT @RT(4)TASK @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 7 @F @F @F @F 
+
+@Var @RT(10)PU_Task_13 @RT(0) @T @T @RENAMED 0 @T @T @DT @RT(4)TASK @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 7 @F @F @F @F 
+
+@Var @RT(9)EV_Task_1 @RT(0) @T @T @RENAMED 0 @T @T @DT @RT(4)TASK @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 7 @F @F @F @F 
+
+@Var @RT(9)EV_Task_3 @RT(0) @T @T @RENAMED 0 @T @T @DT @RT(4)TASK @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 7 @F @F @F @F 
+
+@Var @RT(9)EV_Task_7 @RT(0) @T @T @RENAMED 0 @T @T @DT @RT(4)TASK @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 7 @F @F @F @F 
+
+@Var @RT(7)TaskSim @RT(0) @T @T @RENAMED 0 @T @T @DT @RT(4)TASK @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 7 @F @F @F @F 
+
+@Var @RT(8)Task10ms @RT(0) @T @T @RENAMED 0 @T @T @DT @RT(4)TASK @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 7 @F @F @F @F 
+
+@Var @RT(7)abError @RT(0) @T @T @DERIVED 0 @T @T @DT @RT(14)KERROR_Handler @RT(0) @T @T @UNKNOWN 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(15)mevGeneralError @RT(0) @T @T @DERIVED 0 @T @T @DT @RT(20)KERROR_General_Event @RT(0) @T @T @UNKNOWN 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(18)mevGeneralErrorOLC @RT(0) @T @T @DERIVED 0 @T @T @DT @RT(10)KMSG_Event @RT(0) @T @T @UNKNOWN 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(15)mevApplErrorOLC @RT(0) @T @T @DERIVED 0 @T @T @DT @RT(21)KERROR_Appl_OLC_Event @RT(0) @T @T @UNKNOWN 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(14)mevFWTaskError @RT(0) @T @T @DERIVED 0 @T @T @DT @RT(19)KERROR_FWTask_Event @RT(0) @T @T @UNKNOWN 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(17)mevFWTaskErrorOLC @RT(0) @T @T @DERIVED 0 @T @T @DT @RT(23)KERROR_FWTask_OLC_Event @RT(0) @T @T @UNKNOWN 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(12)mevApplError @RT(0) @T @T @DERIVED 0 @T @T @DT @RT(17)KERROR_Appl_Event @RT(0) @T @T @UNKNOWN 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(8)g_bLinux @RT(0) @T @F @DT @RT(4)BOOL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 6 @F @F @F @F 
+
+@Var @RT(18)erGeneralException @RT(0) @T @F @DT @RT(5)ALARM @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 7 @F @F @F @F 
+
+@Var @RT(23)erRestartAfterCFRemoved @RT(0) @T @F @DT @RT(5)ALARM @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 7 @F @F @F @F 
+
+@Var @RT(16)sv_OperationMode @RT(0) @T @T @RENAMED 0 @T @T @DT @RT(15)tnOperationMode @RT(0) @T @T @UNKNOWN 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 8 @F @F @F @F 
+
+@Var @RT(13)sv_bCFRemoved @RT(0) @T @F @DT @RT(4)BOOL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 8 @F @F @F @F 
+
+@Var @RT(16)mbEventsAssigned @RT(0) @T @F @DT @RT(4)BOOL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(23)erSMARTDataNotAvailable @RT(0) @T @F @DT @RT(5)ALARM @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 7 @F @F @F @F 
+
+@END_Dcl 
+
+@END_Export 
+
+@BEG_Body 
+
+22 
+
+@BEG_Export 
+
+@BEG_Algo 
+@ALGORITHM @RT(15)aGetMessageKind @STRUCTURED_TEXT 
+@RT(0) @RT(0) @RT(0) @F @F 
+@END_Algo 
+
+@BEG_Dcl 
+@RT(16)DclTreeContainer 
+2 
+@Var @RT(8)MsgClass @RT(0) @T @T @DERIVED 0 @T @T @DT @RT(10)KMSG_Class @RT(0) @T @T @UNKNOWN 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 1 @F @F @F @F 
+
+@Var @RT(9)ErrorKind @RT(0) @T @F @DT @RT(3)INT @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 3 @F @F @F @F 
+
+@END_Dcl 
+
+@END_Export 
+
+@BEG_Export 
+
+@BEG_Algo 
+@ALGORITHM @RT(13)aGetErrorKind @STRUCTURED_TEXT 
+@RT(0) @RT(0) @RT(0) @F @F 
+@END_Algo 
+
+@BEG_Dcl 
+@RT(16)DclTreeContainer 
+2 
+@Var @RT(10)ErrorClass @RT(0) @T @T @DERIVED 0 @T @T @DT @RT(26)KERROR_Component_ErrorKind @RT(0) @T @T @UNKNOWN 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 1 @F @F @F @F 
+
+@Var @RT(9)ErrorKind @RT(0) @T @F @DT @RT(3)INT @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 3 @F @F @F @F 
+
+@END_Dcl 
+
+@END_Export 
+
+@BEG_Export 
+
+@BEG_Algo 
+@ALGORITHM @RT(17)aGetMessageParams @STRUCTURED_TEXT 
+@RT(0) @RT(0) @RT(0) @F @F 
+@END_Algo 
+
+@BEG_Dcl 
+@RT(16)DclTreeContainer 
+11 
+@Var @RT(7)msgData @RT(0) @T @T @DERIVED 0 @T @T @DT @RT(12)KMSG_MsgData @RT(0) @T @T @UNKNOWN 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 2 @F @F @F @F 
+
+@Var @RT(6)status @RT(0) @T @T @DERIVED 0 @T @T @DT @RT(11)KMSG_Status @RT(0) @T @T @UNKNOWN 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(9)paramType @RT(0) @T @T @DERIVED 0 @T @T @DT @RT(14)KMSG_ParamType @RT(0) @T @T @UNKNOWN 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(9)DintValue @RT(0) @T @F @DT @RT(4)DINT @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(9)LintValue @RT(0) @T @F @DT @RT(4)LINT @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(9)RealValue @RT(0) @T @F @DT @RT(4)REAL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(10)LrealValue @RT(0) @T @F @DT @RT(5)LREAL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(11)StringValue @RT(0) @T @F @DT @RT(11)STRING(255) @RT(0) @T @T @STRING 0 @F @RT(3)255 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(4)sTmp @RT(0) @T @F @DT @RT(11)STRING(255) @RT(0) @T @T @STRING 0 @F @RT(3)255 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(13)MessageParams @RT(0) @T @T @DERIVED 0 @T @T @DT @RT(13)tyAlarmParams @RT(0) @T @T @UNKNOWN 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 3 @F @F @F @F 
+
+@Var @RT(1)i @RT(0) @T @F @DT @RT(4)DINT @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 4 @F @F @F @F 
+
+@END_Dcl 
+
+@END_Export 
+
+@BEG_Export 
+
+@BEG_Algo 
+@ALGORITHM @RT(18)aStopRealTimeTasks @STRUCTURED_TEXT 
+@RT(0) @RT(0) @RT(0) @F @F 
+@END_Algo 
+
+@BEG_Dcl 
+@RT(16)DclTreeContainer 
+1 
+@Var @RT(5)dummy @RT(0) @T @F @DT @RT(4)DINT @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@END_Dcl 
+
+@END_Export 
+
+@BEG_Export 
+
+@BEG_Algo 
+@ALGORITHM @RT(13)aGeneralError @STRUCTURED_TEXT 
+@RT(0) @RT(0) @RT(0) @F @F 
+@END_Algo 
+
+@BEG_Dcl 
+@RT(16)DclTreeContainer 
+10 
+@Var @RT(7)iCompNr @RT(0) @T @F @DT @RT(4)DINT @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(16)component number @RT(0) 
+@END_Attrib 
+1 1 @F @F @F @F 
+
+@Var @RT(8)iErrorNr @RT(0) @T @F @DT @RT(4)DINT @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(12)error number @RT(0) 
+@END_Attrib 
+1 1 @F @F @F @F 
+
+@Var @RT(10)iErrorKind @RT(0) @T @F @DT @RT(3)INT @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(33)error kind (error, info, warning) @RT(0) 
+@END_Attrib 
+1 1 @F @F @F @F 
+
+@Var @RT(11)ErrorParams @RT(0) @T @T @DERIVED 0 @T @T @DT @RT(13)tyAlarmParams @RT(0) @T @T @UNKNOWN 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 1 @F @F @F @F 
+
+@Var @RT(5)Error @RT(0) @T @T @DERIVED 0 @T @T @DT @RT(14)KERROR_Handler @RT(0) @T @T @UNKNOWN 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 1 @F @F @F @F 
+
+@Var @RT(11)MessageData @RT(0) @T @T @DERIVED 0 @T @T @DT @RT(12)KMSG_MsgData @RT(0) @T @T @UNKNOWN 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 2 @F @F @F @F 
+
+@Var @RT(10)ErrorState @RT(0) @T @T @DERIVED 0 @T @T @DT @RT(13)KERROR_Status @RT(0) @T @T @UNKNOWN 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(8)MsgState @RT(0) @T @T @DERIVED 0 @T @T @DT @RT(11)KMSG_Status @RT(0) @T @T @UNKNOWN 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(14)fbErrorHandler @RT(0) @T @T @DERIVED 0 @T @T @DT @RT(14)FBErrorHandler @RT(0) @T @T @UNKNOWN 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(16)abCPUTemperature @RT(0) @T @T @DERIVED 0 @T @T @DT @RT(16)ABCPUTemperature @RT(0) @T @T @UNKNOWN 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@END_Dcl 
+
+@END_Export 
+
+@BEG_Export 
+
+@BEG_Algo 
+@EVENT_ALGORITHM @RT(15)evaGeneralError @STRUCTURED_TEXT 
+@RT(0) @RT(15)mevGeneralError @RT(13)TaskException @F @F 
+@END_Algo 
+
+@BEG_Dcl 
+@RT(16)DclTreeContainer 
+6 
+@Var @RT(18)evGeneralErrorData @RT(0) @T @T @DERIVED 0 @T @T @DT @RT(19)KERROR_General_Data @RT(0) @T @T @UNKNOWN 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 1 @F @F @F @F 
+
+@Var @RT(6)Status @RT(0) @T @T @DERIVED 0 @T @T @DT @RT(13)KERROR_Status @RT(0) @T @T @UNKNOWN 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(9)ErrorData @RT(0) @T @T @DERIVED 0 @T @T @DT @RT(16)KERROR_Component @RT(0) @T @T @UNKNOWN 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(9)ErrorKind @RT(0) @T @T @DERIVED 0 @T @T @DT @RT(26)KERROR_Component_ErrorKind @RT(0) @T @T @UNKNOWN 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(11)ErrorParams @RT(0) @T @T @DERIVED 0 @T @T @DT @RT(13)tyAlarmParams @RT(0) @T @T @UNKNOWN 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(10)iErrorKind @RT(0) @T @F @DT @RT(3)INT @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@END_Dcl 
+
+@END_Export 
+
+@BEG_Export 
+
+@BEG_Algo 
+@EVENT_ALGORITHM @RT(18)evaGeneralErrorOLC @STRUCTURED_TEXT 
+@RT(0) @RT(18)mevGeneralErrorOLC @RT(13)TaskException @F @F 
+@END_Algo 
+
+@BEG_Dcl 
+@RT(16)DclTreeContainer 
+8 
+@Var @RT(18)evGeneralErrorData @RT(0) @T @T @DERIVED 0 @T @T @DT @RT(12)KMSG_MsgData @RT(0) @T @T @UNKNOWN 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 1 @F @F @F @F 
+
+@Var @RT(6)status @RT(0) @T @T @DERIVED 0 @T @T @DT @RT(11)KMSG_Status @RT(0) @T @T @UNKNOWN 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(7)msgData @RT(0) @T @T @DERIVED 0 @T @T @DT @RT(12)KMSG_MsgData @RT(0) @T @T @UNKNOWN 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(10)dataValues @RT(0) @T @T @DERIVED 0 @T @T @DT @RT(15)KMSG_DataValues @RT(0) @T @T @UNKNOWN 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(10)iErrorKind @RT(0) @T @F @DT @RT(3)INT @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(13)MessageParams @RT(0) @T @T @DERIVED 0 @T @T @DT @RT(13)tyAlarmParams @RT(0) @T @T @UNKNOWN 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(13)bRuntimeError @RT(0) @T @T @RENAMED 0 @T @T @DT @RT(4)BOOL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(17)bApplicationError @RT(0) @T @T @RENAMED 0 @T @T @DT @RT(4)BOOL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@END_Dcl 
+
+@END_Export 
+
+@BEG_Export 
+
+@BEG_Algo 
+@ALGORITHM @RT(17)aApplicationError @STRUCTURED_TEXT 
+@RT(0) @RT(0) @RT(0) @F @F 
+@END_Algo 
+
+@BEG_Dcl 
+@RT(16)DclTreeContainer 
+10 
+@Var @RT(13)ExceptionKind @RT(0) @T @T @DERIVED 0 @T @T @DT @RT(16)KERROR_Appl_Kind @RT(0) @T @T @UNKNOWN 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 1 @F @F @F @F 
+
+@Var @RT(13)sFunctionUnit @RT(0) @T @F @DT @RT(10)STRING(31) @RT(0) @T @T @STRING 0 @F @RT(2)31 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 1 @F @F @F @F 
+
+@Var @RT(10)CodeOffset @RT(0) @T @F @DT @RT(5)UDINT @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 1 @F @F @F @F 
+
+@Var @RT(11)FrameOffset @RT(0) @T @F @DT @RT(5)UDINT @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 1 @F @F @F @F 
+
+@Var @RT(9)CodeIndex @RT(0) @T @F @DT @RT(5)UDINT @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 1 @F @F @F @F 
+
+@Var @RT(10)sErrorKind @RT(0) @T @F @DT @RT(10)STRING(31) @RT(0) @T @T @STRING 0 @F @RT(2)31 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(5)dummy @RT(0) @T @F @DT @RT(4)DINT @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(2)i1 @RT(0) @T @F @DT @RT(4)DINT @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(2)i2 @RT(0) @T @F @DT @RT(4)DINT @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(2)i3 @RT(0) @T @F @DT @RT(4)DINT @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@END_Dcl 
+
+@END_Export 
+
+@BEG_Export 
+
+@BEG_Algo 
+@EVENT_ALGORITHM @RT(19)evaApplicationError @STRUCTURED_TEXT 
+@RT(0) @RT(12)mevApplError @RT(13)TaskException @F @F 
+@END_Algo 
+
+@BEG_Dcl 
+@RT(16)DclTreeContainer 
+1 
+@Var @RT(26)erApplicationExceptionData @RT(0) @T @T @DERIVED 0 @T @T @DT @RT(16)KERROR_Appl_Data @RT(0) @T @T @UNKNOWN 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 1 @F @F @F @F 
+
+@END_Dcl 
+
+@END_Export 
+
+@BEG_Export 
+
+@BEG_Algo 
+@EVENT_ALGORITHM @RT(22)evaApplicationErrorOLC @STRUCTURED_TEXT 
+@RT(0) @RT(15)mevApplErrorOLC @RT(13)TaskException @F @F 
+@END_Algo 
+
+@BEG_Dcl 
+@RT(16)DclTreeContainer 
+1 
+@Var @RT(26)erApplicationExceptionData @RT(0) @T @T @DERIVED 0 @T @T @DT @RT(20)KERROR_Appl_OLC_Data @RT(0) @T @T @UNKNOWN 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 1 @F @F @F @F 
+
+@END_Dcl 
+
+@END_Export 
+
+@BEG_Export 
+
+@BEG_Algo 
+@EVENT_ALGORITHM @RT(12)evaTimeError @STRUCTURED_TEXT 
+@RT(0) @RT(11)evTimeError @RT(13)TaskException @F @F 
+@END_Algo 
+
+@BEG_Dcl 
+@RT(16)DclTreeContainer 
+4 
+@Var @RT(15)evTimeErrorData @RT(0) @T @T @DERIVED 0 @T @T @DT @RT(16)KERROR_Time_Data @RT(0) @T @T @UNKNOWN 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 1 @F @F @F @F 
+
+@Var @RT(10)sAlarmText @RT(0) @T @F @DT @RT(11)STRING(255) @RT(0) @T @T @STRING 0 @F @RT(3)255 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(13)iAlarmCounter @RT(0) @T @F @DT @RT(4)DINT @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(5)dummy @RT(0) @T @F @DT @RT(4)DINT @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@END_Dcl 
+
+@END_Export 
+
+@BEG_Export 
+
+@BEG_Algo 
+@EVENT_ALGORITHM @RT(18)evaFWResourceError @STRUCTURED_TEXT 
+@RT(0) @RT(17)evFWResourceError @RT(13)TaskException @F @F 
+@END_Algo 
+
+@BEG_Dcl 
+@RT(16)DclTreeContainer 
+3 
+@Var @RT(22)evaFWResourceErrorData @RT(0) @T @T @DERIVED 0 @T @T @DT @RT(22)KERROR_FWResource_Data @RT(0) @T @T @UNKNOWN 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 1 @F @F @F @F 
+
+@Var @RT(10)sAlarmText @RT(0) @T @F @DT @RT(11)STRING(255) @RT(0) @T @T @STRING 0 @F @RT(3)255 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(5)dummy @RT(0) @T @F @DT @RT(4)DINT @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@END_Dcl 
+
+@END_Export 
+
+@BEG_Export 
+
+@BEG_Algo 
+@ALGORITHM @RT(12)aFWTaskError @STRUCTURED_TEXT 
+@RT(0) @RT(0) @RT(0) @F @F 
+@END_Algo 
+
+@BEG_Dcl 
+@RT(16)DclTreeContainer 
+7 
+@Var @RT(9)ErrorKind @RT(0) @T @T @DERIVED 0 @T @T @DT @RT(18)KERROR_FWTask_Kind @RT(0) @T @T @UNKNOWN 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 1 @F @F @F @F 
+
+@Var @RT(13)sFunctionUnit @RT(0) @T @F @DT @RT(10)STRING(31) @RT(0) @T @T @STRING 0 @F @RT(2)31 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 1 @F @F @F @F 
+
+@Var @RT(10)CodeOffset @RT(0) @T @F @DT @RT(5)UDINT @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 1 @F @F @F @F 
+
+@Var @RT(11)FrameOffset @RT(0) @T @F @DT @RT(5)UDINT @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 1 @F @F @F @F 
+
+@Var @RT(9)CodeIndex @RT(0) @T @F @DT @RT(5)UDINT @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 1 @F @F @F @F 
+
+@Var @RT(10)sAlarmText @RT(0) @T @F @DT @RT(10)STRING(50) @RT(0) @T @T @STRING 0 @F @RT(2)50 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(5)dummy @RT(0) @T @F @DT @RT(4)DINT @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@END_Dcl 
+
+@END_Export 
+
+@BEG_Export 
+
+@BEG_Algo 
+@EVENT_ALGORITHM @RT(14)evaFWTaskError @STRUCTURED_TEXT 
+@RT(0) @RT(14)mevFWTaskError @RT(13)TaskException @F @F 
+@END_Algo 
+
+@BEG_Dcl 
+@RT(16)DclTreeContainer 
+1 
+@Var @RT(18)evaFWTaskErrorData @RT(0) @T @T @DERIVED 0 @T @T @DT @RT(18)KERROR_FWTask_Data @RT(0) @T @T @UNKNOWN 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 1 @F @F @F @F 
+
+@END_Dcl 
+
+@END_Export 
+
+@BEG_Export 
+
+@BEG_Algo 
+@EVENT_ALGORITHM @RT(17)evaFWTaskErrorOLC @STRUCTURED_TEXT 
+@RT(0) @RT(17)mevFWTaskErrorOLC @RT(13)TaskException @F @F 
+@END_Algo 
+
+@BEG_Dcl 
+@RT(16)DclTreeContainer 
+1 
+@Var @RT(18)evaFWTaskErrorData @RT(0) @T @T @DERIVED 0 @T @T @DT @RT(22)KERROR_FWTask_OLC_Data @RT(0) @T @T @UNKNOWN 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 1 @F @F @F @F 
+
+@END_Dcl 
+
+@END_Export 
+
+@BEG_Export 
+
+@BEG_Algo 
+@PROCESS_ALGORITHM @RT(19)paReadStartupErrors @STRUCTURED_TEXT 
+@RT(0) @RT(0) @RT(8)TaskSlow @F @F 
+@END_Algo 
+
+@BEG_Dcl 
+@RT(16)DclTreeContainer 
+5 
+@Var @RT(6)Status @RT(0) @T @T @DERIVED 0 @T @T @DT @RT(13)KERROR_Status @RT(0) @T @T @UNKNOWN 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(9)ErrorData @RT(0) @T @T @DERIVED 0 @T @T @DT @RT(16)KERROR_Component @RT(0) @T @T @UNKNOWN 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(9)ErrorKind @RT(0) @T @T @DERIVED 0 @T @T @DT @RT(26)KERROR_Component_ErrorKind @RT(0) @T @T @UNKNOWN 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(11)ErrorParams @RT(0) @T @T @DERIVED 0 @T @T @DT @RT(13)tyAlarmParams @RT(0) @T @T @UNKNOWN 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(10)iErrorKind @RT(0) @T @F @DT @RT(3)INT @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@END_Dcl 
+
+@END_Export 
+
+@BEG_Export 
+
+@BEG_Algo 
+@PROCESS_ALGORITHM @RT(21)paReadStartupMessages @STRUCTURED_TEXT 
+@RT(0) @RT(0) @RT(8)TaskSlow @F @F 
+@END_Algo 
+
+@BEG_Dcl 
+@RT(16)DclTreeContainer 
+9 
+@Var @RT(7)msgData @RT(0) @T @T @DERIVED 0 @T @T @DT @RT(12)KMSG_MsgData @RT(0) @T @T @UNKNOWN 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(10)dataValues @RT(0) @T @T @DERIVED 0 @T @T @DT @RT(15)KMSG_DataValues @RT(0) @T @T @UNKNOWN 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(10)iErrorKind @RT(0) @T @F @DT @RT(3)INT @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(13)MessageParams @RT(0) @T @T @DERIVED 0 @T @T @DT @RT(13)tyAlarmParams @RT(0) @T @T @UNKNOWN 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(6)status @RT(0) @T @T @DERIVED 0 @T @T @DT @RT(11)KMSG_Status @RT(0) @T @T @UNKNOWN 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(10)MsgBrowser @RT(0) @T @T @DERIVED 0 @T @T @DT @RT(12)KMSG_Browser @RT(0) @T @T @UNKNOWN 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(11)iSmartState @RT(0) @T @F @DT @RT(4)SINT @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(5)state @RT(0) @T @T @DERIVED 0 @T @T @DT @RT(15)KSYS_BPApiState @RT(0) @T @T @UNKNOWN 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(11)sDeviceName @RT(0) @T @F @DT @RT(11)STRING(255) @RT(0) @T @T @STRING 0 @F @RT(3)255 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@END_Dcl 
+
+@END_Export 
+
+@BEG_Export 
+
+@BEG_Algo 
+@PROCESS_ALGORITHM @RT(6)paInit @STRUCTURED_TEXT 
+@RT(0) @RT(0) @RT(7)TaskMid @T @F 
+@END_Algo 
+
+@BEG_Dcl 
+@RT(16)DclTreeContainer 
+1 
+@Var @RT(1)b @RT(0) @T @F @DT @RT(4)BOOL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@END_Dcl 
+
+@END_Export 
+
+@BEG_Export 
+
+@BEG_Algo 
+@ALGORITHM @RT(13)aAssignEvents @STRUCTURED_TEXT 
+@RT(0) @RT(0) @RT(0) @F @F 
+@END_Algo 
+
+@BEG_Dcl 
+@RT(16)DclTreeContainer 
+6 
+@Var @RT(10)StatusName @RT(0) @T @T @DERIVED 0 @T @T @DT @RT(15)KCAT_HandleData @RT(0) @T @T @UNKNOWN 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(6)Status @RT(0) @T @T @DERIVED 0 @T @T @DT @RT(11)KCAT_Status @RT(0) @T @T @UNKNOWN 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(6)sValue @RT(0) @T @F @DT @RT(11)STRING(255) @RT(0) @T @T @STRING 0 @F @RT(3)255 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(10)MsgClasses @RT(0) @T @F @DT @RT(5)DWORD @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(6)status @RT(0) @T @T @DERIVED 0 @T @T @DT @RT(11)KMSG_Status @RT(0) @T @T @UNKNOWN 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(6)handle @RT(0) @T @F @DT @RT(9)REFERENCE @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@END_Dcl 
+
+@END_Export 
+
+@BEG_Export 
+
+@BEG_Algo 
+@PROCESS_ALGORITHM @RT(12)paTaskInject @STRUCTURED_TEXT 
+@RT(0) @RT(0) @RT(13)TaskInject(0) @T @F 
+@END_Algo 
+
+@BEG_Dcl 
+@RT(16)DclTreeContainer 
+0 
+@END_Dcl 
+
+@END_Export 
+
+@BEG_Export 
+
+@BEG_Algo 
+@PROCESS_ALGORITHM @RT(12)paTaskAnalog @STRUCTURED_TEXT 
+@RT(0) @RT(0) @RT(13)TaskAnalog(0) @T @F 
+@END_Algo 
+
+@BEG_Dcl 
+@RT(16)DclTreeContainer 
+0 
+@END_Dcl 
+
+@END_Export 
+
+@BEG_Export 
+
+@BEG_Algo 
+@POSTUPDATE_ALGORITHM @RT(7)pOpMode @STRUCTURED_TEXT 
+@RT(0) @RT(16)sv_OperationMode @RT(9)PU_Task_7 @F @F 
+@END_Algo 
+
+@BEG_Dcl 
+@RT(16)DclTreeContainer 
+1 
+@Var @RT(1)s @RT(0) @T @T @DERIVED 0 @T @T @DT @RT(11)KSYS_Status @RT(0) @T @T @UNKNOWN 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@END_Dcl 
+
+@END_Export 
+
+@BEG_Body 
+@TL(19)
+(**************************************** WARNING ********************************************
+ *** The KEBA Kemro K2 System including software is not intended for safety control tasks! ***
+ ***                       For further information see Comment tab!                        ***
+ *********************************************************************************************)
+
+IF MsgClass = KMSG_Class_Error THEN
+   ErrorKind := cErrorKind_Error;
+ELSIF MsgClass = KMSG_Class_ErrorMinor THEN  
+   ErrorKind := cErrorKind_Error;
+ELSIF MsgClass = KMSG_Class_ErrorFatal THEN
+   ErrorKind := cErrorKind_Error;
+ELSIF MsgClass = KMSG_Class_Info THEN
+   ErrorKind := cErrorKind_Info;
+ELSIF MsgClass = KMSG_Class_Warning THEN
+   ErrorKind := cErrorKind_Warning;
+ELSE
+   ErrorKind := 0; //unknown kind
+END_IF;
+
+@END_Body 
+
+@@@BEG_Comment@@@ 
+@TL(0)
+
+@@@END_Comment@@@ 
+
+@BEG_Body 
+@TL(15)
+(**************************************** WARNING ********************************************
+ *** The KEBA Kemro K2 System including software is not intended for safety control tasks! ***
+ ***                       For further information see Comment tab!                        ***
+ *********************************************************************************************)
+
+IF ErrorClass = KERROR_Component_ErrorKind_Error THEN
+   ErrorKind := cErrorKind_Error;
+ELSIF ErrorClass = KERROR_Component_ErrorKind_Info THEN
+   ErrorKind := cErrorKind_Info;
+ELSIF ErrorClass = KERROR_Component_ErrorKind_Warn THEN
+   ErrorKind := cErrorKind_Warning;
+ELSE
+   ErrorKind := 0;
+END_IF;
+
+@END_Body 
+
+@@@BEG_Comment@@@ 
+@TL(0)
+
+@@@END_Comment@@@ 
+
+@BEG_Body 
+@TL(44)
+(**************************************** WARNING ********************************************
+ *** The KEBA Kemro K2 System including software is not intended for safety control tasks! ***
+ ***                       For further information see Comment tab!                        ***
+ *********************************************************************************************)
+
+MessageParams[1] := '';
+MessageParams[2] := '';
+MessageParams[3] := '';
+MessageParams[4] := '';
+
+FOR i := 0 TO 3 DO
+
+   status := KMSG_GetMsgParamType(ParamNr := i,
+                        MsgData := msgData,
+                        MsgParamType := paramType);
+   
+   CASE paramType OF
+      KMSG_Param_DINT:
+         status := KMSG_GetMsgParam(i, msgData, DintValue);
+         sTmp := DINT_TO_STRING(DintValue);
+      
+      KMSG_Param_LINT:
+         status := KMSG_GetMsgParam(i, msgData, LintValue);
+         sTmp := LINT_TO_STRING(LintValue);
+      
+      KMSG_Param_REAL:
+         status := KMSG_GetMsgParam(i, msgData, RealValue);
+         sTmp := REAL_TO_STRING(RealValue);
+      
+      KMSG_Param_LREAL:
+         status := KMSG_GetMsgParam(i, msgData, LrealValue);
+         sTmp := LREAL_TO_STRING(LrealValue);
+      
+      KMSG_Param_STRING:
+         status := KMSG_GetMsgParam(i, msgData, StringValue);
+         sTmp := StringValue;
+   ELSE
+      sTmp := '';
+   END_CASE;
+     
+   MessageParams[(i+1)] := sTmp;
+ 
+END_FOR;
+
+@END_Body 
+
+@@@BEG_Comment@@@ 
+@TL(0)
+
+@@@END_Comment@@@ 
+
+@BEG_Body 
+@TL(32)
+(**************************************** WARNING ********************************************
+ *** The KEBA Kemro K2 System including software is not intended for safety control tasks! ***
+ ***                       For further information see Comment tab!                        ***
+ *********************************************************************************************)
+
+// We ran into an unrecoverable problem and want to avoid any futher trouble.
+// -> Stop IEC tasks to make sure:
+// * No additional errors happen
+// * Machine functions are not continuing while the IO system is frozen
+
+// Stop all tasks <= IEC priority 13.
+// Do NOT stop TaskException which is necessary for error handling.
+// Do NOT stop tasks with lower priority, especially TaskKVB, TaskVis and TaskVisLow which should continue 
+// to allow showing the actual status on KVB systems.
+
+STOP_TASK(TaskInject);
+STOP_TASK(TaskAnalog);
+STOP_TASK(TaskSequencer);
+STOP_TASK(TaskMid);
+STOP_TASK(TaskSlow);
+STOP_TASK(TaskHeating);
+STOP_TASK(PU_Task_3);
+STOP_TASK(PU_Task_7);
+STOP_TASK(PU_Task_13);
+STOP_TASK(EV_Task_1);
+STOP_TASK(EV_Task_3);
+STOP_TASK(EV_Task_7); 
+STOP_TASK(TaskSim);
+STOP_TASK(Task10ms);
+
+dummy := Print('!!!!! KAPPL_ExceptionInterpretation.aStopRealTimeTasks: high priority IEC Tasks stopped!');
+
+@END_Body 
+
+@@@BEG_Comment@@@ 
+@TL(10)
+@h    ! WARNING !
+@h    The Kemro K2 system (including software) only meets category B according to EN 954-1,
+@h    thus it is not intended for usage in safety-relevant control applications in the field 
+@h    of personal safety (e.g. emergency stop).
+@h    To implement potentially necessary safety-relevant control tasks, always use additional 
+@h    external safety devices that are intended for the particular purpose, and meet the necessary 
+@h    functional safety.
+@h    For further information see EN 954-1 (EN ISO 13849-1) and/or the K2-x00 user manual, chapter 
+@h    "CE conformity, directives and standards".
+
+@@@END_Comment@@@ 
+
+@BEG_Body 
+@TL(37)
+(**************************************** WARNING ********************************************
+ *** The KEBA Kemro K2 System including software is not intended for safety control tasks! ***
+ ***                       For further information see Comment tab!                        ***
+ *********************************************************************************************)
+
+abWatchdog.aGet();
+fbErrorHandler(iComponentNr := iCompNr,
+               iErrorNr := iErrorNr,
+               iErrorKind := iErrorKind,
+               AlarmParameters := ErrorParams);
+
+IF fbErrorHandler.bOpenWatchdog THEN
+   
+   IF abWatchdog.aGet.bState THEN
+      // opening Watchdog if not already opened
+      abWatchdog.aOpen();
+   END_IF;
+   
+   IF g_bLinux THEN
+      MsgState := KMSG_QuitError(MessageData);
+   ELSE
+      ErrorState := Error.QuittError();
+   END_IF;
+   
+   aStopRealTimeTasks();
+END_IF;
+
+IF (iCompNr = 6338) THEN
+   IF (iErrorNr = 108) THEN
+      // cpu temp high -> start polling
+      abCPUTemperature.aStart();
+   ELSIF (iErrorNr = 137) THEN
+      // cpu temp ok -> stop polling
+      abCPUTemperature.aStop();
+   END_IF;
+END_IF;
+
+@END_Body 
+
+@@@BEG_Comment@@@ 
+@TL(0)
+
+@@@END_Comment@@@ 
+
+@BEG_Body 
+@TL(32)
+(**************************************** WARNING ********************************************
+ *** The KEBA Kemro K2 System including software is not intended for safety control tasks! ***
+ ***                       For further information see Comment tab!                        ***
+ *********************************************************************************************)
+
+// receive the GeneralErrorEvent call the errorhandler and quit the error
+IF abError.GetError(evGeneralErrorData) = KERROR_Status_OK THEN
+   //call the errorhandler for error-filtering and reaction
+   
+   // read Errorinfo from errorbuffer
+   ErrorData := abError.GetErrorNr();   
+   ErrorKind := abError.GetErrorKind();
+   
+   aGetErrorKind(ErrorClass := ErrorKind,
+                 ErrorKind => iErrorKind);
+   
+   ErrorParams[1] := FGetErrorParam(abError,abError.GetFirstParamType());
+   ErrorParams[2] := FGetErrorParam(abError,abError.GetNextParamType());
+   ErrorParams[3] := FGetErrorParam(abError,abError.GetNextParamType());
+   ErrorParams[4] := FGetErrorParam(abError,abError.GetNextParamType());
+   
+   aGeneralError(iCompNr := ErrorData.ComponentNr,
+                 iErrorNr := ErrorData.Number,
+                 iErrorKind := iErrorKind,
+                 ErrorParams := ErrorParams,
+                 Error := abError);
+   
+END_IF;    
+
+Status := abError.QuittError();
+   
+
+@END_Body 
+
+@@@BEG_Comment@@@ 
+@TL(0)
+
+@@@END_Comment@@@ 
+
+@BEG_Body 
+@TL(47)
+(**************************************** WARNING ********************************************
+ *** The KEBA Kemro K2 System including software is not intended for safety control tasks! ***
+ ***                       For further information see Comment tab!                        ***
+ *********************************************************************************************)
+
+//save message data
+msgData := evGeneralErrorData;
+
+status := KMSG_GetMsgDataValues(MsgData := msgData,
+                      DataValues := dataValues);
+
+//quit error immediately after getting the according data
+//to avoid "Error quit time exceeded"  
+status := KMSG_QuitError(msgData);
+
+//get message kind
+aGetMessageKind(MsgClass := dataValues.MsgClass,
+                ErrorKind => iErrorKind);
+
+//get message params
+aGetMessageParams(msgData := msgData,
+                  MessageParams => MessageParams);
+
+IF (dataValues.CompNr = 3500) THEN
+   bRuntimeError := (dataValues.MsgNr = 10898) OR (dataValues.MsgNr = 10899);
+   bApplicationError := (dataValues.MsgNr >=  40115) AND (dataValues.MsgNr <= 40118);
+ELSE
+   bRuntimeError := FALSE;
+   bApplicationError := FALSE;
+END_IF;
+
+
+IF bRuntimeError OR bApplicationError THEN
+   //IRT - error which is also provided by a different event -> only set erGeneralException
+   SET_ALARM(Name := erGeneralException,
+             SubID1 := dataValues.CompNr,
+             SubID2 := dataValues.MsgNr,
+             SubID3 := 0,
+             SubID4 := 0);
+ELSE
+   aGeneralError(iCompNr := dataValues.CompNr,
+                 iErrorNr := dataValues.MsgNr,
+                 iErrorKind := iErrorKind,
+                 ErrorParams := MessageParams,
+                 MessageData := msgData);
+END_IF;
+
+@END_Body 
+
+@@@BEG_Comment@@@ 
+@TL(0)
+
+@@@END_Comment@@@ 
+
+@BEG_Body 
+@TL(53)
+(**************************************** WARNING ********************************************
+ *** The KEBA Kemro K2 System including software is not intended for safety control tasks! ***
+ ***                       For further information see Comment tab!                        ***
+ *********************************************************************************************)
+
+//handle application exception
+CASE ExceptionKind OF
+   //get errorkind
+   KERROR_Appl_Kind_Division:          sErrorKind:= 'division';
+   KERROR_Appl_Kind_NullPointer:       sErrorKind:= 'nullpointer';
+   KERROR_Appl_Kind_OutOfRange:        sErrorKind:= 'out of range';
+   KERROR_Appl_Kind_StackOverflow:     sErrorKind:= 'stack overflow';
+   KERROR_Appl_Kind_EmptyEvent:        sErrorKind:= 'empty event';
+   KERROR_Appl_Kind_FloatingPoint:     sErrorKind:= 'floating point';
+   KERROR_Appl_Kind_SFCError:          sErrorKind:= 'SFC error';
+   KERROR_Appl_Kind_EventQueueFull:    sErrorKind:= 'event queue full';
+   KERROR_Appl_Kind_LinkError:         sErrorKind:= 'link error';
+ELSE    
+   sErrorKind:= 'unknown ErrorKind';
+END_CASE;
+
+i1:= UDINT_TO_DINT(CodeOffset);
+i2 := UDINT_TO_DINT(FrameOffset);
+
+IF g_bLinux THEN
+   SET_ALARM(Name := erApplicationExceptionOLC,
+         Param1 := sFunctionUnit,
+         SubID1 := CodeOffset,
+         SubID2 := FrameOffset,
+         SubID3 := CodeIndex,
+         Param2 := sErrorKind);
+   
+   i3 := UDINT_TO_DINT(CodeIndex);
+   dummy := Print('FU: %s, CodeOffset/FrameOffset/CodeIndex: %d/%d/%d',sFunctionUnit,i1,i2,i3);
+ELSE
+   SET_ALARM(Name := erApplicationException,
+         Param1 := sFunctionUnit,
+         SubID1 := CodeOffset,
+         SubID2 := FrameOffset,
+         Param2 := sErrorKind);
+   
+   dummy := Print('FU: %s, CodeOffset/FrameOffset: %d/%d',sFunctionUnit,i1,i2);
+END_IF;
+                       
+abWatchdog.aGet();
+IF abWatchdog.aGet.bState THEN
+   // opening Watchdog if not already opened
+   dummy := Print('!!!!! Open watchdog because of evApplError (%s) !!!!!', sErrorKind);   
+   abWatchdog.aOpen();
+END_IF;
+
+aStopRealTimeTasks();
+
+@END_Body 
+
+@@@BEG_Comment@@@ 
+@TL(0)
+
+@@@END_Comment@@@ 
+
+@BEG_Body 
+@TL(11)
+(**************************************** WARNING ********************************************
+ *** The KEBA Kemro K2 System including software is not intended for safety control tasks! ***
+ ***                       For further information see Comment tab!                        ***
+ *********************************************************************************************)
+
+//handle application error event
+aApplicationError(ExceptionKind := erApplicationExceptionData.Kind,
+                  sFunctionUnit := erApplicationExceptionData.FunctionalUnit,
+                  CodeOffset := erApplicationExceptionData.CodeOffset,
+                  FrameOffset := erApplicationExceptionData.FrameOffset);
+
+@END_Body 
+
+@@@BEG_Comment@@@ 
+@TL(0)
+
+@@@END_Comment@@@ 
+
+@BEG_Body 
+@TL(12)
+(**************************************** WARNING ********************************************
+ *** The KEBA Kemro K2 System including software is not intended for safety control tasks! ***
+ ***                       For further information see Comment tab!                        ***
+ *********************************************************************************************)
+
+//handle application error event
+aApplicationError(ExceptionKind := erApplicationExceptionData.Kind,
+                  sFunctionUnit := erApplicationExceptionData.FunctionalUnit,
+                  CodeOffset := erApplicationExceptionData.CodeOffset,
+                  FrameOffset := erApplicationExceptionData.FrameOffset,
+                  CodeIndex := erApplicationExceptionData.CodeIndex);
+
+@END_Body 
+
+@@@BEG_Comment@@@ 
+@TL(0)
+
+@@@END_Comment@@@ 
+
+@BEG_Body 
+@TL(33)
+(**************************************** WARNING ********************************************
+ *** The KEBA Kemro K2 System including software is not intended for safety control tasks! ***
+ ***                       For further information see Comment tab!                        ***
+ *********************************************************************************************)
+
+//get taskname
+sAlarmText := GET_TASK_NAME(evTimeErrorData.Task);
+
+//get kind of timeException
+CASE evTimeErrorData.Kind OF
+   KERROR_Time_Kind_CycleOverflow: sAlarmText := CONCAT('Kind: CycleOverflow, Task: ',sAlarmText);
+   KERROR_Time_Kind_CountOverflow: sAlarmText := CONCAT('Kind: CountOverflow, Task: ',sAlarmText);
+END_CASE;
+
+iAlarmCounter := iAlarmCounter + 1; // -> SubID, if there are more than 1 errors only 1 alarm would be set
+
+SET_ALARM(Name := erTimeException,
+          Param1 := sAlarmText,
+          SubID1 :=  iAlarmCounter);
+
+abWatchdog.aGet();
+IF abWatchdog.aGet.bState THEN
+   // opening Watchdog if not already opened
+   dummy := Print('!!!!! Open watchdog because of evTimeError (%s) !!!!!', sAlarmText);
+   abWatchdog.aOpen();
+END_IF;
+         
+//state:=SET_WVEVENT(9999);  //seting WV Event to trigger WindView profile
+
+aStopRealTimeTasks();
+
+
+
+@END_Body 
+
+@@@BEG_Comment@@@ 
+@TL(0)
+
+@@@END_Comment@@@ 
+
+@BEG_Body 
+@TL(29)
+(**************************************** WARNING ********************************************
+ *** The KEBA Kemro K2 System including software is not intended for safety control tasks! ***
+ ***                       For further information see Comment tab!                        ***
+ *********************************************************************************************)
+
+//receiving the FirmwareResourceError
+
+CASE evaFWResourceErrorData.Kind OF
+   //getting errorKind 
+   KERROR_FWResource_Kind_Exc: sAlarmText := 'Processor';
+   KERROR_FWResource_Kind_IRT: sAlarmText := 'IEC-Control';
+   KERROR_FWResource_Kind_FW:  sAlarmText := 'Firmware';
+ELSE
+   sAlarmText := 'unknown ErrorKind';
+END_CASE;
+
+SET_ALARM(Name := erFWResourceException,
+          Param1 := sAlarmText);
+
+abWatchdog.aGet();
+IF abWatchdog.aGet.bState THEN
+   // opening Watchdog if not already opened
+   dummy := Print('!!!!! Open watchdog because of evFWResourceError (Kind: %s) !!!!!', sAlarmText);
+   abWatchdog.aOpen();
+END_IF;
+
+aStopRealTimeTasks();
+
+
+@END_Body 
+
+@@@BEG_Comment@@@ 
+@TL(0)
+
+@@@END_Comment@@@ 
+
+@BEG_Body 
+@TL(48)
+(**************************************** WARNING ********************************************
+ *** The KEBA Kemro K2 System including software is not intended for safety control tasks! ***
+ ***                       For further information see Comment tab!                        ***
+ *********************************************************************************************)
+
+//handle FW task error
+CASE ErrorKind OF
+   //getting errorKind 
+   KERROR_FWTask_Kind_IEC: sAlarmText := 'IEC Generation';
+   KERROR_FWTask_Kind_SFC: sAlarmText := 'SFC Generation';
+   KERROR_FWTask_Kind_Exc: sAlarmText := 'Processor';
+   KERROR_FWTask_Kind_IRT: sAlarmText := 'IEC-Control';
+   KERROR_FWTask_Kind_FW:  sAlarmText := 'Internal Firmware';
+ELSE
+    sAlarmText := 'unknown ErrorKind';
+END_CASE;
+
+IF g_bLinux THEN
+   SET_ALARM(Name := erFWTaskExceptionOLC,
+            Param1 := sFunctionUnit, 
+            SubID1 := CodeOffset,
+            SubID2 := FrameOffset,
+            SubID3 := CodeIndex,
+            Param2 := sAlarmText);
+ELSE
+   SET_ALARM(Name := erFWTaskException,
+          Param1 := sFunctionUnit, 
+          SubID1 := CodeOffset,
+          SubID2 := FrameOffset,
+          Param2 := sAlarmText);      
+END_IF;
+
+
+abWatchdog.aGet();
+IF abWatchdog.aGet.bState THEN
+   // opening Watchdog if not already opened
+   dummy := Print('!!!!! Open watchdog because of evFWTaskError (Kind: %s) in FU %s !!!!!', sAlarmText, sFunctionUnit);
+   IF g_bLinux THEN
+      dummy := Print('!!!!! CodeOffset: %i FrameOffset: %i CodeIndex: %i !!!!!',CodeOffset, FrameOffset, CodeIndex);
+   ELSE
+      dummy := Print('!!!!! CodeOffset: %i FrameOffset: %i !!!!!',CodeOffset, FrameOffset);   
+   END_IF; 
+   
+   abWatchdog.aOpen();
+END_IF;
+
+aStopRealTimeTasks();
+
+@END_Body 
+
+@@@BEG_Comment@@@ 
+@TL(0)
+
+@@@END_Comment@@@ 
+
+@BEG_Body 
+@TL(11)
+(**************************************** WARNING ********************************************
+ *** The KEBA Kemro K2 System including software is not intended for safety control tasks! ***
+ ***                       For further information see Comment tab!                        ***
+ *********************************************************************************************)
+
+//handle FirmwareTaskError
+aFWTaskError(ErrorKind := evaFWTaskErrorData.Kind,
+             sFunctionUnit := evaFWTaskErrorData.FunctionalUnit,
+             CodeOffset := evaFWTaskErrorData.CodeOffset,
+             FrameOffset := evaFWTaskErrorData.FrameOffset);
+
+@END_Body 
+
+@@@BEG_Comment@@@ 
+@TL(0)
+
+@@@END_Comment@@@ 
+
+@BEG_Body 
+@TL(12)
+(**************************************** WARNING ********************************************
+ *** The KEBA Kemro K2 System including software is not intended for safety control tasks! ***
+ ***                       For further information see Comment tab!                        ***
+ *********************************************************************************************)
+
+//handle FirmwareTaskError
+aFWTaskError(ErrorKind := evaFWTaskErrorData.Kind,
+             sFunctionUnit := evaFWTaskErrorData.FunctionalUnit,
+             CodeOffset := evaFWTaskErrorData.CodeOffset,
+             FrameOffset := evaFWTaskErrorData.FrameOffset,
+             CodeIndex := evaFWTaskErrorData.CodeIndex);
+
+@END_Body 
+
+@@@BEG_Comment@@@ 
+@TL(0)
+
+@@@END_Comment@@@ 
+
+@BEG_Body 
+@TL(33)
+(**************************************** WARNING ********************************************
+ *** The KEBA Kemro K2 System including software is not intended for safety control tasks! ***
+ ***                       For further information see Comment tab!                        ***
+ *********************************************************************************************)
+
+// initialisation of the GeneralExceptionHandling 
+Status := abError.GetLastError();
+WHILE Status = KERROR_Status_OK DO  // reading all errors that occured during boot (iec not running)
+   
+   // read Errorinfo from errorbuffer
+   ErrorData := abError.GetErrorNr();   
+   ErrorKind := abError.GetErrorKind();
+   
+   aGetErrorKind(ErrorClass := ErrorKind,
+                 ErrorKind => iErrorKind);
+   
+   ErrorParams[1] := FGetErrorParam(abError,abError.GetFirstParamType());
+   ErrorParams[2] := FGetErrorParam(abError,abError.GetNextParamType());
+   ErrorParams[3] := FGetErrorParam(abError,abError.GetNextParamType());
+   ErrorParams[4] := FGetErrorParam(abError,abError.GetNextParamType());
+   
+   aGeneralError(iCompNr := ErrorData.ComponentNr,
+                 iErrorNr := ErrorData.Number,
+                 iErrorKind := iErrorKind,
+                 ErrorParams := ErrorParams,
+                 Error := abError);
+ 
+   // reading next error
+   Status := abError.GetPrevError();
+END_WHILE;
+ 
+STOP_PROCESS_ALGORITHM();   
+
+@END_Body 
+
+@@@BEG_Comment@@@ 
+@TL(0)
+
+@@@END_Comment@@@ 
+
+@BEG_Body 
+@TL(44)
+(**************************************** WARNING ********************************************
+ *** The KEBA Kemro K2 System including software is not intended for safety control tasks! ***
+ ***                       For further information see Comment tab!                        ***
+ *********************************************************************************************)
+
+// get first message
+status := MsgBrowser.GetFirstMsg(MsgClass := KMSG_Class_All,
+                                MsgData := msgData);
+
+
+WHILE status = KMSG_Status_OK DO  
+ 
+   status := KMSG_GetMsgDataValues(MsgData := msgData,
+                      DataValues := dataValues);
+   
+   //get message kind
+   aGetMessageKind(MsgClass := dataValues.MsgClass,
+                ErrorKind => iErrorKind);
+      
+   //get message params
+   aGetMessageParams(msgData := msgData,
+                     MessageParams => MessageParams);
+   
+   aGeneralError(iCompNr := dataValues.CompNr,
+               iErrorNr := dataValues.MsgNr,
+               iErrorKind := iErrorKind,
+               ErrorParams := MessageParams,
+               MessageData := msgData);
+ 
+   // read next message
+   status := MsgBrowser.GetNextMsg(MsgData := msgData);
+
+END_WHILE;
+
+state := KSYS_BPAPI_VAR_TXTREAD('SYS.HW.TypeLabel.deviceName', sDeviceName);
+IF (sDeviceName <> 'PCSimulation') THEN
+   state := KSYS_BPAPI_VAR_READ('SYS.HW.Storage.PhysicalDevices.sda.smartState', iSmartState);
+   IF (state <> 0) OR (iSmartState = 3) THEN
+      SET_ALARM(Name := erSMARTDataNotAvailable);
+   END_IF;      
+END_IF;
+ 
+STOP_PROCESS_ALGORITHM();
+
+@END_Body 
+
+@@@BEG_Comment@@@ 
+@TL(0)
+
+@@@END_Comment@@@ 
+
+@BEG_Body 
+@TL(21)
+(**************************************** WARNING ********************************************
+ *** The KEBA Kemro K2 System including software is not intended for safety control tasks! ***
+ ***                       For further information see Comment tab!                        ***
+ *********************************************************************************************)
+
+b := FCreateExceptionVersion();
+
+//check if last reboot was triggered by application because of a removed CF
+IF sv_bCFRemoved THEN
+   SET_ALARM(Name := erRestartAfterCFRemoved);
+   sv_bCFRemoved := FALSE;
+END_IF;
+
+IF g_bLinux THEN      
+   START_PROCESS_ALGORITHM(paReadStartupMessages);
+ELSE
+   START_PROCESS_ALGORITHM(paReadStartupErrors);
+END_IF;
+
+STOP_PROCESS_ALGORITHM();
+
+@END_Body 
+
+@@@BEG_Comment@@@ 
+@TL(0)
+
+@@@END_Comment@@@ 
+
+@BEG_Body 
+@TL(45)
+(**************************************** WARNING ********************************************
+ *** The KEBA Kemro K2 System including software is not intended for safety control tasks! ***
+ ***                       For further information see Comment tab!                        ***
+ *********************************************************************************************)
+
+//assigning of error events must be done immediately after startup because
+//otherwise application errors which happen very early will not be handled!
+
+StatusName := KCAT_GetHandle('UOS.System');
+IF StatusName.Status = KCAT_Status_OK THEN
+   Status := KCAT_GetValue(Handle := StatusName.Handle, Buffer := sValue);
+   IF (sValue = 'Linux') THEN
+      g_bLinux := TRUE;
+   END_IF;
+END_IF;
+
+IF g_bLinux THEN
+   
+   //activate event algorithms and attach error event
+   mevGeneralErrorOLC := evGeneralErrorOLC;
+   mevApplErrorOLC := evApplErrorOLC;
+   mevFWTaskErrorOLC := evFWTaskErrorOLC;
+   
+   MsgClasses := KMSG_Class_ErrorFatal OR KMSG_Class_Error OR KMSG_Class_ErrorMinor OR 
+                 KMSG_Class_Warning OR KMSG_Class_Info; 
+   
+   status := KMSG_AttachMsgEvent(MsgClass := MsgClasses,
+                              CompNrBegin := 0,
+                              CompNrEnd := 0,
+                              MsgNrBegin := 0,
+                              MsgNrEnd := 0,
+                              MsgEvent := evGeneralErrorOLC,
+                              Handle := handle);
+   
+ELSE
+   mevGeneralError := evGeneralError;
+   mevApplError := evApplError;
+   mevFWTaskError := evFWTaskError;  
+END_IF;
+
+//initialize watchdog
+abWatchdog.aClose();
+
+mbEventsAssigned := TRUE;
+
+@END_Body 
+
+@@@BEG_Comment@@@ 
+@TL(0)
+
+@@@END_Comment@@@ 
+
+@BEG_Body 
+@TL(13)
+(**************************************** WARNING ********************************************
+ *** The KEBA Kemro K2 System including software is not intended for safety control tasks! ***
+ ***                       For further information see Comment tab!                        ***
+ *********************************************************************************************)
+
+IF NOT mbEventsAssigned THEN
+   aAssignEvents();   
+END_IF;
+
+STOP_PROCESS_ALGORITHM();
+
+
+
+@END_Body 
+
+@@@BEG_Comment@@@ 
+@TL(0)
+
+@@@END_Comment@@@ 
+
+@BEG_Body 
+@TL(11)
+(**************************************** WARNING ********************************************
+ *** The KEBA Kemro K2 System including software is not intended for safety control tasks! ***
+ ***                       For further information see Comment tab!                        ***
+ *********************************************************************************************)
+
+IF NOT mbEventsAssigned THEN
+   aAssignEvents();
+END_IF;
+
+STOP_PROCESS_ALGORITHM();
+
+@END_Body 
+
+@@@BEG_Comment@@@ 
+@TL(0)
+
+@@@END_Comment@@@ 
+
+@BEG_Body 
+@TL(11)
+(**************************************** WARNING ********************************************
+ *** The KEBA Kemro K2 System including software is not intended for safety control tasks! ***
+ ***                       For further information see Comment tab!                        ***
+ *********************************************************************************************)
+
+IF (sv_OperationMode = nManual) AND sv_bCFRemoved THEN
+   //operation mode changed to manual
+   //-> trigger a restart of the system
+   s := RESTART_SYSTEM();
+END_IF;
+
+@END_Body 
+
+@@@BEG_Comment@@@ 
+@TL(0)
+
+@@@END_Comment@@@ 
+@END_Body 
+
+@END_Contents 

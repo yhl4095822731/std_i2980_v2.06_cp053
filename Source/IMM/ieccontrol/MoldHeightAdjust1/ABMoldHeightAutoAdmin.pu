@@ -1,0 +1,2508 @@
+(*
+@h    ! WARNING !
+@h    The Kemro K2 system (including software) only meets category B according to EN 954-1,
+@h    thus it is not intended for usage in safety-relevant control applications in the field 
+@h    of personal safety (e.g. emergency stop).
+@h    To implement potentially necessary safety-relevant control tasks, always use additional 
+@h    external safety devices that are intended for the particular purpose, and meet the necessary 
+@h    functional safety.
+@h    For further information see EN 954-1 (EN ISO 13849-1) and/or the K2-x00 user manual, chapter 
+@h    "CE conformity, directives and standards". 
+
+This algo block does the followings calls:
+
+Initially:
+Registration of MoldHeightAutomatic Adjustment to the sv_MovementsAvailable
+
+PostUpdate on MovementStart:
+Starting the control algo for different mold height adjustment modes.
+*)
+
+IMPORT_OVER_LISTFILE
+ SET_ALARM
+, GET_SYNC_REFTO
+, cLockGroupMoldHeight
+, cLockGroupSafetyGateMold
+, cLockGroupNozzleFwd
+, cLockGroupMotor
+, nPositionChange
+, nPositionSetTonnage
+, nForceOpenLoop
+, nForceClosedLoop
+, nElectricWithMoldPos
+, nDirectLock
+, cCompMoldHeight
+, cCompMold
+, nSetup
+, cMoveAll
+, nLockAbort
+, nUnlock
+, KSYS_Status_OK
+, cSubOptionMoldDirectLock
+, cLockGroupRotateInjectPos
+, tsMoveData
+, tsMoldHeightSetupPosMeasurement
+, tsEndpointMonitor
+, tnMoldHeightAdjustMode
+, tsDeviceId
+, tnOperationMode
+, KAPPL_LintabData
+, tsClampForces
+, ALARM_EVENT
+, tsMoveCtrl
+, ABCalculateMoldHeightImpulses
+, tyTieBarPosition
+, ABMovementRegister
+, ABAdjustPositionChange
+, ABAdjustForceOpenLoop
+, ABAdjustPosSetTonnage
+, ABAdjustPosSetTonnageDetect
+, ABAdjustElectric
+, ABAdjustDirectLock
+, TON
+, ABAdjust2Platen
+, ALARM_EVENT_DATA
+, FBLockUnlock
+, KSYS_Status
+, tOptionId
+
+END_IMPORT
+
+ALGORITHM_BLOCK ABMoldHeightAutoAdmin #DUMMY_EDIT_BLOCK
+
+SYSTEM_VAR
+ sv_bInitStart : BOOL;
+ sv_MoveMoldHeightAuto : tsMoveData;
+ sv_bAutoMoldHeightAdjustActive : BOOL (* is TRUE when auto mold height adjust is acitve *);
+ sv_MoldHeightSetPosMeasurement : tsMoldHeightSetupPosMeasurement;
+ sv_MoldHeightEndpoints : tsEndpointMonitor;
+ sv_MoldHeightAdjustMode : tnMoldHeightAdjustMode;
+ sv_DeviceId : tsDeviceId;
+ sv_bDeviceStart : BOOL;
+ sv_OperationMode : tnOperationMode;
+ sv_dActMoldHeightAdjustTime : TIME;
+ sv_dMaxMoldHeightAdjustTime : TIME;
+ sv_ClampForceLintabImpulses : KAPPL_LintabData;
+ sv_bLedAutoAdjust : BOOL;
+ sv_bHMILedAutoAdjust : BOOL;
+ sv_ClampForce : tsClampForces;
+ sv_bMoldHeightAutoAdjFinished : BOOL;
+ sv_bInitDone : BOOL;
+ sv_bFALSE : BOOL;
+ sv_TieBarPosition : tyTieBarPosition (* array with actual position of the tiebars *);
+ sv_rTieBarMinPos : REAL;
+ sv_rTieBarMaxPos : REAL;
+END_VAR
+
+SYSTEM_OBJECT
+ PU_Task_7 : TASK;
+ erLimitSwitchCanceledAutoAdj : ALARM;
+ erSetupModeRequiredForAdjust : ALARM;
+ erDistPerImpNotValid : ALARM;
+ erMaxMoldHeightAdjTimeExc : ALARM;
+ TaskMid : TASK;
+ evMoveTimeout : ALARM_EVENT;
+ evMoveTimeoutReset : ALARM_EVENT;
+ EV_Task_7 : TASK;
+ erTieBarOutOfRange : ALARM;
+END_OBJECT
+
+VAR_EXTERNAL
+ g_MoveCtrl : tsMoveCtrl;
+ g_bDirectLock : BOOL;
+ g_b2Platen : BOOL;
+END_VAR
+
+VAR
+ abCalculateMoldHeightImpulses : ABCalculateMoldHeightImpulses;
+ mbInit : BOOL := TRUE;
+ mbAutoAdjustAllowed : BOOL;
+END_VAR
+
+(*
+Starts the algo paRun when sv_bDeviceStart is set by ABControl.
+*)
+
+POSTUPDATE_ALGORITHM pDeviceStart ON PU_Task_7 WITH sv_bDeviceStart
+
+#BEGIN_EDIT_BLOCK
+(**************************************** WARNING ********************************************
+ *** The KEBA Kemro K2 System including software is not intended for safety control tasks! ***
+ ***                       For further information see Comment tab!                        ***
+ *********************************************************************************************)
+
+IF sv_bDeviceStart THEN
+   mbAutoAdjustAllowed := TRUE;
+   IF g_b2Platen THEN
+      START_PROCESS_ALGORITHM(paCheckConditions2Platen);
+      START_PROCESS_ALGORITHM(paRun2Platen);
+   ELSE
+      START_PROCESS_ALGORITHM(paCheckConditions);
+      START_PROCESS_ALGORITHM(paRun);
+   END_IF;
+END_IF;
+
+
+;#END_EDIT_BLOCK END_ALGORITHM
+
+(*
+Registration of MoldHeightAutomatic Adjustment to the sv_MovementsAvailable
+*)
+
+POSTUPDATE_ALGORITHM aRegister ON PU_Task_7 WITH sv_bInitStart
+
+
+VAR
+ abMovementRegister : ABMovementRegister;
+END_VAR
+#BEGIN_EDIT_BLOCK
+(**************************************** WARNING ********************************************
+ *** The KEBA Kemro K2 System including software is not intended for safety control tasks! ***
+ ***                       For further information see Comment tab!                        ***
+ *********************************************************************************************)
+
+// movement registration
+sv_MoveMoldHeightAuto.LockGroups[1] := cLockGroupMoldHeight;
+sv_MoveMoldHeightAuto.LockGroups[2] := cLockGroupSafetyGateMold;
+sv_MoveMoldHeightAuto.LockGroups[3] := cLockGroupNozzleFwd;
+sv_MoveMoldHeightAuto.LockGroups[4] := cLockGroupMotor;
+sv_MoveMoldHeightAuto.LockGroups[5] := cLockGroupRotateInjectPos;
+
+sv_MoveMoldHeightAuto.pbPosReached := @sv_bMoldHeightAutoAdjFinished;
+sv_MoveMoldHeightAuto.sIconPath := CONCAT(GET_MY_FU_NAME(), "\hmi\images\movMoldAdjustAuto.gif");
+
+abMovementRegister.aRegister(@sv_MoveMoldHeightAuto);
+
+
+
+;#END_EDIT_BLOCK END_ALGORITHM
+
+(*
+This algo works like this:
+- check various conditions for mold height automatic adjust movement,
+  such as:  operation mode, valid position measurement calibration for mold height,
+            supervision time, limit switch endpoints
+- indicate that mold height automatic adjustment is active
+- start the special mold height adjustment mode control blocks according to the mode which is set
+  AND waiting for their finished/ready flag.
+- indicate the final status of mold height adjustment
+*)
+
+PROCESS_ALGORITHM paRun ON TaskMid
+
+
+VAR_TEMP
+ b : BOOL;
+END_VAR
+
+VAR
+ bReady : BOOL;
+ abAdjustPositionChange : ABAdjustPositionChange;
+ abAdjustForceOpenLoop : ABAdjustForceOpenLoop;
+ abAdjustPosSetTonnage : ABAdjustPosSetTonnage;
+ abAdjustPosSetTonnageDetect : ABAdjustPosSetTonnageDetect;
+ DeviceIdMoldHeight : tsDeviceId;
+ DeviceIdMold : tsDeviceId;
+ bRedoMoldHeight : BOOL;
+ rSetImpulses : DINT;
+ abAdjustElectric : ABAdjustElectric;
+ abAdjustDirectLock : ABAdjustDirectLock;
+END_VAR
+
+(* IecGraph-Code *)
+
+(* init step *)
+INITIAL_STEP START:
+Action13 (P);
+AInit (P);
+END_STEP
+
+ACTION Action13: #BEGIN_EDIT_BLOCK
+b := WRITE_SV_DIRECT(sv_bDeviceStart, sv_bFALSE);
+
+;#END_EDIT_BLOCK END_ACTION (*Action13*)
+
+(* steps *)
+STEP READY_FOR_AUTO_ADJUST:
+SetResetFlags (P);
+END_STEP
+
+ACTION SetResetFlags: #BEGIN_EDIT_BLOCK
+sv_bMoldHeightAutoAdjFinished := FALSE;
+sv_bAutoMoldHeightAdjustActive := TRUE;
+
+;#END_EDIT_BLOCK END_ACTION (*SetResetFlags*)
+STEP POS_CHANGE:
+RunPositionChange (N);
+END_STEP
+
+STEP SET_TONNAGE:
+ACheckModus (P);
+RunSetTonnage (N);
+END_STEP
+
+STEP FORCE_OPEN_LOOP:
+RunForceOpenLoop (N);
+END_STEP
+
+STEP FORCE_CLOSED_LOOP:
+RunForceClosedLoop (N);
+END_STEP
+
+STEP ELECTRIC_LINTAB:
+NRunElectricWithMoldPos (N);
+END_STEP
+
+STEP DIRECTLOCK:
+NRunDirectLock (N);
+END_STEP
+
+STEP PRESSURE_OPEN_LOOP:
+NRunPressureOpenLoop (N);
+END_STEP
+
+STEP READY:
+ResetMovementFlags (P);
+END_STEP
+
+ACTION ResetMovementFlags: #BEGIN_EDIT_BLOCK
+g_MoveCtrl.bReady := TRUE;
+sv_bAutoMoldHeightAdjustActive := FALSE;
+mbInit := TRUE;
+
+STOP_PROCESS_ALGORITHM(paCheckConditions);
+STOP_PROCESS_ALGORITHM();
+
+;#END_EDIT_BLOCK END_ACTION (*ResetMovementFlags*)
+
+(* transitions *)
+TRANSITION ConditionsOK (* ConditionsOK *) FROM START TO READY_FOR_AUTO_ADJUST :=  #BEGIN_EDIT_BLOCK
+mbAutoAdjustAllowed AND (NOT g_MoveCtrl.bStop)
+;#END_EDIT_BLOCK
+END_TRANSITION
+
+TRANSITION ConditionsNotOk (* ConditionsNotOk *) FROM START TO READY :=  #BEGIN_EDIT_BLOCK
+NOT mbAutoAdjustAllowed OR g_MoveCtrl.bStop
+;#END_EDIT_BLOCK
+END_TRANSITION
+
+TRANSITION CheckAdjMode2 (* CheckAdjMode2 *) FROM READY_FOR_AUTO_ADJUST TO POS_CHANGE :=  #BEGIN_EDIT_BLOCK
+sv_MoldHeightAdjustMode = nPositionChange
+;#END_EDIT_BLOCK
+END_TRANSITION
+
+TRANSITION PosChangeReady (* PosChangeReady *) FROM POS_CHANGE TO READY :=  #BEGIN_EDIT_BLOCK
+abAdjustPositionChange.aRun.bReady
+;#END_EDIT_BLOCK
+END_TRANSITION
+
+TRANSITION CheckAdjMode3 (* CheckAdjMode3 *) FROM READY_FOR_AUTO_ADJUST TO SET_TONNAGE :=  #BEGIN_EDIT_BLOCK
+sv_MoldHeightAdjustMode = nPositionSetTonnage
+;#END_EDIT_BLOCK
+END_TRANSITION
+
+TRANSITION SetTonnageReady (* SetTonnageReady *) FROM SET_TONNAGE TO READY :=  #BEGIN_EDIT_BLOCK
+bReady
+;#END_EDIT_BLOCK
+END_TRANSITION
+
+TRANSITION CheckAdjMode4 (* CheckAdjMode4 *) FROM READY_FOR_AUTO_ADJUST TO FORCE_OPEN_LOOP :=  #BEGIN_EDIT_BLOCK
+sv_MoldHeightAdjustMode = nForceOpenLoop
+;#END_EDIT_BLOCK
+END_TRANSITION
+
+TRANSITION ForceOpenLoopReady (* ForceOpenLoopReady *) FROM FORCE_OPEN_LOOP TO READY :=  #BEGIN_EDIT_BLOCK
+abAdjustForceOpenLoop.aRun.bReady
+;#END_EDIT_BLOCK
+END_TRANSITION
+
+TRANSITION CheckAdjMode5 (* CheckAdjMode5 *) FROM READY_FOR_AUTO_ADJUST TO FORCE_CLOSED_LOOP :=  #BEGIN_EDIT_BLOCK
+sv_MoldHeightAdjustMode = nForceClosedLoop
+;#END_EDIT_BLOCK
+END_TRANSITION
+
+TRANSITION ForceClosedLoopReady (* ForceClosedLoopReady *) FROM FORCE_CLOSED_LOOP TO READY :=  #BEGIN_EDIT_BLOCK
+bReady
+;#END_EDIT_BLOCK
+END_TRANSITION
+
+TRANSITION Trans28 (* Trans28 *) FROM READY_FOR_AUTO_ADJUST TO ELECTRIC_LINTAB :=  #BEGIN_EDIT_BLOCK
+sv_MoldHeightAdjustMode = nElectricWithMoldPos
+;#END_EDIT_BLOCK
+END_TRANSITION
+
+TRANSITION Trans29 (* Trans29 *) FROM ELECTRIC_LINTAB TO READY :=  #BEGIN_EDIT_BLOCK
+bReady
+;#END_EDIT_BLOCK
+END_TRANSITION
+
+TRANSITION Trans16 (* Trans16 *) FROM READY_FOR_AUTO_ADJUST TO DIRECTLOCK :=  #BEGIN_EDIT_BLOCK
+sv_MoldHeightAdjustMode = nDirectLock
+;#END_EDIT_BLOCK
+END_TRANSITION
+
+TRANSITION Trans17 (* Trans17 *) FROM DIRECTLOCK TO READY :=  #BEGIN_EDIT_BLOCK
+bReady
+;#END_EDIT_BLOCK
+END_TRANSITION
+
+TRANSITION TPressureOpenLoop (* Trans16 *) FROM READY_FOR_AUTO_ADJUST TO PRESSURE_OPEN_LOOP :=  #BEGIN_EDIT_BLOCK
+sv_MoldHeightAdjustMode = nPressureOpenLoop
+;#END_EDIT_BLOCK
+END_TRANSITION
+
+TRANSITION TReadyPressure (* Trans17 *) FROM PRESSURE_OPEN_LOOP TO READY :=  #BEGIN_EDIT_BLOCK
+abAdjustForceOpenLoop.aRun.bReady
+;#END_EDIT_BLOCK
+END_TRANSITION
+
+TRANSITION TLoopBack (* TLoopBack *) FROM READY TO START :=  #BEGIN_EDIT_BLOCK
+TRUE
+;#END_EDIT_BLOCK
+END_TRANSITION
+
+(* end IecGraph-Code *)
+(* sfc-code *)
+
+(* stand alone actions *)
+ACTION RunPositionChange: #BEGIN_EDIT_BLOCK
+(**************************************** WARNING ********************************************
+ *** The KEBA Kemro K2 System including software is not intended for safety control tasks! ***
+ ***                       For further information see Comment tab!                        ***
+ *********************************************************************************************)
+
+// Start the mold height automatic position change
+// block and read back the finished/ready flag.
+abAdjustPositionChange.aRun(bStop := g_MoveCtrl.bStop OR NOT mbAutoAdjustAllowed,
+                            DeviceIdMoldHeight := DeviceIdMoldHeight);
+
+
+;#END_EDIT_BLOCK END_ACTION (*RunPositionChange*)
+ACTION RunSetTonnage: #BEGIN_EDIT_BLOCK
+(**************************************** WARNING ********************************************
+ *** The KEBA Kemro K2 System including software is not intended for safety control tasks! ***
+ ***                       For further information see Comment tab!                        ***
+ *********************************************************************************************)
+
+IF bRedoMoldHeight THEN
+    //do whole mold height detection
+    abAdjustPosSetTonnageDetect.aRun(bStop := g_MoveCtrl.bStop OR NOT mbAutoAdjustAllowed,
+                            DeviceIdMoldHeight := DeviceIdMoldHeight,
+                            DeviceIdMold := DeviceIdMold);
+    bReady := abAdjustPosSetTonnageDetect.aRun.bReady;                                
+ELSE
+    //only adjust clamp force
+    abAdjustPosSetTonnage.aRun(bStop := g_MoveCtrl.bStop OR NOT mbAutoAdjustAllowed,
+                                DeviceIdMoldHeight := DeviceIdMoldHeight,
+                                DeviceIdMold := DeviceIdMold);
+    bReady := abAdjustPosSetTonnage.aRun.bReady;
+    
+END_IF;
+
+;#END_EDIT_BLOCK END_ACTION (*RunSetTonnage*)
+ACTION RunForceOpenLoop: #BEGIN_EDIT_BLOCK
+(**************************************** WARNING ********************************************
+ *** The KEBA Kemro K2 System including software is not intended for safety control tasks! ***
+ ***                       For further information see Comment tab!                        ***
+ *********************************************************************************************)
+
+// Start the mold height automatic position change
+// block and read back the finished/ready flag.
+
+abAdjustForceOpenLoop.aRun(bStop := g_MoveCtrl.bStop OR NOT mbAutoAdjustAllowed,
+                           DeviceIdMoldHeight := DeviceIdMoldHeight,
+                           DeviceIdMold := DeviceIdMold,
+                           MoldHeightAdjustMode := nForceOpenLoop);
+
+
+;#END_EDIT_BLOCK END_ACTION (*RunForceOpenLoop*)
+ACTION RunForceClosedLoop: #BEGIN_EDIT_BLOCK
+(**************************************** WARNING ********************************************
+ *** The KEBA Kemro K2 System including software is not intended for safety control tasks! ***
+ ***                       For further information see Comment tab!                        ***
+ *********************************************************************************************)
+
+bReady := TRUE;
+
+;#END_EDIT_BLOCK END_ACTION (*RunForceClosedLoop*)
+ACTION AInit: #BEGIN_EDIT_BLOCK
+(**************************************** WARNING ********************************************
+ *** The KEBA Kemro K2 System including software is not intended for safety control tasks! ***
+ ***                       For further information see Comment tab!                        ***
+ *********************************************************************************************)
+
+DeviceIdMoldHeight.CompId := cCompMoldHeight;
+DeviceIdMoldHeight.IndexId := 1;
+
+DeviceIdMold.CompId := cCompMold;
+DeviceIdMold.IndexId := 1;
+
+
+;#END_EDIT_BLOCK END_ACTION (*AInit*)
+ACTION ACheckModus: #BEGIN_EDIT_BLOCK
+(**************************************** WARNING ********************************************
+ *** The KEBA Kemro K2 System including software is not intended for safety control tasks! ***
+ ***                       For further information see Comment tab!                        ***
+ *********************************************************************************************)
+
+abCalculateMoldHeightImpulses.aInit(Lintab := sv_ClampForceLintabImpulses);
+
+abCalculateMoldHeightImpulses.aCalc(rForce := sv_ClampForce.rSetClampForce);
+rSetImpulses := abCalculateMoldHeightImpulses.aCalc.iImpulses;
+
+abCalculateMoldHeightImpulses.aCalc(rForce := sv_ClampForce.rActualClampForce);
+
+// when auto button is pressed but  clamp pressure was not changed
+// redo whole clamp height detection
+bRedoMoldHeight := (rSetImpulses = abCalculateMoldHeightImpulses.aCalc.iImpulses);
+
+;#END_EDIT_BLOCK END_ACTION (*ACheckModus*)
+ACTION NRunElectricWithMoldPos: #BEGIN_EDIT_BLOCK
+(**************************************** WARNING ********************************************
+ *** The KEBA Kemro K2 System including software is not intended for safety control tasks! ***
+ ***                       For further information see Comment tab!                        ***
+ *********************************************************************************************)
+
+abAdjustElectric.aRun(bStop := g_MoveCtrl.bStop OR NOT mbAutoAdjustAllowed,
+                      DeviceIdMoldHeight := DeviceIdMoldHeight,
+                      DeviceIdMold := DeviceIdMold);
+
+bReady := abAdjustElectric.aRun.bReady;
+
+
+;#END_EDIT_BLOCK END_ACTION (*NRunElectricWithMoldPos*)
+ACTION NRunDirectLock: #BEGIN_EDIT_BLOCK
+(**************************************** WARNING ********************************************
+ *** The KEBA Kemro K2 System including software is not intended for safety control tasks! ***
+ ***                       For further information see Comment tab!                        ***
+ *********************************************************************************************)
+
+abAdjustDirectLock.aRun(bStop := g_MoveCtrl.bStop OR NOT mbAutoAdjustAllowed,
+                        DeviceIdMold := DeviceIdMold);
+
+bReady := abAdjustDirectLock.aRun.bReady;
+
+;#END_EDIT_BLOCK END_ACTION (*NRunDirectLock*)
+ACTION NRunPressureOpenLoop: #BEGIN_EDIT_BLOCK
+(**************************************** WARNING ********************************************
+ *** The KEBA Kemro K2 System including software is not intended for safety control tasks! ***
+ ***                       For further information see Comment tab!                        ***
+ *********************************************************************************************)
+
+
+abAdjustForceOpenLoop.aRun(bStop := g_MoveCtrl.bStop OR NOT mbAutoAdjustAllowed,
+                           DeviceIdMoldHeight := DeviceIdMoldHeight,
+                           DeviceIdMold := DeviceIdMold,
+                           MoldHeightAdjustMode := nPressureOpenLoop);
+
+;#END_EDIT_BLOCK END_ACTION (*NRunPressureOpenLoop*)
+(* end sfc-code *)
+
+
+END_ALGORITHM
+
+PROCESS_ALGORITHM paCheckConditions ON TaskMid
+
+
+VAR_TEMP
+ bImpulseValid : BOOL;
+END_VAR
+
+VAR
+ fbTSupervisionTime : TON;
+END_VAR
+#BEGIN_EDIT_BLOCK
+(**************************************** WARNING ********************************************
+ *** The KEBA Kemro K2 System including software is not intended for safety control tasks! ***
+ ***                       For further information see Comment tab!                        ***
+ *********************************************************************************************)
+
+//Reset all alarms and the supervision timer at the start of mold height automatic adjustment.
+IF mbInit THEN
+    fbTSupervisionTime(IN := FALSE,
+                       PT := sv_dMaxMoldHeightAdjustTime);
+    mbInit := FALSE;
+END_IF;
+
+//Call the supervision timer cyclic and write the acutal time to a systemvariable.
+fbTSupervisionTime(IN := TRUE);
+sv_dActMoldHeightAdjustTime := fbTSupervisionTime.ET;
+
+// only check when not in electric mode
+bImpulseValid := sv_MoldHeightSetPosMeasurement.bDistancePerImpulseValid OR 
+                 sv_MoldHeightAdjustMode = nElectricWithMoldPos OR
+                 sv_MoldHeightAdjustMode = nForceOpenLoop OR
+                 sv_MoldHeightAdjustMode = nDirectLock OR
+                 sv_MoldHeightAdjustMode = nPressureOpenLoop;
+
+IF (sv_OperationMode = nSetup) AND 
+    bImpulseValid AND
+    NOT fbTSupervisionTime.Q AND
+    NOT sv_MoldHeightEndpoints.bLimitSwitchArrivedMin AND
+    NOT sv_MoldHeightEndpoints.bLimitSwitchArrivedMax THEN
+    
+    mbAutoAdjustAllowed := TRUE;
+
+ELSE
+   //If the conditions are not fulfilled the allowed flag is set to false
+   //and an according alarm is set   
+    mbAutoAdjustAllowed := FALSE;
+    
+    IF sv_OperationMode <> nSetup THEN
+         SET_ALARM(Name := erSetupModeRequiredForAdjust,
+                   SubID1 := sv_DeviceId.CompId);
+    END_IF;
+    IF NOT bImpulseValid THEN
+         SET_ALARM(erDistPerImpNotValid);       
+    END_IF;  
+    IF fbTSupervisionTime.Q THEN
+         SET_ALARM(erMaxMoldHeightAdjTimeExc);
+    END_IF;
+    IF sv_MoldHeightEndpoints.bLimitSwitchArrivedMin OR sv_MoldHeightEndpoints.bLimitSwitchArrivedMax THEN
+         SET_ALARM(erLimitSwitchCanceledAutoAdj);
+    END_IF;
+    
+    STOP_PROCESS_ALGORITHM();
+    
+END_IF;
+                      
+
+
+
+
+;#END_EDIT_BLOCK END_ALGORITHM
+
+(*
+This algo works like this:
+- check various conditions for mold height automatic adjust movement,
+  such as:  operation mode, valid position measurement calibration for mold height,
+            supervision time, limit switch endpoints
+- indicate that mold height automatic adjustment is active
+- start the special mold height adjustment mode control blocks according to the mode which is set
+  AND waiting for their finished/ready flag.
+- indicate the final status of mold height adjustment
+*)
+
+PROCESS_ALGORITHM paRun2Platen ON TaskMid
+
+
+VAR_TEMP
+ b : BOOL;
+END_VAR
+
+VAR
+ abAdjust2Platen : ABAdjust2Platen;
+END_VAR
+
+(* IecGraph-Code *)
+
+(* init step *)
+INITIAL_STEP S_Start:
+Action13 (P);
+END_STEP
+
+ACTION Action13: #BEGIN_EDIT_BLOCK
+b := WRITE_SV_DIRECT(sv_bDeviceStart, sv_bFALSE);
+
+;#END_EDIT_BLOCK END_ACTION (*Action13*)
+
+(* steps *)
+STEP S_ReadyToAdjust:
+SetResetFlags (P);
+END_STEP
+
+ACTION SetResetFlags: #BEGIN_EDIT_BLOCK
+sv_bMoldHeightAutoAdjFinished := FALSE;
+sv_bAutoMoldHeightAdjustActive := TRUE;
+
+;#END_EDIT_BLOCK END_ACTION (*SetResetFlags*)
+STEP POS_CHANGE:
+ARunAdjustment (N);
+END_STEP
+
+STEP READY:
+ResetMovementFlags (P);
+END_STEP
+
+ACTION ResetMovementFlags: #BEGIN_EDIT_BLOCK
+g_MoveCtrl.bReady := TRUE;
+sv_bAutoMoldHeightAdjustActive := FALSE;
+mbInit := TRUE;
+
+STOP_PROCESS_ALGORITHM(paCheckConditions2Platen);
+STOP_PROCESS_ALGORITHM();
+
+;#END_EDIT_BLOCK END_ACTION (*ResetMovementFlags*)
+
+(* transitions *)
+TRANSITION TConditionsOK (* ConditionsOK *) FROM S_Start TO S_ReadyToAdjust :=  #BEGIN_EDIT_BLOCK
+mbAutoAdjustAllowed AND (NOT g_MoveCtrl.bStop)
+;#END_EDIT_BLOCK
+END_TRANSITION
+
+TRANSITION TConditionsNotOk (* ConditionsNotOk *) FROM S_Start TO READY :=  #BEGIN_EDIT_BLOCK
+NOT mbAutoAdjustAllowed OR g_MoveCtrl.bStop
+;#END_EDIT_BLOCK
+END_TRANSITION
+
+TRANSITION TStartAdjust (* CheckAdjMode2 *) FROM S_ReadyToAdjust TO POS_CHANGE :=  #BEGIN_EDIT_BLOCK
+TRUE
+;#END_EDIT_BLOCK
+END_TRANSITION
+
+TRANSITION TAdjustReady (* PosChangeReady *) FROM POS_CHANGE TO READY :=  #BEGIN_EDIT_BLOCK
+abAdjust2Platen.aRun.bReady
+;#END_EDIT_BLOCK
+END_TRANSITION
+
+TRANSITION TLoopBack (* TLoopBack *) FROM READY TO S_Start :=  #BEGIN_EDIT_BLOCK
+TRUE
+;#END_EDIT_BLOCK
+END_TRANSITION
+
+(* end IecGraph-Code *)
+(* sfc-code *)
+
+(* stand alone actions *)
+ACTION ARunAdjustment: #BEGIN_EDIT_BLOCK
+(**************************************** WARNING ********************************************
+ *** The KEBA Kemro K2 System including software is not intended for safety control tasks! ***
+ ***                       For further information see Comment tab!                        ***
+ *********************************************************************************************)
+
+abAdjust2Platen.aRun(bStop := g_MoveCtrl.bStop OR NOT mbAutoAdjustAllowed);
+
+
+;#END_EDIT_BLOCK END_ACTION (*ARunAdjustment*)
+(* end sfc-code *)
+
+
+END_ALGORITHM
+
+PROCESS_ALGORITHM paCheckConditions2Platen ON TaskMid
+
+
+VAR_TEMP
+ iTieBar : INT;
+END_VAR
+
+VAR
+ fbTSupervisionTime : TON;
+ bTieBarsInRange : BOOL;
+END_VAR
+#BEGIN_EDIT_BLOCK
+(**************************************** WARNING ********************************************
+ *** The KEBA Kemro K2 System including software is not intended for safety control tasks! ***
+ ***                       For further information see Comment tab!                        ***
+ *********************************************************************************************)
+
+//Reset all alarms and the supervision timer at the start of mold height automatic adjustment.
+IF mbInit THEN
+   fbTSupervisionTime(IN := FALSE,
+                      PT := sv_dMaxMoldHeightAdjustTime);
+   mbInit := FALSE;
+END_IF;
+
+//Call the supervision timer cyclic and write the acutal time to a systemvariable.
+fbTSupervisionTime(IN := TRUE);
+sv_dActMoldHeightAdjustTime := fbTSupervisionTime.ET;
+
+//check if tiebars are not outside the range
+bTieBarsInRange := TRUE;
+FOR iTieBar := 1 TO 4 DO
+   IF (sv_TieBarPosition[iTieBar] < sv_rTieBarMinPos) OR (sv_TieBarPosition[iTieBar] > sv_rTieBarMaxPos) THEN
+      SET_ALARM(Name := erTieBarOutOfRange,
+                SubID1 := iTieBar);
+      bTieBarsInRange := FALSE;
+   END_IF;
+END_FOR;
+
+IF (sv_OperationMode = nSetup) AND (NOT fbTSupervisionTime.Q) AND bTieBarsInRange THEN    
+   mbAutoAdjustAllowed := TRUE;
+ELSE
+   //If the conditions are not fulfilled the allowed flag is set to false
+   //and an according alarm is set   
+   mbAutoAdjustAllowed := FALSE;
+   
+   IF sv_OperationMode <> nSetup THEN
+      SET_ALARM(Name := erSetupModeRequiredForAdjust,
+                SubID1 := sv_DeviceId.CompId);
+   END_IF;
+   
+   IF fbTSupervisionTime.Q THEN
+      SET_ALARM(erMaxMoldHeightAdjTimeExc);
+   END_IF;
+      
+   STOP_PROCESS_ALGORITHM();
+    
+END_IF;
+                      
+
+
+
+
+;#END_EDIT_BLOCK END_ALGORITHM
+
+(*
+Mold height auto adjustment button led is enabled when clamp force is changed enough
+for adjusting at least one step
+*)
+
+POSTUPDATE_ALGORITHM pClampForceChanged ON PU_Task_7 WITH sv_MoldHeightAdjustMode,sv_ClampForce
+
+
+VAR
+ tmp : DINT;
+ rMinclampForceChange : REAL := 0.5 (* minimum value, that clamp force has to change before auto adjust led blinks *);
+ bInitDone : BOOL := FALSE;
+ bLedAutoAdjustExists : BOOL := FALSE;
+END_VAR
+#BEGIN_EDIT_BLOCK
+(**************************************** WARNING ********************************************
+ *** The KEBA Kemro K2 System including software is not intended for safety control tasks! ***
+ ***                       For further information see Comment tab!                        ***
+ *********************************************************************************************)
+
+IF NOT bInitDone THEN
+   IF IS_LINKED(sv_bLedAutoAdjust) THEN
+      bLedAutoAdjustExists := TRUE;
+   ELSE
+      bLedAutoAdjustExists := FALSE;
+   END_IF;    
+   bInitDone := TRUE;
+END_IF;
+
+IF g_b2Platen THEN
+   RETURN;  //do not execute on 2 platen IMM´s
+END_IF;
+
+IF sv_MoldHeightAdjustMode = nPositionSetTonnage THEN
+   abCalculateMoldHeightImpulses.aInit(Lintab := sv_ClampForceLintabImpulses);
+   abCalculateMoldHeightImpulses.aCalc(rForce := sv_ClampForce.rActualClampForce);
+   tmp := abCalculateMoldHeightImpulses.aCalc.iImpulses;
+   
+   abCalculateMoldHeightImpulses.aCalc(rForce := sv_ClampForce.rSetClampForce);
+   IF tmp <> abCalculateMoldHeightImpulses.aCalc.iImpulses THEN
+      //turn on led
+      sv_bHMILedAutoAdjust := TRUE;
+   ELSE
+      //turn off led 
+      sv_bHMILedAutoAdjust := FALSE;
+   END_IF;       
+
+   IF bLedAutoAdjustExists THEN
+   sv_bLedAutoAdjust := sv_bHMILedAutoAdjust;
+   END_IF;
+   
+ELSIF sv_MoldHeightAdjustMode = nElectricWithMoldPos THEN
+   IF ABS(sv_ClampForce.rActualClampForce - sv_ClampForce.rSetClampForce)> rMinclampForceChange THEN
+      sv_bHMILedAutoAdjust := TRUE;
+   ELSE
+      sv_bHMILedAutoAdjust := FALSE;   
+   END_IF;
+
+   IF bLedAutoAdjustExists THEN  
+      sv_bLedAutoAdjust := sv_bHMILedAutoAdjust;
+   END_IF;  
+END_IF;
+
+
+;#END_EDIT_BLOCK END_ALGORITHM
+
+EVENT_ALGORITHM evaMoveTimeout ON EV_Task_7 WITH evMoveTimeout
+
+
+VAR_INPUT
+ evAlarmData : ALARM_EVENT_DATA;
+END_VAR
+
+VAR
+ fbLockUnlock : FBLockUnlock;
+END_VAR
+#BEGIN_EDIT_BLOCK
+(**************************************** WARNING ********************************************
+ *** The KEBA Kemro K2 System including software is not intended for safety control tasks! ***
+ ***                       For further information see Comment tab!                        ***
+ *********************************************************************************************)
+
+fbLockUnlock(DeviceId := sv_DeviceId, MoveDir := cMoveAll, MoveId := cMoveAll, Mode := nLockAbort);
+
+
+
+;#END_EDIT_BLOCK END_ALGORITHM
+
+EVENT_ALGORITHM evaMoveTimeoutReset ON EV_Task_7 WITH evMoveTimeoutReset
+
+
+VAR_INPUT
+ evAlarmData : ALARM_EVENT_DATA;
+END_VAR
+
+VAR
+ fbLockUnlock : FBLockUnlock;
+END_VAR
+#BEGIN_EDIT_BLOCK
+(**************************************** WARNING ********************************************
+ *** The KEBA Kemro K2 System including software is not intended for safety control tasks! ***
+ ***                       For further information see Comment tab!                        ***
+ *********************************************************************************************)
+
+fbLockUnlock(DeviceId := sv_DeviceId, MoveDir := cMoveAll, MoveId := cMoveAll, Mode := nUnlock);
+
+
+;#END_EDIT_BLOCK END_ALGORITHM
+
+POSTUPDATE_ALGORITHM pCheckOption ON PU_Task_7 WITH sv_bInitStart
+
+
+VAR
+ s : KSYS_Status;
+ pMoldOptions : REFTO tOptionId;
+END_VAR
+#BEGIN_EDIT_BLOCK
+(**************************************** WARNING ********************************************
+ *** The KEBA Kemro K2 System including software is not intended for safety control tasks! ***
+ ***                       For further information see Comment tab!                        ***
+ *********************************************************************************************)
+
+pMoldOptions := GET_SYNC_REFTO('Mold1.sv_Options', T#0s, s);
+IF s = KSYS_Status_OK THEN
+   g_bDirectLock := (pMoldOptions^ AND cSubOptionMoldDirectLock) = cSubOptionMoldDirectLock;
+   g_b2Platen := (pMoldOptions^ AND cSubOptionMold2Platen) = cSubOptionMold2Platen;
+END_IF;
+
+
+
+;#END_EDIT_BLOCK END_ALGORITHM
+
+POSTUPDATE_ALGORITHM pInit ON PU_Task_7 WITH sv_bInitDone,sv_MoldHeightAdjustMode
+
+#BEGIN_EDIT_BLOCK
+(**************************************** WARNING ********************************************
+ *** The KEBA Kemro K2 System including software is not intended for safety control tasks! ***
+ ***                       For further information see Comment tab!                        ***
+ *********************************************************************************************)
+
+IF g_bDirectLock THEN
+   sv_MoldHeightAdjustMode := nDirectLock;
+END_IF;
+ 
+
+
+;#END_EDIT_BLOCK END_ALGORITHM
+
+
+
+END_ALGORITHM_BLOCK
+
+
+
+#END_OF_IEC_PART
+
+@Puma @IecEditor 6 114 @Pou 25 
+@@@BEG_Comment@@@
+@h    ! WARNING !
+@h    The Kemro K2 system (including software) only meets category B according to EN 954-1,
+@h    thus it is not intended for usage in safety-relevant control applications in the field 
+@h    of personal safety (e.g. emergency stop).
+@h    To implement potentially necessary safety-relevant control tasks, always use additional 
+@h    external safety devices that are intended for the particular purpose, and meet the necessary 
+@h    functional safety.
+@h    For further information see EN 954-1 (EN ISO 13849-1) and/or the K2-x00 user manual, chapter 
+@h    "CE conformity, directives and standards". 
+
+This algo block does the followings calls:
+
+Initially:
+Registration of MoldHeightAutomatic Adjustment to the sv_MovementsAvailable
+
+PostUpdate on MovementStart:
+Starting the control algo for different mold height adjustment modes.
+@@@END_Comment@@@
+
+@BEG_Contents 
+
+@BEG_Func 
+@RT(17)FuncTreeContainer 
+2 
+@Var @RT(9)SET_ALARM @RT(0) @T @T @DERIVED 0 @F @RT(23)KEBA_STANDARD_PROCEDURE @F 
+@T 
+@BEG_Attrib 
+0 @RT(0) @RT(0) 
+@END_Attrib 
+1 1 @F @F @F @F 
+
+@Var @RT(14)GET_SYNC_REFTO @RT(0) @T @T @DERIVED 0 @F @RT(22)KEBA_STANDARD_FUNCTION @F 
+@T 
+@BEG_Attrib 
+0 @RT(0) @RT(0) 
+@END_Attrib 
+1 1 @F @F @F @F 
+
+@END_Func 
+
+@BEG_Const 
+@RT(18)ConstTreeContainer 
+19 
+@Var @RT(20)cLockGroupMoldHeight @RT(0) @T @F @DT @RT(4)DINT @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+0 @RT(2)66 @RT(8)Members: 
+@END_Attrib 
+1 1 @F @F @F @F 
+
+@Var @RT(24)cLockGroupSafetyGateMold @RT(0) @T @F @DT @RT(4)DINT @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+0 @RT(2)61 @RT(73)Members: Mold Close, Mold Hight Forward, Auto Mold Hight, Core In, Inject 
+@END_Attrib 
+1 1 @F @F @F @F 
+
+@Var @RT(19)cLockGroupNozzleFwd @RT(0) @T @F @DT @RT(4)DINT @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+0 @RT(2)68 @RT(8)Members: 
+@END_Attrib 
+1 1 @F @F @F @F 
+
+@Var @RT(15)cLockGroupMotor @RT(0) @T @F @DT @RT(4)DINT @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+0 @RT(2)69 @RT(56)Members: Mold, Ejector, Cores, Injection, Plast, Purge,  
+@END_Attrib 
+1 1 @F @F @F @F 
+
+@Var @RT(15)nPositionChange @RT(0) @T @T @DERIVED 0 @F @RT(22)tnMoldHeightAdjustMode @F 
+@T 
+@BEG_Attrib 
+0 @RT(1)0 @RT(61)position dependend adjustment (just move to another position) 
+@END_Attrib 
+1 1 @F @F @F @F 
+
+@Var @RT(19)nPositionSetTonnage @RT(0) @T @T @DERIVED 0 @F @RT(22)tnMoldHeightAdjustMode @F 
+@T 
+@BEG_Attrib 
+0 @RT(1)2 @RT(77)position dependend adjustment (known relation between increments and tonnage) 
+@END_Attrib 
+1 1 @F @F @F @F 
+
+@Var @RT(14)nForceOpenLoop @RT(0) @T @T @DERIVED 0 @F @RT(22)tnMoldHeightAdjustMode @F 
+@T 
+@BEG_Attrib 
+0 @RT(1)1 @RT(85)pressure dependend adjustment (calculating a pressure value depending on force table) 
+@END_Attrib 
+1 1 @F @F @F @F 
+
+@Var @RT(16)nForceClosedLoop @RT(0) @T @T @DERIVED 0 @F @RT(22)tnMoldHeightAdjustMode @F 
+@T 
+@BEG_Attrib 
+0 @RT(1)3 @RT(65)pressure dependend adjustment (sensing the force inside the mold) 
+@END_Attrib 
+1 1 @F @F @F @F 
+
+@Var @RT(20)nElectricWithMoldPos @RT(0) @T @T @DERIVED 0 @F @RT(22)tnMoldHeightAdjustMode @F 
+@T 
+@BEG_Attrib 
+0 @RT(1)4 @RT(32)mold position dependent movement 
+@END_Attrib 
+1 1 @F @F @F @F 
+
+@Var @RT(11)nDirectLock @RT(0) @T @T @DERIVED 0 @F @RT(22)tnMoldHeightAdjustMode @F 
+@T 
+@BEG_Attrib 
+0 @RT(1)5 @RT(58)mold position dependent movement with standstill detection 
+@END_Attrib 
+1 1 @F @F @F @F 
+
+@Var @RT(15)cCompMoldHeight @RT(0) @T @F @DT @RT(4)DINT @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+0 @RT(3)124 @RT(21)Component Mold Height 
+@END_Attrib 
+1 1 @F @F @F @F 
+
+@Var @RT(9)cCompMold @RT(0) @T @F @DT @RT(4)DINT @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+0 @RT(3)101 @RT(14)Component Mold 
+@END_Attrib 
+1 1 @F @F @F @F 
+
+@Var @RT(6)nSetup @RT(0) @T @T @DERIVED 0 @F @RT(15)tnOperationMode @F 
+@T 
+@BEG_Attrib 
+0 @RT(1)0 @RT(36)Setup mode only for service engineer 
+@END_Attrib 
+1 1 @F @F @F @F 
+
+@Var @RT(8)cMoveAll @RT(0) @T @F @DT @RT(4)DINT @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+0 @RT(13)cMaxMoveIdent @RT(32)all movements (for evLockUnlock) 
+@END_Attrib 
+1 1 @F @F @F @F 
+
+@Var @RT(10)nLockAbort @RT(0) @T @T @DERIVED 0 @F @RT(12)tnLockUnlock @F 
+@T 
+@BEG_Attrib 
+0 @RT(1)0 @RT(0) 
+@END_Attrib 
+1 1 @F @F @F @F 
+
+@Var @RT(7)nUnlock @RT(0) @T @T @DERIVED 0 @F @RT(12)tnLockUnlock @F 
+@T 
+@BEG_Attrib 
+0 @RT(1)2 @RT(0) 
+@END_Attrib 
+1 1 @F @F @F @F 
+
+@Var @RT(14)KSYS_Status_OK @RT(0) @T @T @DERIVED 0 @F @RT(11)KSYS_Status @F 
+@T 
+@BEG_Attrib 
+0 @RT(1)1 @RT(0) 
+@END_Attrib 
+1 1 @F @F @F @F 
+
+@Var @RT(24)cSubOptionMoldDirectLock @RT(0) @T @F @DT @RT(5)DWORD @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+0 @RT(6)16#200 @RT(19)Mold is direct lock 
+@END_Attrib 
+1 1 @F @F @F @F 
+
+@Var @RT(25)cLockGroupRotateInjectPos @RT(0) @T @F @DT @RT(4)DINT @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+0 @RT(2)72 @RT(8)Members: 
+@END_Attrib 
+1 1 @F @F @F @F 
+
+@END_Const 
+
+@BEG_Export 
+
+@BEG_Kind 
+@ALGORITHM_BLOCK @RT(21)ABMoldHeightAutoAdmin @STRUCTURED_TEXT 
+@RT(0) @RT(0) @RT(0) 
+@END_Kind 
+
+@BEG_Dcl 
+@RT(16)DclTreeContainer 
+37 
+@Var @RT(13)sv_bInitStart @RT(0) @T @F @DT @RT(4)BOOL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 8 @F @F @F @F 
+
+@Var @RT(21)sv_MoveMoldHeightAuto @RT(0) @T @T @DERIVED 0 @T @T @DT @RT(10)tsMoveData @RT(0) @T @T @UNKNOWN 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 8 @F @F @F @F 
+
+@Var @RT(30)sv_bAutoMoldHeightAdjustActive @RT(0) @T @F @DT @RT(4)BOOL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(46)is TRUE when auto mold height adjust is acitve @RT(0) 
+@END_Attrib 
+1 8 @F @F @F @F 
+
+@Var @RT(30)sv_MoldHeightSetPosMeasurement @RT(0) @T @T @DERIVED 0 @T @T @DT @RT(31)tsMoldHeightSetupPosMeasurement @RT(0) @T @T @UNKNOWN 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 8 @F @F @F @F 
+
+@Var @RT(22)sv_MoldHeightEndpoints @RT(0) @T @T @DERIVED 0 @T @T @DT @RT(17)tsEndpointMonitor @RT(0) @T @T @UNKNOWN 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 8 @F @F @F @F 
+
+@Var @RT(23)sv_MoldHeightAdjustMode @RT(0) @T @T @DERIVED 0 @T @T @DT @RT(22)tnMoldHeightAdjustMode @RT(0) @T @T @UNKNOWN 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 8 @F @F @F @F 
+
+@Var @RT(11)sv_DeviceId @RT(0) @T @T @DERIVED 0 @T @T @DT @RT(10)tsDeviceId @RT(0) @T @T @UNKNOWN 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 8 @F @F @F @F 
+
+@Var @RT(15)sv_bDeviceStart @RT(0) @T @F @DT @RT(4)BOOL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 8 @F @F @F @F 
+
+@Var @RT(16)sv_OperationMode @RT(0) @T @T @DERIVED 0 @T @T @DT @RT(15)tnOperationMode @RT(0) @T @T @UNKNOWN 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 8 @F @F @F @F 
+
+@Var @RT(27)sv_dActMoldHeightAdjustTime @RT(0) @T @F @DT @RT(4)TIME @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 8 @F @F @F @F 
+
+@Var @RT(27)sv_dMaxMoldHeightAdjustTime @RT(0) @T @F @DT @RT(4)TIME @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 8 @F @F @F @F 
+
+@Var @RT(27)sv_ClampForceLintabImpulses @RT(0) @T @T @DERIVED 0 @T @T @DT @RT(16)KAPPL_LintabData @RT(0) @T @T @UNKNOWN 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 8 @F @F @F @F 
+
+@Var @RT(17)sv_bLedAutoAdjust @RT(0) @T @F @DT @RT(4)BOOL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 8 @F @F @F @F 
+
+@Var @RT(20)sv_bHMILedAutoAdjust @RT(0) @T @F @DT @RT(4)BOOL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 8 @F @F @F @F 
+
+@Var @RT(13)sv_ClampForce @RT(0) @T @T @DERIVED 0 @T @T @DT @RT(13)tsClampForces @RT(0) @T @T @UNKNOWN 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 8 @F @F @F @F 
+
+@Var @RT(29)sv_bMoldHeightAutoAdjFinished @RT(0) @T @F @DT @RT(4)BOOL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 8 @F @F @F @F 
+
+@Var @RT(12)sv_bInitDone @RT(0) @T @F @DT @RT(4)BOOL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 8 @F @F @F @F 
+
+@Var @RT(9)PU_Task_7 @RT(0) @T @F @DT @RT(4)TASK @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 7 @F @F @F @F 
+
+@Var @RT(28)erLimitSwitchCanceledAutoAdj @RT(0) @T @F @DT @RT(5)ALARM @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 7 @F @F @F @F 
+
+@Var @RT(28)erSetupModeRequiredForAdjust @RT(0) @T @F @DT @RT(5)ALARM @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 7 @F @F @F @F 
+
+@Var @RT(20)erDistPerImpNotValid @RT(0) @T @F @DT @RT(5)ALARM @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 7 @F @F @F @F 
+
+@Var @RT(25)erMaxMoldHeightAdjTimeExc @RT(0) @T @F @DT @RT(5)ALARM @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 7 @F @F @F @F 
+
+@Var @RT(7)TaskMid @RT(0) @T @F @DT @RT(4)TASK @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 7 @F @F @F @F 
+
+@Var @RT(13)evMoveTimeout @RT(0) @T @T @DERIVED 0 @T @T @DT @RT(11)ALARM_EVENT @RT(0) @T @T @UNKNOWN 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 7 @F @F @F @F 
+
+@Var @RT(18)evMoveTimeoutReset @RT(0) @T @T @DERIVED 0 @T @T @DT @RT(11)ALARM_EVENT @RT(0) @T @T @UNKNOWN 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 7 @F @F @F @F 
+
+@Var @RT(9)EV_Task_7 @RT(0) @T @F @DT @RT(4)TASK @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 7 @F @F @F @F 
+
+@Var @RT(10)g_MoveCtrl @RT(0) @T @T @DERIVED 0 @T @T @DT @RT(10)tsMoveCtrl @RT(0) @T @T @UNKNOWN 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 6 @F @F @F @F 
+
+@Var @RT(29)abCalculateMoldHeightImpulses @RT(0) @T @T @DERIVED 0 @T @T @DT @RT(29)ABCalculateMoldHeightImpulses @RT(0) @T @T @UNKNOWN 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(6)mbInit @RT(0) @T @F @DT @RT(4)BOOL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(4)TRUE @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(19)mbAutoAdjustAllowed @RT(0) @T @F @DT @RT(4)BOOL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(13)g_bDirectLock @RT(0) @T @F @DT @RT(4)BOOL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 6 @F @F @F @F 
+
+@Var @RT(10)g_b2Platen @RT(0) @T @F @DT @RT(4)BOOL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 6 @F @F @F @F 
+
+@Var @RT(9)sv_bFALSE @RT(0) @T @F @DT @RT(4)BOOL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 8 @F @F @F @F 
+
+@Var @RT(17)sv_TieBarPosition @RT(0) @T @T @DERIVED 0 @T @T @DT @RT(16)tyTieBarPosition @RT(0) @T @T @UNKNOWN 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(41)array with actual position of the tiebars @RT(0) 
+@END_Attrib 
+1 8 @F @F @F @F 
+
+@Var @RT(16)sv_rTieBarMinPos @RT(0) @T @F @DT @RT(4)REAL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 8 @F @F @F @F 
+
+@Var @RT(16)sv_rTieBarMaxPos @RT(0) @T @F @DT @RT(4)REAL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 8 @F @F @F @F 
+
+@Var @RT(18)erTieBarOutOfRange @RT(0) @T @F @DT @RT(5)ALARM @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 7 @F @F @F @F 
+
+@END_Dcl 
+
+@END_Export 
+
+@BEG_Body 
+
+11 
+
+@BEG_Export 
+
+@BEG_Algo 
+@POSTUPDATE_ALGORITHM @RT(12)pDeviceStart @STRUCTURED_TEXT 
+@RT(0) @RT(15)sv_bDeviceStart @RT(9)PU_Task_7 @F @F 
+@END_Algo 
+
+@BEG_Dcl 
+@RT(16)DclTreeContainer 
+0 
+@END_Dcl 
+
+@END_Export 
+
+@BEG_Export 
+
+@BEG_Algo 
+@POSTUPDATE_ALGORITHM @RT(9)aRegister @STRUCTURED_TEXT 
+@RT(0) @RT(13)sv_bInitStart @RT(9)PU_Task_7 @F @F 
+@END_Algo 
+
+@BEG_Dcl 
+@RT(16)DclTreeContainer 
+1 
+@Var @RT(18)abMovementRegister @RT(0) @T @T @DERIVED 0 @T @T @DT @RT(18)ABMovementRegister @RT(0) @T @T @UNKNOWN 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@END_Dcl 
+
+@END_Export 
+
+@BEG_Export 
+
+@BEG_Algo 
+@PROCESS_ALGORITHM @RT(5)paRun @SEQUENTIAL_FLOW_CHART 
+@RT(0) @RT(0) @RT(7)TaskMid @F @F 
+@END_Algo 
+
+@BEG_Dcl 
+@RT(16)DclTreeContainer 
+12 
+@Var @RT(6)bReady @RT(0) @T @F @DT @RT(4)BOOL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(22)abAdjustPositionChange @RT(0) @T @T @DERIVED 0 @T @T @DT @RT(22)ABAdjustPositionChange @RT(0) @T @T @UNKNOWN 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(21)abAdjustForceOpenLoop @RT(0) @T @T @DERIVED 0 @T @T @DT @RT(21)ABAdjustForceOpenLoop @RT(0) @T @T @UNKNOWN 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(21)abAdjustPosSetTonnage @RT(0) @T @T @DERIVED 0 @T @T @DT @RT(21)ABAdjustPosSetTonnage @RT(0) @T @T @UNKNOWN 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(27)abAdjustPosSetTonnageDetect @RT(0) @T @T @DERIVED 0 @T @T @DT @RT(27)ABAdjustPosSetTonnageDetect @RT(0) @T @T @UNKNOWN 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(18)DeviceIdMoldHeight @RT(0) @T @T @DERIVED 0 @T @T @DT @RT(10)tsDeviceId @RT(0) @T @T @UNKNOWN 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(12)DeviceIdMold @RT(0) @T @T @DERIVED 0 @T @T @DT @RT(10)tsDeviceId @RT(0) @T @T @UNKNOWN 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(15)bRedoMoldHeight @RT(0) @T @F @DT @RT(4)BOOL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(12)rSetImpulses @RT(0) @T @F @DT @RT(4)DINT @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(16)abAdjustElectric @RT(0) @T @T @DERIVED 0 @T @T @DT @RT(16)ABAdjustElectric @RT(0) @T @T @UNKNOWN 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(18)abAdjustDirectLock @RT(0) @T @T @DERIVED 0 @T @T @DT @RT(18)ABAdjustDirectLock @RT(0) @T @T @UNKNOWN 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(1)b @RT(0) @T @F @DT @RT(4)BOOL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 4 @F @F @F @F 
+
+@END_Dcl 
+
+@END_Export 
+
+@BEG_Export 
+
+@BEG_Algo 
+@PROCESS_ALGORITHM @RT(17)paCheckConditions @STRUCTURED_TEXT 
+@RT(0) @RT(0) @RT(7)TaskMid @F @F 
+@END_Algo 
+
+@BEG_Dcl 
+@RT(16)DclTreeContainer 
+2 
+@Var @RT(13)bImpulseValid @RT(0) @T @F @DT @RT(4)BOOL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 4 @F @F @F @F 
+
+@Var @RT(18)fbTSupervisionTime @RT(0) @T @T @DERIVED 0 @T @T @DT @RT(3)TON @RT(0) @T @T @UNKNOWN 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@END_Dcl 
+
+@END_Export 
+
+@BEG_Export 
+
+@BEG_Algo 
+@PROCESS_ALGORITHM @RT(12)paRun2Platen @SEQUENTIAL_FLOW_CHART 
+@RT(0) @RT(0) @RT(7)TaskMid @F @F 
+@END_Algo 
+
+@BEG_Dcl 
+@RT(16)DclTreeContainer 
+2 
+@Var @RT(1)b @RT(0) @T @F @DT @RT(4)BOOL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 4 @F @F @F @F 
+
+@Var @RT(15)abAdjust2Platen @RT(0) @T @T @DERIVED 0 @T @T @DT @RT(15)ABAdjust2Platen @RT(0) @T @T @UNKNOWN 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@END_Dcl 
+
+@END_Export 
+
+@BEG_Export 
+
+@BEG_Algo 
+@PROCESS_ALGORITHM @RT(24)paCheckConditions2Platen @STRUCTURED_TEXT 
+@RT(0) @RT(0) @RT(7)TaskMid @F @F 
+@END_Algo 
+
+@BEG_Dcl 
+@RT(16)DclTreeContainer 
+3 
+@Var @RT(18)fbTSupervisionTime @RT(0) @T @T @DERIVED 0 @T @T @DT @RT(3)TON @RT(0) @T @T @UNKNOWN 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(7)iTieBar @RT(0) @T @F @DT @RT(3)INT @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 4 @F @F @F @F 
+
+@Var @RT(15)bTieBarsInRange @RT(0) @T @F @DT @RT(4)BOOL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@END_Dcl 
+
+@END_Export 
+
+@BEG_Export 
+
+@BEG_Algo 
+@POSTUPDATE_ALGORITHM @RT(18)pClampForceChanged @STRUCTURED_TEXT 
+@RT(0) @RT(37)sv_MoldHeightAdjustMode,sv_ClampForce @RT(9)PU_Task_7 @F @F 
+@END_Algo 
+
+@BEG_Dcl 
+@RT(16)DclTreeContainer 
+4 
+@Var @RT(3)tmp @RT(0) @T @F @DT @RT(4)DINT @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(20)rMinclampForceChange @RT(0) @T @F @DT @RT(4)REAL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(3)0.5 @RT(75)minimum value, that clamp force has to change before auto adjust led blinks @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(9)bInitDone @RT(0) @T @F @DT @RT(4)BOOL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(5)FALSE @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(20)bLedAutoAdjustExists @RT(0) @T @F @DT @RT(4)BOOL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(5)FALSE @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@END_Dcl 
+
+@END_Export 
+
+@BEG_Export 
+
+@BEG_Algo 
+@EVENT_ALGORITHM @RT(14)evaMoveTimeout @STRUCTURED_TEXT 
+@RT(0) @RT(13)evMoveTimeout @RT(9)EV_Task_7 @F @F 
+@END_Algo 
+
+@BEG_Dcl 
+@RT(16)DclTreeContainer 
+2 
+@Var @RT(11)evAlarmData @RT(0) @T @T @DERIVED 0 @T @T @DT @RT(16)ALARM_EVENT_DATA @RT(0) @T @T @UNKNOWN 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 1 @F @F @F @F 
+
+@Var @RT(12)fbLockUnlock @RT(0) @T @T @DERIVED 0 @T @T @DT @RT(12)FBLockUnlock @RT(0) @T @T @UNKNOWN 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@END_Dcl 
+
+@END_Export 
+
+@BEG_Export 
+
+@BEG_Algo 
+@EVENT_ALGORITHM @RT(19)evaMoveTimeoutReset @STRUCTURED_TEXT 
+@RT(0) @RT(18)evMoveTimeoutReset @RT(9)EV_Task_7 @F @F 
+@END_Algo 
+
+@BEG_Dcl 
+@RT(16)DclTreeContainer 
+2 
+@Var @RT(11)evAlarmData @RT(0) @T @T @DERIVED 0 @T @T @DT @RT(16)ALARM_EVENT_DATA @RT(0) @T @T @UNKNOWN 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 1 @F @F @F @F 
+
+@Var @RT(12)fbLockUnlock @RT(0) @T @T @DERIVED 0 @T @T @DT @RT(12)FBLockUnlock @RT(0) @T @T @UNKNOWN 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@END_Dcl 
+
+@END_Export 
+
+@BEG_Export 
+
+@BEG_Algo 
+@POSTUPDATE_ALGORITHM @RT(12)pCheckOption @STRUCTURED_TEXT 
+@RT(0) @RT(13)sv_bInitStart @RT(9)PU_Task_7 @F @F 
+@END_Algo 
+
+@BEG_Dcl 
+@RT(16)DclTreeContainer 
+2 
+@Var @RT(1)s @RT(0) @T @T @DERIVED 0 @T @T @DT @RT(11)KSYS_Status @RT(0) @T @T @UNKNOWN 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(12)pMoldOptions @RT(0) @T @T @REFTO 0 @F @DERIVED 0 @T @T @DT @RT(9)tOptionId @RT(0) @T @T @UNKNOWN 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@END_Dcl 
+
+@END_Export 
+
+@BEG_Export 
+
+@BEG_Algo 
+@POSTUPDATE_ALGORITHM @RT(5)pInit @STRUCTURED_TEXT 
+@RT(0) @RT(36)sv_bInitDone,sv_MoldHeightAdjustMode @RT(9)PU_Task_7 @F @F 
+@END_Algo 
+
+@BEG_Dcl 
+@RT(16)DclTreeContainer 
+0 
+@END_Dcl 
+
+@END_Export 
+
+@BEG_Body 
+@TL(16)
+(**************************************** WARNING ********************************************
+ *** The KEBA Kemro K2 System including software is not intended for safety control tasks! ***
+ ***                       For further information see Comment tab!                        ***
+ *********************************************************************************************)
+
+IF sv_bDeviceStart THEN
+   mbAutoAdjustAllowed := TRUE;
+   IF g_b2Platen THEN
+      START_PROCESS_ALGORITHM(paCheckConditions2Platen);
+      START_PROCESS_ALGORITHM(paRun2Platen);
+   ELSE
+      START_PROCESS_ALGORITHM(paCheckConditions);
+      START_PROCESS_ALGORITHM(paRun);
+   END_IF;
+END_IF;
+
+@END_Body 
+
+@@@BEG_Comment@@@ 
+@TL(1)
+Starts the algo paRun when sv_bDeviceStart is set by ABControl.
+@@@END_Comment@@@ 
+
+@BEG_Body 
+@TL(18)
+(**************************************** WARNING ********************************************
+ *** The KEBA Kemro K2 System including software is not intended for safety control tasks! ***
+ ***                       For further information see Comment tab!                        ***
+ *********************************************************************************************)
+
+// movement registration
+sv_MoveMoldHeightAuto.LockGroups[1] := cLockGroupMoldHeight;
+sv_MoveMoldHeightAuto.LockGroups[2] := cLockGroupSafetyGateMold;
+sv_MoveMoldHeightAuto.LockGroups[3] := cLockGroupNozzleFwd;
+sv_MoveMoldHeightAuto.LockGroups[4] := cLockGroupMotor;
+sv_MoveMoldHeightAuto.LockGroups[5] := cLockGroupRotateInjectPos;
+
+sv_MoveMoldHeightAuto.pbPosReached := @sv_bMoldHeightAutoAdjFinished;
+sv_MoveMoldHeightAuto.sIconPath := CONCAT(GET_MY_FU_NAME(), "\hmi\images\movMoldAdjustAuto.gif");
+
+abMovementRegister.aRegister(@sv_MoveMoldHeightAuto);
+
+
+@END_Body 
+
+@@@BEG_Comment@@@ 
+@TL(1)
+Registration of MoldHeightAutomatic Adjustment to the sv_MovementsAvailable
+@@@END_Comment@@@ 
+
+@BEG_SfcBody 
+14 13 19 
+
+@BEG_SfcData 2 
+@StepSeq @RT(4)sseq @F 1 
+@Loop @RT(4)loop @F 2 
+@StepSeq @RT(4)sseq @F 5 
+@Step @RT(5)START @F @T @F @F @RT(0) @F 
+@AcbCont @RT(7)unnamed @F 2 
+@Acb @RT(8)Action13 @F @T @RT(1)P @RT(0) @F @F @T @TL(2)
+b := WRITE_SV_DIRECT(sv_bDeviceStart, sv_bFALSE);
+
+@F 
+@Acb @RT(5)AInit @F @F @RT(1)P @RT(0) @F @F @F @F 
+
+@AltBranch @RT(3)alt @F 2 
+@TransSeq @RT(4)tseq @F 1 
+@Trans @RT(12)ConditionsOK @F @T @F @F @T @T @TL(2)
+mbAutoAdjustAllowed AND (NOT g_MoveCtrl.bStop)
+
+@RT(12)ConditionsOK @F 
+
+@TransSeq @RT(4)tseq @F 2 
+@Trans @RT(15)ConditionsNotOk @F @T @F @F @T @T @TL(2)
+NOT mbAutoAdjustAllowed OR g_MoveCtrl.bStop
+
+@RT(15)ConditionsNotOk @F 
+@Goto @RT(5)READY @F @F 
+
+
+@Step @RT(21)READY_FOR_AUTO_ADJUST @F @F @F @F @RT(0) @F 
+@AcbCont @RT(7)unnamed @F 1 
+@Acb @RT(13)SetResetFlags @F @T @RT(1)P @RT(0) @F @F @T @TL(3)
+sv_bMoldHeightAutoAdjFinished := FALSE;
+sv_bAutoMoldHeightAdjustActive := TRUE;
+
+@F 
+
+@AltBranch @RT(3)alt @F 7 
+@TransSeq @RT(4)tseq @F 3 
+@Trans @RT(13)CheckAdjMode2 @F @T @F @F @T @T @TL(2)
+sv_MoldHeightAdjustMode = nPositionChange
+
+@RT(13)CheckAdjMode2 @F 
+@Step @RT(10)POS_CHANGE @F @F @F @F @RT(0) @F 
+@AcbCont @RT(7)unnamed @F 1 
+@Acb @RT(17)RunPositionChange @F @F @RT(1)N @RT(0) @F @F @F @F 
+
+@Trans @RT(14)PosChangeReady @F @T @F @F @T @T @TL(2)
+abAdjustPositionChange.aRun.bReady
+
+@RT(14)PosChangeReady @F 
+
+@TransSeq @RT(4)tseq @F 3 
+@Trans @RT(13)CheckAdjMode3 @F @T @F @F @T @T @TL(2)
+sv_MoldHeightAdjustMode = nPositionSetTonnage
+
+@RT(13)CheckAdjMode3 @F 
+@Step @RT(11)SET_TONNAGE @F @F @F @F @RT(0) @F 
+@AcbCont @RT(7)unnamed @F 2 
+@Acb @RT(11)ACheckModus @F @F @RT(1)P @RT(0) @F @F @F @F 
+@Acb @RT(13)RunSetTonnage @F @F @RT(1)N @RT(0) @F @F @F @F 
+
+@Trans @RT(15)SetTonnageReady @F @T @F @F @T @T @TL(2)
+bReady
+
+@RT(15)SetTonnageReady @F 
+
+@TransSeq @RT(4)tseq @F 3 
+@Trans @RT(13)CheckAdjMode4 @F @T @F @F @T @T @TL(2)
+sv_MoldHeightAdjustMode = nForceOpenLoop
+
+@RT(13)CheckAdjMode4 @F 
+@Step @RT(15)FORCE_OPEN_LOOP @F @F @F @F @RT(0) @F 
+@AcbCont @RT(7)unnamed @F 1 
+@Acb @RT(16)RunForceOpenLoop @F @F @RT(1)N @RT(0) @F @F @F @F 
+
+@Trans @RT(18)ForceOpenLoopReady @F @T @F @F @T @T @TL(2)
+abAdjustForceOpenLoop.aRun.bReady
+
+@RT(18)ForceOpenLoopReady @F 
+
+@TransSeq @RT(4)tseq @F 3 
+@Trans @RT(13)CheckAdjMode5 @F @T @F @F @T @T @TL(2)
+sv_MoldHeightAdjustMode = nForceClosedLoop
+
+@RT(13)CheckAdjMode5 @F 
+@Step @RT(17)FORCE_CLOSED_LOOP @F @F @F @F @RT(0) @F 
+@AcbCont @RT(7)unnamed @F 1 
+@Acb @RT(18)RunForceClosedLoop @F @F @RT(1)N @RT(0) @F @F @F @F 
+
+@Trans @RT(20)ForceClosedLoopReady @F @T @F @F @T @T @TL(2)
+bReady
+
+@RT(20)ForceClosedLoopReady @F 
+
+@TransSeq @RT(4)tseq @F 3 
+@Trans @RT(7)Trans28 @F @T @F @F @T @T @TL(2)
+sv_MoldHeightAdjustMode = nElectricWithMoldPos
+
+@RT(7)Trans28 @F 
+@Step @RT(15)ELECTRIC_LINTAB @F @F @F @F @RT(0) @F 
+@AcbCont @RT(7)unnamed @F 1 
+@Acb @RT(23)NRunElectricWithMoldPos @F @F @RT(1)N @RT(0) @F @F @F @F 
+
+@Trans @RT(7)Trans29 @F @T @F @F @T @T @TL(2)
+bReady
+
+@RT(7)Trans29 @F 
+
+@TransSeq @RT(4)tseq @F 3 
+@Trans @RT(7)Trans16 @F @T @F @F @T @T @TL(2)
+sv_MoldHeightAdjustMode = nDirectLock
+
+@RT(7)Trans16 @F 
+@Step @RT(10)DIRECTLOCK @F @F @F @F @RT(0) @F 
+@AcbCont @RT(7)unnamed @F 1 
+@Acb @RT(14)NRunDirectLock @F @F @RT(1)N @RT(0) @F @F @F @F 
+
+@Trans @RT(7)Trans17 @F @T @F @F @T @T @TL(2)
+bReady
+
+@RT(7)Trans17 @F 
+
+@TransSeq @RT(4)tseq @F 3 
+@Trans @RT(17)TPressureOpenLoop @F @T @F @F @T @T @TL(2)
+sv_MoldHeightAdjustMode = nPressureOpenLoop
+
+@RT(7)Trans16 @F 
+@Step @RT(18)PRESSURE_OPEN_LOOP @F @F @F @F @RT(0) @F 
+@AcbCont @RT(7)unnamed @F 1 
+@Acb @RT(20)NRunPressureOpenLoop @F @F @RT(1)N @RT(0) @F @F @T @F 
+
+@Trans @RT(14)TReadyPressure @F @T @F @F @T @T @TL(2)
+abAdjustForceOpenLoop.aRun.bReady
+
+@RT(7)Trans17 @F 
+
+
+@Step @RT(5)READY @F @F @T @F @RT(0) @F 
+@AcbCont @RT(7)unnamed @F 1 
+@Acb @RT(18)ResetMovementFlags @F @T @RT(1)P @RT(0) @F @F @T @TL(7)
+g_MoveCtrl.bReady := TRUE;
+sv_bAutoMoldHeightAdjustActive := FALSE;
+mbInit := TRUE;
+
+STOP_PROCESS_ALGORITHM(paCheckConditions);
+STOP_PROCESS_ALGORITHM();
+
+@F 
+
+
+@Trans @RT(9)TLoopBack @F @T @T @T @T @T @TL(2)
+TRUE
+
+@RT(9)TLoopBack @F 
+
+@END_SfcData 
+@SaActions 9 
+@SaText @RT(17)RunPositionChange 1 @TL(11)
+(**************************************** WARNING ********************************************
+ *** The KEBA Kemro K2 System including software is not intended for safety control tasks! ***
+ ***                       For further information see Comment tab!                        ***
+ *********************************************************************************************)
+
+// Start the mold height automatic position change
+// block and read back the finished/ready flag.
+abAdjustPositionChange.aRun(bStop := g_MoveCtrl.bStop OR NOT mbAutoAdjustAllowed,
+                            DeviceIdMoldHeight := DeviceIdMoldHeight);
+
+
+
+@SaText @RT(13)RunSetTonnage 1 @TL(20)
+(**************************************** WARNING ********************************************
+ *** The KEBA Kemro K2 System including software is not intended for safety control tasks! ***
+ ***                       For further information see Comment tab!                        ***
+ *********************************************************************************************)
+
+IF bRedoMoldHeight THEN
+    //do whole mold height detection
+    abAdjustPosSetTonnageDetect.aRun(bStop := g_MoveCtrl.bStop OR NOT mbAutoAdjustAllowed,
+                            DeviceIdMoldHeight := DeviceIdMoldHeight,
+                            DeviceIdMold := DeviceIdMold);
+    bReady := abAdjustPosSetTonnageDetect.aRun.bReady;                                
+ELSE
+    //only adjust clamp force
+    abAdjustPosSetTonnage.aRun(bStop := g_MoveCtrl.bStop OR NOT mbAutoAdjustAllowed,
+                                DeviceIdMoldHeight := DeviceIdMoldHeight,
+                                DeviceIdMold := DeviceIdMold);
+    bReady := abAdjustPosSetTonnage.aRun.bReady;
+    
+END_IF;
+
+
+@SaText @RT(16)RunForceOpenLoop 1 @TL(14)
+(**************************************** WARNING ********************************************
+ *** The KEBA Kemro K2 System including software is not intended for safety control tasks! ***
+ ***                       For further information see Comment tab!                        ***
+ *********************************************************************************************)
+
+// Start the mold height automatic position change
+// block and read back the finished/ready flag.
+
+abAdjustForceOpenLoop.aRun(bStop := g_MoveCtrl.bStop OR NOT mbAutoAdjustAllowed,
+                           DeviceIdMoldHeight := DeviceIdMoldHeight,
+                           DeviceIdMold := DeviceIdMold,
+                           MoldHeightAdjustMode := nForceOpenLoop);
+
+
+
+@SaText @RT(18)RunForceClosedLoop 1 @TL(7)
+(**************************************** WARNING ********************************************
+ *** The KEBA Kemro K2 System including software is not intended for safety control tasks! ***
+ ***                       For further information see Comment tab!                        ***
+ *********************************************************************************************)
+
+bReady := TRUE;
+
+
+@SaText @RT(5)AInit 1 @TL(12)
+(**************************************** WARNING ********************************************
+ *** The KEBA Kemro K2 System including software is not intended for safety control tasks! ***
+ ***                       For further information see Comment tab!                        ***
+ *********************************************************************************************)
+
+DeviceIdMoldHeight.CompId := cCompMoldHeight;
+DeviceIdMoldHeight.IndexId := 1;
+
+DeviceIdMold.CompId := cCompMold;
+DeviceIdMold.IndexId := 1;
+
+
+
+@SaText @RT(11)ACheckModus 1 @TL(16)
+(**************************************** WARNING ********************************************
+ *** The KEBA Kemro K2 System including software is not intended for safety control tasks! ***
+ ***                       For further information see Comment tab!                        ***
+ *********************************************************************************************)
+
+abCalculateMoldHeightImpulses.aInit(Lintab := sv_ClampForceLintabImpulses);
+
+abCalculateMoldHeightImpulses.aCalc(rForce := sv_ClampForce.rSetClampForce);
+rSetImpulses := abCalculateMoldHeightImpulses.aCalc.iImpulses;
+
+abCalculateMoldHeightImpulses.aCalc(rForce := sv_ClampForce.rActualClampForce);
+
+// when auto button is pressed but  clamp pressure was not changed
+// redo whole clamp height detection
+bRedoMoldHeight := (rSetImpulses = abCalculateMoldHeightImpulses.aCalc.iImpulses);
+
+
+@SaText @RT(23)NRunElectricWithMoldPos 1 @TL(12)
+(**************************************** WARNING ********************************************
+ *** The KEBA Kemro K2 System including software is not intended for safety control tasks! ***
+ ***                       For further information see Comment tab!                        ***
+ *********************************************************************************************)
+
+abAdjustElectric.aRun(bStop := g_MoveCtrl.bStop OR NOT mbAutoAdjustAllowed,
+                      DeviceIdMoldHeight := DeviceIdMoldHeight,
+                      DeviceIdMold := DeviceIdMold);
+
+bReady := abAdjustElectric.aRun.bReady;
+
+
+
+@SaText @RT(14)NRunDirectLock 1 @TL(10)
+(**************************************** WARNING ********************************************
+ *** The KEBA Kemro K2 System including software is not intended for safety control tasks! ***
+ ***                       For further information see Comment tab!                        ***
+ *********************************************************************************************)
+
+abAdjustDirectLock.aRun(bStop := g_MoveCtrl.bStop OR NOT mbAutoAdjustAllowed,
+                        DeviceIdMold := DeviceIdMold);
+
+bReady := abAdjustDirectLock.aRun.bReady;
+
+
+@SaText @RT(20)NRunPressureOpenLoop 1 @TL(11)
+(**************************************** WARNING ********************************************
+ *** The KEBA Kemro K2 System including software is not intended for safety control tasks! ***
+ ***                       For further information see Comment tab!                        ***
+ *********************************************************************************************)
+
+
+abAdjustForceOpenLoop.aRun(bStop := g_MoveCtrl.bStop OR NOT mbAutoAdjustAllowed,
+                           DeviceIdMoldHeight := DeviceIdMoldHeight,
+                           DeviceIdMold := DeviceIdMold,
+                           MoldHeightAdjustMode := nPressureOpenLoop);
+
+
+@SaTrans 0 
+@SaExits 0 
+@END_SfcBody 
+
+@@@BEG_Comment@@@ 
+@TL(8)
+This algo works like this:
+- check various conditions for mold height automatic adjust movement,
+  such as:  operation mode, valid position measurement calibration for mold height,
+            supervision time, limit switch endpoints
+- indicate that mold height automatic adjustment is active
+- start the special mold height adjustment mode control blocks according to the mode which is set
+  AND waiting for their finished/ready flag.
+- indicate the final status of mold height adjustment
+@@@END_Comment@@@ 
+
+@BEG_Body 
+@TL(57)
+(**************************************** WARNING ********************************************
+ *** The KEBA Kemro K2 System including software is not intended for safety control tasks! ***
+ ***                       For further information see Comment tab!                        ***
+ *********************************************************************************************)
+
+//Reset all alarms and the supervision timer at the start of mold height automatic adjustment.
+IF mbInit THEN
+    fbTSupervisionTime(IN := FALSE,
+                       PT := sv_dMaxMoldHeightAdjustTime);
+    mbInit := FALSE;
+END_IF;
+
+//Call the supervision timer cyclic and write the acutal time to a systemvariable.
+fbTSupervisionTime(IN := TRUE);
+sv_dActMoldHeightAdjustTime := fbTSupervisionTime.ET;
+
+// only check when not in electric mode
+bImpulseValid := sv_MoldHeightSetPosMeasurement.bDistancePerImpulseValid OR 
+                 sv_MoldHeightAdjustMode = nElectricWithMoldPos OR
+                 sv_MoldHeightAdjustMode = nForceOpenLoop OR
+                 sv_MoldHeightAdjustMode = nDirectLock OR
+                 sv_MoldHeightAdjustMode = nPressureOpenLoop;
+
+IF (sv_OperationMode = nSetup) AND 
+    bImpulseValid AND
+    NOT fbTSupervisionTime.Q AND
+    NOT sv_MoldHeightEndpoints.bLimitSwitchArrivedMin AND
+    NOT sv_MoldHeightEndpoints.bLimitSwitchArrivedMax THEN
+    
+    mbAutoAdjustAllowed := TRUE;
+
+ELSE
+   //If the conditions are not fulfilled the allowed flag is set to false
+   //and an according alarm is set   
+    mbAutoAdjustAllowed := FALSE;
+    
+    IF sv_OperationMode <> nSetup THEN
+         SET_ALARM(Name := erSetupModeRequiredForAdjust,
+                   SubID1 := sv_DeviceId.CompId);
+    END_IF;
+    IF NOT bImpulseValid THEN
+         SET_ALARM(erDistPerImpNotValid);       
+    END_IF;  
+    IF fbTSupervisionTime.Q THEN
+         SET_ALARM(erMaxMoldHeightAdjTimeExc);
+    END_IF;
+    IF sv_MoldHeightEndpoints.bLimitSwitchArrivedMin OR sv_MoldHeightEndpoints.bLimitSwitchArrivedMax THEN
+         SET_ALARM(erLimitSwitchCanceledAutoAdj);
+    END_IF;
+    
+    STOP_PROCESS_ALGORITHM();
+    
+END_IF;
+                      
+
+
+
+@END_Body 
+
+@@@BEG_Comment@@@ 
+@TL(0)
+
+@@@END_Comment@@@ 
+
+@BEG_SfcBody 
+14 13 19 
+
+@BEG_SfcData 2 
+@StepSeq @RT(4)sseq @F 1 
+@Loop @RT(4)loop @F 2 
+@StepSeq @RT(4)sseq @F 7 
+@Step @RT(7)S_Start @F @T @F @F @RT(0) @F 
+@AcbCont @RT(7)unnamed @F 1 
+@Acb @RT(8)Action13 @F @T @RT(1)P @RT(0) @F @F @T @TL(2)
+b := WRITE_SV_DIRECT(sv_bDeviceStart, sv_bFALSE);
+
+@F 
+
+@AltBranch @RT(3)alt @F 2 
+@TransSeq @RT(4)tseq @F 1 
+@Trans @RT(13)TConditionsOK @F @T @F @F @T @T @TL(2)
+mbAutoAdjustAllowed AND (NOT g_MoveCtrl.bStop)
+
+@RT(12)ConditionsOK @F 
+
+@TransSeq @RT(4)tseq @F 2 
+@Trans @RT(16)TConditionsNotOk @F @T @F @F @T @T @TL(2)
+NOT mbAutoAdjustAllowed OR g_MoveCtrl.bStop
+
+@RT(15)ConditionsNotOk @F 
+@Goto @RT(5)READY @F @F 
+
+
+@Step @RT(15)S_ReadyToAdjust @F @F @F @F @RT(0) @F 
+@AcbCont @RT(7)unnamed @F 1 
+@Acb @RT(13)SetResetFlags @F @T @RT(1)P @RT(0) @F @F @T @TL(3)
+sv_bMoldHeightAutoAdjFinished := FALSE;
+sv_bAutoMoldHeightAdjustActive := TRUE;
+
+@F 
+
+@Trans @RT(12)TStartAdjust @F @T @F @F @T @T @TL(2)
+TRUE
+
+@RT(13)CheckAdjMode2 @F 
+@Step @RT(10)POS_CHANGE @F @F @F @F @RT(0) @F 
+@AcbCont @RT(7)unnamed @F 1 
+@Acb @RT(14)ARunAdjustment @F @F @RT(1)N @RT(0) @F @F @F @F 
+
+@Trans @RT(12)TAdjustReady @F @T @F @F @T @T @TL(2)
+abAdjust2Platen.aRun.bReady
+
+@RT(14)PosChangeReady @F 
+@Step @RT(5)READY @F @F @T @F @RT(0) @F 
+@AcbCont @RT(7)unnamed @F 1 
+@Acb @RT(18)ResetMovementFlags @F @T @RT(1)P @RT(0) @F @F @T @TL(7)
+g_MoveCtrl.bReady := TRUE;
+sv_bAutoMoldHeightAdjustActive := FALSE;
+mbInit := TRUE;
+
+STOP_PROCESS_ALGORITHM(paCheckConditions2Platen);
+STOP_PROCESS_ALGORITHM();
+
+@F 
+
+
+@Trans @RT(9)TLoopBack @F @T @T @T @T @T @TL(2)
+TRUE
+
+@RT(9)TLoopBack @F 
+
+@END_SfcData 
+@SaActions 1 
+@SaText @RT(14)ARunAdjustment 1 @TL(8)
+(**************************************** WARNING ********************************************
+ *** The KEBA Kemro K2 System including software is not intended for safety control tasks! ***
+ ***                       For further information see Comment tab!                        ***
+ *********************************************************************************************)
+
+abAdjust2Platen.aRun(bStop := g_MoveCtrl.bStop OR NOT mbAutoAdjustAllowed);
+
+
+
+@SaTrans 0 
+@SaExits 0 
+@END_SfcBody 
+
+@@@BEG_Comment@@@ 
+@TL(8)
+This algo works like this:
+- check various conditions for mold height automatic adjust movement,
+  such as:  operation mode, valid position measurement calibration for mold height,
+            supervision time, limit switch endpoints
+- indicate that mold height automatic adjustment is active
+- start the special mold height adjustment mode control blocks according to the mode which is set
+  AND waiting for their finished/ready flag.
+- indicate the final status of mold height adjustment
+@@@END_Comment@@@ 
+
+@BEG_Body 
+@TL(49)
+(**************************************** WARNING ********************************************
+ *** The KEBA Kemro K2 System including software is not intended for safety control tasks! ***
+ ***                       For further information see Comment tab!                        ***
+ *********************************************************************************************)
+
+//Reset all alarms and the supervision timer at the start of mold height automatic adjustment.
+IF mbInit THEN
+   fbTSupervisionTime(IN := FALSE,
+                      PT := sv_dMaxMoldHeightAdjustTime);
+   mbInit := FALSE;
+END_IF;
+
+//Call the supervision timer cyclic and write the acutal time to a systemvariable.
+fbTSupervisionTime(IN := TRUE);
+sv_dActMoldHeightAdjustTime := fbTSupervisionTime.ET;
+
+//check if tiebars are not outside the range
+bTieBarsInRange := TRUE;
+FOR iTieBar := 1 TO 4 DO
+   IF (sv_TieBarPosition[iTieBar] < sv_rTieBarMinPos) OR (sv_TieBarPosition[iTieBar] > sv_rTieBarMaxPos) THEN
+      SET_ALARM(Name := erTieBarOutOfRange,
+                SubID1 := iTieBar);
+      bTieBarsInRange := FALSE;
+   END_IF;
+END_FOR;
+
+IF (sv_OperationMode = nSetup) AND (NOT fbTSupervisionTime.Q) AND bTieBarsInRange THEN    
+   mbAutoAdjustAllowed := TRUE;
+ELSE
+   //If the conditions are not fulfilled the allowed flag is set to false
+   //and an according alarm is set   
+   mbAutoAdjustAllowed := FALSE;
+   
+   IF sv_OperationMode <> nSetup THEN
+      SET_ALARM(Name := erSetupModeRequiredForAdjust,
+                SubID1 := sv_DeviceId.CompId);
+   END_IF;
+   
+   IF fbTSupervisionTime.Q THEN
+      SET_ALARM(erMaxMoldHeightAdjTimeExc);
+   END_IF;
+      
+   STOP_PROCESS_ALGORITHM();
+    
+END_IF;
+                      
+
+
+
+@END_Body 
+
+@@@BEG_Comment@@@ 
+@TL(0)
+
+@@@END_Comment@@@ 
+
+@BEG_Body 
+@TL(48)
+(**************************************** WARNING ********************************************
+ *** The KEBA Kemro K2 System including software is not intended for safety control tasks! ***
+ ***                       For further information see Comment tab!                        ***
+ *********************************************************************************************)
+
+IF NOT bInitDone THEN
+   IF IS_LINKED(sv_bLedAutoAdjust) THEN
+      bLedAutoAdjustExists := TRUE;
+   ELSE
+      bLedAutoAdjustExists := FALSE;
+   END_IF;    
+   bInitDone := TRUE;
+END_IF;
+
+IF g_b2Platen THEN
+   RETURN;  //do not execute on 2 platen IMM´s
+END_IF;
+
+IF sv_MoldHeightAdjustMode = nPositionSetTonnage THEN
+   abCalculateMoldHeightImpulses.aInit(Lintab := sv_ClampForceLintabImpulses);
+   abCalculateMoldHeightImpulses.aCalc(rForce := sv_ClampForce.rActualClampForce);
+   tmp := abCalculateMoldHeightImpulses.aCalc.iImpulses;
+   
+   abCalculateMoldHeightImpulses.aCalc(rForce := sv_ClampForce.rSetClampForce);
+   IF tmp <> abCalculateMoldHeightImpulses.aCalc.iImpulses THEN
+      //turn on led
+      sv_bHMILedAutoAdjust := TRUE;
+   ELSE
+      //turn off led 
+      sv_bHMILedAutoAdjust := FALSE;
+   END_IF;       
+
+   IF bLedAutoAdjustExists THEN
+   sv_bLedAutoAdjust := sv_bHMILedAutoAdjust;
+   END_IF;
+   
+ELSIF sv_MoldHeightAdjustMode = nElectricWithMoldPos THEN
+   IF ABS(sv_ClampForce.rActualClampForce - sv_ClampForce.rSetClampForce)> rMinclampForceChange THEN
+      sv_bHMILedAutoAdjust := TRUE;
+   ELSE
+      sv_bHMILedAutoAdjust := FALSE;   
+   END_IF;
+
+   IF bLedAutoAdjustExists THEN  
+      sv_bLedAutoAdjust := sv_bHMILedAutoAdjust;
+   END_IF;  
+END_IF;
+
+@END_Body 
+
+@@@BEG_Comment@@@ 
+@TL(2)
+Mold height auto adjustment button led is enabled when clamp force is changed enough
+for adjusting at least one step
+@@@END_Comment@@@ 
+
+@BEG_Body 
+@TL(8)
+(**************************************** WARNING ********************************************
+ *** The KEBA Kemro K2 System including software is not intended for safety control tasks! ***
+ ***                       For further information see Comment tab!                        ***
+ *********************************************************************************************)
+
+fbLockUnlock(DeviceId := sv_DeviceId, MoveDir := cMoveAll, MoveId := cMoveAll, Mode := nLockAbort);
+
+
+@END_Body 
+
+@@@BEG_Comment@@@ 
+@TL(0)
+
+@@@END_Comment@@@ 
+
+@BEG_Body 
+@TL(7)
+(**************************************** WARNING ********************************************
+ *** The KEBA Kemro K2 System including software is not intended for safety control tasks! ***
+ ***                       For further information see Comment tab!                        ***
+ *********************************************************************************************)
+
+fbLockUnlock(DeviceId := sv_DeviceId, MoveDir := cMoveAll, MoveId := cMoveAll, Mode := nUnlock);
+
+@END_Body 
+
+@@@BEG_Comment@@@ 
+@TL(0)
+
+@@@END_Comment@@@ 
+
+@BEG_Body 
+@TL(12)
+(**************************************** WARNING ********************************************
+ *** The KEBA Kemro K2 System including software is not intended for safety control tasks! ***
+ ***                       For further information see Comment tab!                        ***
+ *********************************************************************************************)
+
+pMoldOptions := GET_SYNC_REFTO('Mold1.sv_Options', T#0s, s);
+IF s = KSYS_Status_OK THEN
+   g_bDirectLock := (pMoldOptions^ AND cSubOptionMoldDirectLock) = cSubOptionMoldDirectLock;
+   g_b2Platen := (pMoldOptions^ AND cSubOptionMold2Platen) = cSubOptionMold2Platen;
+END_IF;
+
+
+@END_Body 
+
+@@@BEG_Comment@@@ 
+@TL(0)
+
+@@@END_Comment@@@ 
+
+@BEG_Body 
+@TL(10)
+(**************************************** WARNING ********************************************
+ *** The KEBA Kemro K2 System including software is not intended for safety control tasks! ***
+ ***                       For further information see Comment tab!                        ***
+ *********************************************************************************************)
+
+IF g_bDirectLock THEN
+   sv_MoldHeightAdjustMode := nDirectLock;
+END_IF;
+ 
+
+@END_Body 
+
+@@@BEG_Comment@@@ 
+@TL(0)
+
+@@@END_Comment@@@ 
+@END_Body 
+
+@END_Contents 

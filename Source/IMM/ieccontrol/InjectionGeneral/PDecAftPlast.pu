@@ -1,0 +1,170 @@
+IMPORT_OVER_LISTFILE
+ tsLimitDataReal
+, KAPPL_VisProfilePlast
+, tsDecompParam
+
+END_IMPORT
+
+PLAUSIBILITY_FUNCTION PDecAftPlast : tsLimitDataReal
+
+VAR_INPUT
+ DeviceClass : INT;
+ Userlevel : INT;
+END_VAR
+
+SYSTEM_VAR_IN
+ sv_rScrewVolume : REAL;
+ sv_PlastProfVis : KAPPL_VisProfilePlast;
+ sv_DecompBefPlastSettings : tsDecompParam;
+END_VAR
+
+VAR
+ rPlastEndPos : REAL;
+ rDecBefPlastEndPos : REAL;
+ rEndPos : REAL;
+END_VAR
+#BEGIN_EDIT_BLOCK
+(**************************************** WARNING ********************************************
+ *** The KEBA Kemro K2 System including software is not intended for safety control tasks! ***
+ ***                       For further information see Comment tab!                        ***
+ *********************************************************************************************)
+
+//plausibility of decompression after plast volume
+PDecAftPlast.rLowerLimit := 0.0;
+
+IF sv_DecompBefPlastSettings.Mode = nPosDependent THEN
+   rDecBefPlastEndPos := sv_DecompBefPlastSettings.rDecompPos;
+ELSE
+   rDecBefPlastEndPos := 0.0;
+END_IF;
+
+rPlastEndPos := sv_PlastProfVis.Profile.Points[(sv_PlastProfVis.Profile.iNoOfPoints+1)].rStartPos;
+rEndPos := MAX(rDecBefPlastEndPos, rPlastEndPos);
+
+PDecAftPlast.rUpperLimit := sv_rScrewVolume - rEndPos;
+
+
+;#END_EDIT_BLOCK END_FUNCTION
+
+
+
+#END_OF_IEC_PART
+
+@Puma @IecEditor 6 52 @Pou 25 
+@@@BEG_Comment@@@
+
+@@@END_Comment@@@
+
+@BEG_Contents 
+
+@BEG_Func 
+@RT(17)FuncTreeContainer 
+0 
+@END_Func 
+
+@BEG_Const 
+@RT(18)ConstTreeContainer 
+0 
+@END_Const 
+
+@BEG_Export 
+
+@BEG_Kind 
+@PLAUSIBILITY_FUNCTION @RT(12)PDecAftPlast @STRUCTURED_TEXT 
+@RT(15)tsLimitDataReal @RT(0) @RT(0) 
+@END_Kind 
+
+@BEG_Dcl 
+@RT(16)DclTreeContainer 
+8 
+@Var @RT(11)DeviceClass @RT(0) @T @F @DT @RT(3)INT @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+0 1 @F @F @F @F 
+
+@Var @RT(9)Userlevel @RT(0) @T @F @DT @RT(3)INT @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+0 1 @F @F @F @F 
+
+@Var @RT(15)sv_rScrewVolume @RT(0) @T @F @DT @RT(4)REAL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 9 @F @F @F @F 
+
+@Var @RT(15)sv_PlastProfVis @RT(0) @T @T @DERIVED 0 @F @RT(21)KAPPL_VisProfilePlast @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 9 @F @F @F @F 
+
+@Var @RT(12)rPlastEndPos @RT(0) @T @F @DT @RT(4)REAL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(25)sv_DecompBefPlastSettings @RT(0) @T @T @DERIVED 0 @T @T @DT @RT(13)tsDecompParam @RT(0) @T @T @UNKNOWN 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 9 @F @F @F @F 
+
+@Var @RT(18)rDecBefPlastEndPos @RT(0) @T @F @DT @RT(4)REAL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(7)rEndPos @RT(0) @T @F @DT @RT(4)REAL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@END_Dcl 
+
+@END_Export 
+
+@BEG_Body 
+@TL(19)
+(**************************************** WARNING ********************************************
+ *** The KEBA Kemro K2 System including software is not intended for safety control tasks! ***
+ ***                       For further information see Comment tab!                        ***
+ *********************************************************************************************)
+
+//plausibility of decompression after plast volume
+PDecAftPlast.rLowerLimit := 0.0;
+
+IF sv_DecompBefPlastSettings.Mode = nPosDependent THEN
+   rDecBefPlastEndPos := sv_DecompBefPlastSettings.rDecompPos;
+ELSE
+   rDecBefPlastEndPos := 0.0;
+END_IF;
+
+rPlastEndPos := sv_PlastProfVis.Profile.Points[(sv_PlastProfVis.Profile.iNoOfPoints+1)].rStartPos;
+rEndPos := MAX(rDecBefPlastEndPos, rPlastEndPos);
+
+PDecAftPlast.rUpperLimit := sv_rScrewVolume - rEndPos;
+
+@END_Body 
+
+@END_Contents 

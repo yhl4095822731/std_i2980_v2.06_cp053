@@ -1,0 +1,5588 @@
+IMPORT_OVER_LISTFILE
+ GET_MY_FU_NAME
+, WRITE_SVREAL_DIRECT
+, GET_TASK_INTERVAL
+, WRITE_SV_DIRECT
+, KSWO_AddVariable
+, FAddToScopeGroup
+, SET_ALARM
+, cLockGroupClampingUnit
+, cLockGroupMotor
+, cLockGroupSafetyGateMold
+, KCTRL_YXGen_Input_Default
+, cMoveBwd
+, nActive
+, nDeviceState
+, nDeactivate
+, nInactive
+, cMoveBwdInterPos
+, nSetup
+, cMoveBwdForMHAdjust
+, cMoveBwdForMHAdjustSetup
+, tnCalibState_Error
+, KCTRL_Ret_OK
+, MAX_VOLTAGE
+, KCTRL_YXGen_RampType_Sin
+, cScopeGroupMold
+, cMaxIntermediateConditions
+, tsCalibMovement
+, tsMoveData
+, KAPPL_VisProfile
+, tnOperationMode
+, tsVelPre
+, KCTRL_Lintab_Point
+, tsMinOutput
+, tsSetTimes
+, tsActTimes
+, KAPPL_LintabData
+, tyInstanceListArray
+, KCTRL_Lintab_Param_Light
+, tServoValveControlData
+, tServoValveData
+, tServoValveControlSet
+, tsToggleLeverSplineData
+, tServoValveConstructionData
+, tnICMActivateMode
+, tnICMMode
+, tsPropValveParams
+, tsMoveCtrl
+, ABProfileMovement
+, ABConstMovement
+, ABConstCalib
+, ABLintabApply
+, KCTRL_Lintab_Light
+, ABCalcOffset
+, ABValveController
+, ABStepOutput
+, KAPPL_ProfileData
+, KAPPL_Plastics_ProfileOutput
+, ABProportionalValve
+, tCalculatedProfiles
+, ABMovementRegister
+, tsAlarm
+, FBSetMovementState
+, FBDebugTrace
+, FBDebugTrace2
+, FBConstOutputRamp
+, KCTRL_YXGen_LightB
+, KCTRL_YXGenParam
+, KCTRL_YXGen_InputType
+, KCTRL_YXGen_Accelerations
+, KCTRL_ProfPoint
+, ABEstimatePressure
+, KSWO_Status
+
+END_IMPORT
+
+ALGORITHM_BLOCK ABMoveOpen #DUMMY_EDIT_BLOCK
+
+SYSTEM_VAR
+ sv_CalibState : tsCalibMovement;
+ sv_MoveOpen : tsMoveData;
+ sv_MoveOpenForMHAdj : tsMoveData (* move backward for mold height auto adjustment *);
+ sv_MoveOpenInterPos : tsMoveData;
+ sv_rMoldPosition : REAL;
+ sv_rPressure : REAL;
+ sv_rVelocity : REAL;
+ sv_iActiveStage : DINT;
+ sv_MoldBwdProfVis : KAPPL_VisProfile;
+ sv_bMoldOpen : BOOL;
+ sv_rBwdInterruptAccel : REAL;
+ sv_rBwdInterruptDeaccel : REAL;
+ sv_rBwdInterruptPosition : REAL;
+ sv_OperationMode : tnOperationMode;
+ sv_ConstBwdVis : tsVelPre (* const output for mold open movement *);
+ sv_TmpLintabPoint : KCTRL_Lintab_Point;
+ ai_Position : REAL (* analog input value from transducer *);
+ sv_dStandStillDetectTime : TIME (* time for standstill detection *);
+ sv_rMaxVoltageDiff : REAL (* max. voltage difference to detect stand still *);
+ sv_bDoTransducerCalib : BOOL;
+ sv_bPreOutputReady : BOOL (* PreOutput is ready *);
+ sv_bOutputActive : BOOL (* Output is active *);
+ sv_bTransducerError : BOOL;
+ sv_MinOutputBwd : tsMinOutput;
+ sv_MoldOpenTimesSet : tsSetTimes;
+ sv_MoldOpenTimesAct : tsActTimes;
+ sv_bInitStart : BOOL;
+ sv_bMoveMoldUntilEnd : BOOL;
+ sv_LintabOutBwdP : KAPPL_LintabData;
+ sv_LintabOutBwdV : KAPPL_LintabData;
+ sv_rVelocityAbs : REAL;
+ sv_rPressureAbs : REAL;
+ sv_bInitDone : BOOL;
+ sv_rMaxSpeedBwd : REAL;
+ sv_MoveOpenForMHAdjSetup : tsMoveData;
+ sv_MoldFwdProfVis : KAPPL_VisProfile;
+ sv_bOpenMHUntilProtectStep : BOOL;
+ sv_rOpenPosForMHAdjust : REAL;
+ sv_bOpenMHUntilMoldHeightCalib : BOOL;
+ sv_rToggleLeverStroke : REAL (* Opening Stroke of toggle lever *);
+ sv_ToggleLeverLintabDerive : KAPPL_LintabData (* derivation calculated from sv_ToggleLeverLintab *);
+ sv_OpenInterstopDeadTime : TIME;
+ sv_OpenManualDelayTime : TIME;
+ sv_rMoldVelEstimate : REAL;
+ sv_rMoldStroke : REAL;
+ sv_dCalculatedDurationOpen : TIME (* Calculated duration for mold open *);
+ sv_InstanceDataOpenInterPos : tyInstanceListArray (* array with target positions of mold open interpos movements *);
+ sv_bLockDecompOK : BOOL;
+ sv_bLockDecompTimeOut : BOOL;
+ sv_bOpenActive : BOOL (* mold open is active *);
+ sv_rMoldValveOutput : REAL;
+ sv_ValveCharacteristicLintab : KCTRL_Lintab_Param_Light;
+ sv_ToggleLeverLintab : KAPPL_LintabData (* derivation calculated from sv_ToggleLeverLintab *);
+ sv_ToggleBwdProfVis : KAPPL_VisProfile;
+ sv_InstanceDataOpenToggleInter : tyInstanceListArray (* array with target positions of mold close interpos movements *);
+ sv_rToggleLeverPosition : REAL;
+ sv_rMoldPressure1 : REAL (* pressure mold fwd *);
+ sv_rMoldPressure2 : REAL (* pressure mold bwd *);
+ sv_rToggleLeverVelEstimate : REAL;
+ sv_ServoValveControlData : tServoValveControlData;
+ sv_ValveData : tServoValveData;
+ sv_ServoValveControlSet : tServoValveControlSet;
+ sv_bUseValve : BOOL;
+ sv_ToggleLeverSplineData : tsToggleLeverSplineData;
+ sv_ConstructionData : tServoValveConstructionData;
+ sv_rInterstopTolerance : REAL;
+ sv_bMoveIdent : BOOL;
+ sv_rIdentPosition : REAL;
+ sv_rIdentStopRamp : REAL;
+ sv_dSetDelayTimeOffBwd : TIME;
+ sv_rSmoothFactor : REAL;
+ sv_bPresMoldHeightAdjustActive : BOOL;
+ sv_rMinAmplification : REAL (* minimum amplification *);
+ sv_rMaxAmplification : REAL (* maximum amplification *);
+ sv_rToggleLeverSetPosition : REAL;
+ sv_LintabOutMoldPosCtrl : KAPPL_LintabData;
+ sv_bICMStartPosReached : BOOL;
+ sv_CoiningActivateMode : tnICMActivateMode (* activating mode for coining *);
+ sv_bVentingDone : BOOL;
+ sv_bCoiningDone : BOOL;
+ sv_bVentingStartPointDetected : BOOL;
+ sv_bCoiningStartPointDetected : BOOL;
+ sv_VentingActivateMode : tnICMActivateMode;
+ sv_ICMMode : tnICMMode;
+ sv_dActOpenTime : TIME (* this time is not increased when interpos movement is active *);
+ sv_bDoPumpVelocityCalib : BOOL;
+ sv_rMoldPropValveParams : tsPropValveParams;
+ sv_rMoldValvePressureDropOpen : REAL;
+ sv_rTolerancePosReached : REAL (* tolerance for endpos reached *);
+ sv_rMonTolerance : REAL (* tolerance for endpos reached *);
+ do_FastOpen : BOOL (* tolerance for endpos reached *);
+ sv_rFastVelocityFactor : REAL;
+ sv_bPumpUseProfileVelociy : BOOL;
+ sv_CalculatedProfileBwdToggle : tCalculatedProfiles;
+ sv_CalculatedProfileBwd : tCalculatedProfiles;
+END_VAR
+
+SYSTEM_OBJECT
+ erMoldNotOpen : ALARM;
+ erMoldPosNotCorrect : ALARM;
+ TaskAnalog : TASK;
+ TaskSlow : TASK;
+ PU_Task_7 : TASK;
+ erMoldOpenNoMinOutput : ALARM;
+ PU_Task_13 : TASK;
+END_OBJECT
+
+VAR_EXTERNAL
+ g_MoveCtrl : tsMoveCtrl;
+ g_bDirectLockAvailable : BOOL;
+ pSysPressure : REFTO REAL;
+ g_bMoldValve : BOOL;
+ g_bPressureSensor1Available : BOOL;
+ g_bPressureSensor2Available : BOOL;
+ g_bPressureSensorsAvailable : BOOL;
+END_VAR
+
+VAR
+ abMoldOpen : ABProfileMovement;
+ abMoldOpenConst : ABConstMovement;
+ abMoldBwdCalib : ABConstCalib;
+ abLintabApplyPres : ABLintabApply;
+ abLintabApplyVel : ABLintabApply;
+ abToggleLeverLintab : KCTRL_Lintab_Light;
+ ToggleLeverLintabPar : KCTRL_Lintab_Param_Light;
+ abCalcOffset : ABCalcOffset;
+ rMaxVoltageValve : REAL;
+ rInterruptTogglePosition : REAL;
+ abLintabApplyToggleSlow : ABLintabApply (* block for usage in TaskSlow *);
+ abLintabApplyToggle : ABLintabApply;
+ abValveController : ABValveController;
+ rTankPressure : REAL := 1.0;
+ bStart : BOOL;
+ rOffsetPos : REAL := 1.0;
+ rOffsetNeg : REAL := -1.2;
+ abMoldOpenStep : ABStepOutput;
+ PumpVelocityProfile : KAPPL_ProfileData;
+ fbPumpVelocityOutput : KAPPL_Plastics_ProfileOutput;
+ mrPumpVelocity : REAL;
+ mrSetVelocity : REAL;
+ mrUP : REAL;
+ mrUD : REAL;
+ abPropValve : ABProportionalValve;
+ mrAreaOutletFactor : REAL;
+ mrPropValveOutput : REAL;
+ mbUsePropValve : BOOL;
+ mrSetFlowOutlet : REAL;
+ mrPressOutlet : REAL;
+ mrSign : REAL;
+ mrTolerancePosReached : REAL;
+ mbInTolerance : BOOL;
+ mbFastOpenLinked : BOOL;
+END_VAR
+
+ALGORITHM aRegister
+
+
+VAR
+ abMoveOpenRegister : ABMovementRegister;
+ abMoveOpenForMHAdjRegister : ABMovementRegister;
+ abMoveOpenForMHAdjSetupReg : ABMovementRegister;
+ abMoveOpenInterPosRegister : ABMovementRegister;
+ Alarm : tsAlarm;
+END_VAR
+#BEGIN_EDIT_BLOCK
+(**************************************** WARNING ********************************************
+ *** The KEBA Kemro K2 System including software is not intended for safety control tasks! ***
+ ***                       For further information see Comment tab!                        ***
+ *********************************************************************************************)
+
+// movement registration
+sv_MoveOpen.pdStartDelaySet := @sv_MoldOpenTimesSet.dSetDelayTime;
+sv_MoveOpen.pdStartDelayAct := @sv_MoldOpenTimesAct.dActDelayTime;
+sv_MoveOpen.pdActiveTimeAct := @sv_dActOpenTime;
+sv_MoveOpen.pdTimeLimit     := @sv_MoldOpenTimesSet.dMaxMoveTime;
+sv_MoveOpen.LockGroups[1] := cLockGroupClampingUnit;
+sv_MoveOpen.LockGroups[2] := cLockGroupMotor;
+sv_MoveOpen.LockGroups[3] := cLockGroupSafetyGateMold;
+sv_MoveOpen.LockGroups[4] := cLockGroupMoldNutOpen;
+sv_MoveOpen.LockGroups[5] := cLockGroupHighPressureReleased;
+sv_MoveOpen.pbPosReached := @sv_bMoldOpen;
+Alarm.AlarmId := erMoldNotOpen;
+sv_MoveOpen.Alarm := Alarm;
+sv_MoveOpen.sIconPath := CONCAT(GET_MY_FU_NAME(), "\hmi\images\movMoldBwd.gif");
+abMoveOpenRegister.aRegister(@sv_MoveOpen);
+
+// register movement to intermediate position
+sv_MoveOpenInterPos.pdActiveTimeAct := @sv_MoldOpenTimesAct.dActMoveTime;
+sv_MoveOpenInterPos.LockGroups := sv_MoveOpen.LockGroups;
+sv_MoveOpenInterPos.sIconPath := CONCAT(GET_MY_FU_NAME(), "\hmi\images\movMoldInterposBwd.gif");
+Alarm.AlarmId := erMoldPosNotCorrect;
+sv_MoveOpenInterPos.Alarm := Alarm;
+abMoveOpenInterPosRegister.aRegister(@sv_MoveOpenInterPos);
+
+// register movement for mold height automatic adjustment
+sv_MoveOpenForMHAdj.pdStartDelaySet := @sv_MoldOpenTimesSet.dSetDelayTime;
+sv_MoveOpenForMHAdj.pdStartDelayAct := @sv_MoldOpenTimesAct.dActDelayTime;
+sv_MoveOpenForMHAdj.LockGroups := sv_MoveOpen.LockGroups;
+sv_MoveOpenForMHAdj.sIconPath := sv_MoveOpen.sIconPath;
+sv_MoveOpenForMHAdj.pbPosReached := @sv_bMoldOpen;
+Alarm.AlarmId := erMoldNotOpen;
+sv_MoveOpenForMHAdj.Alarm := Alarm;
+abMoveOpenForMHAdjRegister.aRegister(@sv_MoveOpenForMHAdj);
+
+
+sv_MoveOpenForMHAdjSetup.pdStartDelaySet := @sv_MoldOpenTimesSet.dSetDelayTime;
+sv_MoveOpenForMHAdjSetup.pdStartDelayAct := @sv_MoldOpenTimesAct.dActDelayTime;
+sv_MoveOpenForMHAdjSetup.LockGroups := sv_MoveOpen.LockGroups;
+sv_MoveOpenForMHAdjSetup.sIconPath := sv_MoveOpen.sIconPath;
+sv_MoveOpenForMHAdjSetup.pbPosReached := @sv_bMoldOpen;
+Alarm.AlarmId := erMoldNotOpen;
+sv_MoveOpenForMHAdjSetup.Alarm := Alarm;
+abMoveOpenForMHAdjSetupReg.aRegister(@sv_MoveOpenForMHAdjSetup);
+
+
+;#END_EDIT_BLOCK END_ALGORITHM
+
+ALGORITHM aRun
+
+
+VAR_OUTPUT
+ bReady : BOOL;
+END_VAR
+
+VAR_INPUT
+ bStop : BOOL;
+END_VAR
+
+VAR_TEMP
+ b : BOOL;
+ rMoldValveOutput : REAL;
+END_VAR
+
+VAR
+ dummy : DINT;
+ fbSetMovementState : FBSetMovementState;
+ dummypoint : KCTRL_Lintab_Point;
+ rMHAdjustBwdPos : REAL (* backward pos for MH open setup movement *);
+ fbDebugTrace : FBDebugTrace;
+ rAmplification : REAL;
+ bError : BOOL;
+ iErrorInfo : DINT;
+ rActStartposition : REAL;
+ rMinPositionError : REAL := 2.0;
+ rMaxStroke : REAL := 0.95 (* 95% offset allowed, at least 5% stroke left *);
+ fbDebugTrace2 : FBDebugTrace2;
+ fbConstOutputRamp : FBConstOutputRamp;
+ rEndValue : REAL;
+ rStopRamp : REAL;
+ rMinOutput : REAL := 10.0 (* % *);
+ rOutput : REAL;
+ rSetPos : REAL;
+ dCycleTime : TIME;
+ rSetVelocity : REAL;
+ abYXGenLightB : KCTRL_YXGen_LightB;
+ Param : KCTRL_YXGenParam;
+ InputType : KCTRL_YXGen_InputType := KCTRL_YXGen_Input_Default;
+ Accelerations : KCTRL_YXGen_Accelerations;
+ StopPoint : KCTRL_ProfPoint;
+ rYXSetPos : REAL;
+ rYXSetVel : REAL;
+ rYXSetAccel : REAL;
+ rYXSetJerk : REAL;
+ CalcedVelocityProfile : KAPPL_ProfileData;
+ rQNom : REAL;
+ rPNom : REAL;
+ rQNomPB : REAL;
+ rPNomPB : REAL;
+ rPressure1 : REAL;
+ rPressure2 : REAL;
+ abEstimatePressure : ABEstimatePressure;
+ bStopActive : BOOL;
+ rEndPositionMold : REAL;
+ rTargetPosition : REAL;
+ rPositionDown : REAL;
+ bInitDone : BOOL;
+ rCycleTime : REAL;
+ rSetFlow : REAL;
+ rPessureDrop : REAL := 10.0 (* pressure drop at valve edge *);
+ rEndposMold : REAL;
+ rEndposToggle : REAL;
+ rSetVelocityValve : REAL;
+END_VAR
+
+(* IecGraph-Code *)
+
+(* init step *)
+INITIAL_STEP START:
+aStart (P);
+aResetICM (P);
+END_STEP
+
+ACTION aStart: #BEGIN_EDIT_BLOCK
+bReady := FALSE;
+fbSetMovementState(MoveId   := g_MoveCtrl.pData^.MoveId,
+                   MoveDir  := cMoveBwd,
+                   State    := nActive);
+sv_bOpenActive := TRUE;
+fbDebugTrace2(nDeviceState, 'Mold open started');
+
+;#END_EDIT_BLOCK END_ACTION (*aStart*)
+ACTION aResetICM: #BEGIN_EDIT_BLOCK
+IF IS_LINKED(sv_ICMMode) THEN //Reset ICM during mold open
+    IF (sv_CoiningActivateMode <> nDeactivate) 
+        OR (sv_VentingActivateMode <> nDeactivate) THEN  
+
+        sv_bVentingDone := FALSE;
+        sv_bCoiningDone := FALSE;    
+        sv_bCoiningStartPointDetected := FALSE; 
+        sv_bVentingStartPointDetected := FALSE;         
+        sv_bICMStartPosReached := FALSE; 
+    END_IF;
+END_IF;
+
+;#END_EDIT_BLOCK END_ACTION (*aResetICM*)
+
+(* steps *)
+STEP S_ResetTimeOut:
+AResetTimeOut (P);
+END_STEP
+
+ACTION AResetTimeOut: #BEGIN_EDIT_BLOCK
+sv_bLockDecompTimeOut := FALSE;
+
+;#END_EDIT_BLOCK END_ACTION (*AResetTimeOut*)
+STEP S_DECIDE_MOVE:
+END_STEP
+
+STEP S_CheckOpMode:
+END_STEP
+
+STEP S_CheckIfCalib:
+END_STEP
+
+STEP S_ConstMove:
+AResetConstBlock (P);
+ASetTargetPosition (P);
+AConstOutput (N);
+END_STEP
+
+STEP S_Calib:
+AResetCalibBlock (P);
+ATransducerCalib (N);
+ACheckCalibError (N);
+END_STEP
+
+STEP S_MoveOpen:
+AResetCalibBlock2 (P);
+ATransducerCalib2 (N);
+END_STEP
+
+STEP S_MoveIdent:
+AResetIdentBlock (P);
+AStepOutput (N);
+END_STEP
+
+STEP S_ProfileMove:
+AResetProfileBlock (P);
+AParToggleLeverAmplification (P);
+ACalcToggleLeverAmplification (N);
+AProfileOutput (N);
+AMoldOpenTime (N);
+AInitValveController (P);
+ACalcValveController (N);
+ACalcPumpVelocity (N);
+ACopySetPositionOpen (P0);
+END_STEP
+
+ACTION ACopySetPositionOpen: #BEGIN_EDIT_BLOCK
+IF bStop THEN
+   sv_rToggleLeverSetPosition := sv_rToggleLeverPosition;
+ELSE
+   sv_rToggleLeverSetPosition := abMoldOpen.aRun.rEndPosition; 
+END_IF;
+
+;#END_EDIT_BLOCK END_ACTION (*ACopySetPositionOpen*)
+STEP S_CalcOffset:
+ACalcOffset (P);
+END_STEP
+
+STEP S_GetBackwardPosForMH:
+Action18 (P);
+AGetBackwardPos (P);
+Action16 (P);
+END_STEP
+
+ACTION Action18: #BEGIN_EDIT_BLOCK
+sv_bOpenMHUntilProtectStep := TRUE;
+
+;#END_EDIT_BLOCK END_ACTION (*Action18*)
+ACTION Action16: #BEGIN_EDIT_BLOCK
+sv_bOpenMHUntilProtectStep := FALSE;
+
+;#END_EDIT_BLOCK END_ACTION (*Action16*)
+STEP S_MoveForMHAdj:
+AResetConstBlock (P);
+AConstOutputForMHAdjustSetup (N);
+END_STEP
+
+STEP S_GetbackwardPos:
+AGetBackwardPos (P);
+END_STEP
+
+STEP S_SetupMoveForMHAdj:
+AResetConstBlock (P);
+AConstOutputForMHAdjustSetup (N);
+END_STEP
+
+STEP READY:
+AReady (P);
+END_STEP
+
+ACTION AReady: #BEGIN_EDIT_BLOCK
+IF g_bMoldValve THEN
+   sv_rMoldValveOutput := 0.0;
+END_IF;
+
+bReady := TRUE;
+fbSetMovementState(MoveId   := g_MoveCtrl.pData^.MoveId,
+                   MoveDir  := cMoveBwd,
+                   State    := nInactive);
+sv_bOpenActive := FALSE;
+fbDebugTrace2(nDeviceState, 'Mold open ready');
+
+;#END_EDIT_BLOCK END_ACTION (*AReady*)
+
+(* transitions *)
+GO_ON_TRANSITION TLockDecompOK (* TLockDecompOK *) FROM START TO S_DECIDE_MOVE :=  #BEGIN_EDIT_BLOCK
+//Wait for lock decomp finished
+sv_bLockDecompOK
+;#END_EDIT_BLOCK
+END_TRANSITION
+
+GO_ON_TRANSITION TStopped (* TStopped *) FROM START TO S_ResetTimeOut :=  #BEGIN_EDIT_BLOCK
+bStop OR sv_bLockDecompTimeOut
+;#END_EDIT_BLOCK
+END_TRANSITION
+
+GO_ON_TRANSITION TTrue2 (* TTrue2 *) FROM S_ResetTimeOut TO READY :=  #BEGIN_EDIT_BLOCK
+TRUE
+;#END_EDIT_BLOCK
+END_TRANSITION
+
+GO_ON_TRANSITION TMoveBwd (* TMoveBwd *) FROM S_DECIDE_MOVE TO S_CheckOpMode :=  #BEGIN_EDIT_BLOCK
+g_MoveCtrl.pData^.MoveId = cMoveBwd OR
+g_MoveCtrl.pData^.MoveId = cMoveBwdInterPos
+;#END_EDIT_BLOCK
+END_TRANSITION
+
+GO_ON_TRANSITION TSetupMode (* TSetupMode *) FROM S_CheckOpMode TO S_CheckIfCalib :=  #BEGIN_EDIT_BLOCK
+(sv_OperationMode = nSetup) AND NOT sv_bPresMoldHeightAdjustActive
+;#END_EDIT_BLOCK
+END_TRANSITION
+
+GO_ON_TRANSITION TNotCalib (* TNotCalib *) FROM S_CheckIfCalib TO S_ConstMove :=  #BEGIN_EDIT_BLOCK
+NOT sv_bDoTransducerCalib AND
+NOT sv_bMoveMoldUntilEnd AND
+NOT sv_bMoveIdent
+;#END_EDIT_BLOCK
+END_TRANSITION
+
+TRANSITION TConstMoveReady (* TConstMoveReady *) FROM S_ConstMove TO READY :=  #BEGIN_EDIT_BLOCK
+NOT abMoldOpenConst.aRun.bActive
+;#END_EDIT_BLOCK
+END_TRANSITION
+
+GO_ON_TRANSITION TCalibActivated (* TCalibActivated *) FROM S_CheckIfCalib TO S_Calib :=  #BEGIN_EDIT_BLOCK
+sv_bDoTransducerCalib
+;#END_EDIT_BLOCK
+END_TRANSITION
+
+TRANSITION TCalibReady (* TCalibReady *) FROM S_Calib TO READY :=  #BEGIN_EDIT_BLOCK
+NOT abMoldBwdCalib.aRun.bActive
+;#END_EDIT_BLOCK
+END_TRANSITION
+
+GO_ON_TRANSITION TMoveUntilEnd (* TMoveUntilEnd *) FROM S_CheckIfCalib TO S_MoveOpen :=  #BEGIN_EDIT_BLOCK
+sv_bMoveMoldUntilEnd
+;#END_EDIT_BLOCK
+END_TRANSITION
+
+TRANSITION TMoveOpenReady (* TMoveOpenReady *) FROM S_MoveOpen TO READY :=  #BEGIN_EDIT_BLOCK
+NOT abMoldBwdCalib.aRun.bActive
+;#END_EDIT_BLOCK
+END_TRANSITION
+
+GO_ON_TRANSITION TMoveIdentActivated (* TMoveIdentActivated *) FROM S_CheckIfCalib TO S_MoveIdent :=  #BEGIN_EDIT_BLOCK
+sv_bMoveIdent
+;#END_EDIT_BLOCK
+END_TRANSITION
+
+TRANSITION TMoveIdentReady (* TMoveIdentReady *) FROM S_MoveIdent TO READY :=  #BEGIN_EDIT_BLOCK
+NOT abMoldOpenStep.aRun.bActive
+;#END_EDIT_BLOCK
+END_TRANSITION
+
+GO_ON_TRANSITION TNotSetup (* TNotSetup *) FROM S_CheckOpMode TO S_ProfileMove :=  #BEGIN_EDIT_BLOCK
+(sv_OperationMode <> nSetup) OR
+sv_bPresMoldHeightAdjustActive
+;#END_EDIT_BLOCK
+END_TRANSITION
+
+GO_ON_TRANSITION TProfileMoveReady (* TProfileMoveReady *) FROM S_ProfileMove TO S_CalcOffset :=  #BEGIN_EDIT_BLOCK
+NOT abMoldOpen.aRun.bActive
+;#END_EDIT_BLOCK
+END_TRANSITION
+
+GO_ON_TRANSITION TCalcOffset (* TCalcOffset *) FROM S_CalcOffset TO READY :=  #BEGIN_EDIT_BLOCK
+TRUE
+
+;#END_EDIT_BLOCK
+END_TRANSITION
+
+GO_ON_TRANSITION TMoveBwdForMHAdj (* TMoveBwdForMHAdj *) FROM S_DECIDE_MOVE TO S_GetBackwardPosForMH :=  #BEGIN_EDIT_BLOCK
+g_MoveCtrl.pData^.MoveId = cMoveBwdForMHAdjust
+;#END_EDIT_BLOCK
+END_TRANSITION
+
+GO_ON_TRANSITION Trans252 (* Trans252 *) FROM S_GetBackwardPosForMH TO S_MoveForMHAdj :=  #BEGIN_EDIT_BLOCK
+TRUE
+;#END_EDIT_BLOCK
+END_TRANSITION
+
+TRANSITION TProfileMoveReady2 (* TProfileMoveReady2 *) FROM S_MoveForMHAdj TO READY :=  #BEGIN_EDIT_BLOCK
+NOT abMoldOpenConst.aRun.bActive
+;#END_EDIT_BLOCK
+END_TRANSITION
+
+GO_ON_TRANSITION Trans23 (* Trans23 *) FROM S_DECIDE_MOVE TO S_GetbackwardPos :=  #BEGIN_EDIT_BLOCK
+g_MoveCtrl.pData^.MoveId = cMoveBwdForMHAdjustSetup
+;#END_EDIT_BLOCK
+END_TRANSITION
+
+GO_ON_TRANSITION Trans25 (* Trans25 *) FROM S_GetbackwardPos TO S_SetupMoveForMHAdj :=  #BEGIN_EDIT_BLOCK
+TRUE
+;#END_EDIT_BLOCK
+END_TRANSITION
+
+TRANSITION Trans24 (* Trans24 *) FROM S_SetupMoveForMHAdj TO READY :=  #BEGIN_EDIT_BLOCK
+NOT abMoldOpenConst.aRun.bActive
+;#END_EDIT_BLOCK
+END_TRANSITION
+
+TRANSITION TReady (* TReady *) FROM READY TO START :=  #BEGIN_EDIT_BLOCK
+TRUE
+;#END_EDIT_BLOCK
+END_TRANSITION
+
+(* end IecGraph-Code *)
+(* sfc-code *)
+
+(* stand alone actions *)
+ACTION AResetCalibBlock: #BEGIN_EDIT_BLOCK
+(**************************************** WARNING ********************************************
+ *** The KEBA Kemro K2 System including software is not intended for safety control tasks! ***
+ ***                       For further information see Comment tab!                        ***
+ *********************************************************************************************)
+
+bError := FALSE;
+abMoldBwdCalib.aRun(bStart := FALSE,
+                    LintabPoint := sv_TmpLintabPoint);
+IF abMoldBwdCalib.aRun.bError THEN
+   sv_CalibState.Status := tnCalibState_Error;
+   bError := TRUE;
+   dummy := Print("Calib Error: Reset calib block failed"); 
+END_IF;
+
+IF g_bMoldValve THEN
+   sv_rMoldValveOutput := rMaxVoltageValve;
+END_IF;
+
+
+;#END_EDIT_BLOCK END_ACTION (*AResetCalibBlock*)
+ACTION AResetConstBlock: #BEGIN_EDIT_BLOCK
+(**************************************** WARNING ********************************************
+ *** The KEBA Kemro K2 System including software is not intended for safety control tasks! ***
+ ***                       For further information see Comment tab!                        ***
+ *********************************************************************************************)
+
+IF g_bMoldValve THEN
+   sv_rMoldValveOutput := rMaxVoltageValve;
+END_IF;
+IF sv_bMoveIdent OR sv_rIdentPosition > 0.0 THEN
+   sv_rBwdInterruptPosition := sv_rIdentPosition;
+END_IF;
+abMoldOpenConst.aRun(bStart := FALSE);
+                   
+
+;#END_EDIT_BLOCK END_ACTION (*AResetConstBlock*)
+ACTION AResetProfileBlock: #BEGIN_EDIT_BLOCK
+(**************************************** WARNING ********************************************
+ *** The KEBA Kemro K2 System including software is not intended for safety control tasks! ***
+ ***                       For further information see Comment tab!                        ***
+ *********************************************************************************************)
+
+abMoldOpen.aRun(bStart := FALSE);
+rActStartposition := sv_rMoldPosition;
+                    
+IF (g_MoveCtrl.pData^.MoveId = cMoveBwdInterPos) THEN
+   abLintabApplyToggle.aCalcInv(rY:= sv_rBwdInterruptPosition - MIN(sv_rTolerancePosReached, sv_rMonTolerance));
+   mrTolerancePosReached := rInterruptTogglePosition - abLintabApplyToggle.aCalcInv.rX;
+ELSE
+   rEndposMold := sv_CalculatedProfileBwd.VelocityProfile.CalculatedProfile.Point[sv_CalculatedProfileBwd.VelocityProfile.CalculatedProfile.uNoOfPoints].rX;
+   rEndposToggle := sv_CalculatedProfileBwdToggle.VelocityProfile.CalculatedProfile.Point[sv_CalculatedProfileBwdToggle.VelocityProfile.CalculatedProfile.uNoOfPoints].rX;
+   abLintabApplyToggle.aCalcInv(rY:= rEndposMold - MIN(sv_rTolerancePosReached, sv_rMonTolerance));
+   mrTolerancePosReached := rEndposToggle - abLintabApplyToggle.aCalcInv.rX;
+END_IF;
+
+;#END_EDIT_BLOCK END_ACTION (*AResetProfileBlock*)
+ACTION AResetCalibBlock2: #BEGIN_EDIT_BLOCK
+(**************************************** WARNING ********************************************
+ *** The KEBA Kemro K2 System including software is not intended for safety control tasks! ***
+ ***                       For further information see Comment tab!                        ***
+ *********************************************************************************************)
+
+//the point is set to dummy, as this block is only used for opening the mold
+abMoldBwdCalib.aRun(bStart := FALSE,
+                    LintabPoint := dummypoint);
+
+IF g_bMoldValve THEN
+   sv_rMoldValveOutput := rMaxVoltageValve;
+END_IF;
+
+;#END_EDIT_BLOCK END_ACTION (*AResetCalibBlock2*)
+ACTION AGetBackwardPos: #BEGIN_EDIT_BLOCK
+
+IF sv_bOpenMHUntilProtectStep THEN  
+   //get backward position for Mold Height adjust mold open movement
+   IF sv_MoldFwdProfVis.Profile.iNoOfPoints >= 3 THEN
+      //normal case
+      //start position of protect step      
+      rMHAdjustBwdPos := sv_MoldFwdProfVis.Profile.Points[sv_MoldFwdProfVis.Profile.iNoOfPoints - 1 ].rStartPos;
+           
+   ELSE
+      //should never happen
+      rMHAdjustBwdPos := sv_MoldFwdProfVis.Profile.Points[1].rStartPos;
+         
+   END_IF;
+
+ELSIF sv_bOpenMHUntilMoldHeightCalib THEN
+   // for adjusting the clamp force
+   rMHAdjustBwdPos := sv_rOpenPosForMHAdjust;
+ELSE
+   rMHAdjustBwdPos := 0.0;
+   fbDebugTrace(sText := 'ABMoveOpen.AGetbackwardPos: unknown open modus for Mold');
+END_IF;
+
+;#END_EDIT_BLOCK END_ACTION (*AGetBackwardPos*)
+ACTION AParToggleLeverAmplification: #BEGIN_EDIT_BLOCK
+// parametrization
+ToggleLeverLintabPar.Mode.bZeroExtrapolation := FALSE;
+ToggleLeverLintabPar.Mode.bLinearExtrapolation := TRUE;
+ToggleLeverLintabPar.Mode.bSetNegativeValuesToZero :=FALSE;
+ToggleLeverLintabPar.rXOffs := 0.0;
+ToggleLeverLintabPar.rYOffs := 0.0;
+ToggleLeverLintabPar.LintabPoints := sv_ToggleLeverLintabDerive.LintabPoints;
+abToggleLeverLintab.Par(Param:=ToggleLeverLintabPar);
+
+;#END_EDIT_BLOCK END_ACTION (*AParToggleLeverAmplification*)
+ACTION ACalcToggleLeverAmplification: #BEGIN_EDIT_BLOCK
+// calculate
+abToggleLeverLintab.Calculate(rX:=sv_rMoldPosition);
+
+IF ((abToggleLeverLintab.Calculate.rY) < sv_rMinAmplification) THEN
+   //use at least a minimum value
+   rAmplification := sv_rMinAmplification;
+ELSIF ((abToggleLeverLintab.Calculate.rY) > sv_rMaxAmplification) THEN
+   //don´t exceed a maximum value
+   rAmplification := sv_rMaxAmplification;
+ELSE
+   //use calculated value
+   rAmplification := abToggleLeverLintab.Calculate.rY;
+END_IF;
+
+;#END_EDIT_BLOCK END_ACTION (*ACalcToggleLeverAmplification*)
+ACTION ACheckCalibError: #BEGIN_EDIT_BLOCK
+IF bError THEN
+   sv_CalibState.Status := tnCalibState_Error;
+   dummy := Print("Calib Error: %i", iErrorInfo);
+END_IF;
+
+;#END_EDIT_BLOCK END_ACTION (*ACheckCalibError*)
+ACTION ACalcOffset: #BEGIN_EDIT_BLOCK
+IF NOT (g_MoveCtrl.pData^.MoveId = cMoveBwdInterPos) THEN
+    // only optimize if end position reachend
+    IF (sv_MoldBwdProfVis.bUseOffsetOptimizing) AND (sv_MoldBwdProfVis.rMinOutputVel > 0.0) THEN
+        // only optimize if end position reachend
+        abLintabApplyToggle.aCalc(rX := abMoldOpen.aRun.rEndPosition,
+                                  rY => rEndPositionMold);
+        IF sv_rMoldPosition > 0.99 * rEndPositionMold THEN    
+            abCalcOffset.aCalcOffset(rPositionError := abMoldOpen.aRun.rPositionError,
+                                    rEndPosition := rEndPositionMold,
+                                    rMoldPosition := sv_rMoldPosition,
+                                    rActStartposition := rActStartposition,
+                                    rActErrorDelay := sv_rMoldPosition - rEndPositionMold,
+                                    rActError := abMoldOpen.aRun.rPositionError,
+                                    rLastOffset := sv_MoldBwdProfVis.rOffset,
+                                    rMinPositionError := rMinPositionError,
+                                    rMaxStroke := rMaxStroke,
+                                    rSaveOffset := sv_MoldBwdProfVis.rOffset,
+                                    bClose := FALSE);
+        
+            sv_MoldBwdProfVis.rOffset := abCalcOffset.aCalcOffset.rOffset;
+        END_IF;
+    ELSE
+        sv_MoldBwdProfVis.rOffset := 0.0;    
+    END_IF;    
+END_IF;
+
+;#END_EDIT_BLOCK END_ACTION (*ACalcOffset*)
+ACTION ACalcValveController: #BEGIN_EDIT_BLOCK
+IF  g_bMoldValve AND g_bPressureSensorsAvailable THEN   
+   IF mbFastOpenLinked AND do_FastOpen THEN
+      rSetVelocityValve := sv_rFastVelocityFactor * rSetVelocity;
+   ELSE
+      rSetVelocityValve := rSetVelocity;   
+   END_IF;
+
+   IF sv_bPumpUseProfileVelociy THEN
+      mrPumpVelocity := rSetVelocity;
+   ELSE
+      fbPumpVelocityOutput(Start := bStart,
+                           Stop  := bStop,
+                           ReParam  := FALSE,
+                           PreOutputValue := PumpVelocityProfile.ProfilePoints.Point[1].rY,
+                           StartOutputValue := PumpVelocityProfile.ProfilePoints.Point[1].rY, 
+                           InputValue := sv_rToggleLeverPosition,
+                           Interrupt := FALSE,
+                           DelayTime := T#0s);
+      IF fbPumpVelocityOutput.Error  THEN
+         mrPumpVelocity := rSetVelocity;
+      ELSE
+         IF abMoldOpen.aRun.bActive THEN
+            mrPumpVelocity := fbPumpVelocityOutput.Output;      
+         ELSE
+            mrPumpVelocity := 0.0;
+         END_IF;
+      END_IF;         
+   END_IF;
+   
+   IF sv_ServoValveControlData.bEnable THEN
+      // use non linear control
+      IF g_MoveCtrl.pData^.MoveId = cMoveBwdInterPos THEN
+           bStopActive := TRUE;    
+      ELSE
+           bStopActive := FALSE;  
+      END_IF;
+      
+      //rYXSetPos := abYXGenLightB.Calculate.rS;  -> calculate after controller call
+      rYXSetVel := rSetVelocityValve;
+
+      IF NOT g_bPressureSensor1Available THEN
+         abYXGenLightB.Calculate(rX:=sv_rToggleLeverPosition, bStopPointActive:=bStopActive );
+         IF (abYXGenLightB.Calculate.calcStatus <> KCTRL_Ret_OK)  THEN
+            sv_rMoldValveOutput := 0.0;
+            sv_rVelocityAbs := 0.0; 
+            RETURN; 
+         END_IF; 
+         rYXSetAccel := abYXGenLightB.Calculate.rA;
+         rYXSetJerk := abYXGenLightB.Calculate.rJ;
+         abEstimatePressure.aRun(rPressure := sv_rMoldPressure2*1.0e5, 
+                                 rSetPos    := rYXSetPos*1.0e-3,
+                                 rSetVel    := rYXSetVel*1.0e-3,
+                                 rSetAccel  := rYXSetAccel*1.0e-3,
+                                 bCalcPressure1 := TRUE);
+         rPressure1 := abEstimatePressure.aRun.rPressureEstimate;
+         rPressure2 := sv_rMoldPressure2*1.0e5;  
+      ELSIF NOT g_bPressureSensor2Available THEN
+         abYXGenLightB.Calculate(rX:=sv_rToggleLeverPosition, bStopPointActive:=bStopActive );
+         IF (abYXGenLightB.Calculate.calcStatus <> KCTRL_Ret_OK)  THEN
+            sv_rMoldValveOutput := 0.0;
+            sv_rVelocityAbs := 0.0; 
+            RETURN; 
+         END_IF; 
+         rYXSetAccel := abYXGenLightB.Calculate.rA;
+         rYXSetJerk := abYXGenLightB.Calculate.rJ;
+         abEstimatePressure.aRun(rPressure := sv_rMoldPressure1*1.0e5, 
+                                 rSetPos    := rYXSetPos*1.0e-3,
+                                 rSetVel    := rYXSetVel*1.0e-3,
+                                 rSetAccel  := rYXSetAccel*1.0e-3,
+                                 bCalcPressure1 := FALSE);
+         rPressure2 := abEstimatePressure.aRun.rPressureEstimate;
+         rPressure1 := sv_rMoldPressure1*1.0e5;  
+      ELSE    
+         rPressure1 := sv_rMoldPressure1*1.0e5;
+         rPressure2 := sv_rMoldPressure2*1.0e5;    
+      END_IF;          
+ 
+      // use SI-units 
+      abValveController.aRun(bStart := bStart,
+                             rSetPosition := rYXSetPos*1.0e-3,
+                             rSetVelocity := rYXSetVel*1.0e-3,
+                             rActPosition := sv_rToggleLeverPosition*1.0e-3,
+                             rActVelocity := sv_rToggleLeverVelEstimate*1.0e-3,
+                             rSystemPressure := pSysPressure^*1.0e5,
+                             rTankPressure := rTankPressure*1.0e5,
+                             rPressure1 := rPressure1,
+                             rPressure2 := rPressure2);
+
+      rOutput := abValveController.aRun.rU;
+      mrUP := abValveController.aRun.rUP;
+      mrUD := abValveController.aRun.rUD;
+      IF rOutput > 0.0 THEN
+         rMoldValveOutput := abValveController.aRun.rU + rOffsetPos;
+         IF rMoldValveOutput > MAX_VOLTAGE THEN
+            rMoldValveOutput := MAX_VOLTAGE;
+         END_IF;
+         b := WRITE_SVREAL_DIRECT(sv_rMoldValveOutput, rMoldValveOutput);
+      ELSIF rOutput < 0.0 THEN
+         rMoldValveOutput := abValveController.aRun.rU + rOffsetNeg;
+         IF rMoldValveOutput < -MAX_VOLTAGE THEN
+            rMoldValveOutput := -MAX_VOLTAGE;
+         END_IF; 
+         b := WRITE_SVREAL_DIRECT(sv_rMoldValveOutput, rMoldValveOutput);         
+      ELSE
+         rMoldValveOutput := 0.5 * (rOffsetPos + rOffsetNeg); 
+         b := WRITE_SVREAL_DIRECT(sv_rMoldValveOutput, rMoldValveOutput);         
+      END_IF;
+      
+      // update reference position
+      rYXSetPos := rYXSetPos + rSetVelocityValve * rCycleTime;
+      // integrator stop at maximum position (profile or interstop) of movement
+      IF rYXSetPos > rEndValue  THEN
+         rYXSetPos :=  rEndValue;
+      END_IF;            
+      
+      b := WRITE_SVREAL_DIRECT(sv_rVelocityAbs, mrPumpVelocity);
+      b := WRITE_SVREAL_DIRECT(sv_ServoValveControlSet.rSetPos, rYXSetPos);
+      b := WRITE_SVREAL_DIRECT(sv_ServoValveControlSet.rSetVel, rYXSetVel);
+      b := WRITE_SVREAL_DIRECT(sv_ServoValveControlSet.rSetAccel, rYXSetAccel);       
+   ELSIF sv_bUseValve THEN
+      b := WRITE_SVREAL_DIRECT(sv_rVelocityAbs, rSetVelocity);
+      IF mbUsePropValve THEN // calc feed forward if init OK
+         // use feedforward calculated from pressure drop at prop valve
+         rSetFlow := mrAreaOutletFactor * (rSetVelocityValve 
+                   + sv_ServoValveControlData.rGainPBwd * (rYXSetPos - sv_rToggleLeverPosition)                       
+                   + sv_ServoValveControlData.rGainDBwd * (rSetVelocityValve - sv_rToggleLeverVelEstimate));
+         abPropValve.aCalcVoltage(rPressure := rPessureDrop,
+                                  rFlow := rSetFlow);                  
+         mrPropValveOutput := abPropValve.aCalcVoltage.rControlVoltage * mrSign;
+         b := WRITE_SVREAL_DIRECT(sv_rMoldValveOutput, mrPropValveOutput);
+         mrPressOutlet := rPessureDrop;
+         mrSetFlowOutlet := rSetFlow;
+         // update reference position
+         rYXSetPos := rYXSetPos + rSetVelocityValve * rCycleTime;
+         // integrator stop at maximum position (profile or interstop) of movement
+         IF rYXSetPos > rEndValue  THEN
+            rYXSetPos :=  rEndValue;
+         END_IF;                  
+      ELSE
+         // use const output until last ramp
+         fbConstOutputRamp(bStart:=FALSE,
+                           bStop:=bStop,
+                           rActValue:=sv_rToggleLeverPosition,
+                           bInterstopRamp:=abMoldOpen.aRun.bOnInterstopRamp,
+                           bProfileRamp:=abMoldOpen.aRun.bOnLastRamp,
+                           rEndValue:=rEndValue,
+                           bDir:=TRUE,
+                           rStartValueStopRamp:=abMoldOpen.aRun.rVelocityOutput,    
+                           rStopRamp:=rStopRamp,
+                           bActive := abMoldOpen.aRun.bActive); 
+         b := WRITE_SVREAL_DIRECT(sv_rMoldValveOutput, fbConstOutputRamp.rOutput); 
+         b := WRITE_SVREAL_DIRECT(sv_ServoValveControlSet.rSetPos, rSetPos);
+         b := WRITE_SVREAL_DIRECT(sv_ServoValveControlSet.rSetVel, rSetVelocity);
+      END_IF;
+   ELSE
+      b := WRITE_SVREAL_DIRECT(sv_rMoldValveOutput, rMaxVoltageValve);
+      b := WRITE_SVREAL_DIRECT(sv_rVelocityAbs, rSetVelocity); 
+      b := WRITE_SVREAL_DIRECT(sv_ServoValveControlSet.rSetPos, rSetPos);
+      b := WRITE_SVREAL_DIRECT(sv_ServoValveControlSet.rSetVel, rSetVelocity);
+   END_IF;
+
+   bStart := FALSE;
+ELSIF g_bMoldValve THEN 
+   // proportional valve
+   b := WRITE_SVREAL_DIRECT(sv_rVelocityAbs, rSetVelocity); 
+   IF (sv_bUseValve OR sv_ServoValveControlData.bEnable) THEN // 
+      IF mbFastOpenLinked AND do_FastOpen THEN
+         rSetVelocityValve := sv_rFastVelocityFactor * rSetVelocity;
+      ELSE
+         rSetVelocityValve := rSetVelocity;   
+      END_IF;
+      IF (mbUsePropValve AND sv_ServoValveControlData.bEnable) THEN // calc feed forward if init OK
+         // use feedforward calculated from pressure drop at prop valve
+         rSetFlow := mrAreaOutletFactor * (rSetVelocityValve 
+                   + sv_ServoValveControlData.rGainPBwd * (rYXSetPos - sv_rToggleLeverPosition)                       
+                   + sv_ServoValveControlData.rGainDBwd * (rSetVelocityValve - sv_rToggleLeverVelEstimate));
+         abPropValve.aCalcVoltage(rPressure := rPessureDrop,
+                                  rFlow := rSetFlow);                  
+         mrPropValveOutput := abPropValve.aCalcVoltage.rControlVoltage * mrSign;
+         b := WRITE_SVREAL_DIRECT(sv_rMoldValveOutput, mrPropValveOutput);
+         mrPressOutlet := rPessureDrop;
+         mrSetFlowOutlet := rSetFlow;
+         // update reference position
+         rYXSetPos := rYXSetPos + rSetVelocityValve * rCycleTime;
+         // integrator stop at maximum position (profile or interstop) of movement
+         IF rYXSetPos > rEndValue  THEN
+            rYXSetPos :=  rEndValue;
+         END_IF;                  
+      ELSE
+         fbConstOutputRamp(bStart:=FALSE,
+                           bStop:=bStop,
+                           rActValue:=sv_rToggleLeverPosition,
+                           bInterstopRamp:=abMoldOpen.aRun.bOnInterstopRamp,
+                           bProfileRamp:=abMoldOpen.aRun.bOnLastRamp,
+                           rEndValue:=rEndValue,
+                           bDir:=TRUE,
+                           rStartValueStopRamp:=abMoldOpen.aRun.rVelocityOutput,    
+                           rStopRamp:=rStopRamp,
+                           bActive := abMoldOpen.aRun.bActive); 
+         b := WRITE_SVREAL_DIRECT(sv_rMoldValveOutput, fbConstOutputRamp.rOutput);
+      END_IF;
+    ELSE
+       b := WRITE_SVREAL_DIRECT(sv_rMoldValveOutput, rMaxVoltageValve);
+    END_IF;
+ELSE
+   b := WRITE_SVREAL_DIRECT(sv_rVelocityAbs, rSetVelocity);
+END_IF;
+
+mrSetVelocity := rSetVelocity;
+    
+
+
+;#END_EDIT_BLOCK END_ACTION (*ACalcValveController*)
+ACTION AInitValveController: #BEGIN_EDIT_BLOCK
+IF g_bMoldValve THEN
+   IF g_MoveCtrl.pData^.MoveId = cMoveBwdInterPos THEN
+      rEndValue := rInterruptTogglePosition; //  use toggle lever position calculated from mold position sv_rBwdInterruptPosition;
+   ELSE
+      rEndValue := sv_ToggleBwdProfVis.Profile.Points[sv_MoldBwdProfVis.Profile.iNoOfPoints+1].rStartPos;
+   END_IF;
+   rYXSetPos := sv_rToggleLeverPosition;
+
+   IF NOT bInitDone THEN
+      dCycleTime := GET_TASK_INTERVAL();
+      rCycleTime := LINT_TO_REAL(TIME_TO_LINT(dCycleTime))/1.0e6;  
+      bInitDone := TRUE;
+   END_IF;
+    
+   IF  g_bPressureSensorsAvailable THEN
+    
+      rQNom := sv_ValveData.rQNom / 60000.0; //l/min -> m/s
+      rPNom := sv_ValveData.rDeltaPNom * 1.0e5; // bar -> N/mÂ²
+      rQNomPB := sv_ValveData.rQNomPB / 60000.0; //l/min -> m/s
+      rPNomPB := sv_ValveData.rDeltaPNomPB * 1.0e5; // bar -> N/mÂ²
+      abValveController.aPar(rPistonArea1 := sv_ConstructionData.rPistonArea1,
+                             rPistonArea2 := sv_ConstructionData.rPistonArea2,
+                             rQNom := rQNom,
+                             rDeltaPressNom := rPNom,
+                             rQNomPB := rQNomPB,
+                             rDeltaPressNomPB := rPNomPB,
+                             bUsePB := sv_ValveData.bNominalAsysmmetric,
+                             rMaxStroke := sv_rToggleLeverStroke*1.0e-3, // mm -> m
+                             rVolume1 := sv_ConstructionData.rVolume1*1.0e-3, // dmÂ³ -> mÂ³
+                             rVolume2 := sv_ConstructionData.rVolume2*1.0e-3, // dmÂ³ -> mÂ³
+                             rGainP := sv_ServoValveControlData.rGainPBwd,
+                             rGainD := sv_ServoValveControlData.rGainDBwd,
+                             bPositiveVoltageIncreasing := 
+                                sv_ServoValveControlData.bPositiveVoltageIncreasing,
+                             bPositionIncreasing := TRUE);
+      rSetPos := sv_rToggleLeverPosition;
+      // trajectories generator: s, v, a, j
+      abMoldOpen.aGetVelocityProfile();
+      CalcedVelocityProfile := abMoldOpen.aGetVelocityProfile.CalcedVelocityProfile;
+      Accelerations.rSoft  := CalcedVelocityProfile.StopAcceleration;
+      Accelerations.rStop  := CalcedVelocityProfile.InterAcceleration;
+      Accelerations.rStart := CalcedVelocityProfile.Acceleration;
+      Param.Mode.RampType    := KCTRL_YXGen_RampType_Sin;
+      Param.Mode.bPeriodMode := FALSE;;
+      Param.ProfilePoints := CalcedVelocityProfile.ProfilePoints;
+    
+      abYXGenLightB.Par(dCycleTime:= dCycleTime,
+                        Param:=Param,
+                        InputType:=InputType);
+      abYXGenLightB.ParDeadTime(dDeadTime := sv_dSetDelayTimeOffBwd);
+      abYXGenLightB.ParAccelerations(Accelerations:=Accelerations);
+       
+      StopPoint.rX :=rInterruptTogglePosition + sv_rInterstopTolerance; 
+      abYXGenLightB.ParStopPoint(StopPoint:=StopPoint); 
+
+      abYXGenLightB.Init(rX0:=sv_rToggleLeverPosition,
+                         rY0:=0.0);
+      
+    
+      
+      IF sv_ServoValveControlData.bEnable THEN
+         IF NOT (g_bPressureSensor1Available AND g_bPressureSensor2Available) THEN
+            abEstimatePressure.aPar(rMassPiston := sv_ConstructionData.rMassPiston,
+                                    rMassMold := sv_ConstructionData.rMassMold,
+                                    rViscoseFrictonCylinder := sv_ConstructionData.rViscoseFrictonCylinder,
+                                    rViscoseFrictonMold := sv_ConstructionData.rViscoseFrictonMold,
+                                    rCoulombFrictonCylinder := sv_ConstructionData.rCoulombFrictonCylinder,
+                                    rCoulombFrictonMold := sv_ConstructionData.rCoulombFrictonMold,
+                                    rPistonArea1 := sv_ConstructionData.rPistonArea1,
+                                    rPistonArea2 := sv_ConstructionData.rPistonArea2,
+                                    ToggleLeverSplineData:=sv_ToggleLeverSplineData);
+         END_IF;             
+      END_IF;      
+   END_IF;
+    
+   IF sv_MoldFwdProfVis.rMaxRampVel > sv_MoldBwdProfVis.rMaxRampVel THEN
+      rStopRamp := sv_MoldBwdProfVis.rMaxRampVel;
+   ELSE
+      rStopRamp := sv_MoldFwdProfVis.rMaxRampVel;
+   END_IF;
+   fbConstOutputRamp(bReParam:=TRUE,
+                    bStart:=TRUE,
+                    bStop := FALSE,
+                    rActValue:=sv_rToggleLeverPosition,           
+                    rStartValue:= rMaxVoltageValve,
+                    rMinOutput := rMinOutput,
+                    LintabParam:=sv_ValveCharacteristicLintab,
+                    bInterstopRamp:=abMoldOpen.aRun.bOnInterstopRamp,
+                    bProfileRamp:=abMoldOpen.aRun.bOnLastRamp,
+                    rEndValue:=rEndValue,
+                    bDir:=TRUE,
+                    rStartValueStopRamp:=abMoldOpen.aRun.rVelocityOutput,
+                    rStopRamp:=rStopRamp,
+                    bActive := abMoldOpen.aRun.bActive);
+    
+   fbPumpVelocityOutput(Start := FALSE,
+                        Stop  := FALSE,
+                        ReParam  := TRUE,
+                        CycleTime := dCycleTime,
+                        PreRamp := 1.0e10,
+                        PreOutputValue := PumpVelocityProfile.ProfilePoints.Point[1].rY,
+                        StartOutputValue := PumpVelocityProfile.ProfilePoints.Point[1].rY, 
+                        ProfilData := PumpVelocityProfile,
+                        MinOutput := 0.0,
+                        RampType := sv_MoldBwdProfVis.RampTypeVel,
+                        OpenEnd := sv_MoldBwdProfVis.bOpenEndProfile,
+                        DeadTime := T#0s,
+                        InputValue := sv_rToggleLeverPosition,
+                        Interrupt := FALSE,
+                        DelayTime := T#0s); 
+   
+   rPessureDrop := MAX(0.0, sv_rMoldValvePressureDropOpen);
+    
+   bStart := TRUE;
+END_IF;
+
+;#END_EDIT_BLOCK END_ACTION (*AInitValveController*)
+ACTION AResetIdentBlock: #BEGIN_EDIT_BLOCK
+sv_rBwdInterruptPosition := sv_rIdentPosition;
+IF g_bMoldValve THEN
+   sv_rMoldValveOutput := rMaxVoltageValve;
+   rPositionDown := (sv_rToggleLeverPosition + sv_rBwdInterruptPosition) * 0.5;
+END_IF;
+abMoldOpenStep.aRun(bStart := FALSE);
+
+
+;#END_EDIT_BLOCK END_ACTION (*AResetIdentBlock*)
+ACTION AMoldOpenTime: #BEGIN_EDIT_BLOCK
+IF g_MoveCtrl.pData^.MoveId <> cMoveBwdInterPos THEN
+   b := WRITE_SV_DIRECT(sv_dActOpenTime, abMoldOpen.aRun.dActMoveTime);   
+END_IF;
+
+;#END_EDIT_BLOCK END_ACTION (*AMoldOpenTime*)
+ACTION ASetTargetPosition: #BEGIN_EDIT_BLOCK
+(**************************************** WARNING ********************************************
+ *** The KEBA Kemro K2 System including software is not intended for safety control tasks! ***
+ ***                       For further information see Comment tab!                        ***
+ *********************************************************************************************)
+
+IF sv_bDoPumpVelocityCalib THEN
+   rTargetPosition := 0.9 * sv_rMoldStroke;
+ELSE
+   rTargetPosition := sv_rBwdInterruptPosition;
+END_IF;
+
+
+
+;#END_EDIT_BLOCK END_ACTION (*ASetTargetPosition*)
+ACTION ATransducerCalib2: #BEGIN_EDIT_BLOCK
+(**************************************** WARNING ********************************************
+ *** The KEBA Kemro K2 System including software is not intended for safety control tasks! ***
+ ***                       For further information see Comment tab!                        ***
+ *********************************************************************************************)
+
+abMoldBwdCalib.aRun(bStop := bStop OR sv_bTransducerError,
+                    bStart := TRUE,
+                    rActVoltage := ai_Position,
+                    rMaxVoltageDiff := sv_rMaxVoltageDiff,
+                    dStandStillDetectTime := sv_dStandStillDetectTime,
+                    LintabPoint := dummypoint,
+                    rSetValue := sv_rToggleLeverStroke,
+                    dDelayTimeOn := sv_MoldOpenTimesSet.dSetDelayTimePump,
+                    dDelayTimeOff := sv_MoldOpenTimesSet.dSetDelayTimeValve,
+                    bActive => sv_bOutputActive,
+                    rOutputPre => sv_rPressureAbs,
+                    rOutputVel => sv_rVelocityAbs,
+                    bPreOutputReached => sv_bPreOutputReady);
+sv_bDoTransducerCalib := NOT (abMoldBwdCalib.aRun.bPointDetected);
+
+abLintabApplyPres.aCalc(rX := sv_rPressureAbs,
+                        rY => sv_rPressure);
+
+abLintabApplyVel.aCalc(rX := sv_rVelocityAbs,
+                       rY => sv_rVelocity);
+
+;#END_EDIT_BLOCK END_ACTION (*ATransducerCalib2*)
+ACTION ATransducerCalib: #BEGIN_EDIT_BLOCK
+(**************************************** WARNING ********************************************
+ *** The KEBA Kemro K2 System including software is not intended for safety control tasks! ***
+ ***                       For further information see Comment tab!                        ***
+ *********************************************************************************************)
+
+abMoldBwdCalib.aRun(bStop := bStop OR sv_bTransducerError,
+                    bStart := TRUE,
+                    rActVoltage := ai_Position,
+                    rMaxVoltageDiff := sv_rMaxVoltageDiff,
+                    dStandStillDetectTime := sv_dStandStillDetectTime,
+                    LintabPoint := sv_TmpLintabPoint,
+                    rSetValue := sv_rMoldStroke,
+                    dDelayTimeOn := sv_MoldOpenTimesSet.dSetDelayTimePump,
+                    dDelayTimeOff := sv_MoldOpenTimesSet.dSetDelayTimeValve,
+                    bActive => sv_bOutputActive,
+                    rOutputPre => sv_rPressureAbs,
+                    rOutputVel => sv_rVelocityAbs,
+                    bPreOutputReached => sv_bPreOutputReady);
+sv_bDoTransducerCalib := NOT (abMoldBwdCalib.aRun.bPointDetected);
+bError := abMoldBwdCalib.aRun.bError OR bError;
+
+abLintabApplyPres.aCalc(rX := sv_rPressureAbs,
+                        rY => sv_rPressure);
+
+abLintabApplyVel.aCalc(rX := sv_rVelocityAbs,
+                       rY => sv_rVelocity);
+
+;#END_EDIT_BLOCK END_ACTION (*ATransducerCalib*)
+ACTION AProfileOutput: #BEGIN_EDIT_BLOCK
+(**************************************** WARNING ********************************************
+ *** The KEBA Kemro K2 System including software is not intended for safety control tasks! ***
+ ***                       For further information see Comment tab!                        ***
+ *********************************************************************************************)
+
+abLintabApplyToggle.aCalcInv(rY := sv_rBwdInterruptPosition,
+                             rX => rInterruptTogglePosition);
+
+abMoldOpen.aRun(bStop := bStop OR sv_bTransducerError,
+                bUseInterruptPos := g_MoveCtrl.pData^.MoveId = cMoveBwdInterPos,
+                rInterruptPosition := rInterruptTogglePosition + sv_rInterstopTolerance,
+                bStart := NOT sv_bOutputActive,
+                rActPosition := sv_rToggleLeverPosition,
+                dMaxMoveTime := sv_MoldOpenTimesSet.dMaxMoveTime,
+                dDelayTimeOn := sv_MoldOpenTimesSet.dSetDelayTimePump,
+                dDelayTimeOff := sv_MoldOpenTimesSet.dSetDelayTimeValve,
+                DeadTime := sv_dSetDelayTimeOffBwd,
+                rAmplification := rAmplification,
+                ManualDelayTime := sv_OpenManualDelayTime,
+                StopDeadTime := sv_OpenInterstopDeadTime,
+                rInterruptAccel := sv_rBwdInterruptAccel,
+                rInterruptDeaccel := sv_rBwdInterruptDeaccel,
+                rActVelocity := sv_rMoldVelEstimate,
+                rMaxPosition := sv_rToggleLeverStroke,
+                rMaxVelocity := sv_rMaxSpeedBwd,
+                rSmoothFactor := sv_rSmoothFactor,
+                rTolerancePosReached:= mrTolerancePosReached,
+                rVelocityOutput => rSetVelocity,
+                bActive => sv_bOutputActive,
+                iActiveStage => sv_iActiveStage,
+                bPreOutputReached => sv_bPreOutputReady);
+
+b := WRITE_SVREAL_DIRECT(sv_rPressureAbs, abMoldOpen.aRun.rPressureOutput);                 
+b := WRITE_SV_DIRECT(sv_MoldOpenTimesAct.dActMoveTime, abMoldOpen.aRun.dActMoveTime);
+
+abLintabApplyPres.aCalc(rX := sv_rPressureAbs);
+b := WRITE_SVREAL_DIRECT(sv_rPressure, abLintabApplyPres.aCalc.rY);                 
+
+mbInTolerance := abMoldOpen.aRun.bInTolerance;
+
+;#END_EDIT_BLOCK END_ACTION (*AProfileOutput*)
+ACTION AStepOutput: #BEGIN_EDIT_BLOCK
+(**************************************** WARNING ********************************************
+ *** The KEBA Kemro K2 System including software is not intended for safety control tasks! ***
+ ***                       For further information see Comment tab!                        ***
+ *********************************************************************************************)
+
+abMoldOpenStep.aRun(bUsePosDetect := sv_rBwdInterruptPosition <> 0.0,
+                    rLowOutput := sv_rMaxSpeedBwd * 0.1,
+                    rPositionDown := (sv_rToggleLeverPosition + sv_rBwdInterruptPosition) * 0.5,
+                    bStart := TRUE,
+                    bStop := bStop,
+                    bDirection := TRUE,
+                    rActPos := sv_rToggleLeverPosition,
+                    rTargetPos := sv_rBwdInterruptPosition,
+                    dDelayTimeOn := sv_MoldOpenTimesSet.dSetDelayTimePump,
+                    dDelayTimeOff := sv_dSetDelayTimeOffBwd,
+                    rPositionUp := sv_rToggleLeverPosition,
+                    rHighOutput := sv_ConstBwdVis.Velocity.Output.rOutputValue,
+                    dMaxMoveTime := sv_MoldOpenTimesSet.dMaxMoveTime,
+                    rStopRamp := sv_rIdentStopRamp,
+                    bActive => sv_bOutputActive,
+                    rOutputPre => sv_rPressureAbs,
+                    rOutputVel => sv_rVelocityAbs,
+                    bPreOutputReached => sv_bPreOutputReady);
+
+abLintabApplyPres.aCalc(rX := sv_rPressureAbs,
+                        rY => sv_rPressure);
+
+abLintabApplyVel.aCalc(rX := sv_rVelocityAbs,
+                       rY => sv_rVelocity);
+
+IF (g_bMoldValve) THEN
+   // if use stop ramp close mold valve
+   IF (sv_rToggleLeverPosition > rPositionDown) AND (sv_ConstBwdVis.Velocity.Output.rOutputValue > 0.0) THEN
+      rOutput := rMaxVoltageValve * sv_rVelocityAbs / sv_ConstBwdVis.Velocity.Output.rOutputValue;
+      IF rOutput > 0.0 THEN
+         rMoldValveOutput := rOutput + rOffsetPos;
+         IF rMoldValveOutput > MAX_VOLTAGE THEN
+            rMoldValveOutput := MAX_VOLTAGE;
+         END_IF;
+         b := WRITE_SVREAL_DIRECT(sv_rMoldValveOutput, rMoldValveOutput);
+      ELSIF rOutput < 0.0 THEN
+         rMoldValveOutput := rOutput + rOffsetNeg;
+         IF rMoldValveOutput < -MAX_VOLTAGE THEN
+            rMoldValveOutput := -MAX_VOLTAGE;
+         END_IF; 
+         b := WRITE_SVREAL_DIRECT(sv_rMoldValveOutput, rMoldValveOutput);
+      END_IF;
+   END_IF;
+END_IF;
+
+;#END_EDIT_BLOCK END_ACTION (*AStepOutput*)
+ACTION AConstOutputForMHAdjustSetup: #BEGIN_EDIT_BLOCK
+(**************************************** WARNING ********************************************
+ *** The KEBA Kemro K2 System including software is not intended for safety control tasks! ***
+ ***                       For further information see Comment tab!                        ***
+ *********************************************************************************************)
+
+abMoldOpenConst.aRun(bStop := bStop OR sv_bTransducerError,
+                     bStart := TRUE,
+                     bDirection := TRUE,
+                     rActPos := sv_rMoldPosition,
+                     rTargetPos := rMHAdjustBwdPos,
+                     bUsePosDetect := TRUE,
+                     dMaxTime := sv_MoldOpenTimesSet.dMaxMoveTime,
+                     dDelayTimeOn := sv_MoldOpenTimesSet.dSetDelayTimePump,
+                     dDelayTimeOff := sv_MoldOpenTimesSet.dSetDelayTimeValve,
+                     rOutputPre => sv_rPressureAbs,
+                     rOutputVel => sv_rVelocityAbs,
+                     bActive => sv_bOutputActive,
+                     dActTime => sv_MoldOpenTimesAct.dActMoveTime,
+                     bPreOutputReached => sv_bPreOutputReady);
+
+abLintabApplyPres.aCalc(rX := sv_rPressureAbs,
+                        rY => sv_rPressure);
+
+abLintabApplyVel.aCalc(rX := sv_rVelocityAbs,
+                       rY => sv_rVelocity);
+
+;#END_EDIT_BLOCK END_ACTION (*AConstOutputForMHAdjustSetup*)
+ACTION AConstOutput: #BEGIN_EDIT_BLOCK
+(**************************************** WARNING ********************************************
+ *** The KEBA Kemro K2 System including software is not intended for safety control tasks! ***
+ ***                       For further information see Comment tab!                        ***
+ *********************************************************************************************)
+
+abMoldOpenConst.aRun(bUsePosDetect := rTargetPosition <> 0.0,
+                     bStart := TRUE,
+                     bStop := bStop,
+                     bDirection := TRUE,
+                     rActPos := sv_rMoldPosition,
+                     rTargetPos := rTargetPosition,
+                     dDelayTimeOn := sv_MoldOpenTimesSet.dSetDelayTimePump,
+                     dDelayTimeOff := sv_MoldOpenTimesSet.dSetDelayTimeValve,
+                     rOutputPre => sv_rPressureAbs,
+                     rOutputVel => sv_rVelocityAbs,
+                     bActive => sv_bOutputActive,
+                     dActTime => sv_MoldOpenTimesAct.dActMoveTime,
+                     bPreOutputReached => sv_bPreOutputReady);
+
+abLintabApplyPres.aCalc(rX := sv_rPressureAbs,
+                        rY => sv_rPressure);
+
+abLintabApplyVel.aCalc(rX := sv_rVelocityAbs,
+                       rY => sv_rVelocity);
+
+;#END_EDIT_BLOCK END_ACTION (*AConstOutput*)
+ACTION ACalcPumpVelocity: #BEGIN_EDIT_BLOCK
+(**************************************** WARNING ********************************************
+ *** The KEBA Kemro K2 System including software is not intended for safety control tasks! ***
+ ***                       For further information see Comment tab!                        ***
+ *********************************************************************************************)
+
+abLintabApplyVel.aCalc(rX := sv_rVelocityAbs,
+                       rY => sv_rVelocity);
+
+;#END_EDIT_BLOCK END_ACTION (*ACalcPumpVelocity*)
+(* end sfc-code *)
+
+
+END_ALGORITHM
+
+ALGORITHM aInit
+
+#BEGIN_EDIT_BLOCK
+(**************************************** WARNING ********************************************
+ *** The KEBA Kemro K2 System including software is not intended for safety control tasks! ***
+ ***                       For further information see Comment tab!                        ***
+ *********************************************************************************************)
+
+abMoldOpen.aInit(pProfile := @sv_ToggleBwdProfVis,
+                 MoveDir := sv_MoveOpen.MoveDir,
+                 pdCalcedDuration := @sv_dCalculatedDurationOpen,
+                 prCalcDurationStartPosition := @sv_ToggleBwdProfVis.Profile.Points[1].rStartPos,
+                 pInstanceDataInterPos := @sv_InstanceDataOpenToggleInter);
+
+abMoldOpenConst.aInit(pConst := @sv_ConstBwdVis,
+                      MoveId := cMoveBwd);
+
+abMoldBwdCalib.aInit(pConst := @sv_ConstBwdVis,
+                     MoveId := cMoveBwd);
+
+abLintabApplyPres.aInit(pLintab := @sv_LintabOutBwdP);
+
+abLintabApplyVel.aInit(pLintab := @sv_LintabOutBwdV);
+
+abMoldOpen.aInitMaxRamps(prMaxAbsAccelStart := @sv_MoldFwdProfVis.rMaxRampVel,
+                         prMaxAbsAccelEnd := @sv_MoldBwdProfVis.rMaxRampVel,
+                         prPosAccelStart := @sv_MoldBwdProfVis.Profile.Points[1].rStartPos,
+                         prPosAccelEnd := @sv_MoldFwdProfVis.Profile.Points[1].rStartPos,
+                         bUseAccelerationReduction := NOT g_bDirectLockAvailable);
+
+abLintabApplyToggle.aInit(pLintab := @sv_ToggleLeverLintab);
+
+abLintabApplyToggleSlow.aInit(pLintab := @sv_ToggleLeverLintab);
+
+abMoldOpenStep.aInit(pConst := @sv_ConstBwdVis,
+                     MoveId := cMoveBwd,
+                     prMaxSpeed := @sv_rMaxSpeedBwd);
+
+mbFastOpenLinked := IS_LINKED(do_FastOpen);
+
+
+;#END_EDIT_BLOCK END_ALGORITHM
+
+POSTUPDATE_ALGORITHM pMinOutputChanged ON PU_Task_7 WITH sv_MinOutputBwd,sv_bInitStart
+
+#BEGIN_EDIT_BLOCK
+(**************************************** WARNING ********************************************
+ *** The KEBA Kemro K2 System including software is not intended for safety control tasks! ***
+ ***                       For further information see Comment tab!                        ***
+ *********************************************************************************************)
+
+//copy minoutput to bwd profile
+sv_MoldBwdProfVis.rMinOutputVel := sv_MinOutputBwd.rVelocity;
+sv_MoldBwdProfVis.rMinOutputPress := sv_MinOutputBwd.rPressure;
+
+//copy minoutput to bwd constoutput
+sv_ConstBwdVis.Velocity.rMinOutput := sv_MinOutputBwd.rVelocity;
+sv_ConstBwdVis.Pressure.rMinOutput := sv_MinOutputBwd.rPressure;
+
+
+;#END_EDIT_BLOCK END_ALGORITHM
+
+PROCESS_ALGORITHM paInitDebugMeasurement ON TaskSlow AUTOSTART
+
+
+VAR
+ fuName : STRING(255);
+ variableName : STRING(255);
+ swoState : KSWO_Status;
+ b : BOOL;
+END_VAR
+#BEGIN_EDIT_BLOCK
+fuName := GET_MY_FU_NAME();
+variableName := CONCAT(fuName,'.Open.rSetPressure bar');
+swoState := KSWO_AddVariable( Task := TaskAnalog,
+                              Name := variableName,
+                              Variable := sv_rPressureAbs);
+b := FAddToScopeGroup(Task := TaskAnalog, 
+                      Name := variableName, 
+                      GroupId := cScopeGroupMold);
+variableName := CONCAT(fuName,'.Open.rSetVelocity mm/s');
+swoState := KSWO_AddVariable( Task := TaskAnalog,
+                              Name := variableName,
+                              Variable := mrSetVelocity);
+b := FAddToScopeGroup(Task := TaskAnalog, 
+                      Name := variableName, 
+                      GroupId := cScopeGroupMold);
+variableName := CONCAT(fuName,'.Open.bActive');
+swoState := KSWO_AddVariable( Task := TaskAnalog,
+                              Name := variableName,
+                              Variable := sv_bOutputActive);
+b := FAddToScopeGroup(Task := TaskAnalog, 
+                      Name := variableName, 
+                      GroupId := cScopeGroupMold);
+b := FAddToScopeGroup(Task := TaskAnalog, 
+                      Name := variableName, 
+                      GroupId := cScopeGroupMold);
+
+variableName := CONCAT(fuName,'.Open.rPumpVelocity');
+swoState := KSWO_AddVariable( Task := TaskAnalog,
+                              Name := variableName,
+                              Variable := mrPumpVelocity);
+
+variableName := CONCAT(fuName,'.Control.rUP');
+swoState := KSWO_AddVariable( Task := TaskAnalog,
+                              Name := variableName,
+                              Variable := mrUP);
+variableName := CONCAT(fuName,'.Control.rUD');
+swoState := KSWO_AddVariable( Task := TaskAnalog,
+                              Name := variableName,
+                              Variable := mrUD);
+
+variableName := CONCAT(fuName,'.Open.InTolerance');
+swoState := KSWO_AddVariable( Task := TaskAnalog,
+                              Name := variableName,
+                              Variable := mbInTolerance);
+STOP_PROCESS_ALGORITHM();
+
+
+;#END_EDIT_BLOCK END_ALGORITHM
+
+POSTUPDATE_ALGORITHM pCheckOffset ON PU_Task_7 WITH sv_bInitDone,sv_MoldBwdProfVis.bUseOffsetOptimizing,sv_MinOutputBwd
+
+
+VAR
+ rOffsetFactor : REAL := 0.1;
+END_VAR
+#BEGIN_EDIT_BLOCK
+// no offset identified use 50 % for start
+IF (sv_MoldBwdProfVis.bUseOffsetOptimizing) AND (sv_MinOutputBwd.rVelocity > 0.0) THEN
+    IF (sv_MoldBwdProfVis.rOffset <= 0.0) THEN
+        IF (sv_MoldBwdProfVis.Profile.iNoOfPoints+1) <= 20 THEN
+            IF sv_MoldBwdProfVis.Profile.Points[sv_MoldBwdProfVis.Profile.iNoOfPoints+1].rStartPos >= sv_MoldBwdProfVis.Profile.Points[sv_MoldBwdProfVis.Profile.iNoOfPoints].rStartPos THEN
+                sv_MoldBwdProfVis.rOffset := rOffsetFactor * sv_MoldBwdProfVis.Profile.Points[sv_MoldBwdProfVis.Profile.iNoOfPoints+1].rStartPos;        
+            ELSE    
+                sv_MoldBwdProfVis.rOffset := rOffsetFactor * sv_MoldBwdProfVis.Profile.Points[sv_MoldBwdProfVis.Profile.iNoOfPoints].rStartPos;        
+            END_IF;
+        ELSE
+            sv_MoldBwdProfVis.rOffset := rOffsetFactor * sv_MoldBwdProfVis.Profile.Points[sv_MoldBwdProfVis.Profile.iNoOfPoints].rStartPos;        
+        END_IF;
+    END_IF;
+ELSE
+    IF sv_MoldBwdProfVis.bUseOffsetOptimizing THEN
+        sv_MoldBwdProfVis.bUseOffsetOptimizing := FALSE;
+        SET_ALARM(erMoldOpenNoMinOutput);
+    END_IF;
+    
+    sv_MoldBwdProfVis.rOffset := 0.0;
+    abCalcOffset.aReset();
+END_IF;
+
+
+;#END_EDIT_BLOCK END_ALGORITHM
+
+POSTUPDATE_ALGORITHM pCalcToggleProfile ON PU_Task_7 WITH sv_bInitDone,sv_MoldBwdProfVis
+
+#BEGIN_EDIT_BLOCK
+START_PROCESS_ALGORITHM(paCalcToggleProfile);
+
+
+;#END_EDIT_BLOCK END_ALGORITHM
+
+PROCESS_ALGORITHM paCalcToggleProfile ON TaskSlow
+
+
+VAR_TEMP
+ i : UDINT;
+END_VAR
+
+VAR
+ pCalcedProfile : REFTO tCalculatedProfiles;
+END_VAR
+#BEGIN_EDIT_BLOCK
+(**************************************** WARNING ********************************************
+ *** The KEBA Kemro K2 System including software is not intended for safety control tasks! ***
+ ***                       For further information see Comment tab!                        ***
+ *********************************************************************************************)
+
+//save reference to calced profile
+pCalcedProfile := sv_ToggleBwdProfVis.pCalculatedProfile;
+
+sv_ToggleBwdProfVis := sv_MoldBwdProfVis;
+FOR i:= 1 TO sv_MoldBwdProfVis.Profile.iNoOfPoints+1 DO
+    abLintabApplyToggleSlow.aCalcInv(rY := sv_MoldBwdProfVis.Profile.Points[i].rStartPos,
+                                 rX => sv_ToggleBwdProfVis.Profile.Points[i].rStartPos);
+END_FOR;
+
+//copy original reference
+sv_ToggleBwdProfVis.pCalculatedProfile := pCalcedProfile;
+
+STOP_PROCESS_ALGORITHM();
+
+
+;#END_EDIT_BLOCK END_ALGORITHM
+
+POSTUPDATE_ALGORITHM pCalcToggleInterPos ON PU_Task_7 WITH sv_bInitDone,sv_InstanceDataOpenInterPos
+
+#BEGIN_EDIT_BLOCK
+START_PROCESS_ALGORITHM(paCalcToggleInterPos);
+
+
+;#END_EDIT_BLOCK END_ALGORITHM
+
+PROCESS_ALGORITHM paCalcToggleInterPos ON TaskSlow
+
+
+VAR_TEMP
+ i : DINT;
+END_VAR
+#BEGIN_EDIT_BLOCK
+(**************************************** WARNING ********************************************
+ *** The KEBA Kemro K2 System including software is not intended for safety control tasks! ***
+ ***                       For further information see Comment tab!                        ***
+ *********************************************************************************************)
+
+sv_InstanceDataOpenToggleInter := sv_InstanceDataOpenInterPos;
+FOR i:=1 TO cMaxIntermediateConditions DO
+    abLintabApplyToggleSlow.aCalcInv(rY := sv_InstanceDataOpenInterPos[i].rTargetValue,
+                                 rX => sv_InstanceDataOpenToggleInter[i].rTargetValue);
+END_FOR;
+STOP_PROCESS_ALGORITHM();
+
+
+;#END_EDIT_BLOCK END_ALGORITHM
+
+POSTUPDATE_ALGORITHM pCalcMovementDirection ON PU_Task_7 WITH sv_bInitDone,sv_ValveData.rValveOffsetFwd,sv_ValveData.rValveOffsetBwd
+
+
+VAR_TEMP
+ uCount : UDINT;
+END_VAR
+#BEGIN_EDIT_BLOCK
+IF g_bMoldValve THEN
+    IF sv_ValveData.rValveOffsetFwd > sv_ValveData.rValveOffsetBwd THEN
+        rOffsetPos := sv_ValveData.rValveOffsetFwd;
+        rOffsetNeg := sv_ValveData.rValveOffsetBwd;
+        rMaxVoltageValve := -MAX_VOLTAGE;
+    ELSE    
+        rOffsetPos := sv_ValveData.rValveOffsetBwd;
+        rOffsetNeg := sv_ValveData.rValveOffsetFwd;
+        rMaxVoltageValve := MAX_VOLTAGE;
+    END_IF;
+
+    IF g_bPressureSensorsAvailable THEN    
+        sv_ValveCharacteristicLintab.LintabPoints.uNoOfPoints := 4;
+        sv_ValveCharacteristicLintab.LintabPoints.Point[1].rX := -MAX_VOLTAGE; 
+        sv_ValveCharacteristicLintab.LintabPoints.Point[1].rY := -MAX_VOLTAGE; 
+        sv_ValveCharacteristicLintab.LintabPoints.Point[2].rY := 0.0; 
+        sv_ValveCharacteristicLintab.LintabPoints.Point[3].rY := 0.0; 
+        sv_ValveCharacteristicLintab.LintabPoints.Point[4].rX := MAX_VOLTAGE; 
+        sv_ValveCharacteristicLintab.LintabPoints.Point[4].rY := MAX_VOLTAGE; 
+        IF sv_ValveData.rValveOffsetFwd > sv_ValveData.rValveOffsetBwd THEN
+            sv_ValveCharacteristicLintab.LintabPoints.Point[2].rX := sv_ValveData.rValveOffsetBwd; 
+            sv_ValveCharacteristicLintab.LintabPoints.Point[3].rX := sv_ValveData.rValveOffsetFwd; 
+            sv_ServoValveControlData.bPositiveVoltageIncreasing := FALSE;
+        ELSE    
+            sv_ValveCharacteristicLintab.LintabPoints.Point[3].rX := sv_ValveData.rValveOffsetBwd; 
+            sv_ValveCharacteristicLintab.LintabPoints.Point[2].rX := sv_ValveData.rValveOffsetFwd; 
+            sv_ServoValveControlData.bPositiveVoltageIncreasing := TRUE;
+        END_IF;    
+        IF sv_ServoValveControlData.bPositiveVoltageIncreasing THEN
+            FOR uCount :=1 TO sv_LintabOutMoldPosCtrl.LintabPoints.uNoOfPoints DO
+               sv_LintabOutMoldPosCtrl.LintabPoints.Point[uCount].rX := sv_ValveCharacteristicLintab.LintabPoints.Point[uCount].rY;
+               sv_LintabOutMoldPosCtrl.LintabPoints.Point[uCount].rY := sv_ValveCharacteristicLintab.LintabPoints.Point[uCount].rX;
+            END_FOR;
+        ELSE
+            sv_LintabOutMoldPosCtrl.LintabPoints.uNoOfPoints := sv_ValveCharacteristicLintab.LintabPoints.uNoOfPoints;
+            FOR uCount :=1 TO sv_LintabOutMoldPosCtrl.LintabPoints.uNoOfPoints DO
+               sv_LintabOutMoldPosCtrl.LintabPoints.Point[uCount].rX := -sv_ValveCharacteristicLintab.LintabPoints.Point[uCount].rY;
+               sv_LintabOutMoldPosCtrl.LintabPoints.Point[uCount].rY := sv_ValveCharacteristicLintab.LintabPoints.Point[uCount].rX;
+            END_FOR;
+        END_IF;
+
+    END_IF;
+END_IF;
+
+
+;#END_EDIT_BLOCK END_ALGORITHM
+
+POSTUPDATE_ALGORITHM pInstanceDataDurationChanged ON PU_Task_13 WITH sv_InstanceDataOpenToggleInter
+
+
+VAR_TEMP
+ i : DINT;
+END_VAR
+
+VAR
+ InstDataOpenToggleInter : tyInstanceListArray;
+ bCopyDurations : BOOL;
+END_VAR
+#BEGIN_EDIT_BLOCK
+(**************************************** WARNING ********************************************
+ *** The KEBA Kemro K2 System including software is not intended for safety control tasks! ***
+ ***                       For further information see Comment tab!                        ***
+ *********************************************************************************************)
+
+//Copy only necessary, if any calculated duration has changed
+FOR i := 1 TO cMaxIntermediateConditions DO
+   IF (sv_InstanceDataOpenToggleInter[i].dCalculatedDuration <> InstDataOpenToggleInter[i].dCalculatedDuration) THEN
+      bCopyDurations := TRUE;
+      EXIT;   
+   END_IF; 
+END_FOR; 
+
+IF bCopyDurations THEN
+   //Copy calculated duration to instance data array
+   FOR i := 1 TO cMaxIntermediateConditions DO
+      sv_InstanceDataOpenInterPos[i].dCalculatedDuration := sv_InstanceDataOpenToggleInter[i].dCalculatedDuration;              
+   END_FOR;
+   
+   InstDataOpenToggleInter := sv_InstanceDataOpenToggleInter;
+
+   bCopyDurations := FALSE;
+END_IF;
+
+
+
+
+
+;#END_EDIT_BLOCK END_ALGORITHM
+
+POSTUPDATE_ALGORITHM pCalcedVelProfileChanged ON PU_Task_7 WITH sv_CalculatedProfileBwdToggle.VelocityProfile.iProfileChangedCounter
+
+#BEGIN_EDIT_BLOCK
+(**************************************** WARNING ********************************************
+ *** The KEBA Kemro K2 System including software is not intended for safety control tasks! ***
+ ***                       For further information see Comment tab!                        ***
+ *********************************************************************************************)
+
+START_PROCESS_ALGORITHM(paCalcDisplayedVelProfile);
+
+
+;#END_EDIT_BLOCK END_ALGORITHM
+
+POSTUPDATE_ALGORITHM pCalcedPresProfileChanged ON PU_Task_7 WITH sv_CalculatedProfileBwdToggle.PressureProfile.iProfileChangedCounter
+
+#BEGIN_EDIT_BLOCK
+(**************************************** WARNING ********************************************
+ *** The KEBA Kemro K2 System including software is not intended for safety control tasks! ***
+ ***                       For further information see Comment tab!                        ***
+ *********************************************************************************************)
+
+START_PROCESS_ALGORITHM(paCalcDisplayedPresProfile);
+
+
+;#END_EDIT_BLOCK END_ALGORITHM
+
+PROCESS_ALGORITHM paCalcDisplayedVelProfile ON TaskSlow
+
+
+VAR_TEMP
+ i : UDINT;
+ rMaxVelProfBwd : REAL;
+END_VAR
+#BEGIN_EDIT_BLOCK
+(**************************************** WARNING ********************************************
+ *** The KEBA Kemro K2 System including software is not intended for safety control tasks! ***
+ ***                       For further information see Comment tab!                        ***
+ *********************************************************************************************)
+
+// velocity profile
+sv_CalculatedProfileBwd.VelocityProfile.CalculatedProfile := sv_CalculatedProfileBwdToggle.VelocityProfile.CalculatedProfile;
+FOR i := 1 TO sv_CalculatedProfileBwdToggle.VelocityProfile.CalculatedProfile.uNoOfPoints DO
+   abLintabApplyToggleSlow.aCalc(rX := sv_CalculatedProfileBwdToggle.VelocityProfile.CalculatedProfile.Point[i].rX,
+                               rY => sv_CalculatedProfileBwd.VelocityProfile.CalculatedProfile.Point[i].rX);
+END_FOR;    
+sv_CalculatedProfileBwd.VelocityProfile.iProfileChangedCounter := sv_CalculatedProfileBwdToggle.VelocityProfile.iProfileChangedCounter;
+
+IF (sv_CalculatedProfileBwdToggle.VelocityProfile.CalculatedProfile.uNoOfPoints > 0) THEN
+   PumpVelocityProfile.ProfilePoints.uNoOfPoints := 3;
+   rMaxVelProfBwd := 0.0;
+   FOR i := 1 TO sv_CalculatedProfileBwdToggle.VelocityProfile.CalculatedProfile.uNoOfPoints DO
+      rMaxVelProfBwd :=MAX(rMaxVelProfBwd, sv_CalculatedProfileBwdToggle.VelocityProfile.CalculatedProfile.Point[i].rY);
+   END_FOR;
+   PumpVelocityProfile.ProfilePoints.Point[1].rX := 0.0;
+   PumpVelocityProfile.ProfilePoints.Point[1].rY := MIN(1.1*rMaxVelProfBwd, sv_rMaxSpeedBwd);
+   PumpVelocityProfile.ProfilePoints.Point[2].rX := sv_CalculatedProfileBwdToggle.VelocityProfile.CalculatedProfile.Point[sv_CalculatedProfileBwdToggle.VelocityProfile.CalculatedProfile.uNoOfPoints-1].rX;
+   PumpVelocityProfile.ProfilePoints.Point[2].rY := PumpVelocityProfile.ProfilePoints.Point[1].rY;
+   PumpVelocityProfile.ProfilePoints.Point[3].rX := sv_CalculatedProfileBwdToggle.VelocityProfile.CalculatedProfile.Point[sv_CalculatedProfileBwdToggle.VelocityProfile.CalculatedProfile.uNoOfPoints].rX;
+   PumpVelocityProfile.ProfilePoints.Point[3].rY := sv_CalculatedProfileBwdToggle.VelocityProfile.CalculatedProfile.Point[sv_CalculatedProfileBwdToggle.VelocityProfile.CalculatedProfile.uNoOfPoints].rY;
+   PumpVelocityProfile.Acceleration := sv_ToggleBwdProfVis.rMaxRampVel;
+   PumpVelocityProfile.InterAcceleration := sv_ToggleBwdProfVis.rMaxRampVel;
+   PumpVelocityProfile.StopAcceleration := sv_ToggleBwdProfVis.rMaxRampVel;   
+END_IF;
+    
+STOP_PROCESS_ALGORITHM();
+
+
+;#END_EDIT_BLOCK END_ALGORITHM
+
+PROCESS_ALGORITHM paCalcDisplayedPresProfile ON TaskSlow
+
+
+VAR_TEMP
+ i : UDINT;
+END_VAR
+#BEGIN_EDIT_BLOCK
+(**************************************** WARNING ********************************************
+ *** The KEBA Kemro K2 System including software is not intended for safety control tasks! ***
+ ***                       For further information see Comment tab!                        ***
+ *********************************************************************************************)
+
+// pressure profile    
+sv_CalculatedProfileBwd.PressureProfile.CalculatedProfile := sv_CalculatedProfileBwdToggle.PressureProfile.CalculatedProfile;
+FOR i := 1 TO sv_CalculatedProfileBwdToggle.PressureProfile.CalculatedProfile.uNoOfPoints DO
+   abLintabApplyToggleSlow.aCalc(rX := sv_CalculatedProfileBwdToggle.PressureProfile.CalculatedProfile.Point[i].rX,
+                               rY => sv_CalculatedProfileBwd.PressureProfile.CalculatedProfile.Point[i].rX);
+END_FOR; 
+
+// signalize a change of calculated profile
+sv_CalculatedProfileBwd.PressureProfile.iProfileChangedCounter := sv_CalculatedProfileBwdToggle.PressureProfile.iProfileChangedCounter;
+    
+STOP_PROCESS_ALGORITHM();
+
+
+;#END_EDIT_BLOCK END_ALGORITHM
+
+POSTUPDATE_ALGORITHM pCpyAccelerations ON PU_Task_7 WITH sv_MoldBwdProfVis.Profile.Points[2].rVelRamp
+
+
+VAR_TEMP
+ i : UDINT;
+END_VAR
+#BEGIN_EDIT_BLOCK
+FOR i:= 3 TO 20 DO
+    sv_MoldBwdProfVis.Profile.Points[i].rVelRamp := sv_MoldBwdProfVis.Profile.Points[2].rVelRamp;
+END_FOR;
+
+
+
+;#END_EDIT_BLOCK END_ALGORITHM
+
+POSTUPDATE_ALGORITHM pCalcValveCharacteristic ON PU_Task_7 WITH sv_bInitDone,sv_ValveData,sv_ConstructionData
+
+#BEGIN_EDIT_BLOCK
+IF IS_LINKED(sv_rMoldPropValveParams) AND
+   IS_LINKED(sv_ValveData) AND
+   IS_LINKED(sv_ConstructionData) THEN
+
+   abPropValve.aInit(ValveParams := sv_rMoldPropValveParams);
+   // [l/min] = [mm³/s]*60/10^6 = [m²]*[mm/s]*60 => [v] = [mm/s],[rPistonArea1]=[m²] 
+   mrAreaOutletFactor := sv_ConstructionData.rPistonArea1 * 60.0;
+   IF (sv_ValveData.rValveOffsetBwd > sv_ValveData.rValveOffsetFwd) THEN
+      mrSign := 1.0;
+   ELSE
+      mrSign := -1.0;
+   END_IF;
+ 
+   IF (abPropValve.aInit.bInitDone AND (mrAreaOutletFactor > 0.0)) THEN
+      mbUsePropValve := TRUE;
+   ELSE
+      mbUsePropValve := FALSE;
+   END_IF;
+   
+ELSE
+   mbUsePropValve := FALSE;
+END_IF;
+
+
+
+
+;#END_EDIT_BLOCK END_ALGORITHM
+
+
+
+END_ALGORITHM_BLOCK
+
+
+
+#END_OF_IEC_PART
+
+@Puma @IecEditor 6 159 @Pou 25 
+@@@BEG_Comment@@@
+
+@@@END_Comment@@@
+
+@BEG_Contents 
+
+@BEG_Func 
+@RT(17)FuncTreeContainer 
+7 
+@Var @RT(14)GET_MY_FU_NAME @RT(0) @T @T @DERIVED 0 @F @RT(22)KEBA_STANDARD_FUNCTION @F 
+@T 
+@BEG_Attrib 
+0 @RT(0) @RT(0) 
+@END_Attrib 
+1 1 @F @F @F @F 
+
+@Var @RT(19)WRITE_SVREAL_DIRECT @RT(0) @T @T @DERIVED 0 @F @RT(22)KEBA_STANDARD_FUNCTION @F 
+@T 
+@BEG_Attrib 
+0 @RT(0) @RT(0) 
+@END_Attrib 
+1 1 @F @F @F @F 
+
+@Var @RT(17)GET_TASK_INTERVAL @RT(0) @T @T @DERIVED 0 @F @RT(22)KEBA_STANDARD_FUNCTION @F 
+@T 
+@BEG_Attrib 
+0 @RT(0) @RT(0) 
+@END_Attrib 
+1 1 @F @F @F @F 
+
+@Var @RT(15)WRITE_SV_DIRECT @RT(0) @T @T @DERIVED 0 @F @RT(22)KEBA_STANDARD_FUNCTION @F 
+@T 
+@BEG_Attrib 
+0 @RT(0) @RT(0) 
+@END_Attrib 
+1 1 @F @F @F @F 
+
+@Var @RT(16)KSWO_AddVariable @RT(0) @T @T @DERIVED 0 @F @RT(22)KEBA_STANDARD_FUNCTION @F 
+@T 
+@BEG_Attrib 
+0 @RT(0) @RT(0) 
+@END_Attrib 
+1 1 @F @F @F @F 
+
+@Var @RT(16)FAddToScopeGroup @RT(0) @T @T @DERIVED 0 @F @RT(8)FUNCTION @F 
+@T 
+@BEG_Attrib 
+0 @RT(0) @RT(0) 
+@END_Attrib 
+1 1 @F @F @F @F 
+
+@Var @RT(9)SET_ALARM @RT(0) @T @T @DERIVED 0 @F @RT(23)KEBA_STANDARD_PROCEDURE @F 
+@T 
+@BEG_Attrib 
+0 @RT(0) @RT(0) 
+@END_Attrib 
+1 1 @F @F @F @F 
+
+@END_Func 
+
+@BEG_Const 
+@RT(18)ConstTreeContainer 
+19 
+@Var @RT(22)cLockGroupClampingUnit @RT(0) @T @F @DT @RT(4)DINT @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+0 @RT(2)65 @RT(29)Members: Mold, Ejector, Cores 
+@END_Attrib 
+1 1 @F @F @F @F 
+
+@Var @RT(15)cLockGroupMotor @RT(0) @T @F @DT @RT(4)DINT @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+0 @RT(2)69 @RT(56)Members: Mold, Ejector, Cores, Injection, Plast, Purge,  
+@END_Attrib 
+1 1 @F @F @F @F 
+
+@Var @RT(24)cLockGroupSafetyGateMold @RT(0) @T @F @DT @RT(4)DINT @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+0 @RT(2)61 @RT(73)Members: Mold Close, Mold Hight Forward, Auto Mold Hight, Core In, Inject 
+@END_Attrib 
+1 1 @F @F @F @F 
+
+@Var @RT(25)KCTRL_YXGen_Input_Default @RT(0) @T @T @DERIVED 0 @F @RT(21)KCTRL_YXGen_InputType @F 
+@T 
+@BEG_Attrib 
+0 @RT(1)0 @RT(0) 
+@END_Attrib 
+1 1 @F @F @F @F 
+
+@Var @RT(8)cMoveBwd @RT(0) @T @F @DT @RT(4)DINT @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+0 @RT(2)11 @RT(17)movement backward 
+@END_Attrib 
+1 1 @F @F @F @F 
+
+@Var @RT(7)nActive @RT(0) @T @T @DERIVED 0 @F @RT(16)tnActiveInactive @F 
+@T 
+@BEG_Attrib 
+0 @RT(1)1 @RT(0) 
+@END_Attrib 
+1 1 @F @F @F @F 
+
+@Var @RT(12)nDeviceState @RT(0) @T @T @DERIVED 0 @F @RT(12)tnTraceLevel @F 
+@T 
+@BEG_Attrib 
+0 @RT(1)3 @RT(0) 
+@END_Attrib 
+1 1 @F @F @F @F 
+
+@Var @RT(11)nDeactivate @RT(0) @T @T @DERIVED 0 @F @RT(17)tnICMActivateMode @F 
+@T 
+@BEG_Attrib 
+0 @RT(1)0 @RT(10)deactivate 
+@END_Attrib 
+1 1 @F @F @F @F 
+
+@Var @RT(9)nInactive @RT(0) @T @T @DERIVED 0 @F @RT(16)tnActiveInactive @F 
+@T 
+@BEG_Attrib 
+0 @RT(1)0 @RT(0) 
+@END_Attrib 
+1 1 @F @F @F @F 
+
+@Var @RT(16)cMoveBwdInterPos @RT(0) @T @F @DT @RT(4)DINT @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+0 @RT(2)16 @RT(38)move backward to intermediate position 
+@END_Attrib 
+1 1 @F @F @F @F 
+
+@Var @RT(6)nSetup @RT(0) @T @T @DERIVED 0 @F @RT(15)tnOperationMode @F 
+@T 
+@BEG_Attrib 
+0 @RT(1)0 @RT(36)Setup mode only for service engineer 
+@END_Attrib 
+1 1 @F @F @F @F 
+
+@Var @RT(19)cMoveBwdForMHAdjust @RT(0) @T @F @DT @RT(4)DINT @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+0 @RT(2)33 @RT(62)mold backward movement during automatic mold height adjustment 
+@END_Attrib 
+1 1 @F @F @F @F 
+
+@Var @RT(24)cMoveBwdForMHAdjustSetup @RT(0) @T @F @DT @RT(4)DINT @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+0 @RT(2)40 @RT(62)mold backward movement during automatic mold height adjustment 
+@END_Attrib 
+1 1 @F @F @F @F 
+
+@Var @RT(18)tnCalibState_Error @RT(0) @T @T @DERIVED 0 @F @RT(12)tnCalibState @F 
+@T 
+@BEG_Attrib 
+0 @RT(1)3 @RT(32)error occured during calibration 
+@END_Attrib 
+1 1 @F @F @F @F 
+
+@Var @RT(12)KCTRL_Ret_OK @RT(0) @T @T @DERIVED 0 @F @RT(9)KCTRL_Ret @F 
+@T 
+@BEG_Attrib 
+0 @RT(1)0 @RT(0) 
+@END_Attrib 
+1 1 @F @F @F @F 
+
+@Var @RT(11)MAX_VOLTAGE @RT(0) @T @F @DT @RT(4)REAL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+0 @RT(4)10.0 @RT(0) 
+@END_Attrib 
+1 1 @F @F @F @F 
+
+@Var @RT(24)KCTRL_YXGen_RampType_Sin @RT(0) @T @T @DERIVED 0 @F @RT(20)KCTRL_YXGen_RampType @F 
+@T 
+@BEG_Attrib 
+0 @RT(1)2 @RT(0) 
+@END_Attrib 
+1 1 @F @F @F @F 
+
+@Var @RT(15)cScopeGroupMold @RT(0) @T @F @DT @RT(5)UDINT @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+0 @RT(1)2 @RT(0) 
+@END_Attrib 
+1 1 @F @F @F @F 
+
+@Var @RT(26)cMaxIntermediateConditions @RT(0) @T @F @DT @RT(4)DINT @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+0 @RT(2)10 @RT(38)max. number of intermediate conditions 
+@END_Attrib 
+1 1 @F @F @F @F 
+
+@END_Const 
+
+@BEG_Export 
+
+@BEG_Kind 
+@ALGORITHM_BLOCK @RT(10)ABMoveOpen @STRUCTURED_TEXT 
+@RT(0) @RT(0) @RT(0) 
+@END_Kind 
+
+@BEG_Dcl 
+@RT(16)DclTreeContainer 
+143 
+@Var @RT(13)sv_CalibState @RT(0) @T @T @DERIVED 0 @T @T @DT @RT(15)tsCalibMovement @RT(0) @T @T @UNKNOWN 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 8 @F @F @F @F 
+
+@Var @RT(11)sv_MoveOpen @RT(0) @T @T @DERIVED 0 @T @T @DT @RT(10)tsMoveData @RT(0) @T @T @UNKNOWN 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 8 @F @F @F @F 
+
+@Var @RT(19)sv_MoveOpenForMHAdj @RT(0) @T @T @DERIVED 0 @T @T @DT @RT(10)tsMoveData @RT(0) @T @T @UNKNOWN 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(45)move backward for mold height auto adjustment @RT(0) 
+@END_Attrib 
+1 8 @F @F @F @F 
+
+@Var @RT(19)sv_MoveOpenInterPos @RT(0) @T @T @DERIVED 0 @T @T @DT @RT(10)tsMoveData @RT(0) @T @T @UNKNOWN 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 8 @F @F @F @F 
+
+@Var @RT(16)sv_rMoldPosition @RT(0) @T @F @DT @RT(4)REAL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 8 @F @F @F @F 
+
+@Var @RT(12)sv_rPressure @RT(0) @T @F @DT @RT(4)REAL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 8 @F @F @F @F 
+
+@Var @RT(12)sv_rVelocity @RT(0) @T @F @DT @RT(4)REAL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 8 @F @F @F @F 
+
+@Var @RT(15)sv_iActiveStage @RT(0) @T @F @DT @RT(4)DINT @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 8 @F @F @F @F 
+
+@Var @RT(17)sv_MoldBwdProfVis @RT(0) @T @T @DERIVED 0 @T @T @DT @RT(16)KAPPL_VisProfile @RT(0) @T @T @UNKNOWN 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 8 @F @F @F @F 
+
+@Var @RT(12)sv_bMoldOpen @RT(0) @T @F @DT @RT(4)BOOL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 8 @F @F @F @F 
+
+@Var @RT(21)sv_rBwdInterruptAccel @RT(0) @T @F @DT @RT(4)REAL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 8 @F @F @F @F 
+
+@Var @RT(23)sv_rBwdInterruptDeaccel @RT(0) @T @F @DT @RT(4)REAL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 8 @F @F @F @F 
+
+@Var @RT(24)sv_rBwdInterruptPosition @RT(0) @T @F @DT @RT(4)REAL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 8 @F @F @F @F 
+
+@Var @RT(16)sv_OperationMode @RT(0) @T @T @DERIVED 0 @T @T @DT @RT(15)tnOperationMode @RT(0) @T @T @UNKNOWN 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 8 @F @F @F @F 
+
+@Var @RT(14)sv_ConstBwdVis @RT(0) @T @T @DERIVED 0 @T @T @DT @RT(8)tsVelPre @RT(0) @T @T @UNKNOWN 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(35)const output for mold open movement @RT(0) 
+@END_Attrib 
+1 8 @F @F @F @F 
+
+@Var @RT(17)sv_TmpLintabPoint @RT(0) @T @T @DERIVED 0 @T @T @DT @RT(18)KCTRL_Lintab_Point @RT(0) @T @T @UNKNOWN 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 8 @F @F @F @F 
+
+@Var @RT(11)ai_Position @RT(0) @T @F @DT @RT(4)REAL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(34)analog input value from transducer @RT(0) 
+@END_Attrib 
+1 8 @F @F @F @F 
+
+@Var @RT(24)sv_dStandStillDetectTime @RT(0) @T @F @DT @RT(4)TIME @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(29)time for standstill detection @RT(0) 
+@END_Attrib 
+1 8 @F @F @F @F 
+
+@Var @RT(18)sv_rMaxVoltageDiff @RT(0) @T @F @DT @RT(4)REAL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(45)max. voltage difference to detect stand still @RT(0) 
+@END_Attrib 
+1 8 @F @F @F @F 
+
+@Var @RT(21)sv_bDoTransducerCalib @RT(0) @T @F @DT @RT(4)BOOL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 8 @F @F @F @F 
+
+@Var @RT(18)sv_bPreOutputReady @RT(0) @T @F @DT @RT(4)BOOL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(18)PreOutput is ready @RT(0) 
+@END_Attrib 
+1 8 @F @F @F @F 
+
+@Var @RT(16)sv_bOutputActive @RT(0) @T @F @DT @RT(4)BOOL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(16)Output is active @RT(0) 
+@END_Attrib 
+1 8 @F @F @F @F 
+
+@Var @RT(19)sv_bTransducerError @RT(0) @T @F @DT @RT(4)BOOL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 8 @F @F @F @F 
+
+@Var @RT(15)sv_MinOutputBwd @RT(0) @T @T @DERIVED 0 @T @T @DT @RT(11)tsMinOutput @RT(0) @T @T @UNKNOWN 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 8 @F @F @F @F 
+
+@Var @RT(19)sv_MoldOpenTimesSet @RT(0) @T @T @DERIVED 0 @T @T @DT @RT(10)tsSetTimes @RT(0) @T @T @UNKNOWN 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 8 @F @F @F @F 
+
+@Var @RT(19)sv_MoldOpenTimesAct @RT(0) @T @T @DERIVED 0 @T @T @DT @RT(10)tsActTimes @RT(0) @T @T @UNKNOWN 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 8 @F @F @F @F 
+
+@Var @RT(13)sv_bInitStart @RT(0) @T @F @DT @RT(4)BOOL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 8 @F @F @F @F 
+
+@Var @RT(20)sv_bMoveMoldUntilEnd @RT(0) @T @F @DT @RT(4)BOOL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 8 @F @F @F @F 
+
+@Var @RT(16)sv_LintabOutBwdP @RT(0) @T @T @DERIVED 0 @T @T @DT @RT(16)KAPPL_LintabData @RT(0) @T @T @UNKNOWN 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 8 @F @F @F @F 
+
+@Var @RT(16)sv_LintabOutBwdV @RT(0) @T @T @DERIVED 0 @T @T @DT @RT(16)KAPPL_LintabData @RT(0) @T @T @UNKNOWN 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 8 @F @F @F @F 
+
+@Var @RT(15)sv_rVelocityAbs @RT(0) @T @F @DT @RT(4)REAL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 8 @F @F @F @F 
+
+@Var @RT(15)sv_rPressureAbs @RT(0) @T @F @DT @RT(4)REAL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 8 @F @F @F @F 
+
+@Var @RT(12)sv_bInitDone @RT(0) @T @F @DT @RT(4)BOOL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 8 @F @F @F @F 
+
+@Var @RT(15)sv_rMaxSpeedBwd @RT(0) @T @F @DT @RT(4)REAL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 8 @F @F @F @F 
+
+@Var @RT(24)sv_MoveOpenForMHAdjSetup @RT(0) @T @T @DERIVED 0 @T @T @DT @RT(10)tsMoveData @RT(0) @T @T @UNKNOWN 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 8 @F @F @F @F 
+
+@Var @RT(17)sv_MoldFwdProfVis @RT(0) @T @T @DERIVED 0 @T @T @DT @RT(16)KAPPL_VisProfile @RT(0) @T @T @UNKNOWN 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 8 @F @F @F @F 
+
+@Var @RT(26)sv_bOpenMHUntilProtectStep @RT(0) @T @F @DT @RT(4)BOOL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 8 @F @F @F @F 
+
+@Var @RT(22)sv_rOpenPosForMHAdjust @RT(0) @T @F @DT @RT(4)REAL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 8 @F @F @F @F 
+
+@Var @RT(30)sv_bOpenMHUntilMoldHeightCalib @RT(0) @T @F @DT @RT(4)BOOL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 8 @F @F @F @F 
+
+@Var @RT(21)sv_rToggleLeverStroke @RT(0) @T @F @DT @RT(4)REAL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(30)Opening Stroke of toggle lever @RT(0) 
+@END_Attrib 
+1 8 @F @F @F @F 
+
+@Var @RT(26)sv_ToggleLeverLintabDerive @RT(0) @T @T @DERIVED 0 @T @T @DT @RT(16)KAPPL_LintabData @RT(0) @T @T @UNKNOWN 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(47)derivation calculated from sv_ToggleLeverLintab @RT(0) 
+@END_Attrib 
+1 8 @F @F @F @F 
+
+@Var @RT(24)sv_OpenInterstopDeadTime @RT(0) @T @F @DT @RT(4)TIME @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 8 @F @F @F @F 
+
+@Var @RT(22)sv_OpenManualDelayTime @RT(0) @T @F @DT @RT(4)TIME @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 8 @F @F @F @F 
+
+@Var @RT(19)sv_rMoldVelEstimate @RT(0) @T @F @DT @RT(4)REAL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 8 @F @F @F @F 
+
+@Var @RT(14)sv_rMoldStroke @RT(0) @T @F @DT @RT(4)REAL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 8 @F @F @F @F 
+
+@Var @RT(26)sv_dCalculatedDurationOpen @RT(0) @T @F @DT @RT(4)TIME @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(33)Calculated duration for mold open @RT(0) 
+@END_Attrib 
+1 8 @F @F @F @F 
+
+@Var @RT(27)sv_InstanceDataOpenInterPos @RT(0) @T @T @DERIVED 0 @T @T @DT @RT(19)tyInstanceListArray @RT(0) @T @T @UNKNOWN 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(59)array with target positions of mold open interpos movements @RT(0) 
+@END_Attrib 
+1 8 @F @F @F @F 
+
+@Var @RT(16)sv_bLockDecompOK @RT(0) @T @F @DT @RT(4)BOOL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 8 @F @F @F @F 
+
+@Var @RT(21)sv_bLockDecompTimeOut @RT(0) @T @F @DT @RT(4)BOOL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 8 @F @F @F @F 
+
+@Var @RT(14)sv_bOpenActive @RT(0) @T @F @DT @RT(4)BOOL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(19)mold open is active @RT(0) 
+@END_Attrib 
+1 8 @F @F @F @F 
+
+@Var @RT(19)sv_rMoldValveOutput @RT(0) @T @F @DT @RT(4)REAL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 8 @F @F @F @F 
+
+@Var @RT(28)sv_ValveCharacteristicLintab @RT(0) @T @T @DERIVED 0 @T @T @DT @RT(24)KCTRL_Lintab_Param_Light @RT(0) @T @T @UNKNOWN 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 8 @F @F @F @F 
+
+@Var @RT(20)sv_ToggleLeverLintab @RT(0) @T @T @DERIVED 0 @T @T @DT @RT(16)KAPPL_LintabData @RT(0) @T @T @UNKNOWN 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(47)derivation calculated from sv_ToggleLeverLintab @RT(0) 
+@END_Attrib 
+1 8 @F @F @F @F 
+
+@Var @RT(19)sv_ToggleBwdProfVis @RT(0) @T @T @DERIVED 0 @T @T @DT @RT(16)KAPPL_VisProfile @RT(0) @T @T @UNKNOWN 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 8 @F @F @F @F 
+
+@Var @RT(30)sv_InstanceDataOpenToggleInter @RT(0) @T @T @DERIVED 0 @T @T @DT @RT(19)tyInstanceListArray @RT(0) @T @T @UNKNOWN 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(60)array with target positions of mold close interpos movements @RT(0) 
+@END_Attrib 
+1 8 @F @F @F @F 
+
+@Var @RT(23)sv_rToggleLeverPosition @RT(0) @T @F @DT @RT(4)REAL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 8 @F @F @F @F 
+
+@Var @RT(17)sv_rMoldPressure1 @RT(0) @T @F @DT @RT(4)REAL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(17)pressure mold fwd @RT(0) 
+@END_Attrib 
+1 8 @F @F @F @F 
+
+@Var @RT(17)sv_rMoldPressure2 @RT(0) @T @F @DT @RT(4)REAL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(17)pressure mold bwd @RT(0) 
+@END_Attrib 
+1 8 @F @F @F @F 
+
+@Var @RT(26)sv_rToggleLeverVelEstimate @RT(0) @T @F @DT @RT(4)REAL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 8 @F @F @F @F 
+
+@Var @RT(24)sv_ServoValveControlData @RT(0) @T @T @DERIVED 0 @T @T @DT @RT(22)tServoValveControlData @RT(0) @T @T @UNKNOWN 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 8 @F @F @F @F 
+
+@Var @RT(12)sv_ValveData @RT(0) @T @T @DERIVED 0 @T @T @DT @RT(15)tServoValveData @RT(0) @T @T @UNKNOWN 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 8 @F @F @F @F 
+
+@Var @RT(23)sv_ServoValveControlSet @RT(0) @T @T @DERIVED 0 @T @T @DT @RT(21)tServoValveControlSet @RT(0) @T @T @UNKNOWN 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 8 @F @F @F @F 
+
+@Var @RT(12)sv_bUseValve @RT(0) @T @F @DT @RT(4)BOOL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 8 @F @F @F @F 
+
+@Var @RT(24)sv_ToggleLeverSplineData @RT(0) @T @T @DERIVED 0 @T @T @DT @RT(23)tsToggleLeverSplineData @RT(0) @T @T @UNKNOWN 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 8 @F @F @F @F 
+
+@Var @RT(19)sv_ConstructionData @RT(0) @T @T @DERIVED 0 @T @T @DT @RT(27)tServoValveConstructionData @RT(0) @T @T @UNKNOWN 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 8 @F @F @F @F 
+
+@Var @RT(22)sv_rInterstopTolerance @RT(0) @T @F @DT @RT(4)REAL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 8 @F @F @F @F 
+
+@Var @RT(13)sv_bMoveIdent @RT(0) @T @F @DT @RT(4)BOOL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 8 @F @F @F @F 
+
+@Var @RT(17)sv_rIdentPosition @RT(0) @T @F @DT @RT(4)REAL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 8 @F @F @F @F 
+
+@Var @RT(17)sv_rIdentStopRamp @RT(0) @T @F @DT @RT(4)REAL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 8 @F @F @F @F 
+
+@Var @RT(22)sv_dSetDelayTimeOffBwd @RT(0) @T @F @DT @RT(4)TIME @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 8 @F @F @F @F 
+
+@Var @RT(16)sv_rSmoothFactor @RT(0) @T @F @DT @RT(4)REAL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 8 @F @F @F @F 
+
+@Var @RT(30)sv_bPresMoldHeightAdjustActive @RT(0) @T @F @DT @RT(4)BOOL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 8 @F @F @F @F 
+
+@Var @RT(20)sv_rMinAmplification @RT(0) @T @F @DT @RT(4)REAL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(21)minimum amplification @RT(0) 
+@END_Attrib 
+1 8 @F @F @F @F 
+
+@Var @RT(20)sv_rMaxAmplification @RT(0) @T @F @DT @RT(4)REAL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(21)maximum amplification @RT(0) 
+@END_Attrib 
+1 8 @F @F @F @F 
+
+@Var @RT(26)sv_rToggleLeverSetPosition @RT(0) @T @F @DT @RT(4)REAL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 8 @F @F @F @F 
+
+@Var @RT(23)sv_LintabOutMoldPosCtrl @RT(0) @T @T @DERIVED 0 @T @T @DT @RT(16)KAPPL_LintabData @RT(0) @T @T @UNKNOWN 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 8 @F @F @F @F 
+
+@Var @RT(22)sv_bICMStartPosReached @RT(0) @T @F @DT @RT(4)BOOL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 8 @F @F @F @F 
+
+@Var @RT(22)sv_CoiningActivateMode @RT(0) @T @T @DERIVED 0 @T @T @DT @RT(17)tnICMActivateMode @RT(0) @T @T @UNKNOWN 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(27)activating mode for coining @RT(0) 
+@END_Attrib 
+1 8 @F @F @F @F 
+
+@Var @RT(15)sv_bVentingDone @RT(0) @T @F @DT @RT(4)BOOL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 8 @F @F @F @F 
+
+@Var @RT(15)sv_bCoiningDone @RT(0) @T @F @DT @RT(4)BOOL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 8 @F @F @F @F 
+
+@Var @RT(29)sv_bVentingStartPointDetected @RT(0) @T @F @DT @RT(4)BOOL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 8 @F @F @F @F 
+
+@Var @RT(29)sv_bCoiningStartPointDetected @RT(0) @T @F @DT @RT(4)BOOL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 8 @F @F @F @F 
+
+@Var @RT(22)sv_VentingActivateMode @RT(0) @T @T @DERIVED 0 @T @T @DT @RT(17)tnICMActivateMode @RT(0) @T @T @UNKNOWN 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 8 @F @F @F @F 
+
+@Var @RT(10)sv_ICMMode @RT(0) @T @T @DERIVED 0 @T @T @DT @RT(9)tnICMMode @RT(0) @T @T @UNKNOWN 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 8 @F @F @F @F 
+
+@Var @RT(15)sv_dActOpenTime @RT(0) @T @F @DT @RT(4)TIME @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(59)this time is not increased when interpos movement is active @RT(0) 
+@END_Attrib 
+1 8 @F @F @F @F 
+
+@Var @RT(23)sv_bDoPumpVelocityCalib @RT(0) @T @F @DT @RT(4)BOOL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 8 @F @F @F @F 
+
+@Var @RT(23)sv_rMoldPropValveParams @RT(0) @T @T @DERIVED 0 @T @T @DT @RT(17)tsPropValveParams @RT(0) @T @T @UNKNOWN 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 8 @F @F @F @F 
+
+@Var @RT(29)sv_rMoldValvePressureDropOpen @RT(0) @T @F @DT @RT(4)REAL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 8 @F @F @F @F 
+
+@Var @RT(23)sv_rTolerancePosReached @RT(0) @T @F @DT @RT(4)REAL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(28)tolerance for endpos reached @RT(0) 
+@END_Attrib 
+1 8 @F @F @F @F 
+
+@Var @RT(16)sv_rMonTolerance @RT(0) @T @F @DT @RT(4)REAL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(28)tolerance for endpos reached @RT(0) 
+@END_Attrib 
+1 8 @F @F @F @F 
+
+@Var @RT(11)do_FastOpen @RT(0) @T @F @DT @RT(4)BOOL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(28)tolerance for endpos reached @RT(0) 
+@END_Attrib 
+1 8 @F @F @F @F 
+
+@Var @RT(22)sv_rFastVelocityFactor @RT(0) @T @F @DT @RT(4)REAL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 8 @F @F @F @F 
+
+@Var @RT(25)sv_bPumpUseProfileVelociy @RT(0) @T @F @DT @RT(4)BOOL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 8 @F @F @F @F 
+
+@Var @RT(13)erMoldNotOpen @RT(0) @T @F @DT @RT(5)ALARM @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 7 @F @F @F @F 
+
+@Var @RT(19)erMoldPosNotCorrect @RT(0) @T @F @DT @RT(5)ALARM @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 7 @F @F @F @F 
+
+@Var @RT(10)TaskAnalog @RT(0) @T @F @DT @RT(4)TASK @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 7 @F @F @F @F 
+
+@Var @RT(8)TaskSlow @RT(0) @T @F @DT @RT(4)TASK @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 7 @F @F @F @F 
+
+@Var @RT(9)PU_Task_7 @RT(0) @T @F @DT @RT(4)TASK @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 7 @F @F @F @F 
+
+@Var @RT(21)erMoldOpenNoMinOutput @RT(0) @T @F @DT @RT(5)ALARM @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 7 @F @F @F @F 
+
+@Var @RT(10)PU_Task_13 @RT(0) @T @F @DT @RT(4)TASK @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 7 @F @F @F @F 
+
+@Var @RT(10)g_MoveCtrl @RT(0) @T @T @DERIVED 0 @T @T @DT @RT(10)tsMoveCtrl @RT(0) @T @T @UNKNOWN 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 6 @F @F @F @F 
+
+@Var @RT(22)g_bDirectLockAvailable @RT(0) @T @F @DT @RT(4)BOOL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 6 @F @F @F @F 
+
+@Var @RT(12)pSysPressure @RT(0) @T @T @REFTO 0 @T @DT @RT(4)REAL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 6 @F @F @F @F 
+
+@Var @RT(12)g_bMoldValve @RT(0) @T @F @DT @RT(4)BOOL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 6 @F @F @F @F 
+
+@Var @RT(27)g_bPressureSensor1Available @RT(0) @T @F @DT @RT(4)BOOL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 6 @F @F @F @F 
+
+@Var @RT(27)g_bPressureSensor2Available @RT(0) @T @F @DT @RT(4)BOOL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 6 @F @F @F @F 
+
+@Var @RT(27)g_bPressureSensorsAvailable @RT(0) @T @F @DT @RT(4)BOOL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 6 @F @F @F @F 
+
+@Var @RT(10)abMoldOpen @RT(0) @T @T @DERIVED 0 @T @T @DT @RT(17)ABProfileMovement @RT(0) @T @T @UNKNOWN 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(15)abMoldOpenConst @RT(0) @T @T @DERIVED 0 @T @T @DT @RT(15)ABConstMovement @RT(0) @T @T @UNKNOWN 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(14)abMoldBwdCalib @RT(0) @T @T @DERIVED 0 @T @T @DT @RT(12)ABConstCalib @RT(0) @T @T @UNKNOWN 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(17)abLintabApplyPres @RT(0) @T @T @DERIVED 0 @T @T @DT @RT(13)ABLintabApply @RT(0) @T @T @UNKNOWN 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(16)abLintabApplyVel @RT(0) @T @T @DERIVED 0 @T @T @DT @RT(13)ABLintabApply @RT(0) @T @T @UNKNOWN 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(19)abToggleLeverLintab @RT(0) @T @T @DERIVED 0 @T @T @DT @RT(18)KCTRL_Lintab_Light @RT(0) @T @T @UNKNOWN 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(20)ToggleLeverLintabPar @RT(0) @T @T @DERIVED 0 @T @T @DT @RT(24)KCTRL_Lintab_Param_Light @RT(0) @T @T @UNKNOWN 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(12)abCalcOffset @RT(0) @T @T @DERIVED 0 @T @T @DT @RT(12)ABCalcOffset @RT(0) @T @T @UNKNOWN 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(16)rMaxVoltageValve @RT(0) @T @F @DT @RT(4)REAL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(24)rInterruptTogglePosition @RT(0) @T @F @DT @RT(4)REAL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(23)abLintabApplyToggleSlow @RT(0) @T @T @DERIVED 0 @T @T @DT @RT(13)ABLintabApply @RT(0) @T @T @UNKNOWN 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(27)block for usage in TaskSlow @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(19)abLintabApplyToggle @RT(0) @T @T @DERIVED 0 @T @T @DT @RT(13)ABLintabApply @RT(0) @T @T @UNKNOWN 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(17)abValveController @RT(0) @T @T @DERIVED 0 @T @T @DT @RT(17)ABValveController @RT(0) @T @T @UNKNOWN 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(13)rTankPressure @RT(0) @T @F @DT @RT(4)REAL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(3)1.0 @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(6)bStart @RT(0) @T @F @DT @RT(4)BOOL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(10)rOffsetPos @RT(0) @T @F @DT @RT(4)REAL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(3)1.0 @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(10)rOffsetNeg @RT(0) @T @F @DT @RT(4)REAL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(4)-1.2 @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(14)abMoldOpenStep @RT(0) @T @T @DERIVED 0 @T @T @DT @RT(12)ABStepOutput @RT(0) @T @T @UNKNOWN 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(19)PumpVelocityProfile @RT(0) @T @T @DERIVED 0 @T @T @DT @RT(17)KAPPL_ProfileData @RT(0) @T @T @UNKNOWN 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(20)fbPumpVelocityOutput @RT(0) @T @T @DERIVED 0 @T @T @DT @RT(28)KAPPL_Plastics_ProfileOutput @RT(0) @T @T @UNKNOWN 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(14)mrPumpVelocity @RT(0) @T @F @DT @RT(4)REAL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(13)mrSetVelocity @RT(0) @T @F @DT @RT(4)REAL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(4)mrUP @RT(0) @T @F @DT @RT(4)REAL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(4)mrUD @RT(0) @T @F @DT @RT(4)REAL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(11)abPropValve @RT(0) @T @T @DERIVED 0 @T @T @DT @RT(19)ABProportionalValve @RT(0) @T @T @UNKNOWN 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(18)mrAreaOutletFactor @RT(0) @T @F @DT @RT(4)REAL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(17)mrPropValveOutput @RT(0) @T @F @DT @RT(4)REAL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(14)mbUsePropValve @RT(0) @T @F @DT @RT(4)BOOL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(15)mrSetFlowOutlet @RT(0) @T @F @DT @RT(4)REAL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(13)mrPressOutlet @RT(0) @T @F @DT @RT(4)REAL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(6)mrSign @RT(0) @T @F @DT @RT(4)REAL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(21)mrTolerancePosReached @RT(0) @T @F @DT @RT(4)REAL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(13)mbInTolerance @RT(0) @T @F @DT @RT(4)BOOL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(16)mbFastOpenLinked @RT(0) @T @F @DT @RT(4)BOOL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(29)sv_CalculatedProfileBwdToggle @RT(0) @T @T @DERIVED 0 @T @T @DT @RT(19)tCalculatedProfiles @RT(0) @T @T @UNKNOWN 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 8 @F @F @F @F 
+
+@Var @RT(23)sv_CalculatedProfileBwd @RT(0) @T @T @DERIVED 0 @T @T @DT @RT(19)tCalculatedProfiles @RT(0) @T @T @UNKNOWN 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 8 @F @F @F @F 
+
+@END_Dcl 
+
+@END_Export 
+
+@BEG_Body 
+
+18 
+
+@BEG_Export 
+
+@BEG_Algo 
+@ALGORITHM @RT(9)aRegister @STRUCTURED_TEXT 
+@RT(0) @RT(0) @RT(0) @F @F 
+@END_Algo 
+
+@BEG_Dcl 
+@RT(16)DclTreeContainer 
+5 
+@Var @RT(18)abMoveOpenRegister @RT(0) @T @T @DERIVED 0 @T @T @DT @RT(18)ABMovementRegister @RT(0) @T @T @UNKNOWN 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(26)abMoveOpenForMHAdjRegister @RT(0) @T @T @DERIVED 0 @T @T @DT @RT(18)ABMovementRegister @RT(0) @T @T @UNKNOWN 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(26)abMoveOpenForMHAdjSetupReg @RT(0) @T @T @DERIVED 0 @T @T @DT @RT(18)ABMovementRegister @RT(0) @T @T @UNKNOWN 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(26)abMoveOpenInterPosRegister @RT(0) @T @T @DERIVED 0 @T @T @DT @RT(18)ABMovementRegister @RT(0) @T @T @UNKNOWN 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(5)Alarm @RT(0) @T @T @DERIVED 0 @T @T @DT @RT(7)tsAlarm @RT(0) @T @T @UNKNOWN 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@END_Dcl 
+
+@END_Export 
+
+@BEG_Export 
+
+@BEG_Algo 
+@ALGORITHM @RT(4)aRun @SEQUENTIAL_FLOW_CHART 
+@RT(0) @RT(0) @RT(0) @F @F 
+@END_Algo 
+
+@BEG_Dcl 
+@RT(16)DclTreeContainer 
+52 
+@Var @RT(6)bReady @RT(0) @T @F @DT @RT(4)BOOL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 3 @F @F @F @F 
+
+@Var @RT(5)bStop @RT(0) @T @F @DT @RT(4)BOOL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 1 @F @F @F @F 
+
+@Var @RT(1)b @RT(0) @T @F @DT @RT(4)BOOL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 4 @F @F @F @F 
+
+@Var @RT(16)rMoldValveOutput @RT(0) @T @F @DT @RT(4)REAL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 4 @F @F @F @F 
+
+@Var @RT(5)dummy @RT(0) @T @F @DT @RT(4)DINT @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(18)fbSetMovementState @RT(0) @T @T @DERIVED 0 @T @T @DT @RT(18)FBSetMovementState @RT(0) @T @T @UNKNOWN 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(10)dummypoint @RT(0) @T @T @DERIVED 0 @T @T @DT @RT(18)KCTRL_Lintab_Point @RT(0) @T @T @UNKNOWN 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(15)rMHAdjustBwdPos @RT(0) @T @F @DT @RT(4)REAL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(39)backward pos for MH open setup movement @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(12)fbDebugTrace @RT(0) @T @T @DERIVED 0 @T @T @DT @RT(12)FBDebugTrace @RT(0) @T @T @UNKNOWN 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(14)rAmplification @RT(0) @T @F @DT @RT(4)REAL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(6)bError @RT(0) @T @F @DT @RT(4)BOOL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(10)iErrorInfo @RT(0) @T @F @DT @RT(4)DINT @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(17)rActStartposition @RT(0) @T @F @DT @RT(4)REAL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(17)rMinPositionError @RT(0) @T @F @DT @RT(4)REAL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(3)2.0 @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(10)rMaxStroke @RT(0) @T @F @DT @RT(4)REAL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(4)0.95 @RT(43)95% offset allowed, at least 5% stroke left @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(13)fbDebugTrace2 @RT(0) @T @T @DERIVED 0 @T @T @DT @RT(13)FBDebugTrace2 @RT(0) @T @T @UNKNOWN 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(17)fbConstOutputRamp @RT(0) @T @T @DERIVED 0 @T @T @DT @RT(17)FBConstOutputRamp @RT(0) @T @T @UNKNOWN 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(9)rEndValue @RT(0) @T @F @DT @RT(4)REAL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(9)rStopRamp @RT(0) @T @F @DT @RT(4)REAL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(10)rMinOutput @RT(0) @T @F @DT @RT(4)REAL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(4)10.0 @RT(1)% @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(7)rOutput @RT(0) @T @F @DT @RT(4)REAL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(7)rSetPos @RT(0) @T @F @DT @RT(4)REAL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(10)dCycleTime @RT(0) @T @F @DT @RT(4)TIME @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(12)rSetVelocity @RT(0) @T @F @DT @RT(4)REAL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(13)abYXGenLightB @RT(0) @T @T @DERIVED 0 @T @T @DT @RT(18)KCTRL_YXGen_LightB @RT(0) @T @T @UNKNOWN 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(5)Param @RT(0) @T @T @DERIVED 0 @T @T @DT @RT(16)KCTRL_YXGenParam @RT(0) @T @T @UNKNOWN 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(9)InputType @RT(0) @T @T @DERIVED 0 @T @T @DT @RT(21)KCTRL_YXGen_InputType @RT(0) @T @T @UNKNOWN 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(25)KCTRL_YXGen_Input_Default @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(13)Accelerations @RT(0) @T @T @DERIVED 0 @T @T @DT @RT(25)KCTRL_YXGen_Accelerations @RT(0) @T @T @UNKNOWN 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(9)StopPoint @RT(0) @T @T @DERIVED 0 @T @T @DT @RT(15)KCTRL_ProfPoint @RT(0) @T @T @UNKNOWN 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(9)rYXSetPos @RT(0) @T @F @DT @RT(4)REAL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(9)rYXSetVel @RT(0) @T @F @DT @RT(4)REAL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(11)rYXSetAccel @RT(0) @T @F @DT @RT(4)REAL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(10)rYXSetJerk @RT(0) @T @F @DT @RT(4)REAL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(21)CalcedVelocityProfile @RT(0) @T @T @DERIVED 0 @T @T @DT @RT(17)KAPPL_ProfileData @RT(0) @T @T @UNKNOWN 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(5)rQNom @RT(0) @T @F @DT @RT(4)REAL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(5)rPNom @RT(0) @T @F @DT @RT(4)REAL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(7)rQNomPB @RT(0) @T @F @DT @RT(4)REAL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(7)rPNomPB @RT(0) @T @F @DT @RT(4)REAL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(10)rPressure1 @RT(0) @T @F @DT @RT(4)REAL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(10)rPressure2 @RT(0) @T @F @DT @RT(4)REAL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(18)abEstimatePressure @RT(0) @T @T @DERIVED 0 @T @T @DT @RT(18)ABEstimatePressure @RT(0) @T @T @UNKNOWN 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(11)bStopActive @RT(0) @T @F @DT @RT(4)BOOL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(16)rEndPositionMold @RT(0) @T @F @DT @RT(4)REAL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(15)rTargetPosition @RT(0) @T @F @DT @RT(4)REAL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(13)rPositionDown @RT(0) @T @F @DT @RT(4)REAL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(9)bInitDone @RT(0) @T @F @DT @RT(4)BOOL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(10)rCycleTime @RT(0) @T @F @DT @RT(4)REAL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(8)rSetFlow @RT(0) @T @F @DT @RT(4)REAL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(12)rPessureDrop @RT(0) @T @F @DT @RT(4)REAL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(4)10.0 @RT(27)pressure drop at valve edge @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(11)rEndposMold @RT(0) @T @F @DT @RT(4)REAL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(13)rEndposToggle @RT(0) @T @F @DT @RT(4)REAL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(17)rSetVelocityValve @RT(0) @T @F @DT @RT(4)REAL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@END_Dcl 
+
+@END_Export 
+
+@BEG_Export 
+
+@BEG_Algo 
+@ALGORITHM @RT(5)aInit @STRUCTURED_TEXT 
+@RT(0) @RT(0) @RT(0) @F @F 
+@END_Algo 
+
+@BEG_Dcl 
+@RT(16)DclTreeContainer 
+0 
+@END_Dcl 
+
+@END_Export 
+
+@BEG_Export 
+
+@BEG_Algo 
+@POSTUPDATE_ALGORITHM @RT(17)pMinOutputChanged @STRUCTURED_TEXT 
+@RT(0) @RT(29)sv_MinOutputBwd,sv_bInitStart @RT(9)PU_Task_7 @F @F 
+@END_Algo 
+
+@BEG_Dcl 
+@RT(16)DclTreeContainer 
+0 
+@END_Dcl 
+
+@END_Export 
+
+@BEG_Export 
+
+@BEG_Algo 
+@PROCESS_ALGORITHM @RT(22)paInitDebugMeasurement @STRUCTURED_TEXT 
+@RT(0) @RT(0) @RT(8)TaskSlow @T @F 
+@END_Algo 
+
+@BEG_Dcl 
+@RT(16)DclTreeContainer 
+4 
+@Var @RT(6)fuName @RT(0) @T @F @DT @RT(11)STRING(255) @RT(0) @T @T @STRING 0 @F @RT(3)255 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(12)variableName @RT(0) @T @F @DT @RT(11)STRING(255) @RT(0) @T @T @STRING 0 @F @RT(3)255 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(8)swoState @RT(0) @T @T @DERIVED 0 @T @T @DT @RT(11)KSWO_Status @RT(0) @T @T @UNKNOWN 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(1)b @RT(0) @T @F @DT @RT(4)BOOL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@END_Dcl 
+
+@END_Export 
+
+@BEG_Export 
+
+@BEG_Algo 
+@POSTUPDATE_ALGORITHM @RT(12)pCheckOffset @STRUCTURED_TEXT 
+@RT(0) @RT(67)sv_bInitDone,sv_MoldBwdProfVis.bUseOffsetOptimizing,sv_MinOutputBwd @RT(9)PU_Task_7 @F @F 
+@END_Algo 
+
+@BEG_Dcl 
+@RT(16)DclTreeContainer 
+1 
+@Var @RT(13)rOffsetFactor @RT(0) @T @F @DT @RT(4)REAL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(3)0.1 @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@END_Dcl 
+
+@END_Export 
+
+@BEG_Export 
+
+@BEG_Algo 
+@POSTUPDATE_ALGORITHM @RT(18)pCalcToggleProfile @STRUCTURED_TEXT 
+@RT(0) @RT(30)sv_bInitDone,sv_MoldBwdProfVis @RT(9)PU_Task_7 @F @F 
+@END_Algo 
+
+@BEG_Dcl 
+@RT(16)DclTreeContainer 
+0 
+@END_Dcl 
+
+@END_Export 
+
+@BEG_Export 
+
+@BEG_Algo 
+@PROCESS_ALGORITHM @RT(19)paCalcToggleProfile @STRUCTURED_TEXT 
+@RT(0) @RT(0) @RT(8)TaskSlow @F @F 
+@END_Algo 
+
+@BEG_Dcl 
+@RT(16)DclTreeContainer 
+2 
+@Var @RT(1)i @RT(0) @T @F @DT @RT(5)UDINT @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 4 @F @F @F @F 
+
+@Var @RT(14)pCalcedProfile @RT(0) @T @T @REFTO 0 @F @DERIVED 0 @T @T @DT @RT(19)tCalculatedProfiles @RT(0) @T @T @UNKNOWN 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@END_Dcl 
+
+@END_Export 
+
+@BEG_Export 
+
+@BEG_Algo 
+@POSTUPDATE_ALGORITHM @RT(19)pCalcToggleInterPos @STRUCTURED_TEXT 
+@RT(0) @RT(40)sv_bInitDone,sv_InstanceDataOpenInterPos @RT(9)PU_Task_7 @F @F 
+@END_Algo 
+
+@BEG_Dcl 
+@RT(16)DclTreeContainer 
+0 
+@END_Dcl 
+
+@END_Export 
+
+@BEG_Export 
+
+@BEG_Algo 
+@PROCESS_ALGORITHM @RT(20)paCalcToggleInterPos @STRUCTURED_TEXT 
+@RT(0) @RT(0) @RT(8)TaskSlow @F @F 
+@END_Algo 
+
+@BEG_Dcl 
+@RT(16)DclTreeContainer 
+1 
+@Var @RT(1)i @RT(0) @T @F @DT @RT(4)DINT @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 4 @F @F @F @F 
+
+@END_Dcl 
+
+@END_Export 
+
+@BEG_Export 
+
+@BEG_Algo 
+@POSTUPDATE_ALGORITHM @RT(22)pCalcMovementDirection @STRUCTURED_TEXT 
+@RT(0) @RT(70)sv_bInitDone,sv_ValveData.rValveOffsetFwd,sv_ValveData.rValveOffsetBwd @RT(9)PU_Task_7 @F @F 
+@END_Algo 
+
+@BEG_Dcl 
+@RT(16)DclTreeContainer 
+1 
+@Var @RT(6)uCount @RT(0) @T @F @DT @RT(5)UDINT @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 4 @F @F @F @F 
+
+@END_Dcl 
+
+@END_Export 
+
+@BEG_Export 
+
+@BEG_Algo 
+@POSTUPDATE_ALGORITHM @RT(28)pInstanceDataDurationChanged @STRUCTURED_TEXT 
+@RT(0) @RT(30)sv_InstanceDataOpenToggleInter @RT(10)PU_Task_13 @F @F 
+@END_Algo 
+
+@BEG_Dcl 
+@RT(16)DclTreeContainer 
+3 
+@Var @RT(1)i @RT(0) @T @F @DT @RT(4)DINT @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 4 @F @F @F @F 
+
+@Var @RT(23)InstDataOpenToggleInter @RT(0) @T @T @DERIVED 0 @T @T @DT @RT(19)tyInstanceListArray @RT(0) @T @T @UNKNOWN 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(14)bCopyDurations @RT(0) @T @F @DT @RT(4)BOOL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@END_Dcl 
+
+@END_Export 
+
+@BEG_Export 
+
+@BEG_Algo 
+@POSTUPDATE_ALGORITHM @RT(24)pCalcedVelProfileChanged @STRUCTURED_TEXT 
+@RT(0) @RT(68)sv_CalculatedProfileBwdToggle.VelocityProfile.iProfileChangedCounter @RT(9)PU_Task_7 @F @F 
+@END_Algo 
+
+@BEG_Dcl 
+@RT(16)DclTreeContainer 
+0 
+@END_Dcl 
+
+@END_Export 
+
+@BEG_Export 
+
+@BEG_Algo 
+@POSTUPDATE_ALGORITHM @RT(25)pCalcedPresProfileChanged @STRUCTURED_TEXT 
+@RT(0) @RT(68)sv_CalculatedProfileBwdToggle.PressureProfile.iProfileChangedCounter @RT(9)PU_Task_7 @F @F 
+@END_Algo 
+
+@BEG_Dcl 
+@RT(16)DclTreeContainer 
+0 
+@END_Dcl 
+
+@END_Export 
+
+@BEG_Export 
+
+@BEG_Algo 
+@PROCESS_ALGORITHM @RT(25)paCalcDisplayedVelProfile @STRUCTURED_TEXT 
+@RT(0) @RT(0) @RT(8)TaskSlow @F @F 
+@END_Algo 
+
+@BEG_Dcl 
+@RT(16)DclTreeContainer 
+2 
+@Var @RT(1)i @RT(0) @T @F @DT @RT(5)UDINT @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 4 @F @F @F @F 
+
+@Var @RT(14)rMaxVelProfBwd @RT(0) @T @F @DT @RT(4)REAL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 4 @F @F @F @F 
+
+@END_Dcl 
+
+@END_Export 
+
+@BEG_Export 
+
+@BEG_Algo 
+@PROCESS_ALGORITHM @RT(26)paCalcDisplayedPresProfile @STRUCTURED_TEXT 
+@RT(0) @RT(0) @RT(8)TaskSlow @F @F 
+@END_Algo 
+
+@BEG_Dcl 
+@RT(16)DclTreeContainer 
+1 
+@Var @RT(1)i @RT(0) @T @F @DT @RT(5)UDINT @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 4 @F @F @F @F 
+
+@END_Dcl 
+
+@END_Export 
+
+@BEG_Export 
+
+@BEG_Algo 
+@POSTUPDATE_ALGORITHM @RT(17)pCpyAccelerations @STRUCTURED_TEXT 
+@RT(0) @RT(44)sv_MoldBwdProfVis.Profile.Points[2].rVelRamp @RT(9)PU_Task_7 @F @F 
+@END_Algo 
+
+@BEG_Dcl 
+@RT(16)DclTreeContainer 
+1 
+@Var @RT(1)i @RT(0) @T @F @DT @RT(5)UDINT @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 4 @F @F @F @F 
+
+@END_Dcl 
+
+@END_Export 
+
+@BEG_Export 
+
+@BEG_Algo 
+@POSTUPDATE_ALGORITHM @RT(24)pCalcValveCharacteristic @STRUCTURED_TEXT 
+@RT(0) @RT(45)sv_bInitDone,sv_ValveData,sv_ConstructionData @RT(9)PU_Task_7 @F @F 
+@END_Algo 
+
+@BEG_Dcl 
+@RT(16)DclTreeContainer 
+0 
+@END_Dcl 
+
+@END_Export 
+
+@BEG_Body 
+@TL(49)
+(**************************************** WARNING ********************************************
+ *** The KEBA Kemro K2 System including software is not intended for safety control tasks! ***
+ ***                       For further information see Comment tab!                        ***
+ *********************************************************************************************)
+
+// movement registration
+sv_MoveOpen.pdStartDelaySet := @sv_MoldOpenTimesSet.dSetDelayTime;
+sv_MoveOpen.pdStartDelayAct := @sv_MoldOpenTimesAct.dActDelayTime;
+sv_MoveOpen.pdActiveTimeAct := @sv_dActOpenTime;
+sv_MoveOpen.pdTimeLimit     := @sv_MoldOpenTimesSet.dMaxMoveTime;
+sv_MoveOpen.LockGroups[1] := cLockGroupClampingUnit;
+sv_MoveOpen.LockGroups[2] := cLockGroupMotor;
+sv_MoveOpen.LockGroups[3] := cLockGroupSafetyGateMold;
+sv_MoveOpen.LockGroups[4] := cLockGroupMoldNutOpen;
+sv_MoveOpen.LockGroups[5] := cLockGroupHighPressureReleased;
+sv_MoveOpen.pbPosReached := @sv_bMoldOpen;
+Alarm.AlarmId := erMoldNotOpen;
+sv_MoveOpen.Alarm := Alarm;
+sv_MoveOpen.sIconPath := CONCAT(GET_MY_FU_NAME(), "\hmi\images\movMoldBwd.gif");
+abMoveOpenRegister.aRegister(@sv_MoveOpen);
+
+// register movement to intermediate position
+sv_MoveOpenInterPos.pdActiveTimeAct := @sv_MoldOpenTimesAct.dActMoveTime;
+sv_MoveOpenInterPos.LockGroups := sv_MoveOpen.LockGroups;
+sv_MoveOpenInterPos.sIconPath := CONCAT(GET_MY_FU_NAME(), "\hmi\images\movMoldInterposBwd.gif");
+Alarm.AlarmId := erMoldPosNotCorrect;
+sv_MoveOpenInterPos.Alarm := Alarm;
+abMoveOpenInterPosRegister.aRegister(@sv_MoveOpenInterPos);
+
+// register movement for mold height automatic adjustment
+sv_MoveOpenForMHAdj.pdStartDelaySet := @sv_MoldOpenTimesSet.dSetDelayTime;
+sv_MoveOpenForMHAdj.pdStartDelayAct := @sv_MoldOpenTimesAct.dActDelayTime;
+sv_MoveOpenForMHAdj.LockGroups := sv_MoveOpen.LockGroups;
+sv_MoveOpenForMHAdj.sIconPath := sv_MoveOpen.sIconPath;
+sv_MoveOpenForMHAdj.pbPosReached := @sv_bMoldOpen;
+Alarm.AlarmId := erMoldNotOpen;
+sv_MoveOpenForMHAdj.Alarm := Alarm;
+abMoveOpenForMHAdjRegister.aRegister(@sv_MoveOpenForMHAdj);
+
+
+sv_MoveOpenForMHAdjSetup.pdStartDelaySet := @sv_MoldOpenTimesSet.dSetDelayTime;
+sv_MoveOpenForMHAdjSetup.pdStartDelayAct := @sv_MoldOpenTimesAct.dActDelayTime;
+sv_MoveOpenForMHAdjSetup.LockGroups := sv_MoveOpen.LockGroups;
+sv_MoveOpenForMHAdjSetup.sIconPath := sv_MoveOpen.sIconPath;
+sv_MoveOpenForMHAdjSetup.pbPosReached := @sv_bMoldOpen;
+Alarm.AlarmId := erMoldNotOpen;
+sv_MoveOpenForMHAdjSetup.Alarm := Alarm;
+abMoveOpenForMHAdjSetupReg.aRegister(@sv_MoveOpenForMHAdjSetup);
+
+@END_Body 
+
+@@@BEG_Comment@@@ 
+@TL(0)
+
+@@@END_Comment@@@ 
+
+@BEG_SfcBody 
+33 18 24 
+
+@BEG_SfcData 2 
+@StepSeq @RT(4)sseq @F 1 
+@Loop @RT(4)loop @F 2 
+@StepSeq @RT(4)sseq @F 5 
+@Step @RT(5)START @F @T @F @F @RT(0) @F 
+@AcbCont @RT(7)unnamed @F 2 
+@Acb @RT(6)aStart @F @T @RT(1)P @RT(0) @F @F @T @TL(7)
+bReady := FALSE;
+fbSetMovementState(MoveId   := g_MoveCtrl.pData^.MoveId,
+                   MoveDir  := cMoveBwd,
+                   State    := nActive);
+sv_bOpenActive := TRUE;
+fbDebugTrace2(nDeviceState, 'Mold open started');
+
+@F 
+@Acb @RT(9)aResetICM @F @T @RT(1)P @RT(0) @F @F @T @TL(12)
+IF IS_LINKED(sv_ICMMode) THEN //Reset ICM during mold open
+    IF (sv_CoiningActivateMode <> nDeactivate) 
+        OR (sv_VentingActivateMode <> nDeactivate) THEN  
+
+        sv_bVentingDone := FALSE;
+        sv_bCoiningDone := FALSE;    
+        sv_bCoiningStartPointDetected := FALSE; 
+        sv_bVentingStartPointDetected := FALSE;         
+        sv_bICMStartPosReached := FALSE; 
+    END_IF;
+END_IF;
+
+@F 
+
+@AltBranch @RT(3)alt @F 2 
+@TransSeq @RT(4)tseq @F 1 
+@Trans @RT(13)TLockDecompOK @F @T @F @F @T @F @TL(3)
+//Wait for lock decomp finished
+sv_bLockDecompOK
+
+@RT(13)TLockDecompOK @F 
+
+@TransSeq @RT(4)tseq @F 4 
+@Trans @RT(8)TStopped @F @T @F @F @T @F @TL(2)
+bStop OR sv_bLockDecompTimeOut
+
+@RT(8)TStopped @F 
+@Step @RT(14)S_ResetTimeOut @F @F @F @F @RT(0) @F 
+@AcbCont @RT(7)unnamed @F 1 
+@Acb @RT(13)AResetTimeOut @F @T @RT(1)P @RT(0) @F @F @T @TL(2)
+sv_bLockDecompTimeOut := FALSE;
+
+@F 
+
+@Trans @RT(6)TTrue2 @F @T @F @F @T @F @TL(2)
+TRUE
+
+@RT(6)TTrue2 @F 
+@Goto @RT(5)READY @F @F 
+
+
+@Step @RT(13)S_DECIDE_MOVE @F @F @F @F @RT(0) @F 
+@AcbCont @RT(7)unnamed @F 0 
+
+@AltBranch @RT(3)alt @F 3 
+@TransSeq @RT(4)tseq @F 3 
+@Trans @RT(8)TMoveBwd @F @T @F @F @T @F @TL(3)
+g_MoveCtrl.pData^.MoveId = cMoveBwd OR
+g_MoveCtrl.pData^.MoveId = cMoveBwdInterPos
+
+@RT(8)TMoveBwd @F 
+@Step @RT(13)S_CheckOpMode @F @F @F @F @RT(0) @F 
+@AcbCont @RT(7)unnamed @F 0 
+
+@AltBranch @RT(3)alt @F 2 
+@TransSeq @RT(4)tseq @F 3 
+@Trans @RT(10)TSetupMode @F @T @F @F @T @F @TL(2)
+(sv_OperationMode = nSetup) AND NOT sv_bPresMoldHeightAdjustActive
+
+@RT(10)TSetupMode @F 
+@Step @RT(14)S_CheckIfCalib @F @F @F @F @RT(0) @F 
+@AcbCont @RT(7)unnamed @F 0 
+
+@AltBranch @RT(3)alt @F 4 
+@TransSeq @RT(4)tseq @F 3 
+@Trans @RT(9)TNotCalib @F @T @F @F @T @F @TL(4)
+NOT sv_bDoTransducerCalib AND
+NOT sv_bMoveMoldUntilEnd AND
+NOT sv_bMoveIdent
+
+@RT(9)TNotCalib @F 
+@Step @RT(11)S_ConstMove @F @F @F @F @RT(0) @F 
+@AcbCont @RT(7)unnamed @F 3 
+@Acb @RT(16)AResetConstBlock @F @F @RT(1)P @RT(0) @F @F @F @F 
+@Acb @RT(18)ASetTargetPosition @F @F @RT(1)P @RT(0) @F @F @F @F 
+@Acb @RT(12)AConstOutput @F @F @RT(1)N @RT(0) @F @F @F @F 
+
+@Trans @RT(15)TConstMoveReady @F @T @F @F @T @T @TL(2)
+NOT abMoldOpenConst.aRun.bActive
+
+@RT(15)TConstMoveReady @F 
+
+@TransSeq @RT(4)tseq @F 3 
+@Trans @RT(15)TCalibActivated @F @T @F @F @T @F @TL(2)
+sv_bDoTransducerCalib
+
+@RT(15)TCalibActivated @F 
+@Step @RT(7)S_Calib @F @F @F @F @RT(0) @F 
+@AcbCont @RT(7)unnamed @F 3 
+@Acb @RT(16)AResetCalibBlock @F @F @RT(1)P @RT(0) @F @F @F @F 
+@Acb @RT(16)ATransducerCalib @F @F @RT(1)N @RT(0) @F @F @F @F 
+@Acb @RT(16)ACheckCalibError @F @F @RT(1)N @RT(0) @F @F @F @F 
+
+@Trans @RT(11)TCalibReady @F @T @F @F @T @T @TL(2)
+NOT abMoldBwdCalib.aRun.bActive
+
+@RT(11)TCalibReady @F 
+
+@TransSeq @RT(4)tseq @F 3 
+@Trans @RT(13)TMoveUntilEnd @F @T @F @F @T @F @TL(2)
+sv_bMoveMoldUntilEnd
+
+@RT(13)TMoveUntilEnd @F 
+@Step @RT(10)S_MoveOpen @F @F @F @F @RT(0) @F 
+@AcbCont @RT(7)unnamed @F 2 
+@Acb @RT(17)AResetCalibBlock2 @F @F @RT(1)P @RT(0) @F @F @F @F 
+@Acb @RT(17)ATransducerCalib2 @F @F @RT(1)N @RT(0) @F @F @F @F 
+
+@Trans @RT(14)TMoveOpenReady @F @T @F @F @T @T @TL(2)
+NOT abMoldBwdCalib.aRun.bActive
+
+@RT(14)TMoveOpenReady @F 
+
+@TransSeq @RT(4)tseq @F 3 
+@Trans @RT(19)TMoveIdentActivated @F @T @F @F @T @F @TL(2)
+sv_bMoveIdent
+
+@RT(19)TMoveIdentActivated @F 
+@Step @RT(11)S_MoveIdent @F @F @F @F @RT(0) @F 
+@AcbCont @RT(7)unnamed @F 2 
+@Acb @RT(16)AResetIdentBlock @F @F @RT(1)P @RT(0) @F @F @F @F 
+@Acb @RT(11)AStepOutput @F @F @RT(1)N @RT(0) @F @F @F @F 
+
+@Trans @RT(15)TMoveIdentReady @F @T @F @F @T @T @TL(2)
+NOT abMoldOpenStep.aRun.bActive
+
+@RT(15)TMoveIdentReady @F 
+
+
+
+@TransSeq @RT(4)tseq @F 5 
+@Trans @RT(9)TNotSetup @F @T @F @F @T @F @TL(3)
+(sv_OperationMode <> nSetup) OR
+sv_bPresMoldHeightAdjustActive
+
+@RT(9)TNotSetup @F 
+@Step @RT(13)S_ProfileMove @F @F @F @F @RT(0) @F 
+@AcbCont @RT(7)unnamed @F 9 
+@Acb @RT(18)AResetProfileBlock @F @F @RT(1)P @RT(0) @F @F @F @F 
+@Acb @RT(28)AParToggleLeverAmplification @F @F @RT(1)P @RT(0) @F @F @F @F 
+@Acb @RT(29)ACalcToggleLeverAmplification @F @F @RT(1)N @RT(0) @F @F @F @F 
+@Acb @RT(14)AProfileOutput @F @F @RT(1)N @RT(0) @F @F @F @F 
+@Acb @RT(13)AMoldOpenTime @F @F @RT(1)N @RT(0) @F @F @F @F 
+@Acb @RT(20)AInitValveController @F @F @RT(1)P @RT(0) @F @F @F @F 
+@Acb @RT(20)ACalcValveController @F @F @RT(1)N @RT(0) @F @F @F @F 
+@Acb @RT(17)ACalcPumpVelocity @F @F @RT(1)N @RT(0) @F @F @F @F 
+@Acb @RT(20)ACopySetPositionOpen @F @T @RT(2)P0 @RT(0) @F @F @T @TL(6)
+IF bStop THEN
+   sv_rToggleLeverSetPosition := sv_rToggleLeverPosition;
+ELSE
+   sv_rToggleLeverSetPosition := abMoldOpen.aRun.rEndPosition; 
+END_IF;
+
+@F 
+
+@Trans @RT(17)TProfileMoveReady @F @T @F @F @T @F @TL(2)
+NOT abMoldOpen.aRun.bActive
+
+@RT(17)TProfileMoveReady @F 
+@Step @RT(12)S_CalcOffset @F @F @F @F @RT(0) @F 
+@AcbCont @RT(7)unnamed @F 1 
+@Acb @RT(11)ACalcOffset @F @F @RT(1)P @RT(0) @F @F @F @F 
+
+@Trans @RT(11)TCalcOffset @F @T @F @F @T @F @TL(3)
+TRUE
+
+
+@RT(11)TCalcOffset @F 
+
+
+
+@TransSeq @RT(4)tseq @F 5 
+@Trans @RT(16)TMoveBwdForMHAdj @F @T @F @F @T @F @TL(2)
+g_MoveCtrl.pData^.MoveId = cMoveBwdForMHAdjust
+
+@RT(16)TMoveBwdForMHAdj @F 
+@Step @RT(21)S_GetBackwardPosForMH @F @F @F @F @RT(0) @F 
+@AcbCont @RT(7)unnamed @F 3 
+@Acb @RT(8)Action18 @F @T @RT(1)P @RT(0) @F @F @T @TL(2)
+sv_bOpenMHUntilProtectStep := TRUE;
+
+@F 
+@Acb @RT(15)AGetBackwardPos @F @F @RT(1)P @RT(0) @F @F @F @F 
+@Acb @RT(8)Action16 @F @T @RT(1)P @RT(0) @F @F @T @TL(2)
+sv_bOpenMHUntilProtectStep := FALSE;
+
+@F 
+
+@Trans @RT(8)Trans252 @F @T @F @F @T @F @TL(2)
+TRUE
+
+@RT(8)Trans252 @F 
+@Step @RT(14)S_MoveForMHAdj @F @F @F @F @RT(0) @F 
+@AcbCont @RT(7)unnamed @F 2 
+@Acb @RT(16)AResetConstBlock @F @F @RT(1)P @RT(0) @F @F @F @F 
+@Acb @RT(28)AConstOutputForMHAdjustSetup @F @F @RT(1)N @RT(0) @F @F @F @F 
+
+@Trans @RT(18)TProfileMoveReady2 @F @T @F @F @T @T @TL(2)
+NOT abMoldOpenConst.aRun.bActive
+
+@RT(18)TProfileMoveReady2 @F 
+
+@TransSeq @RT(4)tseq @F 5 
+@Trans @RT(7)Trans23 @F @T @F @F @T @F @TL(2)
+g_MoveCtrl.pData^.MoveId = cMoveBwdForMHAdjustSetup
+
+@RT(7)Trans23 @F 
+@Step @RT(16)S_GetbackwardPos @F @F @F @F @RT(0) @F 
+@AcbCont @RT(7)unnamed @F 1 
+@Acb @RT(15)AGetBackwardPos @F @F @RT(1)P @RT(0) @F @F @F @F 
+
+@Trans @RT(7)Trans25 @F @T @F @F @T @F @TL(2)
+TRUE
+
+@RT(7)Trans25 @F 
+@Step @RT(19)S_SetupMoveForMHAdj @F @F @F @F @RT(0) @F 
+@AcbCont @RT(7)unnamed @F 2 
+@Acb @RT(16)AResetConstBlock @F @F @RT(1)P @RT(0) @F @F @F @F 
+@Acb @RT(28)AConstOutputForMHAdjustSetup @F @F @RT(1)N @RT(0) @F @F @F @F 
+
+@Trans @RT(7)Trans24 @F @T @F @F @T @T @TL(2)
+NOT abMoldOpenConst.aRun.bActive
+
+@RT(7)Trans24 @F 
+
+
+@Step @RT(5)READY @F @F @T @F @RT(0) @F 
+@AcbCont @RT(7)unnamed @F 1 
+@Acb @RT(6)AReady @F @T @RT(1)P @RT(0) @F @F @T @TL(11)
+IF g_bMoldValve THEN
+   sv_rMoldValveOutput := 0.0;
+END_IF;
+
+bReady := TRUE;
+fbSetMovementState(MoveId   := g_MoveCtrl.pData^.MoveId,
+                   MoveDir  := cMoveBwd,
+                   State    := nInactive);
+sv_bOpenActive := FALSE;
+fbDebugTrace2(nDeviceState, 'Mold open ready');
+
+@F 
+
+
+@Trans @RT(6)TReady @F @T @T @T @T @T @TL(2)
+TRUE
+
+@RT(6)TReady @F 
+
+@END_SfcData 
+@SaActions 21 
+@SaText @RT(16)AResetCalibBlock 1 @TL(19)
+(**************************************** WARNING ********************************************
+ *** The KEBA Kemro K2 System including software is not intended for safety control tasks! ***
+ ***                       For further information see Comment tab!                        ***
+ *********************************************************************************************)
+
+bError := FALSE;
+abMoldBwdCalib.aRun(bStart := FALSE,
+                    LintabPoint := sv_TmpLintabPoint);
+IF abMoldBwdCalib.aRun.bError THEN
+   sv_CalibState.Status := tnCalibState_Error;
+   bError := TRUE;
+   dummy := Print("Calib Error: Reset calib block failed"); 
+END_IF;
+
+IF g_bMoldValve THEN
+   sv_rMoldValveOutput := rMaxVoltageValve;
+END_IF;
+
+
+
+@SaText @RT(16)AResetConstBlock 1 @TL(14)
+(**************************************** WARNING ********************************************
+ *** The KEBA Kemro K2 System including software is not intended for safety control tasks! ***
+ ***                       For further information see Comment tab!                        ***
+ *********************************************************************************************)
+
+IF g_bMoldValve THEN
+   sv_rMoldValveOutput := rMaxVoltageValve;
+END_IF;
+IF sv_bMoveIdent OR sv_rIdentPosition > 0.0 THEN
+   sv_rBwdInterruptPosition := sv_rIdentPosition;
+END_IF;
+abMoldOpenConst.aRun(bStart := FALSE);
+                   
+
+
+@SaText @RT(18)AResetProfileBlock 1 @TL(18)
+(**************************************** WARNING ********************************************
+ *** The KEBA Kemro K2 System including software is not intended for safety control tasks! ***
+ ***                       For further information see Comment tab!                        ***
+ *********************************************************************************************)
+
+abMoldOpen.aRun(bStart := FALSE);
+rActStartposition := sv_rMoldPosition;
+                    
+IF (g_MoveCtrl.pData^.MoveId = cMoveBwdInterPos) THEN
+   abLintabApplyToggle.aCalcInv(rY:= sv_rBwdInterruptPosition - MIN(sv_rTolerancePosReached, sv_rMonTolerance));
+   mrTolerancePosReached := rInterruptTogglePosition - abLintabApplyToggle.aCalcInv.rX;
+ELSE
+   rEndposMold := sv_CalculatedProfileBwd.VelocityProfile.CalculatedProfile.Point[sv_CalculatedProfileBwd.VelocityProfile.CalculatedProfile.uNoOfPoints].rX;
+   rEndposToggle := sv_CalculatedProfileBwdToggle.VelocityProfile.CalculatedProfile.Point[sv_CalculatedProfileBwdToggle.VelocityProfile.CalculatedProfile.uNoOfPoints].rX;
+   abLintabApplyToggle.aCalcInv(rY:= rEndposMold - MIN(sv_rTolerancePosReached, sv_rMonTolerance));
+   mrTolerancePosReached := rEndposToggle - abLintabApplyToggle.aCalcInv.rX;
+END_IF;
+
+
+@SaText @RT(17)AResetCalibBlock2 1 @TL(13)
+(**************************************** WARNING ********************************************
+ *** The KEBA Kemro K2 System including software is not intended for safety control tasks! ***
+ ***                       For further information see Comment tab!                        ***
+ *********************************************************************************************)
+
+//the point is set to dummy, as this block is only used for opening the mold
+abMoldBwdCalib.aRun(bStart := FALSE,
+                    LintabPoint := dummypoint);
+
+IF g_bMoldValve THEN
+   sv_rMoldValveOutput := rMaxVoltageValve;
+END_IF;
+
+
+@SaText @RT(15)AGetBackwardPos 1 @TL(22)
+
+IF sv_bOpenMHUntilProtectStep THEN  
+   //get backward position for Mold Height adjust mold open movement
+   IF sv_MoldFwdProfVis.Profile.iNoOfPoints >= 3 THEN
+      //normal case
+      //start position of protect step      
+      rMHAdjustBwdPos := sv_MoldFwdProfVis.Profile.Points[sv_MoldFwdProfVis.Profile.iNoOfPoints - 1 ].rStartPos;
+           
+   ELSE
+      //should never happen
+      rMHAdjustBwdPos := sv_MoldFwdProfVis.Profile.Points[1].rStartPos;
+         
+   END_IF;
+
+ELSIF sv_bOpenMHUntilMoldHeightCalib THEN
+   // for adjusting the clamp force
+   rMHAdjustBwdPos := sv_rOpenPosForMHAdjust;
+ELSE
+   rMHAdjustBwdPos := 0.0;
+   fbDebugTrace(sText := 'ABMoveOpen.AGetbackwardPos: unknown open modus for Mold');
+END_IF;
+
+
+@SaText @RT(28)AParToggleLeverAmplification 1 @TL(9)
+// parametrization
+ToggleLeverLintabPar.Mode.bZeroExtrapolation := FALSE;
+ToggleLeverLintabPar.Mode.bLinearExtrapolation := TRUE;
+ToggleLeverLintabPar.Mode.bSetNegativeValuesToZero :=FALSE;
+ToggleLeverLintabPar.rXOffs := 0.0;
+ToggleLeverLintabPar.rYOffs := 0.0;
+ToggleLeverLintabPar.LintabPoints := sv_ToggleLeverLintabDerive.LintabPoints;
+abToggleLeverLintab.Par(Param:=ToggleLeverLintabPar);
+
+
+@SaText @RT(29)ACalcToggleLeverAmplification 1 @TL(14)
+// calculate
+abToggleLeverLintab.Calculate(rX:=sv_rMoldPosition);
+
+IF ((abToggleLeverLintab.Calculate.rY) < sv_rMinAmplification) THEN
+   //use at least a minimum value
+   rAmplification := sv_rMinAmplification;
+ELSIF ((abToggleLeverLintab.Calculate.rY) > sv_rMaxAmplification) THEN
+   //don´t exceed a maximum value
+   rAmplification := sv_rMaxAmplification;
+ELSE
+   //use calculated value
+   rAmplification := abToggleLeverLintab.Calculate.rY;
+END_IF;
+
+
+@SaText @RT(16)ACheckCalibError 1 @TL(5)
+IF bError THEN
+   sv_CalibState.Status := tnCalibState_Error;
+   dummy := Print("Calib Error: %i", iErrorInfo);
+END_IF;
+
+
+@SaText @RT(11)ACalcOffset 1 @TL(26)
+IF NOT (g_MoveCtrl.pData^.MoveId = cMoveBwdInterPos) THEN
+    // only optimize if end position reachend
+    IF (sv_MoldBwdProfVis.bUseOffsetOptimizing) AND (sv_MoldBwdProfVis.rMinOutputVel > 0.0) THEN
+        // only optimize if end position reachend
+        abLintabApplyToggle.aCalc(rX := abMoldOpen.aRun.rEndPosition,
+                                  rY => rEndPositionMold);
+        IF sv_rMoldPosition > 0.99 * rEndPositionMold THEN    
+            abCalcOffset.aCalcOffset(rPositionError := abMoldOpen.aRun.rPositionError,
+                                    rEndPosition := rEndPositionMold,
+                                    rMoldPosition := sv_rMoldPosition,
+                                    rActStartposition := rActStartposition,
+                                    rActErrorDelay := sv_rMoldPosition - rEndPositionMold,
+                                    rActError := abMoldOpen.aRun.rPositionError,
+                                    rLastOffset := sv_MoldBwdProfVis.rOffset,
+                                    rMinPositionError := rMinPositionError,
+                                    rMaxStroke := rMaxStroke,
+                                    rSaveOffset := sv_MoldBwdProfVis.rOffset,
+                                    bClose := FALSE);
+        
+            sv_MoldBwdProfVis.rOffset := abCalcOffset.aCalcOffset.rOffset;
+        END_IF;
+    ELSE
+        sv_MoldBwdProfVis.rOffset := 0.0;    
+    END_IF;    
+END_IF;
+
+
+@SaText @RT(20)ACalcValveController 1 @TL(212)
+IF  g_bMoldValve AND g_bPressureSensorsAvailable THEN   
+   IF mbFastOpenLinked AND do_FastOpen THEN
+      rSetVelocityValve := sv_rFastVelocityFactor * rSetVelocity;
+   ELSE
+      rSetVelocityValve := rSetVelocity;   
+   END_IF;
+
+   IF sv_bPumpUseProfileVelociy THEN
+      mrPumpVelocity := rSetVelocity;
+   ELSE
+      fbPumpVelocityOutput(Start := bStart,
+                           Stop  := bStop,
+                           ReParam  := FALSE,
+                           PreOutputValue := PumpVelocityProfile.ProfilePoints.Point[1].rY,
+                           StartOutputValue := PumpVelocityProfile.ProfilePoints.Point[1].rY, 
+                           InputValue := sv_rToggleLeverPosition,
+                           Interrupt := FALSE,
+                           DelayTime := T#0s);
+      IF fbPumpVelocityOutput.Error  THEN
+         mrPumpVelocity := rSetVelocity;
+      ELSE
+         IF abMoldOpen.aRun.bActive THEN
+            mrPumpVelocity := fbPumpVelocityOutput.Output;      
+         ELSE
+            mrPumpVelocity := 0.0;
+         END_IF;
+      END_IF;         
+   END_IF;
+   
+   IF sv_ServoValveControlData.bEnable THEN
+      // use non linear control
+      IF g_MoveCtrl.pData^.MoveId = cMoveBwdInterPos THEN
+           bStopActive := TRUE;    
+      ELSE
+           bStopActive := FALSE;  
+      END_IF;
+      
+      //rYXSetPos := abYXGenLightB.Calculate.rS;  -> calculate after controller call
+      rYXSetVel := rSetVelocityValve;
+
+      IF NOT g_bPressureSensor1Available THEN
+         abYXGenLightB.Calculate(rX:=sv_rToggleLeverPosition, bStopPointActive:=bStopActive );
+         IF (abYXGenLightB.Calculate.calcStatus <> KCTRL_Ret_OK)  THEN
+            sv_rMoldValveOutput := 0.0;
+            sv_rVelocityAbs := 0.0; 
+            RETURN; 
+         END_IF; 
+         rYXSetAccel := abYXGenLightB.Calculate.rA;
+         rYXSetJerk := abYXGenLightB.Calculate.rJ;
+         abEstimatePressure.aRun(rPressure := sv_rMoldPressure2*1.0e5, 
+                                 rSetPos    := rYXSetPos*1.0e-3,
+                                 rSetVel    := rYXSetVel*1.0e-3,
+                                 rSetAccel  := rYXSetAccel*1.0e-3,
+                                 bCalcPressure1 := TRUE);
+         rPressure1 := abEstimatePressure.aRun.rPressureEstimate;
+         rPressure2 := sv_rMoldPressure2*1.0e5;  
+      ELSIF NOT g_bPressureSensor2Available THEN
+         abYXGenLightB.Calculate(rX:=sv_rToggleLeverPosition, bStopPointActive:=bStopActive );
+         IF (abYXGenLightB.Calculate.calcStatus <> KCTRL_Ret_OK)  THEN
+            sv_rMoldValveOutput := 0.0;
+            sv_rVelocityAbs := 0.0; 
+            RETURN; 
+         END_IF; 
+         rYXSetAccel := abYXGenLightB.Calculate.rA;
+         rYXSetJerk := abYXGenLightB.Calculate.rJ;
+         abEstimatePressure.aRun(rPressure := sv_rMoldPressure1*1.0e5, 
+                                 rSetPos    := rYXSetPos*1.0e-3,
+                                 rSetVel    := rYXSetVel*1.0e-3,
+                                 rSetAccel  := rYXSetAccel*1.0e-3,
+                                 bCalcPressure1 := FALSE);
+         rPressure2 := abEstimatePressure.aRun.rPressureEstimate;
+         rPressure1 := sv_rMoldPressure1*1.0e5;  
+      ELSE    
+         rPressure1 := sv_rMoldPressure1*1.0e5;
+         rPressure2 := sv_rMoldPressure2*1.0e5;    
+      END_IF;          
+ 
+      // use SI-units 
+      abValveController.aRun(bStart := bStart,
+                             rSetPosition := rYXSetPos*1.0e-3,
+                             rSetVelocity := rYXSetVel*1.0e-3,
+                             rActPosition := sv_rToggleLeverPosition*1.0e-3,
+                             rActVelocity := sv_rToggleLeverVelEstimate*1.0e-3,
+                             rSystemPressure := pSysPressure^*1.0e5,
+                             rTankPressure := rTankPressure*1.0e5,
+                             rPressure1 := rPressure1,
+                             rPressure2 := rPressure2);
+
+      rOutput := abValveController.aRun.rU;
+      mrUP := abValveController.aRun.rUP;
+      mrUD := abValveController.aRun.rUD;
+      IF rOutput > 0.0 THEN
+         rMoldValveOutput := abValveController.aRun.rU + rOffsetPos;
+         IF rMoldValveOutput > MAX_VOLTAGE THEN
+            rMoldValveOutput := MAX_VOLTAGE;
+         END_IF;
+         b := WRITE_SVREAL_DIRECT(sv_rMoldValveOutput, rMoldValveOutput);
+      ELSIF rOutput < 0.0 THEN
+         rMoldValveOutput := abValveController.aRun.rU + rOffsetNeg;
+         IF rMoldValveOutput < -MAX_VOLTAGE THEN
+            rMoldValveOutput := -MAX_VOLTAGE;
+         END_IF; 
+         b := WRITE_SVREAL_DIRECT(sv_rMoldValveOutput, rMoldValveOutput);         
+      ELSE
+         rMoldValveOutput := 0.5 * (rOffsetPos + rOffsetNeg); 
+         b := WRITE_SVREAL_DIRECT(sv_rMoldValveOutput, rMoldValveOutput);         
+      END_IF;
+      
+      // update reference position
+      rYXSetPos := rYXSetPos + rSetVelocityValve * rCycleTime;
+      // integrator stop at maximum position (profile or interstop) of movement
+      IF rYXSetPos > rEndValue  THEN
+         rYXSetPos :=  rEndValue;
+      END_IF;            
+      
+      b := WRITE_SVREAL_DIRECT(sv_rVelocityAbs, mrPumpVelocity);
+      b := WRITE_SVREAL_DIRECT(sv_ServoValveControlSet.rSetPos, rYXSetPos);
+      b := WRITE_SVREAL_DIRECT(sv_ServoValveControlSet.rSetVel, rYXSetVel);
+      b := WRITE_SVREAL_DIRECT(sv_ServoValveControlSet.rSetAccel, rYXSetAccel);       
+   ELSIF sv_bUseValve THEN
+      b := WRITE_SVREAL_DIRECT(sv_rVelocityAbs, rSetVelocity);
+      IF mbUsePropValve THEN // calc feed forward if init OK
+         // use feedforward calculated from pressure drop at prop valve
+         rSetFlow := mrAreaOutletFactor * (rSetVelocityValve 
+                   + sv_ServoValveControlData.rGainPBwd * (rYXSetPos - sv_rToggleLeverPosition)                       
+                   + sv_ServoValveControlData.rGainDBwd * (rSetVelocityValve - sv_rToggleLeverVelEstimate));
+         abPropValve.aCalcVoltage(rPressure := rPessureDrop,
+                                  rFlow := rSetFlow);                  
+         mrPropValveOutput := abPropValve.aCalcVoltage.rControlVoltage * mrSign;
+         b := WRITE_SVREAL_DIRECT(sv_rMoldValveOutput, mrPropValveOutput);
+         mrPressOutlet := rPessureDrop;
+         mrSetFlowOutlet := rSetFlow;
+         // update reference position
+         rYXSetPos := rYXSetPos + rSetVelocityValve * rCycleTime;
+         // integrator stop at maximum position (profile or interstop) of movement
+         IF rYXSetPos > rEndValue  THEN
+            rYXSetPos :=  rEndValue;
+         END_IF;                  
+      ELSE
+         // use const output until last ramp
+         fbConstOutputRamp(bStart:=FALSE,
+                           bStop:=bStop,
+                           rActValue:=sv_rToggleLeverPosition,
+                           bInterstopRamp:=abMoldOpen.aRun.bOnInterstopRamp,
+                           bProfileRamp:=abMoldOpen.aRun.bOnLastRamp,
+                           rEndValue:=rEndValue,
+                           bDir:=TRUE,
+                           rStartValueStopRamp:=abMoldOpen.aRun.rVelocityOutput,    
+                           rStopRamp:=rStopRamp,
+                           bActive := abMoldOpen.aRun.bActive); 
+         b := WRITE_SVREAL_DIRECT(sv_rMoldValveOutput, fbConstOutputRamp.rOutput); 
+         b := WRITE_SVREAL_DIRECT(sv_ServoValveControlSet.rSetPos, rSetPos);
+         b := WRITE_SVREAL_DIRECT(sv_ServoValveControlSet.rSetVel, rSetVelocity);
+      END_IF;
+   ELSE
+      b := WRITE_SVREAL_DIRECT(sv_rMoldValveOutput, rMaxVoltageValve);
+      b := WRITE_SVREAL_DIRECT(sv_rVelocityAbs, rSetVelocity); 
+      b := WRITE_SVREAL_DIRECT(sv_ServoValveControlSet.rSetPos, rSetPos);
+      b := WRITE_SVREAL_DIRECT(sv_ServoValveControlSet.rSetVel, rSetVelocity);
+   END_IF;
+
+   bStart := FALSE;
+ELSIF g_bMoldValve THEN 
+   // proportional valve
+   b := WRITE_SVREAL_DIRECT(sv_rVelocityAbs, rSetVelocity); 
+   IF (sv_bUseValve OR sv_ServoValveControlData.bEnable) THEN // 
+      IF mbFastOpenLinked AND do_FastOpen THEN
+         rSetVelocityValve := sv_rFastVelocityFactor * rSetVelocity;
+      ELSE
+         rSetVelocityValve := rSetVelocity;   
+      END_IF;
+      IF (mbUsePropValve AND sv_ServoValveControlData.bEnable) THEN // calc feed forward if init OK
+         // use feedforward calculated from pressure drop at prop valve
+         rSetFlow := mrAreaOutletFactor * (rSetVelocityValve 
+                   + sv_ServoValveControlData.rGainPBwd * (rYXSetPos - sv_rToggleLeverPosition)                       
+                   + sv_ServoValveControlData.rGainDBwd * (rSetVelocityValve - sv_rToggleLeverVelEstimate));
+         abPropValve.aCalcVoltage(rPressure := rPessureDrop,
+                                  rFlow := rSetFlow);                  
+         mrPropValveOutput := abPropValve.aCalcVoltage.rControlVoltage * mrSign;
+         b := WRITE_SVREAL_DIRECT(sv_rMoldValveOutput, mrPropValveOutput);
+         mrPressOutlet := rPessureDrop;
+         mrSetFlowOutlet := rSetFlow;
+         // update reference position
+         rYXSetPos := rYXSetPos + rSetVelocityValve * rCycleTime;
+         // integrator stop at maximum position (profile or interstop) of movement
+         IF rYXSetPos > rEndValue  THEN
+            rYXSetPos :=  rEndValue;
+         END_IF;                  
+      ELSE
+         fbConstOutputRamp(bStart:=FALSE,
+                           bStop:=bStop,
+                           rActValue:=sv_rToggleLeverPosition,
+                           bInterstopRamp:=abMoldOpen.aRun.bOnInterstopRamp,
+                           bProfileRamp:=abMoldOpen.aRun.bOnLastRamp,
+                           rEndValue:=rEndValue,
+                           bDir:=TRUE,
+                           rStartValueStopRamp:=abMoldOpen.aRun.rVelocityOutput,    
+                           rStopRamp:=rStopRamp,
+                           bActive := abMoldOpen.aRun.bActive); 
+         b := WRITE_SVREAL_DIRECT(sv_rMoldValveOutput, fbConstOutputRamp.rOutput);
+      END_IF;
+    ELSE
+       b := WRITE_SVREAL_DIRECT(sv_rMoldValveOutput, rMaxVoltageValve);
+    END_IF;
+ELSE
+   b := WRITE_SVREAL_DIRECT(sv_rVelocityAbs, rSetVelocity);
+END_IF;
+
+mrSetVelocity := rSetVelocity;
+    
+
+
+
+@SaText @RT(20)AInitValveController 1 @TL(116)
+IF g_bMoldValve THEN
+   IF g_MoveCtrl.pData^.MoveId = cMoveBwdInterPos THEN
+      rEndValue := rInterruptTogglePosition; //  use toggle lever position calculated from mold position sv_rBwdInterruptPosition;
+   ELSE
+      rEndValue := sv_ToggleBwdProfVis.Profile.Points[sv_MoldBwdProfVis.Profile.iNoOfPoints+1].rStartPos;
+   END_IF;
+   rYXSetPos := sv_rToggleLeverPosition;
+
+   IF NOT bInitDone THEN
+      dCycleTime := GET_TASK_INTERVAL();
+      rCycleTime := LINT_TO_REAL(TIME_TO_LINT(dCycleTime))/1.0e6;  
+      bInitDone := TRUE;
+   END_IF;
+    
+   IF  g_bPressureSensorsAvailable THEN
+    
+      rQNom := sv_ValveData.rQNom / 60000.0; //l/min -> m/s
+      rPNom := sv_ValveData.rDeltaPNom * 1.0e5; // bar -> N/mÂ²
+      rQNomPB := sv_ValveData.rQNomPB / 60000.0; //l/min -> m/s
+      rPNomPB := sv_ValveData.rDeltaPNomPB * 1.0e5; // bar -> N/mÂ²
+      abValveController.aPar(rPistonArea1 := sv_ConstructionData.rPistonArea1,
+                             rPistonArea2 := sv_ConstructionData.rPistonArea2,
+                             rQNom := rQNom,
+                             rDeltaPressNom := rPNom,
+                             rQNomPB := rQNomPB,
+                             rDeltaPressNomPB := rPNomPB,
+                             bUsePB := sv_ValveData.bNominalAsysmmetric,
+                             rMaxStroke := sv_rToggleLeverStroke*1.0e-3, // mm -> m
+                             rVolume1 := sv_ConstructionData.rVolume1*1.0e-3, // dmÂ³ -> mÂ³
+                             rVolume2 := sv_ConstructionData.rVolume2*1.0e-3, // dmÂ³ -> mÂ³
+                             rGainP := sv_ServoValveControlData.rGainPBwd,
+                             rGainD := sv_ServoValveControlData.rGainDBwd,
+                             bPositiveVoltageIncreasing := 
+                                sv_ServoValveControlData.bPositiveVoltageIncreasing,
+                             bPositionIncreasing := TRUE);
+      rSetPos := sv_rToggleLeverPosition;
+      // trajectories generator: s, v, a, j
+      abMoldOpen.aGetVelocityProfile();
+      CalcedVelocityProfile := abMoldOpen.aGetVelocityProfile.CalcedVelocityProfile;
+      Accelerations.rSoft  := CalcedVelocityProfile.StopAcceleration;
+      Accelerations.rStop  := CalcedVelocityProfile.InterAcceleration;
+      Accelerations.rStart := CalcedVelocityProfile.Acceleration;
+      Param.Mode.RampType    := KCTRL_YXGen_RampType_Sin;
+      Param.Mode.bPeriodMode := FALSE;;
+      Param.ProfilePoints := CalcedVelocityProfile.ProfilePoints;
+    
+      abYXGenLightB.Par(dCycleTime:= dCycleTime,
+                        Param:=Param,
+                        InputType:=InputType);
+      abYXGenLightB.ParDeadTime(dDeadTime := sv_dSetDelayTimeOffBwd);
+      abYXGenLightB.ParAccelerations(Accelerations:=Accelerations);
+       
+      StopPoint.rX :=rInterruptTogglePosition + sv_rInterstopTolerance; 
+      abYXGenLightB.ParStopPoint(StopPoint:=StopPoint); 
+
+      abYXGenLightB.Init(rX0:=sv_rToggleLeverPosition,
+                         rY0:=0.0);
+      
+    
+      
+      IF sv_ServoValveControlData.bEnable THEN
+         IF NOT (g_bPressureSensor1Available AND g_bPressureSensor2Available) THEN
+            abEstimatePressure.aPar(rMassPiston := sv_ConstructionData.rMassPiston,
+                                    rMassMold := sv_ConstructionData.rMassMold,
+                                    rViscoseFrictonCylinder := sv_ConstructionData.rViscoseFrictonCylinder,
+                                    rViscoseFrictonMold := sv_ConstructionData.rViscoseFrictonMold,
+                                    rCoulombFrictonCylinder := sv_ConstructionData.rCoulombFrictonCylinder,
+                                    rCoulombFrictonMold := sv_ConstructionData.rCoulombFrictonMold,
+                                    rPistonArea1 := sv_ConstructionData.rPistonArea1,
+                                    rPistonArea2 := sv_ConstructionData.rPistonArea2,
+                                    ToggleLeverSplineData:=sv_ToggleLeverSplineData);
+         END_IF;             
+      END_IF;      
+   END_IF;
+    
+   IF sv_MoldFwdProfVis.rMaxRampVel > sv_MoldBwdProfVis.rMaxRampVel THEN
+      rStopRamp := sv_MoldBwdProfVis.rMaxRampVel;
+   ELSE
+      rStopRamp := sv_MoldFwdProfVis.rMaxRampVel;
+   END_IF;
+   fbConstOutputRamp(bReParam:=TRUE,
+                    bStart:=TRUE,
+                    bStop := FALSE,
+                    rActValue:=sv_rToggleLeverPosition,           
+                    rStartValue:= rMaxVoltageValve,
+                    rMinOutput := rMinOutput,
+                    LintabParam:=sv_ValveCharacteristicLintab,
+                    bInterstopRamp:=abMoldOpen.aRun.bOnInterstopRamp,
+                    bProfileRamp:=abMoldOpen.aRun.bOnLastRamp,
+                    rEndValue:=rEndValue,
+                    bDir:=TRUE,
+                    rStartValueStopRamp:=abMoldOpen.aRun.rVelocityOutput,
+                    rStopRamp:=rStopRamp,
+                    bActive := abMoldOpen.aRun.bActive);
+    
+   fbPumpVelocityOutput(Start := FALSE,
+                        Stop  := FALSE,
+                        ReParam  := TRUE,
+                        CycleTime := dCycleTime,
+                        PreRamp := 1.0e10,
+                        PreOutputValue := PumpVelocityProfile.ProfilePoints.Point[1].rY,
+                        StartOutputValue := PumpVelocityProfile.ProfilePoints.Point[1].rY, 
+                        ProfilData := PumpVelocityProfile,
+                        MinOutput := 0.0,
+                        RampType := sv_MoldBwdProfVis.RampTypeVel,
+                        OpenEnd := sv_MoldBwdProfVis.bOpenEndProfile,
+                        DeadTime := T#0s,
+                        InputValue := sv_rToggleLeverPosition,
+                        Interrupt := FALSE,
+                        DelayTime := T#0s); 
+   
+   rPessureDrop := MAX(0.0, sv_rMoldValvePressureDropOpen);
+    
+   bStart := TRUE;
+END_IF;
+
+
+@SaText @RT(16)AResetIdentBlock 1 @TL(8)
+sv_rBwdInterruptPosition := sv_rIdentPosition;
+IF g_bMoldValve THEN
+   sv_rMoldValveOutput := rMaxVoltageValve;
+   rPositionDown := (sv_rToggleLeverPosition + sv_rBwdInterruptPosition) * 0.5;
+END_IF;
+abMoldOpenStep.aRun(bStart := FALSE);
+
+
+
+@SaText @RT(13)AMoldOpenTime 1 @TL(4)
+IF g_MoveCtrl.pData^.MoveId <> cMoveBwdInterPos THEN
+   b := WRITE_SV_DIRECT(sv_dActOpenTime, abMoldOpen.aRun.dActMoveTime);   
+END_IF;
+
+
+@SaText @RT(18)ASetTargetPosition 1 @TL(13)
+(**************************************** WARNING ********************************************
+ *** The KEBA Kemro K2 System including software is not intended for safety control tasks! ***
+ ***                       For further information see Comment tab!                        ***
+ *********************************************************************************************)
+
+IF sv_bDoPumpVelocityCalib THEN
+   rTargetPosition := 0.9 * sv_rMoldStroke;
+ELSE
+   rTargetPosition := sv_rBwdInterruptPosition;
+END_IF;
+
+
+
+
+@SaText @RT(17)ATransducerCalib2 1 @TL(26)
+(**************************************** WARNING ********************************************
+ *** The KEBA Kemro K2 System including software is not intended for safety control tasks! ***
+ ***                       For further information see Comment tab!                        ***
+ *********************************************************************************************)
+
+abMoldBwdCalib.aRun(bStop := bStop OR sv_bTransducerError,
+                    bStart := TRUE,
+                    rActVoltage := ai_Position,
+                    rMaxVoltageDiff := sv_rMaxVoltageDiff,
+                    dStandStillDetectTime := sv_dStandStillDetectTime,
+                    LintabPoint := dummypoint,
+                    rSetValue := sv_rToggleLeverStroke,
+                    dDelayTimeOn := sv_MoldOpenTimesSet.dSetDelayTimePump,
+                    dDelayTimeOff := sv_MoldOpenTimesSet.dSetDelayTimeValve,
+                    bActive => sv_bOutputActive,
+                    rOutputPre => sv_rPressureAbs,
+                    rOutputVel => sv_rVelocityAbs,
+                    bPreOutputReached => sv_bPreOutputReady);
+sv_bDoTransducerCalib := NOT (abMoldBwdCalib.aRun.bPointDetected);
+
+abLintabApplyPres.aCalc(rX := sv_rPressureAbs,
+                        rY => sv_rPressure);
+
+abLintabApplyVel.aCalc(rX := sv_rVelocityAbs,
+                       rY => sv_rVelocity);
+
+
+@SaText @RT(16)ATransducerCalib 1 @TL(27)
+(**************************************** WARNING ********************************************
+ *** The KEBA Kemro K2 System including software is not intended for safety control tasks! ***
+ ***                       For further information see Comment tab!                        ***
+ *********************************************************************************************)
+
+abMoldBwdCalib.aRun(bStop := bStop OR sv_bTransducerError,
+                    bStart := TRUE,
+                    rActVoltage := ai_Position,
+                    rMaxVoltageDiff := sv_rMaxVoltageDiff,
+                    dStandStillDetectTime := sv_dStandStillDetectTime,
+                    LintabPoint := sv_TmpLintabPoint,
+                    rSetValue := sv_rMoldStroke,
+                    dDelayTimeOn := sv_MoldOpenTimesSet.dSetDelayTimePump,
+                    dDelayTimeOff := sv_MoldOpenTimesSet.dSetDelayTimeValve,
+                    bActive => sv_bOutputActive,
+                    rOutputPre => sv_rPressureAbs,
+                    rOutputVel => sv_rVelocityAbs,
+                    bPreOutputReached => sv_bPreOutputReady);
+sv_bDoTransducerCalib := NOT (abMoldBwdCalib.aRun.bPointDetected);
+bError := abMoldBwdCalib.aRun.bError OR bError;
+
+abLintabApplyPres.aCalc(rX := sv_rPressureAbs,
+                        rY => sv_rPressure);
+
+abLintabApplyVel.aCalc(rX := sv_rVelocityAbs,
+                       rY => sv_rVelocity);
+
+
+@SaText @RT(14)AProfileOutput 1 @TL(40)
+(**************************************** WARNING ********************************************
+ *** The KEBA Kemro K2 System including software is not intended for safety control tasks! ***
+ ***                       For further information see Comment tab!                        ***
+ *********************************************************************************************)
+
+abLintabApplyToggle.aCalcInv(rY := sv_rBwdInterruptPosition,
+                             rX => rInterruptTogglePosition);
+
+abMoldOpen.aRun(bStop := bStop OR sv_bTransducerError,
+                bUseInterruptPos := g_MoveCtrl.pData^.MoveId = cMoveBwdInterPos,
+                rInterruptPosition := rInterruptTogglePosition + sv_rInterstopTolerance,
+                bStart := NOT sv_bOutputActive,
+                rActPosition := sv_rToggleLeverPosition,
+                dMaxMoveTime := sv_MoldOpenTimesSet.dMaxMoveTime,
+                dDelayTimeOn := sv_MoldOpenTimesSet.dSetDelayTimePump,
+                dDelayTimeOff := sv_MoldOpenTimesSet.dSetDelayTimeValve,
+                DeadTime := sv_dSetDelayTimeOffBwd,
+                rAmplification := rAmplification,
+                ManualDelayTime := sv_OpenManualDelayTime,
+                StopDeadTime := sv_OpenInterstopDeadTime,
+                rInterruptAccel := sv_rBwdInterruptAccel,
+                rInterruptDeaccel := sv_rBwdInterruptDeaccel,
+                rActVelocity := sv_rMoldVelEstimate,
+                rMaxPosition := sv_rToggleLeverStroke,
+                rMaxVelocity := sv_rMaxSpeedBwd,
+                rSmoothFactor := sv_rSmoothFactor,
+                rTolerancePosReached:= mrTolerancePosReached,
+                rVelocityOutput => rSetVelocity,
+                bActive => sv_bOutputActive,
+                iActiveStage => sv_iActiveStage,
+                bPreOutputReached => sv_bPreOutputReady);
+
+b := WRITE_SVREAL_DIRECT(sv_rPressureAbs, abMoldOpen.aRun.rPressureOutput);                 
+b := WRITE_SV_DIRECT(sv_MoldOpenTimesAct.dActMoveTime, abMoldOpen.aRun.dActMoveTime);
+
+abLintabApplyPres.aCalc(rX := sv_rPressureAbs);
+b := WRITE_SVREAL_DIRECT(sv_rPressure, abLintabApplyPres.aCalc.rY);                 
+
+mbInTolerance := abMoldOpen.aRun.bInTolerance;
+
+
+@SaText @RT(11)AStepOutput 1 @TL(50)
+(**************************************** WARNING ********************************************
+ *** The KEBA Kemro K2 System including software is not intended for safety control tasks! ***
+ ***                       For further information see Comment tab!                        ***
+ *********************************************************************************************)
+
+abMoldOpenStep.aRun(bUsePosDetect := sv_rBwdInterruptPosition <> 0.0,
+                    rLowOutput := sv_rMaxSpeedBwd * 0.1,
+                    rPositionDown := (sv_rToggleLeverPosition + sv_rBwdInterruptPosition) * 0.5,
+                    bStart := TRUE,
+                    bStop := bStop,
+                    bDirection := TRUE,
+                    rActPos := sv_rToggleLeverPosition,
+                    rTargetPos := sv_rBwdInterruptPosition,
+                    dDelayTimeOn := sv_MoldOpenTimesSet.dSetDelayTimePump,
+                    dDelayTimeOff := sv_dSetDelayTimeOffBwd,
+                    rPositionUp := sv_rToggleLeverPosition,
+                    rHighOutput := sv_ConstBwdVis.Velocity.Output.rOutputValue,
+                    dMaxMoveTime := sv_MoldOpenTimesSet.dMaxMoveTime,
+                    rStopRamp := sv_rIdentStopRamp,
+                    bActive => sv_bOutputActive,
+                    rOutputPre => sv_rPressureAbs,
+                    rOutputVel => sv_rVelocityAbs,
+                    bPreOutputReached => sv_bPreOutputReady);
+
+abLintabApplyPres.aCalc(rX := sv_rPressureAbs,
+                        rY => sv_rPressure);
+
+abLintabApplyVel.aCalc(rX := sv_rVelocityAbs,
+                       rY => sv_rVelocity);
+
+IF (g_bMoldValve) THEN
+   // if use stop ramp close mold valve
+   IF (sv_rToggleLeverPosition > rPositionDown) AND (sv_ConstBwdVis.Velocity.Output.rOutputValue > 0.0) THEN
+      rOutput := rMaxVoltageValve * sv_rVelocityAbs / sv_ConstBwdVis.Velocity.Output.rOutputValue;
+      IF rOutput > 0.0 THEN
+         rMoldValveOutput := rOutput + rOffsetPos;
+         IF rMoldValveOutput > MAX_VOLTAGE THEN
+            rMoldValveOutput := MAX_VOLTAGE;
+         END_IF;
+         b := WRITE_SVREAL_DIRECT(sv_rMoldValveOutput, rMoldValveOutput);
+      ELSIF rOutput < 0.0 THEN
+         rMoldValveOutput := rOutput + rOffsetNeg;
+         IF rMoldValveOutput < -MAX_VOLTAGE THEN
+            rMoldValveOutput := -MAX_VOLTAGE;
+         END_IF; 
+         b := WRITE_SVREAL_DIRECT(sv_rMoldValveOutput, rMoldValveOutput);
+      END_IF;
+   END_IF;
+END_IF;
+
+
+@SaText @RT(28)AConstOutputForMHAdjustSetup 1 @TL(26)
+(**************************************** WARNING ********************************************
+ *** The KEBA Kemro K2 System including software is not intended for safety control tasks! ***
+ ***                       For further information see Comment tab!                        ***
+ *********************************************************************************************)
+
+abMoldOpenConst.aRun(bStop := bStop OR sv_bTransducerError,
+                     bStart := TRUE,
+                     bDirection := TRUE,
+                     rActPos := sv_rMoldPosition,
+                     rTargetPos := rMHAdjustBwdPos,
+                     bUsePosDetect := TRUE,
+                     dMaxTime := sv_MoldOpenTimesSet.dMaxMoveTime,
+                     dDelayTimeOn := sv_MoldOpenTimesSet.dSetDelayTimePump,
+                     dDelayTimeOff := sv_MoldOpenTimesSet.dSetDelayTimeValve,
+                     rOutputPre => sv_rPressureAbs,
+                     rOutputVel => sv_rVelocityAbs,
+                     bActive => sv_bOutputActive,
+                     dActTime => sv_MoldOpenTimesAct.dActMoveTime,
+                     bPreOutputReached => sv_bPreOutputReady);
+
+abLintabApplyPres.aCalc(rX := sv_rPressureAbs,
+                        rY => sv_rPressure);
+
+abLintabApplyVel.aCalc(rX := sv_rVelocityAbs,
+                       rY => sv_rVelocity);
+
+
+@SaText @RT(12)AConstOutput 1 @TL(25)
+(**************************************** WARNING ********************************************
+ *** The KEBA Kemro K2 System including software is not intended for safety control tasks! ***
+ ***                       For further information see Comment tab!                        ***
+ *********************************************************************************************)
+
+abMoldOpenConst.aRun(bUsePosDetect := rTargetPosition <> 0.0,
+                     bStart := TRUE,
+                     bStop := bStop,
+                     bDirection := TRUE,
+                     rActPos := sv_rMoldPosition,
+                     rTargetPos := rTargetPosition,
+                     dDelayTimeOn := sv_MoldOpenTimesSet.dSetDelayTimePump,
+                     dDelayTimeOff := sv_MoldOpenTimesSet.dSetDelayTimeValve,
+                     rOutputPre => sv_rPressureAbs,
+                     rOutputVel => sv_rVelocityAbs,
+                     bActive => sv_bOutputActive,
+                     dActTime => sv_MoldOpenTimesAct.dActMoveTime,
+                     bPreOutputReached => sv_bPreOutputReady);
+
+abLintabApplyPres.aCalc(rX := sv_rPressureAbs,
+                        rY => sv_rPressure);
+
+abLintabApplyVel.aCalc(rX := sv_rVelocityAbs,
+                       rY => sv_rVelocity);
+
+
+@SaText @RT(17)ACalcPumpVelocity 1 @TL(8)
+(**************************************** WARNING ********************************************
+ *** The KEBA Kemro K2 System including software is not intended for safety control tasks! ***
+ ***                       For further information see Comment tab!                        ***
+ *********************************************************************************************)
+
+abLintabApplyVel.aCalc(rX := sv_rVelocityAbs,
+                       rY => sv_rVelocity);
+
+
+@SaTrans 0 
+@SaExits 0 
+@END_SfcBody 
+
+@@@BEG_Comment@@@ 
+@TL(0)
+
+@@@END_Comment@@@ 
+
+@BEG_Body 
+@TL(37)
+(**************************************** WARNING ********************************************
+ *** The KEBA Kemro K2 System including software is not intended for safety control tasks! ***
+ ***                       For further information see Comment tab!                        ***
+ *********************************************************************************************)
+
+abMoldOpen.aInit(pProfile := @sv_ToggleBwdProfVis,
+                 MoveDir := sv_MoveOpen.MoveDir,
+                 pdCalcedDuration := @sv_dCalculatedDurationOpen,
+                 prCalcDurationStartPosition := @sv_ToggleBwdProfVis.Profile.Points[1].rStartPos,
+                 pInstanceDataInterPos := @sv_InstanceDataOpenToggleInter);
+
+abMoldOpenConst.aInit(pConst := @sv_ConstBwdVis,
+                      MoveId := cMoveBwd);
+
+abMoldBwdCalib.aInit(pConst := @sv_ConstBwdVis,
+                     MoveId := cMoveBwd);
+
+abLintabApplyPres.aInit(pLintab := @sv_LintabOutBwdP);
+
+abLintabApplyVel.aInit(pLintab := @sv_LintabOutBwdV);
+
+abMoldOpen.aInitMaxRamps(prMaxAbsAccelStart := @sv_MoldFwdProfVis.rMaxRampVel,
+                         prMaxAbsAccelEnd := @sv_MoldBwdProfVis.rMaxRampVel,
+                         prPosAccelStart := @sv_MoldBwdProfVis.Profile.Points[1].rStartPos,
+                         prPosAccelEnd := @sv_MoldFwdProfVis.Profile.Points[1].rStartPos,
+                         bUseAccelerationReduction := NOT g_bDirectLockAvailable);
+
+abLintabApplyToggle.aInit(pLintab := @sv_ToggleLeverLintab);
+
+abLintabApplyToggleSlow.aInit(pLintab := @sv_ToggleLeverLintab);
+
+abMoldOpenStep.aInit(pConst := @sv_ConstBwdVis,
+                     MoveId := cMoveBwd,
+                     prMaxSpeed := @sv_rMaxSpeedBwd);
+
+mbFastOpenLinked := IS_LINKED(do_FastOpen);
+
+@END_Body 
+
+@@@BEG_Comment@@@ 
+@TL(0)
+
+@@@END_Comment@@@ 
+
+@BEG_Body 
+@TL(13)
+(**************************************** WARNING ********************************************
+ *** The KEBA Kemro K2 System including software is not intended for safety control tasks! ***
+ ***                       For further information see Comment tab!                        ***
+ *********************************************************************************************)
+
+//copy minoutput to bwd profile
+sv_MoldBwdProfVis.rMinOutputVel := sv_MinOutputBwd.rVelocity;
+sv_MoldBwdProfVis.rMinOutputPress := sv_MinOutputBwd.rPressure;
+
+//copy minoutput to bwd constoutput
+sv_ConstBwdVis.Velocity.rMinOutput := sv_MinOutputBwd.rVelocity;
+sv_ConstBwdVis.Pressure.rMinOutput := sv_MinOutputBwd.rPressure;
+
+@END_Body 
+
+@@@BEG_Comment@@@ 
+@TL(0)
+
+@@@END_Comment@@@ 
+
+@BEG_Body 
+@TL(46)
+fuName := GET_MY_FU_NAME();
+variableName := CONCAT(fuName,'.Open.rSetPressure bar');
+swoState := KSWO_AddVariable( Task := TaskAnalog,
+                              Name := variableName,
+                              Variable := sv_rPressureAbs);
+b := FAddToScopeGroup(Task := TaskAnalog, 
+                      Name := variableName, 
+                      GroupId := cScopeGroupMold);
+variableName := CONCAT(fuName,'.Open.rSetVelocity mm/s');
+swoState := KSWO_AddVariable( Task := TaskAnalog,
+                              Name := variableName,
+                              Variable := mrSetVelocity);
+b := FAddToScopeGroup(Task := TaskAnalog, 
+                      Name := variableName, 
+                      GroupId := cScopeGroupMold);
+variableName := CONCAT(fuName,'.Open.bActive');
+swoState := KSWO_AddVariable( Task := TaskAnalog,
+                              Name := variableName,
+                              Variable := sv_bOutputActive);
+b := FAddToScopeGroup(Task := TaskAnalog, 
+                      Name := variableName, 
+                      GroupId := cScopeGroupMold);
+b := FAddToScopeGroup(Task := TaskAnalog, 
+                      Name := variableName, 
+                      GroupId := cScopeGroupMold);
+
+variableName := CONCAT(fuName,'.Open.rPumpVelocity');
+swoState := KSWO_AddVariable( Task := TaskAnalog,
+                              Name := variableName,
+                              Variable := mrPumpVelocity);
+
+variableName := CONCAT(fuName,'.Control.rUP');
+swoState := KSWO_AddVariable( Task := TaskAnalog,
+                              Name := variableName,
+                              Variable := mrUP);
+variableName := CONCAT(fuName,'.Control.rUD');
+swoState := KSWO_AddVariable( Task := TaskAnalog,
+                              Name := variableName,
+                              Variable := mrUD);
+
+variableName := CONCAT(fuName,'.Open.InTolerance');
+swoState := KSWO_AddVariable( Task := TaskAnalog,
+                              Name := variableName,
+                              Variable := mbInTolerance);
+STOP_PROCESS_ALGORITHM();
+
+@END_Body 
+
+@@@BEG_Comment@@@ 
+@TL(0)
+
+@@@END_Comment@@@ 
+
+@BEG_Body 
+@TL(23)
+// no offset identified use 50 % for start
+IF (sv_MoldBwdProfVis.bUseOffsetOptimizing) AND (sv_MinOutputBwd.rVelocity > 0.0) THEN
+    IF (sv_MoldBwdProfVis.rOffset <= 0.0) THEN
+        IF (sv_MoldBwdProfVis.Profile.iNoOfPoints+1) <= 20 THEN
+            IF sv_MoldBwdProfVis.Profile.Points[sv_MoldBwdProfVis.Profile.iNoOfPoints+1].rStartPos >= sv_MoldBwdProfVis.Profile.Points[sv_MoldBwdProfVis.Profile.iNoOfPoints].rStartPos THEN
+                sv_MoldBwdProfVis.rOffset := rOffsetFactor * sv_MoldBwdProfVis.Profile.Points[sv_MoldBwdProfVis.Profile.iNoOfPoints+1].rStartPos;        
+            ELSE    
+                sv_MoldBwdProfVis.rOffset := rOffsetFactor * sv_MoldBwdProfVis.Profile.Points[sv_MoldBwdProfVis.Profile.iNoOfPoints].rStartPos;        
+            END_IF;
+        ELSE
+            sv_MoldBwdProfVis.rOffset := rOffsetFactor * sv_MoldBwdProfVis.Profile.Points[sv_MoldBwdProfVis.Profile.iNoOfPoints].rStartPos;        
+        END_IF;
+    END_IF;
+ELSE
+    IF sv_MoldBwdProfVis.bUseOffsetOptimizing THEN
+        sv_MoldBwdProfVis.bUseOffsetOptimizing := FALSE;
+        SET_ALARM(erMoldOpenNoMinOutput);
+    END_IF;
+    
+    sv_MoldBwdProfVis.rOffset := 0.0;
+    abCalcOffset.aReset();
+END_IF;
+
+@END_Body 
+
+@@@BEG_Comment@@@ 
+@TL(0)
+
+@@@END_Comment@@@ 
+
+@BEG_Body 
+@TL(2)
+START_PROCESS_ALGORITHM(paCalcToggleProfile);
+
+@END_Body 
+
+@@@BEG_Comment@@@ 
+@TL(0)
+
+@@@END_Comment@@@ 
+
+@BEG_Body 
+@TL(19)
+(**************************************** WARNING ********************************************
+ *** The KEBA Kemro K2 System including software is not intended for safety control tasks! ***
+ ***                       For further information see Comment tab!                        ***
+ *********************************************************************************************)
+
+//save reference to calced profile
+pCalcedProfile := sv_ToggleBwdProfVis.pCalculatedProfile;
+
+sv_ToggleBwdProfVis := sv_MoldBwdProfVis;
+FOR i:= 1 TO sv_MoldBwdProfVis.Profile.iNoOfPoints+1 DO
+    abLintabApplyToggleSlow.aCalcInv(rY := sv_MoldBwdProfVis.Profile.Points[i].rStartPos,
+                                 rX => sv_ToggleBwdProfVis.Profile.Points[i].rStartPos);
+END_FOR;
+
+//copy original reference
+sv_ToggleBwdProfVis.pCalculatedProfile := pCalcedProfile;
+
+STOP_PROCESS_ALGORITHM();
+
+@END_Body 
+
+@@@BEG_Comment@@@ 
+@TL(0)
+
+@@@END_Comment@@@ 
+
+@BEG_Body 
+@TL(2)
+START_PROCESS_ALGORITHM(paCalcToggleInterPos);
+
+@END_Body 
+
+@@@BEG_Comment@@@ 
+@TL(0)
+
+@@@END_Comment@@@ 
+
+@BEG_Body 
+@TL(12)
+(**************************************** WARNING ********************************************
+ *** The KEBA Kemro K2 System including software is not intended for safety control tasks! ***
+ ***                       For further information see Comment tab!                        ***
+ *********************************************************************************************)
+
+sv_InstanceDataOpenToggleInter := sv_InstanceDataOpenInterPos;
+FOR i:=1 TO cMaxIntermediateConditions DO
+    abLintabApplyToggleSlow.aCalcInv(rY := sv_InstanceDataOpenInterPos[i].rTargetValue,
+                                 rX => sv_InstanceDataOpenToggleInter[i].rTargetValue);
+END_FOR;
+STOP_PROCESS_ALGORITHM();
+
+@END_Body 
+
+@@@BEG_Comment@@@ 
+@TL(0)
+
+@@@END_Comment@@@ 
+
+@BEG_Body 
+@TL(44)
+IF g_bMoldValve THEN
+    IF sv_ValveData.rValveOffsetFwd > sv_ValveData.rValveOffsetBwd THEN
+        rOffsetPos := sv_ValveData.rValveOffsetFwd;
+        rOffsetNeg := sv_ValveData.rValveOffsetBwd;
+        rMaxVoltageValve := -MAX_VOLTAGE;
+    ELSE    
+        rOffsetPos := sv_ValveData.rValveOffsetBwd;
+        rOffsetNeg := sv_ValveData.rValveOffsetFwd;
+        rMaxVoltageValve := MAX_VOLTAGE;
+    END_IF;
+
+    IF g_bPressureSensorsAvailable THEN    
+        sv_ValveCharacteristicLintab.LintabPoints.uNoOfPoints := 4;
+        sv_ValveCharacteristicLintab.LintabPoints.Point[1].rX := -MAX_VOLTAGE; 
+        sv_ValveCharacteristicLintab.LintabPoints.Point[1].rY := -MAX_VOLTAGE; 
+        sv_ValveCharacteristicLintab.LintabPoints.Point[2].rY := 0.0; 
+        sv_ValveCharacteristicLintab.LintabPoints.Point[3].rY := 0.0; 
+        sv_ValveCharacteristicLintab.LintabPoints.Point[4].rX := MAX_VOLTAGE; 
+        sv_ValveCharacteristicLintab.LintabPoints.Point[4].rY := MAX_VOLTAGE; 
+        IF sv_ValveData.rValveOffsetFwd > sv_ValveData.rValveOffsetBwd THEN
+            sv_ValveCharacteristicLintab.LintabPoints.Point[2].rX := sv_ValveData.rValveOffsetBwd; 
+            sv_ValveCharacteristicLintab.LintabPoints.Point[3].rX := sv_ValveData.rValveOffsetFwd; 
+            sv_ServoValveControlData.bPositiveVoltageIncreasing := FALSE;
+        ELSE    
+            sv_ValveCharacteristicLintab.LintabPoints.Point[3].rX := sv_ValveData.rValveOffsetBwd; 
+            sv_ValveCharacteristicLintab.LintabPoints.Point[2].rX := sv_ValveData.rValveOffsetFwd; 
+            sv_ServoValveControlData.bPositiveVoltageIncreasing := TRUE;
+        END_IF;    
+        IF sv_ServoValveControlData.bPositiveVoltageIncreasing THEN
+            FOR uCount :=1 TO sv_LintabOutMoldPosCtrl.LintabPoints.uNoOfPoints DO
+               sv_LintabOutMoldPosCtrl.LintabPoints.Point[uCount].rX := sv_ValveCharacteristicLintab.LintabPoints.Point[uCount].rY;
+               sv_LintabOutMoldPosCtrl.LintabPoints.Point[uCount].rY := sv_ValveCharacteristicLintab.LintabPoints.Point[uCount].rX;
+            END_FOR;
+        ELSE
+            sv_LintabOutMoldPosCtrl.LintabPoints.uNoOfPoints := sv_ValveCharacteristicLintab.LintabPoints.uNoOfPoints;
+            FOR uCount :=1 TO sv_LintabOutMoldPosCtrl.LintabPoints.uNoOfPoints DO
+               sv_LintabOutMoldPosCtrl.LintabPoints.Point[uCount].rX := -sv_ValveCharacteristicLintab.LintabPoints.Point[uCount].rY;
+               sv_LintabOutMoldPosCtrl.LintabPoints.Point[uCount].rY := sv_ValveCharacteristicLintab.LintabPoints.Point[uCount].rX;
+            END_FOR;
+        END_IF;
+
+    END_IF;
+END_IF;
+
+@END_Body 
+
+@@@BEG_Comment@@@ 
+@TL(0)
+
+@@@END_Comment@@@ 
+
+@BEG_Body 
+@TL(27)
+(**************************************** WARNING ********************************************
+ *** The KEBA Kemro K2 System including software is not intended for safety control tasks! ***
+ ***                       For further information see Comment tab!                        ***
+ *********************************************************************************************)
+
+//Copy only necessary, if any calculated duration has changed
+FOR i := 1 TO cMaxIntermediateConditions DO
+   IF (sv_InstanceDataOpenToggleInter[i].dCalculatedDuration <> InstDataOpenToggleInter[i].dCalculatedDuration) THEN
+      bCopyDurations := TRUE;
+      EXIT;   
+   END_IF; 
+END_FOR; 
+
+IF bCopyDurations THEN
+   //Copy calculated duration to instance data array
+   FOR i := 1 TO cMaxIntermediateConditions DO
+      sv_InstanceDataOpenInterPos[i].dCalculatedDuration := sv_InstanceDataOpenToggleInter[i].dCalculatedDuration;              
+   END_FOR;
+   
+   InstDataOpenToggleInter := sv_InstanceDataOpenToggleInter;
+
+   bCopyDurations := FALSE;
+END_IF;
+
+
+
+
+@END_Body 
+
+@@@BEG_Comment@@@ 
+@TL(0)
+
+@@@END_Comment@@@ 
+
+@BEG_Body 
+@TL(7)
+(**************************************** WARNING ********************************************
+ *** The KEBA Kemro K2 System including software is not intended for safety control tasks! ***
+ ***                       For further information see Comment tab!                        ***
+ *********************************************************************************************)
+
+START_PROCESS_ALGORITHM(paCalcDisplayedVelProfile);
+
+@END_Body 
+
+@@@BEG_Comment@@@ 
+@TL(0)
+
+@@@END_Comment@@@ 
+
+@BEG_Body 
+@TL(7)
+(**************************************** WARNING ********************************************
+ *** The KEBA Kemro K2 System including software is not intended for safety control tasks! ***
+ ***                       For further information see Comment tab!                        ***
+ *********************************************************************************************)
+
+START_PROCESS_ALGORITHM(paCalcDisplayedPresProfile);
+
+@END_Body 
+
+@@@BEG_Comment@@@ 
+@TL(0)
+
+@@@END_Comment@@@ 
+
+@BEG_Body 
+@TL(32)
+(**************************************** WARNING ********************************************
+ *** The KEBA Kemro K2 System including software is not intended for safety control tasks! ***
+ ***                       For further information see Comment tab!                        ***
+ *********************************************************************************************)
+
+// velocity profile
+sv_CalculatedProfileBwd.VelocityProfile.CalculatedProfile := sv_CalculatedProfileBwdToggle.VelocityProfile.CalculatedProfile;
+FOR i := 1 TO sv_CalculatedProfileBwdToggle.VelocityProfile.CalculatedProfile.uNoOfPoints DO
+   abLintabApplyToggleSlow.aCalc(rX := sv_CalculatedProfileBwdToggle.VelocityProfile.CalculatedProfile.Point[i].rX,
+                               rY => sv_CalculatedProfileBwd.VelocityProfile.CalculatedProfile.Point[i].rX);
+END_FOR;    
+sv_CalculatedProfileBwd.VelocityProfile.iProfileChangedCounter := sv_CalculatedProfileBwdToggle.VelocityProfile.iProfileChangedCounter;
+
+IF (sv_CalculatedProfileBwdToggle.VelocityProfile.CalculatedProfile.uNoOfPoints > 0) THEN
+   PumpVelocityProfile.ProfilePoints.uNoOfPoints := 3;
+   rMaxVelProfBwd := 0.0;
+   FOR i := 1 TO sv_CalculatedProfileBwdToggle.VelocityProfile.CalculatedProfile.uNoOfPoints DO
+      rMaxVelProfBwd :=MAX(rMaxVelProfBwd, sv_CalculatedProfileBwdToggle.VelocityProfile.CalculatedProfile.Point[i].rY);
+   END_FOR;
+   PumpVelocityProfile.ProfilePoints.Point[1].rX := 0.0;
+   PumpVelocityProfile.ProfilePoints.Point[1].rY := MIN(1.1*rMaxVelProfBwd, sv_rMaxSpeedBwd);
+   PumpVelocityProfile.ProfilePoints.Point[2].rX := sv_CalculatedProfileBwdToggle.VelocityProfile.CalculatedProfile.Point[sv_CalculatedProfileBwdToggle.VelocityProfile.CalculatedProfile.uNoOfPoints-1].rX;
+   PumpVelocityProfile.ProfilePoints.Point[2].rY := PumpVelocityProfile.ProfilePoints.Point[1].rY;
+   PumpVelocityProfile.ProfilePoints.Point[3].rX := sv_CalculatedProfileBwdToggle.VelocityProfile.CalculatedProfile.Point[sv_CalculatedProfileBwdToggle.VelocityProfile.CalculatedProfile.uNoOfPoints].rX;
+   PumpVelocityProfile.ProfilePoints.Point[3].rY := sv_CalculatedProfileBwdToggle.VelocityProfile.CalculatedProfile.Point[sv_CalculatedProfileBwdToggle.VelocityProfile.CalculatedProfile.uNoOfPoints].rY;
+   PumpVelocityProfile.Acceleration := sv_ToggleBwdProfVis.rMaxRampVel;
+   PumpVelocityProfile.InterAcceleration := sv_ToggleBwdProfVis.rMaxRampVel;
+   PumpVelocityProfile.StopAcceleration := sv_ToggleBwdProfVis.rMaxRampVel;   
+END_IF;
+    
+STOP_PROCESS_ALGORITHM();
+
+@END_Body 
+
+@@@BEG_Comment@@@ 
+@TL(0)
+
+@@@END_Comment@@@ 
+
+@BEG_Body 
+@TL(17)
+(**************************************** WARNING ********************************************
+ *** The KEBA Kemro K2 System including software is not intended for safety control tasks! ***
+ ***                       For further information see Comment tab!                        ***
+ *********************************************************************************************)
+
+// pressure profile    
+sv_CalculatedProfileBwd.PressureProfile.CalculatedProfile := sv_CalculatedProfileBwdToggle.PressureProfile.CalculatedProfile;
+FOR i := 1 TO sv_CalculatedProfileBwdToggle.PressureProfile.CalculatedProfile.uNoOfPoints DO
+   abLintabApplyToggleSlow.aCalc(rX := sv_CalculatedProfileBwdToggle.PressureProfile.CalculatedProfile.Point[i].rX,
+                               rY => sv_CalculatedProfileBwd.PressureProfile.CalculatedProfile.Point[i].rX);
+END_FOR; 
+
+// signalize a change of calculated profile
+sv_CalculatedProfileBwd.PressureProfile.iProfileChangedCounter := sv_CalculatedProfileBwdToggle.PressureProfile.iProfileChangedCounter;
+    
+STOP_PROCESS_ALGORITHM();
+
+@END_Body 
+
+@@@BEG_Comment@@@ 
+@TL(0)
+
+@@@END_Comment@@@ 
+
+@BEG_Body 
+@TL(5)
+FOR i:= 3 TO 20 DO
+    sv_MoldBwdProfVis.Profile.Points[i].rVelRamp := sv_MoldBwdProfVis.Profile.Points[2].rVelRamp;
+END_FOR;
+
+
+@END_Body 
+
+@@@BEG_Comment@@@ 
+@TL(0)
+
+@@@END_Comment@@@ 
+
+@BEG_Body 
+@TL(25)
+IF IS_LINKED(sv_rMoldPropValveParams) AND
+   IS_LINKED(sv_ValveData) AND
+   IS_LINKED(sv_ConstructionData) THEN
+
+   abPropValve.aInit(ValveParams := sv_rMoldPropValveParams);
+   // [l/min] = [mm³/s]*60/10^6 = [m²]*[mm/s]*60 => [v] = [mm/s],[rPistonArea1]=[m²] 
+   mrAreaOutletFactor := sv_ConstructionData.rPistonArea1 * 60.0;
+   IF (sv_ValveData.rValveOffsetBwd > sv_ValveData.rValveOffsetFwd) THEN
+      mrSign := 1.0;
+   ELSE
+      mrSign := -1.0;
+   END_IF;
+ 
+   IF (abPropValve.aInit.bInitDone AND (mrAreaOutletFactor > 0.0)) THEN
+      mbUsePropValve := TRUE;
+   ELSE
+      mbUsePropValve := FALSE;
+   END_IF;
+   
+ELSE
+   mbUsePropValve := FALSE;
+END_IF;
+
+
+
+@END_Body 
+
+@@@BEG_Comment@@@ 
+@TL(0)
+
+@@@END_Comment@@@ 
+@END_Body 
+
+@END_Contents 

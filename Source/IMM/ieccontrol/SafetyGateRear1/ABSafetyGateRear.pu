@@ -1,0 +1,252 @@
+(*
+@h    ! WARNING !
+@h    The Kemro K2 system (including software) only meets category B according to EN 954-1,
+@h    thus it is not intended for usage in safety-relevant control applications in the field 
+@h    of personal safety (e.g. emergency stop).
+@h    To implement potentially necessary safety-relevant control tasks, always use additional 
+@h    external safety devices that are intended for the particular purpose, and meet the necessary 
+@h    functional safety.
+@h    For further information see EN 954-1 (EN ISO 13849-1) and/or the K2-x00 user manual, chapter 
+@h    "CE conformity, directives and standards".
+
+The Algorithm maintains the state of the rear safety gate.
+Depending on the digital input di_Closed an according alarm is set if the
+the gate is open.
+
+*)
+
+IMPORT_OVER_LISTFILE
+ SET_ALARM
+, cLockGroupSafetyGateNozzle
+, tsDeviceId
+, tevSafetyGate
+, tevSafetyGateData
+
+END_IMPORT
+
+ALGORITHM_BLOCK ABSafetyGateRear #DUMMY_EDIT_BLOCK
+
+SYSTEM_VAR
+ di_Closed : BOOL;
+ sv_DeviceId : tsDeviceId;
+ sv_bInitDone : BOOL;
+END_VAR
+
+SYSTEM_OBJECT
+ PU_Task_7 : TASK;
+ erSafetyGate : ALARM;
+ evSafetyGate : tevSafetyGate;
+END_OBJECT
+
+POSTUPDATE_ALGORITHM pStateChanged ON PU_Task_7 WITH sv_bInitDone,di_Closed
+
+
+VAR
+ evSafetyGateData : tevSafetyGateData;
+END_VAR
+#BEGIN_EDIT_BLOCK
+(**************************************** WARNING ********************************************
+ *** The KEBA Kemro K2 System including software is not intended for safety control tasks! ***
+ ***                       For further information see Comment tab!                        ***
+ *********************************************************************************************)
+
+IF sv_bInitDone THEN
+   
+   IF di_Closed THEN
+      //rear safety gate closed
+      RESET_ALARM(Name:= erSafetyGate);
+                       
+      evSafetyGateData.State := nClosed;
+   ELSE
+      //rear safety gate open
+      SET_ALARM(Name:= erSafetyGate);
+                    
+      evSafetyGateData.State := nOpen;
+   END_IF;
+   
+   //send state event
+   evSafetyGateData.DeviceId := sv_DeviceId;
+   SET_EVENT(evSafetyGate, evSafetyGateData);
+   
+END_IF;
+
+
+;#END_EDIT_BLOCK END_ALGORITHM
+
+
+
+END_ALGORITHM_BLOCK
+
+
+
+#END_OF_IEC_PART
+
+@Puma @IecEditor 6 52 @Pou 25 
+@@@BEG_Comment@@@
+@h    ! WARNING !
+@h    The Kemro K2 system (including software) only meets category B according to EN 954-1,
+@h    thus it is not intended for usage in safety-relevant control applications in the field 
+@h    of personal safety (e.g. emergency stop).
+@h    To implement potentially necessary safety-relevant control tasks, always use additional 
+@h    external safety devices that are intended for the particular purpose, and meet the necessary 
+@h    functional safety.
+@h    For further information see EN 954-1 (EN ISO 13849-1) and/or the K2-x00 user manual, chapter 
+@h    "CE conformity, directives and standards".
+
+The Algorithm maintains the state of the rear safety gate.
+Depending on the digital input di_Closed an according alarm is set if the
+the gate is open.
+
+@@@END_Comment@@@
+
+@BEG_Contents 
+
+@BEG_Func 
+@RT(17)FuncTreeContainer 
+1 
+@Var @RT(9)SET_ALARM @RT(0) @T @T @DERIVED 0 @F @RT(23)KEBA_STANDARD_PROCEDURE @F 
+@T 
+@BEG_Attrib 
+0 @RT(0) @RT(0) 
+@END_Attrib 
+1 1 @F @F @F @F 
+
+@END_Func 
+
+@BEG_Const 
+@RT(18)ConstTreeContainer 
+1 
+@Var @RT(26)cLockGroupSafetyGateNozzle @RT(0) @T @F @DT @RT(4)DINT @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+0 @RT(2)62 @RT(59)Members: Nozzle Forward, Injection, Plast, Intrusion, Purge 
+@END_Attrib 
+1 1 @F @F @F @F 
+
+@END_Const 
+
+@BEG_Export 
+
+@BEG_Kind 
+@ALGORITHM_BLOCK @RT(16)ABSafetyGateRear @STRUCTURED_TEXT 
+@RT(0) @RT(0) @RT(0) 
+@END_Kind 
+
+@BEG_Dcl 
+@RT(16)DclTreeContainer 
+6 
+@Var @RT(9)PU_Task_7 @RT(0) @T @F @DT @RT(4)TASK @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 7 @F @F @F @F 
+
+@Var @RT(9)di_Closed @RT(0) @T @F @DT @RT(4)BOOL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 8 @F @F @F @F 
+
+@Var @RT(12)erSafetyGate @RT(0) @T @F @DT @RT(5)ALARM @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 7 @F @F @F @F 
+
+@Var @RT(11)sv_DeviceId @RT(0) @T @T @DERIVED 0 @T @T @DT @RT(10)tsDeviceId @RT(0) @T @T @UNKNOWN 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 8 @F @F @F @F 
+
+@Var @RT(12)sv_bInitDone @RT(0) @T @T @RENAMED 0 @T @T @DT @RT(4)BOOL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 8 @F @F @F @F 
+
+@Var @RT(12)evSafetyGate @RT(0) @T @T @DERIVED 0 @T @T @DT @RT(13)tevSafetyGate @RT(0) @T @T @UNKNOWN 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 7 @F @F @F @F 
+
+@END_Dcl 
+
+@END_Export 
+
+@BEG_Body 
+
+1 
+
+@BEG_Export 
+
+@BEG_Algo 
+@POSTUPDATE_ALGORITHM @RT(13)pStateChanged @STRUCTURED_TEXT 
+@RT(0) @RT(22)sv_bInitDone,di_Closed @RT(9)PU_Task_7 @F @F 
+@END_Algo 
+
+@BEG_Dcl 
+@RT(16)DclTreeContainer 
+1 
+@Var @RT(16)evSafetyGateData @RT(0) @T @T @DERIVED 0 @T @T @DT @RT(17)tevSafetyGateData @RT(0) @T @T @UNKNOWN 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@END_Dcl 
+
+@END_Export 
+
+@BEG_Body 
+@TL(25)
+(**************************************** WARNING ********************************************
+ *** The KEBA Kemro K2 System including software is not intended for safety control tasks! ***
+ ***                       For further information see Comment tab!                        ***
+ *********************************************************************************************)
+
+IF sv_bInitDone THEN
+   
+   IF di_Closed THEN
+      //rear safety gate closed
+      RESET_ALARM(Name:= erSafetyGate);
+                       
+      evSafetyGateData.State := nClosed;
+   ELSE
+      //rear safety gate open
+      SET_ALARM(Name:= erSafetyGate);
+                    
+      evSafetyGateData.State := nOpen;
+   END_IF;
+   
+   //send state event
+   evSafetyGateData.DeviceId := sv_DeviceId;
+   SET_EVENT(evSafetyGate, evSafetyGateData);
+   
+END_IF;
+
+@END_Body 
+
+@@@BEG_Comment@@@ 
+@TL(0)
+
+@@@END_Comment@@@ 
+@END_Body 
+
+@END_Contents 

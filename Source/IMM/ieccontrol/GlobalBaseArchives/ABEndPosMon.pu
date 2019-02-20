@@ -1,0 +1,535 @@
+(*
+@h    ! WARNING !
+@h    The Kemro K2 system (including software) only meets category B according to EN 954-1,
+@h    thus it is not intended for usage in safety-relevant control applications in the field 
+@h    of personal safety (e.g. emergency stop).
+@h    To implement potentially necessary safety-relevant control tasks, always use additional 
+@h    external safety devices that are intended for the particular purpose, and meet the necessary 
+@h    functional safety.
+@h    For further information see EN 954-1 (EN ISO 13849-1) and/or the K2-x00 user manual, chapter 
+@h    "CE conformity, directives and standards".
+
+This AB is used for endposition supervision.
+There are two possibilities to detect if an endpoint is reached.
+- a limit switch for the endposition is available
+- the last point of the entered movement profile is reached
+The AB can handle a standard movement profile and plast profile.
+
+The AB gives the following results in this cases:
+1) only a limit switch and no movement profile
+   => endposition is reached if limit switch is true
+   
+2) movement profile and no limit switch
+   => endposition is reached if actual position is lower or equal / bigger or equal
+      (depending on the movedirection) than last last position of the profile; 
+      a given tolerance will also be considered
+      
+3) movement profile and limit switch available
+   => endposition is reached if both criterias from above are fullfilled
+*)
+
+IMPORT_OVER_LISTFILE
+ CHECK_REF
+, tsEndPosData
+, KAPPL_VisProfile
+, KAPPL_VisProfilePlast
+
+END_IMPORT
+
+ALGORITHM_BLOCK ABEndPosMon #DUMMY_EDIT_BLOCK
+
+SYSTEM_VAR
+ sv_EndPosData : tsEndPosData;
+ sv_bInitStart : BOOL;
+END_VAR
+
+SYSTEM_OBJECT
+ TaskAnalog : TASK;
+ PU_Task_7 : TASK;
+END_OBJECT
+
+VAR
+ mpProfile : REFTO KAPPL_VisProfile;
+ mpPlastProfile : REFTO KAPPL_VisProfilePlast;
+ mpTolerance : REFTO REAL;
+ mbReparam : BOOL;
+END_VAR
+
+(*
+This block checks if the actual position is within a tolerance at the target position.
+If this condition is met, "Position Reached" is signaled.
+*)
+
+PROCESS_ALGORITHM paRun ON TaskAnalog(3000)
+
+
+VAR
+ bTargetPosReached : BOOL;
+ rTargetPos : REAL;
+ bDirection : BOOL;
+ rTriggerPos : REAL;
+ pbDI : REFTO BOOL;
+ bDIConnected : BOOL;
+ bValidMoveProfile : BOOL;
+ bValidPlastProfile : BOOL;
+ bValidProfile : BOOL;
+ bInvertDI : BOOL;
+END_VAR
+#BEGIN_EDIT_BLOCK
+(**************************************** WARNING ********************************************
+ *** The KEBA Kemro K2 System including software is not intended for safety control tasks! ***
+ ***                       For further information see Comment tab!                        ***
+ *********************************************************************************************)
+
+IF mbReparam THEN
+   
+   mpProfile := sv_EndPosData.pProfile;
+   bValidMoveProfile := CHECK_REF(mpProfile^);   
+   mpPlastProfile := sv_EndPosData.pPlastProfile;
+   bValidPlastProfile := CHECK_REF(mpPlastProfile^);
+   bValidProfile := bValidMoveProfile OR bValidPlastProfile;
+   
+   pbDI := sv_EndPosData.pbDI;
+   bDIConnected := CHECK_REF(pbDI^);
+   bInvertDI := sv_EndPosData.bInvertDI;   
+   
+   //get target position and direction
+   IF bValidMoveProfile THEN      
+      rTargetPos := MAX(0.0, mpProfile^.Profile.Points[(mpProfile^.Profile.iNoOfPoints+1)].rStartPos);
+      bDirection := mpProfile^.Profile.Points[mpProfile^.Profile.iNoOfPoints+1].rStartPos > mpProfile^.Profile.Points[1].rStartPos;
+   ELSIF bValidPlastProfile THEN
+      rTargetPos := MAX(0.0, mpPlastProfile^.Profile.Points[(mpPlastProfile^.Profile.iNoOfPoints+1)].rStartPos);
+      bDirection := TRUE;
+   END_IF;
+   
+   IF bValidProfile THEN    
+      IF bDirection THEN
+         rTriggerPos := rTargetPos - sv_EndPosData.rTolerance^;         
+      ELSE
+         rTriggerPos := rTargetPos + sv_EndPosData.rTolerance^;        
+      END_IF;  
+   END_IF;
+   
+   mbReparam := FALSE;
+END_IF;
+
+
+//cyclic part
+IF bValidProfile THEN
+   IF bDirection THEN    
+      bTargetPosReached := (sv_EndPosData.rActPos^ > rTriggerPos);                   
+   ELSE
+      bTargetPosReached := (sv_EndPosData.rActPos^ < rTriggerPos);       
+   END_IF;   
+END_IF;
+
+IF bValidProfile AND bDIConnected THEN
+   // profile and DI connected
+   sv_EndPosData.pbPosReached^ := bTargetPosReached AND (pbDI^ XOR bInvertDI);
+ELSIF bValidProfile THEN
+   //only profile connected
+   sv_EndPosData.pbPosReached^ := bTargetPosReached;
+ELSIF bDIConnected THEN
+   //only DI connected
+   sv_EndPosData.pbPosReached^ := pbDI^ XOR bInvertDI;
+END_IF;
+
+
+;#END_EDIT_BLOCK END_ALGORITHM
+
+POSTUPDATE_ALGORITHM pParameterChanged ON PU_Task_7 WITH mpTolerance^,mpProfile^.Profile,mpPlastProfile^.Profile,sv_EndPosData.pProfile,sv_EndPosData.pPlastProfile,sv_EndPosData.pbDI,sv_EndPosData.bInvertDI
+
+#BEGIN_EDIT_BLOCK
+(**************************************** WARNING ********************************************
+ *** The KEBA Kemro K2 System including software is not intended for safety control tasks! ***
+ ***                       For further information see Comment tab!                        ***
+ *********************************************************************************************)
+
+mbReparam := TRUE;
+
+
+;#END_EDIT_BLOCK END_ALGORITHM
+
+POSTUPDATE_ALGORITHM pInit ON PU_Task_7 WITH sv_bInitStart
+
+#BEGIN_EDIT_BLOCK
+(**************************************** WARNING ********************************************
+ *** The KEBA Kemro K2 System including software is not intended for safety control tasks! ***
+ ***                       For further information see Comment tab!                        ***
+ *********************************************************************************************)
+
+mpTolerance := sv_EndPosData.rTolerance;
+mbReparam := TRUE;
+
+START_PROCESS_ALGORITHM(paRun);
+
+
+;#END_EDIT_BLOCK END_ALGORITHM
+
+
+
+END_ALGORITHM_BLOCK
+
+
+
+#END_OF_IEC_PART
+
+@Puma @IecEditor 6 97 @Pou 25 
+@@@BEG_Comment@@@
+@h    ! WARNING !
+@h    The Kemro K2 system (including software) only meets category B according to EN 954-1,
+@h    thus it is not intended for usage in safety-relevant control applications in the field 
+@h    of personal safety (e.g. emergency stop).
+@h    To implement potentially necessary safety-relevant control tasks, always use additional 
+@h    external safety devices that are intended for the particular purpose, and meet the necessary 
+@h    functional safety.
+@h    For further information see EN 954-1 (EN ISO 13849-1) and/or the K2-x00 user manual, chapter 
+@h    "CE conformity, directives and standards".
+
+This AB is used for endposition supervision.
+There are two possibilities to detect if an endpoint is reached.
+- a limit switch for the endposition is available
+- the last point of the entered movement profile is reached
+The AB can handle a standard movement profile and plast profile.
+
+The AB gives the following results in this cases:
+1) only a limit switch and no movement profile
+   => endposition is reached if limit switch is true
+   
+2) movement profile and no limit switch
+   => endposition is reached if actual position is lower or equal / bigger or equal
+      (depending on the movedirection) than last last position of the profile; 
+      a given tolerance will also be considered
+      
+3) movement profile and limit switch available
+   => endposition is reached if both criterias from above are fullfilled
+@@@END_Comment@@@
+
+@BEG_Contents 
+
+@BEG_Func 
+@RT(17)FuncTreeContainer 
+1 
+@Var @RT(9)CHECK_REF @RT(0) @T @T @DERIVED 0 @F @RT(23)KEBA_STANDARD_PROCEDURE @F 
+@T 
+@BEG_Attrib 
+0 @RT(0) @RT(0) 
+@END_Attrib 
+1 1 @F @F @F @F 
+
+@END_Func 
+
+@BEG_Const 
+@RT(18)ConstTreeContainer 
+0 
+@END_Const 
+
+@BEG_Export 
+
+@BEG_Kind 
+@ALGORITHM_BLOCK @RT(11)ABEndPosMon @STRUCTURED_TEXT 
+@RT(0) @RT(0) @RT(0) 
+@END_Kind 
+
+@BEG_Dcl 
+@RT(16)DclTreeContainer 
+8 
+@Var @RT(13)sv_EndPosData @RT(0) @T @T @DERIVED 0 @T @T @DT @RT(12)tsEndPosData @RT(0) @T @T @UNKNOWN 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 8 @F @F @F @F 
+
+@Var @RT(10)TaskAnalog @RT(0) @T @T @RENAMED 0 @T @T @DT @RT(4)TASK @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 7 @F @F @F @F 
+
+@Var @RT(9)PU_Task_7 @RT(0) @T @T @RENAMED 0 @T @T @DT @RT(4)TASK @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 7 @F @F @F @F 
+
+@Var @RT(13)sv_bInitStart @RT(0) @T @F @DT @RT(4)BOOL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 8 @F @F @F @F 
+
+@Var @RT(9)mpProfile @RT(0) @T @T @REFTO 0 @F @DERIVED 0 @T @T @DT @RT(16)KAPPL_VisProfile @RT(0) @T @T @UNKNOWN 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(14)mpPlastProfile @RT(0) @T @T @REFTO 0 @F @DERIVED 0 @T @T @DT @RT(21)KAPPL_VisProfilePlast @RT(0) @T @T @UNKNOWN 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(11)mpTolerance @RT(0) @T @T @REFTO 0 @T @DT @RT(4)REAL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(9)mbReparam @RT(0) @T @F @DT @RT(4)BOOL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@END_Dcl 
+
+@END_Export 
+
+@BEG_Body 
+
+3 
+
+@BEG_Export 
+
+@BEG_Algo 
+@PROCESS_ALGORITHM @RT(5)paRun @STRUCTURED_TEXT 
+@RT(0) @RT(0) @RT(16)TaskAnalog(3000) @F @F 
+@END_Algo 
+
+@BEG_Dcl 
+@RT(16)DclTreeContainer 
+10 
+@Var @RT(17)bTargetPosReached @RT(0) @T @F @DT @RT(4)BOOL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(10)rTargetPos @RT(0) @T @F @DT @RT(4)REAL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(10)bDirection @RT(0) @T @F @DT @RT(4)BOOL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(11)rTriggerPos @RT(0) @T @F @DT @RT(4)REAL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(4)pbDI @RT(0) @T @T @REFTO 0 @T @DT @RT(4)BOOL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(12)bDIConnected @RT(0) @T @F @DT @RT(4)BOOL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(17)bValidMoveProfile @RT(0) @T @F @DT @RT(4)BOOL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(18)bValidPlastProfile @RT(0) @T @F @DT @RT(4)BOOL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(13)bValidProfile @RT(0) @T @F @DT @RT(4)BOOL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(9)bInvertDI @RT(0) @T @F @DT @RT(4)BOOL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@END_Dcl 
+
+@END_Export 
+
+@BEG_Export 
+
+@BEG_Algo 
+@POSTUPDATE_ALGORITHM @RT(17)pParameterChanged @STRUCTURED_TEXT 
+@RT(0) @RT(149)mpTolerance^,mpProfile^.Profile,mpPlastProfile^.Profile,sv_EndPosData.pProfile,sv_EndPosData.pPlastProfile,sv_EndPosData.pbDI,sv_EndPosData.bInvertDI @RT(9)PU_Task_7 @F @F 
+@END_Algo 
+
+@BEG_Dcl 
+@RT(16)DclTreeContainer 
+0 
+@END_Dcl 
+
+@END_Export 
+
+@BEG_Export 
+
+@BEG_Algo 
+@POSTUPDATE_ALGORITHM @RT(5)pInit @STRUCTURED_TEXT 
+@RT(0) @RT(13)sv_bInitStart @RT(9)PU_Task_7 @F @F 
+@END_Algo 
+
+@BEG_Dcl 
+@RT(16)DclTreeContainer 
+0 
+@END_Dcl 
+
+@END_Export 
+
+@BEG_Body 
+@TL(58)
+(**************************************** WARNING ********************************************
+ *** The KEBA Kemro K2 System including software is not intended for safety control tasks! ***
+ ***                       For further information see Comment tab!                        ***
+ *********************************************************************************************)
+
+IF mbReparam THEN
+   
+   mpProfile := sv_EndPosData.pProfile;
+   bValidMoveProfile := CHECK_REF(mpProfile^);   
+   mpPlastProfile := sv_EndPosData.pPlastProfile;
+   bValidPlastProfile := CHECK_REF(mpPlastProfile^);
+   bValidProfile := bValidMoveProfile OR bValidPlastProfile;
+   
+   pbDI := sv_EndPosData.pbDI;
+   bDIConnected := CHECK_REF(pbDI^);
+   bInvertDI := sv_EndPosData.bInvertDI;   
+   
+   //get target position and direction
+   IF bValidMoveProfile THEN      
+      rTargetPos := MAX(0.0, mpProfile^.Profile.Points[(mpProfile^.Profile.iNoOfPoints+1)].rStartPos);
+      bDirection := mpProfile^.Profile.Points[mpProfile^.Profile.iNoOfPoints+1].rStartPos > mpProfile^.Profile.Points[1].rStartPos;
+   ELSIF bValidPlastProfile THEN
+      rTargetPos := MAX(0.0, mpPlastProfile^.Profile.Points[(mpPlastProfile^.Profile.iNoOfPoints+1)].rStartPos);
+      bDirection := TRUE;
+   END_IF;
+   
+   IF bValidProfile THEN    
+      IF bDirection THEN
+         rTriggerPos := rTargetPos - sv_EndPosData.rTolerance^;         
+      ELSE
+         rTriggerPos := rTargetPos + sv_EndPosData.rTolerance^;        
+      END_IF;  
+   END_IF;
+   
+   mbReparam := FALSE;
+END_IF;
+
+
+//cyclic part
+IF bValidProfile THEN
+   IF bDirection THEN    
+      bTargetPosReached := (sv_EndPosData.rActPos^ > rTriggerPos);                   
+   ELSE
+      bTargetPosReached := (sv_EndPosData.rActPos^ < rTriggerPos);       
+   END_IF;   
+END_IF;
+
+IF bValidProfile AND bDIConnected THEN
+   // profile and DI connected
+   sv_EndPosData.pbPosReached^ := bTargetPosReached AND (pbDI^ XOR bInvertDI);
+ELSIF bValidProfile THEN
+   //only profile connected
+   sv_EndPosData.pbPosReached^ := bTargetPosReached;
+ELSIF bDIConnected THEN
+   //only DI connected
+   sv_EndPosData.pbPosReached^ := pbDI^ XOR bInvertDI;
+END_IF;
+
+@END_Body 
+
+@@@BEG_Comment@@@ 
+@TL(2)
+This block checks if the actual position is within a tolerance at the target position.
+If this condition is met, "Position Reached" is signaled.
+@@@END_Comment@@@ 
+
+@BEG_Body 
+@TL(7)
+(**************************************** WARNING ********************************************
+ *** The KEBA Kemro K2 System including software is not intended for safety control tasks! ***
+ ***                       For further information see Comment tab!                        ***
+ *********************************************************************************************)
+
+mbReparam := TRUE;
+
+@END_Body 
+
+@@@BEG_Comment@@@ 
+@TL(0)
+
+@@@END_Comment@@@ 
+
+@BEG_Body 
+@TL(10)
+(**************************************** WARNING ********************************************
+ *** The KEBA Kemro K2 System including software is not intended for safety control tasks! ***
+ ***                       For further information see Comment tab!                        ***
+ *********************************************************************************************)
+
+mpTolerance := sv_EndPosData.rTolerance;
+mbReparam := TRUE;
+
+START_PROCESS_ALGORITHM(paRun);
+
+@END_Body 
+
+@@@BEG_Comment@@@ 
+@TL(0)
+
+@@@END_Comment@@@ 
+@END_Body 
+
+@END_Contents 

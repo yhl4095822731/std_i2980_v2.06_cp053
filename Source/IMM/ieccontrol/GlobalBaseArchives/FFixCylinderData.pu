@@ -1,0 +1,142 @@
+(*
+Fixes wrong values in the CylinderData parameter
+
+Returns TRUE when there was something to fix up
+*)
+
+IMPORT_OVER_LISTFILE
+ tsCylinderData
+
+END_IMPORT
+
+FUNCTION FFixCylinderData : BOOL #DUMMY_EDIT_BLOCK
+
+VAR_INPUT
+ pCylinderData : REFTO tsCylinderData;
+END_VAR
+
+VAR
+ pCylinderDataTmp : REFTO tsCylinderData;
+END_VAR
+#BEGIN_EDIT_BLOCK
+(**************************************** WARNING ********************************************
+ *** The KEBA Kemro K2 System including software is not intended for safety control tasks! ***
+ ***                       For further information see Comment tab!                        ***
+ *********************************************************************************************)
+
+// to work around can not write to VAR_INPUT 
+pCylinderDataTmp := pCylinderData;
+
+FFixCylinderData := FALSE;
+
+IF pCylinderDataTmp^.iNumCylinders <= 0 OR pCylinderDataTmp^.iNumCylinders > 9 THEN
+   pCylinderDataTmp^.iNumCylinders := 1;
+   FFixCylinderData := TRUE;
+END_IF;
+
+IF pCylinderDataTmp^.rCylinderDiameter <= 0.0 THEN
+   pCylinderDataTmp^.rCylinderDiameter := 20.0;
+   FFixCylinderData := TRUE;
+END_IF;
+
+//rPistonRodDiameter 0.0 is allowed to have same area on both sides
+IF pCylinderDataTmp^.rPistonRodDiameter < 0.0 OR 
+   pCylinderDataTmp^.rPistonRodDiameter >= pCylinderDataTmp^.rCylinderDiameter THEN
+   pCylinderDataTmp^.rPistonRodDiameter := pCylinderDataTmp^.rCylinderDiameter * 0.75;
+   FFixCylinderData := TRUE;
+END_IF;
+
+
+
+
+
+;#END_EDIT_BLOCK END_FUNCTION
+
+
+
+#END_OF_IEC_PART
+
+@Puma @IecEditor 6 30 @Pou 25 
+@@@BEG_Comment@@@
+Fixes wrong values in the CylinderData parameter
+
+Returns TRUE when there was something to fix up
+@@@END_Comment@@@
+
+@BEG_Contents 
+
+@BEG_Func 
+@RT(17)FuncTreeContainer 
+0 
+@END_Func 
+
+@BEG_Const 
+@RT(18)ConstTreeContainer 
+0 
+@END_Const 
+
+@BEG_Export 
+
+@BEG_Kind 
+@FUNCTION @RT(16)FFixCylinderData @STRUCTURED_TEXT 
+@RT(4)BOOL @RT(0) @RT(0) 
+@END_Kind 
+
+@BEG_Dcl 
+@RT(16)DclTreeContainer 
+2 
+@Var @RT(13)pCylinderData @RT(0) @T @T @REFTO 0 @F @DERIVED 0 @T @T @DT @RT(14)tsCylinderData @RT(0) @T @T @UNKNOWN 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 1 @F @F @F @F 
+
+@Var @RT(16)pCylinderDataTmp @RT(0) @T @T @REFTO 0 @F @DERIVED 0 @T @T @DT @RT(14)tsCylinderData @RT(0) @T @T @UNKNOWN 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@END_Dcl 
+
+@END_Export 
+
+@BEG_Body 
+@TL(30)
+(**************************************** WARNING ********************************************
+ *** The KEBA Kemro K2 System including software is not intended for safety control tasks! ***
+ ***                       For further information see Comment tab!                        ***
+ *********************************************************************************************)
+
+// to work around can not write to VAR_INPUT 
+pCylinderDataTmp := pCylinderData;
+
+FFixCylinderData := FALSE;
+
+IF pCylinderDataTmp^.iNumCylinders <= 0 OR pCylinderDataTmp^.iNumCylinders > 9 THEN
+   pCylinderDataTmp^.iNumCylinders := 1;
+   FFixCylinderData := TRUE;
+END_IF;
+
+IF pCylinderDataTmp^.rCylinderDiameter <= 0.0 THEN
+   pCylinderDataTmp^.rCylinderDiameter := 20.0;
+   FFixCylinderData := TRUE;
+END_IF;
+
+//rPistonRodDiameter 0.0 is allowed to have same area on both sides
+IF pCylinderDataTmp^.rPistonRodDiameter < 0.0 OR 
+   pCylinderDataTmp^.rPistonRodDiameter >= pCylinderDataTmp^.rCylinderDiameter THEN
+   pCylinderDataTmp^.rPistonRodDiameter := pCylinderDataTmp^.rCylinderDiameter * 0.75;
+   FFixCylinderData := TRUE;
+END_IF;
+
+
+
+
+@END_Body 
+
+@END_Contents 

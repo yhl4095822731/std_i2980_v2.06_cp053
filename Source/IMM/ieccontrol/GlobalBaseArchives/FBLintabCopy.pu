@@ -1,0 +1,184 @@
+(*
+ /*-------------------------------------------------------------------------
+ *                   (c) 2002 by KEBA Ges.m.b.H & Co
+ *                            Linz/AUSTRIA
+ *                         All rights reserved
+ *--------------------------------------------------------------------------
+ *    Projekt   : KEMRO.appl.2.plastics
+ *    Erstautor : prg
+ *    Datum     : 20.02.2003
+ *    $Author: Admin $
+ *    $Revision: 8 $
+ *    $Modtime: 4.07.07 11:02 $
+ *    $Archive: /ApplicationFrames/KePlast/APPL/ApplMoldMachineIECLib_Servo/FBPreCutOff.pu $
+ *--------------------------------------------------------------------------*/
+*)
+
+IMPORT_OVER_LISTFILE
+ cApplPlasticsWrongPIDParams
+, cApplPlasticsPIDCalcFailed
+, cApplPlasticsNoError
+, KAPPL_LintabData
+, tLintabPoints
+//  KCTRL_LintabPoints
+
+END_IMPORT
+
+FUNCTION_BLOCK FBLintabCopy #DUMMY_EDIT_BLOCK
+
+VAR_INPUT
+ LintabLight : REFTO KAPPL_LintabData (* Start pre injection movement *);
+ LintabRef : REFTO tLintabPoints;
+END_VAR
+
+// VAR_OUTPUT
+ // Lintab : KCTRL_LintabPoints (* Cycletime of calling task *);
+// END_VAR
+
+VAR
+ LintabHelp : REFTO tLintabPoints;
+ uCount : UDINT;
+ float : REAL;
+END_VAR
+#BEGIN_EDIT_BLOCK
+//Lintab.uNoOfPoints := LintabLight^ .LintabPoints.uNoOfPoints;
+LintabHelp := LintabRef;
+FOR uCount :=1 TO LintabLight^ .LintabPoints.uNoOfPoints DO
+   LintabHelp^[uCount].rX := LintabLight^.LintabPoints.Point[uCount].rX;
+   LintabHelp^[uCount].rY := LintabLight^.LintabPoints.Point[uCount].rY;
+END_FOR;
+
+
+;#END_EDIT_BLOCK END_FUNCTION_BLOCK
+
+
+
+#END_OF_IEC_PART
+
+@Puma @IecEditor 6 68 @Pou 25 
+@@@BEG_Comment@@@
+ /*-------------------------------------------------------------------------
+ *                   (c) 2002 by KEBA Ges.m.b.H & Co
+ *                            Linz/AUSTRIA
+ *                         All rights reserved
+ *--------------------------------------------------------------------------
+ *    Projekt   : KEMRO.appl.2.plastics
+ *    Erstautor : prg
+ *    Datum     : 20.02.2003
+ *    $Author: Admin $
+ *    $Revision: 8 $
+ *    $Modtime: 4.07.07 11:02 $
+ *    $Archive: /ApplicationFrames/KePlast/APPL/ApplMoldMachineIECLib_Servo/FBPreCutOff.pu $
+ *--------------------------------------------------------------------------*/
+@@@END_Comment@@@
+
+@BEG_Contents 
+
+@BEG_Func 
+@RT(17)FuncTreeContainer 
+0 
+@END_Func 
+
+@BEG_Const 
+@RT(18)ConstTreeContainer 
+3 
+@Var @RT(27)cApplPlasticsWrongPIDParams @RT(0) @T @F @DT @RT(4)DINT @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+0 @RT(4)-151 @RT(51)PID - regulator params are wrong or not initialized 
+@END_Attrib 
+1 1 @F @F @F @F 
+
+@Var @RT(26)cApplPlasticsPIDCalcFailed @RT(0) @T @F @DT @RT(4)DINT @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+0 @RT(4)-152 @RT(29)cyclic PID calculation failed 
+@END_Attrib 
+1 1 @F @F @F @F 
+
+@Var @RT(20)cApplPlasticsNoError @RT(0) @T @F @DT @RT(4)DINT @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+0 @RT(1)0 @RT(8)No Error 
+@END_Attrib 
+1 1 @F @F @F @F 
+
+@END_Const 
+
+@BEG_Export 
+
+@BEG_Kind 
+@FUNCTION_BLOCK @RT(12)FBLintabCopy @STRUCTURED_TEXT 
+@RT(0) @RT(0) @RT(0) 
+@END_Kind 
+
+@BEG_Dcl 
+@RT(16)DclTreeContainer 
+6 
+@Var @RT(11)LintabLight @RT(0) @T @T @REFTO 0 @F @DERIVED 0 @T @T @DT @RT(16)KAPPL_LintabData @RT(0) @T @T @UNKNOWN 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(28)Start pre injection movement @RT(0) 
+@END_Attrib 
+1 1 @F @F @F @F 
+
+@Var @RT(9)LintabRef @RT(0) @T @T @REFTO 0 @F @DERIVED 0 @T @T @DT @RT(13)tLintabPoints @RT(0) @T @T @UNKNOWN 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 1 @F @F @F @F 
+
+@Var @RT(10)LintabHelp @RT(0) @T @T @REFTO 0 @F @DERIVED 0 @T @T @DT @RT(13)tLintabPoints @RT(0) @T @T @UNKNOWN 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(6)Lintab @RT(0) @T @T @DERIVED 0 @T @T @DT @RT(18)KCTRL_LintabPoints @RT(0) @T @T @UNKNOWN 0 @F 
+@F @T 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(25)Cycletime of calling task @RT(0) 
+@END_Attrib 
+1 3 @F @F @F @F 
+
+@Var @RT(6)uCount @RT(0) @T @F @DT @RT(5)UDINT @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(5)float @RT(0) @T @F @DT @RT(4)REAL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@END_Dcl 
+
+@END_Export 
+
+@BEG_Body 
+@TL(7)
+//Lintab.uNoOfPoints := LintabLight^ .LintabPoints.uNoOfPoints;
+LintabHelp := LintabRef;
+FOR uCount :=1 TO LintabLight^ .LintabPoints.uNoOfPoints DO
+   LintabHelp^[uCount].rX := LintabLight^.LintabPoints.Point[uCount].rX;
+   LintabHelp^[uCount].rY := LintabLight^.LintabPoints.Point[uCount].rY;
+END_FOR;
+
+@END_Body 
+
+@END_Contents 

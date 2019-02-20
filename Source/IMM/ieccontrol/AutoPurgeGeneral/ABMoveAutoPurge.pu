@@ -1,0 +1,1155 @@
+(*
+
+
+
+
+@FunctionID: S_KPIEC_PRINJ_03
+
+*)
+
+IMPORT_OVER_LISTFILE
+ SET_EVENT
+, cLockGroupHeatingNozzle
+, cLockGroupSafetyGateNozzle
+, cLockGroupSafetyGateMold
+, cLockGroupMotor
+, cCompInjection
+, cMoveFwd
+, cMoveInjectPurge
+, cMoveBwd
+, cMoveDecompPurge
+, cMovePlastPurge
+, cCompShutOffNozzle
+, cMoveClose
+, cMoveOpen
+, tsMoveData
+, tsPurgeSettings
+, tsActPurgeTimes
+, tyNumberOfDevices
+, tsDeviceId
+, tevStartRequest
+, ABMovementRegister
+, tevStartRequestData
+, FBCheckReady
+, FBStop
+, FBCheckPosReached
+, FBDebugTrace2
+
+END_IMPORT
+
+ALGORITHM_BLOCK ABMoveAutoPurge #DUMMY_EDIT_BLOCK
+
+SYSTEM_VAR
+ sv_MoveAutoPurge : tsMoveData;
+ sv_PurgeSettings : tsPurgeSettings;
+ sv_rScrewPosition : REAL (* actual screw position *);
+ sv_ActPurgeTimes : tsActPurgeTimes;
+ sv_NumberOfDevices : tyNumberOfDevices;
+ sv_DeviceId : tsDeviceId;
+END_VAR
+
+SYSTEM_OBJECT
+ evStartRequest : tevStartRequest;
+END_OBJECT
+
+ALGORITHM aRegister
+
+
+VAR
+ abMovementRegister : ABMovementRegister;
+END_VAR
+#BEGIN_EDIT_BLOCK
+(**************************************** WARNING ********************************************
+ *** The KEBA Kemro K2 System including software is not intended for safety control tasks! ***
+ ***                       For further information see Comment tab!                        ***
+ *********************************************************************************************)
+
+// movement registration
+sv_MoveAutoPurge.LockGroups[1] := cLockGroupHeatingNozzle;
+sv_MoveAutoPurge.LockGroups[2] := cLockGroupSafetyGateNozzle;
+sv_MoveAutoPurge.LockGroups[3] := cLockGroupSafetyGateMold;
+sv_MoveAutoPurge.LockGroups[4] := cLockGroupMotor;
+
+
+abMovementRegister.aRegister(@sv_MoveAutoPurge);
+
+
+
+;#END_EDIT_BLOCK END_ALGORITHM
+
+ALGORITHM aRun
+
+
+VAR_OUTPUT
+ bReady : BOOL;
+END_VAR
+
+VAR_INPUT
+ bStop : BOOL;
+END_VAR
+
+VAR
+ evStartRequestData : tevStartRequestData;
+ DeviceId : tsDeviceId;
+ fbCheckReady : FBCheckReady;
+ iCount : DINT;
+ fbStop : FBStop;
+ bShutOffNozzleAvailable : BOOL;
+ bInitDone : BOOL;
+ pbShutOffNozzleOpen : REFTO BOOL;
+ pbShutOffNozzleClosed : REFTO BOOL;
+ DeviceIdShutOffNozzle : tsDeviceId;
+ fbCheckPosReached : FBCheckPosReached;
+ fbDebugTrace2 : FBDebugTrace2;
+ dTmpPurgePlastTime : TIME;
+ rTmpPurgeDecompPos : REAL;
+END_VAR
+
+(* IecGraph-Code *)
+
+(* init step *)
+INITIAL_STEP S_Start:
+AInitShutOffNozzle (P);
+AStart (P);
+END_STEP
+
+ACTION AStart: #BEGIN_EDIT_BLOCK
+bReady := FALSE;
+fbDebugTrace2(nDeviceState, 'AutoPurge started');
+iCount := 0;
+
+;#END_EDIT_BLOCK END_ACTION (*AStart*)
+
+(* steps *)
+STEP Step17:
+END_STEP
+
+STEP S_OpenShutOffNozzle:
+AStartOpen (P);
+ACheckShutOffNozzle (N);
+END_STEP
+
+ACTION ACheckShutOffNozzle: #BEGIN_EDIT_BLOCK
+fbCheckReady(DeviceId := DeviceId);
+
+;#END_EDIT_BLOCK END_ACTION (*ACheckShutOffNozzle*)
+STEP S_Inject:
+AStartInject (P);
+ACheckInjectReady (N);
+END_STEP
+
+ACTION AStartInject: #BEGIN_EDIT_BLOCK
+// send start request
+DeviceId.CompId := cCompInjection;
+DeviceId.IndexId := sv_DeviceId.IndexId;
+
+evStartRequestData.DeviceId := DeviceId;
+evStartRequestData.MoveDir := cMoveFwd; 
+evStartRequestData.MoveId := cMoveInjectPurge;
+SET_EVENT(evStartRequest, evStartRequestData);
+
+;#END_EDIT_BLOCK END_ACTION (*AStartInject*)
+ACTION ACheckInjectReady: #BEGIN_EDIT_BLOCK
+fbCheckReady(DeviceId := DeviceId);
+
+;#END_EDIT_BLOCK END_ACTION (*ACheckInjectReady*)
+STEP S_Decomp:
+AStartDecomp (P);
+ACheckDecompReady (N);
+END_STEP
+
+ACTION AStartDecomp: #BEGIN_EDIT_BLOCK
+//copy decomp position to avoid wrongly detecting a error
+//when the value changes while the movement is active
+rTmpPurgeDecompPos := sv_PurgeSettings.DecompParams.rEndPos;
+
+// send start request
+DeviceId.CompId := cCompInjection;
+DeviceId.IndexId := sv_DeviceId.IndexId;
+
+evStartRequestData.DeviceId := DeviceId;
+evStartRequestData.MoveDir := cMoveBwd; 
+evStartRequestData.MoveId := cMoveDecompPurge;
+SET_EVENT(evStartRequest, evStartRequestData);
+
+;#END_EDIT_BLOCK END_ACTION (*AStartDecomp*)
+ACTION ACheckDecompReady: #BEGIN_EDIT_BLOCK
+fbCheckReady(DeviceId := DeviceId);
+
+;#END_EDIT_BLOCK END_ACTION (*ACheckDecompReady*)
+STEP S_Plast:
+AStartPlast (P);
+ACheckPlastReady (N);
+END_STEP
+
+ACTION AStartPlast: #BEGIN_EDIT_BLOCK
+//copy purge set time to avoid wrongly detecting a error
+//when the value changes while the movement is active
+dTmpPurgePlastTime := sv_PurgeSettings.PlastParams.dSetPlastTime;
+
+// send start request
+DeviceId.CompId := cCompInjection;
+DeviceId.IndexId := sv_DeviceId.IndexId;
+
+evStartRequestData.DeviceId := DeviceId;
+evStartRequestData.MoveDir := cMoveBwd; 
+evStartRequestData.MoveId := cMovePlastPurge;
+SET_EVENT(evStartRequest, evStartRequestData);
+
+;#END_EDIT_BLOCK END_ACTION (*AStartPlast*)
+ACTION ACheckPlastReady: #BEGIN_EDIT_BLOCK
+fbCheckReady(DeviceId := DeviceId);
+
+;#END_EDIT_BLOCK END_ACTION (*ACheckPlastReady*)
+STEP S_CheckCounter:
+ACounter (P);
+END_STEP
+
+ACTION ACounter: #BEGIN_EDIT_BLOCK
+iCount := iCount + 1;
+
+;#END_EDIT_BLOCK END_ACTION (*ACounter*)
+STEP S_CheckStop:
+END_STEP
+
+STEP S_Stop:
+AStopActiveMovement (P);
+AStoppedMoveReady (N);
+END_STEP
+
+ACTION AStopActiveMovement: #BEGIN_EDIT_BLOCK
+//stop actual active movement
+fbStop(DeviceId := DeviceId);
+
+;#END_EDIT_BLOCK END_ACTION (*AStopActiveMovement*)
+ACTION AStoppedMoveReady: #BEGIN_EDIT_BLOCK
+fbCheckReady(DeviceId := DeviceId);
+
+;#END_EDIT_BLOCK END_ACTION (*AStoppedMoveReady*)
+STEP Step27:
+END_STEP
+
+STEP S_CloseShutOffNozzle:
+AStartClose (P);
+ACheckShutOff (N);
+END_STEP
+
+ACTION ACheckShutOff: #BEGIN_EDIT_BLOCK
+fbCheckReady(DeviceId := DeviceId);
+
+;#END_EDIT_BLOCK END_ACTION (*ACheckShutOff*)
+STEP S_Ready:
+AReady (P);
+END_STEP
+
+ACTION AReady: #BEGIN_EDIT_BLOCK
+bReady := TRUE;
+fbDebugTrace2(nDeviceState, 'AutoPurge ready');
+
+;#END_EDIT_BLOCK END_ACTION (*AReady*)
+
+(* transitions *)
+GO_ON_TRANSITION TStart (* Trans21 *) FROM S_Start TO Step17 :=  #BEGIN_EDIT_BLOCK
+TRUE
+;#END_EDIT_BLOCK
+END_TRANSITION
+
+GO_ON_TRANSITION TShutOffNozzle (* TShutOffNozzle *) FROM Step17 TO S_OpenShutOffNozzle :=  #BEGIN_EDIT_BLOCK
+bShutOffNozzleAvailable
+;#END_EDIT_BLOCK
+END_TRANSITION
+
+TRANSITION TShutOffNozzleOpen (* TShutOffNozzleOpen *) FROM S_OpenShutOffNozzle TO S_Inject :=  #BEGIN_EDIT_BLOCK
+fbCheckReady.bReady AND pbShutOffNozzleOpen^
+;#END_EDIT_BLOCK
+END_TRANSITION
+
+TRANSITION TStop4 (* TStop4 *) FROM S_OpenShutOffNozzle TO S_Stop :=  #BEGIN_EDIT_BLOCK
+bStop
+;#END_EDIT_BLOCK
+END_TRANSITION
+
+GO_ON_TRANSITION TNoShutOffNozzle (* TNoShutOffNozzle *) FROM Step17 TO S_Inject :=  #BEGIN_EDIT_BLOCK
+NOT bShutOffNozzleAvailable
+;#END_EDIT_BLOCK
+END_TRANSITION
+
+TRANSITION TInjectReady (* TInjectReady *) FROM S_Inject TO S_Decomp :=  #BEGIN_EDIT_BLOCK
+fbCheckReady.bReady AND
+sv_rScrewPosition <= sv_PurgeSettings.InjectParams.rEndPos
+;#END_EDIT_BLOCK
+END_TRANSITION
+
+TRANSITION TStop1 (* TStop1 *) FROM S_Inject TO S_Stop :=  #BEGIN_EDIT_BLOCK
+bStop
+;#END_EDIT_BLOCK
+END_TRANSITION
+
+TRANSITION TDecompReady (* TDecompReady *) FROM S_Decomp TO S_Plast :=  #BEGIN_EDIT_BLOCK
+fbCheckReady.bReady AND
+sv_rScrewPosition >= rTmpPurgeDecompPos
+;#END_EDIT_BLOCK
+END_TRANSITION
+
+TRANSITION TStop2 (* TStop2 *) FROM S_Decomp TO S_Stop :=  #BEGIN_EDIT_BLOCK
+bStop
+;#END_EDIT_BLOCK
+END_TRANSITION
+
+TRANSITION TPlastReady (* TPlastReady *) FROM S_Plast TO S_CheckCounter :=  #BEGIN_EDIT_BLOCK
+fbCheckReady.bReady AND
+sv_ActPurgeTimes.dActPlastTime >= dTmpPurgePlastTime
+;#END_EDIT_BLOCK
+END_TRANSITION
+
+TRANSITION TStop3 (* TStop3 *) FROM S_Plast TO S_Stop :=  #BEGIN_EDIT_BLOCK
+bStop
+;#END_EDIT_BLOCK
+END_TRANSITION
+
+GO_ON_TRANSITION TRepeat (* TRepeat *) FROM S_CheckCounter TO S_Inject :=  #BEGIN_EDIT_BLOCK
+iCount < sv_PurgeSettings.iCount
+;#END_EDIT_BLOCK
+END_TRANSITION
+
+GO_ON_TRANSITION TReady (* TReady *) FROM S_CheckCounter TO S_CheckStop :=  #BEGIN_EDIT_BLOCK
+iCount = sv_PurgeSettings.iCount 
+;#END_EDIT_BLOCK
+END_TRANSITION
+
+GO_ON_TRANSITION TStop (* TStop *) FROM S_CheckStop TO S_Stop :=  #BEGIN_EDIT_BLOCK
+bStop
+;#END_EDIT_BLOCK
+END_TRANSITION
+
+TRANSITION TStoppedDeviceReady (* TStoppedDeviceReady *) FROM S_Stop TO Step27 :=  #BEGIN_EDIT_BLOCK
+fbCheckReady.bReady
+;#END_EDIT_BLOCK
+END_TRANSITION
+
+GO_ON_TRANSITION TNoStop (* TNoStop *) FROM S_CheckStop TO Step27 :=  #BEGIN_EDIT_BLOCK
+NOT bStop
+;#END_EDIT_BLOCK
+END_TRANSITION
+
+GO_ON_TRANSITION Trans36 (* Trans36 *) FROM Step27 TO S_CloseShutOffNozzle :=  #BEGIN_EDIT_BLOCK
+bShutOffNozzleAvailable
+;#END_EDIT_BLOCK
+END_TRANSITION
+
+TRANSITION TShutOffNozzleReady (* TShutOffNozzleClosed *) FROM S_CloseShutOffNozzle TO S_Ready :=  #BEGIN_EDIT_BLOCK
+fbCheckReady.bReady
+;#END_EDIT_BLOCK
+END_TRANSITION
+
+GO_ON_TRANSITION Trans37 (* Trans37 *) FROM Step27 TO S_Ready :=  #BEGIN_EDIT_BLOCK
+NOT bShutOffNozzleAvailable
+;#END_EDIT_BLOCK
+END_TRANSITION
+
+TRANSITION Trans12 (* Trans12 *) FROM S_Ready TO S_Start :=  #BEGIN_EDIT_BLOCK
+TRUE
+;#END_EDIT_BLOCK
+END_TRANSITION
+
+(* end IecGraph-Code *)
+(* sfc-code *)
+
+(* stand alone actions *)
+ACTION AInitShutOffNozzle: #BEGIN_EDIT_BLOCK
+//check if shut off nozzle is available
+IF NOT bInitDone THEN
+   bShutOffNozzleAvailable := sv_NumberOfDevices[cCompShutOffNozzle] = sv_DeviceId.IndexId;
+END_IF;
+
+IF bShutOffNozzleAvailable AND NOT bInitDone THEN
+   //get pos reached flags of shut off nozzle
+   DeviceIdShutOffNozzle.CompId := cCompShutOffNozzle;
+   DeviceIdShutOffNozzle.IndexId := sv_DeviceId.IndexId;
+   
+   fbCheckPosReached.DeviceId := DeviceIdShutOffNozzle;
+   fbCheckPosReached.MoveDir := cMoveClose;
+   fbCheckPosReached.MoveId := cMoveClose;
+   fbCheckPosReached();
+   pbShutOffNozzleClosed := fbCheckPosReached.pbPosReached;
+   
+   fbCheckPosReached.MoveDir := cMoveOpen;
+   fbCheckPosReached.MoveId := cMoveOpen;
+   fbCheckPosReached();
+   pbShutOffNozzleOpen := fbCheckPosReached.pbPosReached;
+END_IF;
+
+bInitDone := TRUE;
+
+;#END_EDIT_BLOCK END_ACTION (*AInitShutOffNozzle*)
+ACTION AStartOpen: #BEGIN_EDIT_BLOCK
+(**************************************** WARNING ********************************************
+ *** The KEBA Kemro K2 System including software is not intended for safety control tasks! ***
+ ***                       For further information see Comment tab!                        ***
+ *********************************************************************************************)
+
+// send start request
+DeviceId := DeviceIdShutOffNozzle;
+
+evStartRequestData.DeviceId := DeviceId;
+evStartRequestData.MoveDir := cMoveOpen; 
+evStartRequestData.MoveId := cMoveOpen;
+SET_EVENT(evStartRequest, evStartRequestData);
+
+;#END_EDIT_BLOCK END_ACTION (*AStartOpen*)
+ACTION AStartClose: #BEGIN_EDIT_BLOCK
+(**************************************** WARNING ********************************************
+ *** The KEBA Kemro K2 System including software is not intended for safety control tasks! ***
+ ***                       For further information see Comment tab!                        ***
+ *********************************************************************************************)
+
+// send start request
+DeviceId := DeviceIdShutOffNozzle;
+evStartRequestData.DeviceId := DeviceId;
+evStartRequestData.MoveDir := cMoveClose; 
+evStartRequestData.MoveId := cMoveClose;
+SET_EVENT(evStartRequest, evStartRequestData);
+
+;#END_EDIT_BLOCK END_ACTION (*AStartClose*)
+(* end sfc-code *)
+
+
+END_ALGORITHM
+
+
+
+END_ALGORITHM_BLOCK
+
+
+
+#END_OF_IEC_PART
+
+@Puma @IecEditor 6 103 @Pou 25 
+@@@BEG_Comment@@@
+
+
+
+
+@FunctionID: S_KPIEC_PRINJ_03
+
+@@@END_Comment@@@
+
+@BEG_Contents 
+
+@BEG_Func 
+@RT(17)FuncTreeContainer 
+1 
+@Var @RT(9)SET_EVENT @RT(0) @T @T @DERIVED 0 @F @RT(23)KEBA_STANDARD_PROCEDURE @F 
+@T 
+@BEG_Attrib 
+0 @RT(0) @RT(0) 
+@END_Attrib 
+1 1 @F @F @F @F 
+
+@END_Func 
+
+@BEG_Const 
+@RT(18)ConstTreeContainer 
+13 
+@Var @RT(23)cLockGroupHeatingNozzle @RT(0) @T @F @DT @RT(4)DINT @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+0 @RT(2)63 @RT(35)Members: Injection, Plast, Suckback 
+@END_Attrib 
+1 1 @F @F @F @F 
+
+@Var @RT(26)cLockGroupSafetyGateNozzle @RT(0) @T @F @DT @RT(4)DINT @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+0 @RT(2)62 @RT(59)Members: Nozzle Forward, Injection, Plast, Intrusion, Purge 
+@END_Attrib 
+1 1 @F @F @F @F 
+
+@Var @RT(24)cLockGroupSafetyGateMold @RT(0) @T @F @DT @RT(4)DINT @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+0 @RT(2)61 @RT(73)Members: Mold Close, Mold Hight Forward, Auto Mold Hight, Core In, Inject 
+@END_Attrib 
+1 1 @F @F @F @F 
+
+@Var @RT(15)cLockGroupMotor @RT(0) @T @F @DT @RT(4)DINT @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+0 @RT(2)69 @RT(56)Members: Mold, Ejector, Cores, Injection, Plast, Purge,  
+@END_Attrib 
+1 1 @F @F @F @F 
+
+@Var @RT(14)cCompInjection @RT(0) @T @F @DT @RT(4)DINT @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+0 @RT(3)104 @RT(19)Component Injection 
+@END_Attrib 
+1 1 @F @F @F @F 
+
+@Var @RT(8)cMoveFwd @RT(0) @T @F @DT @RT(4)DINT @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+0 @RT(2)12 @RT(16)movement forward 
+@END_Attrib 
+1 1 @F @F @F @F 
+
+@Var @RT(16)cMoveInjectPurge @RT(0) @T @F @DT @RT(4)DINT @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+0 @RT(2)35 @RT(27)inject movement for purging 
+@END_Attrib 
+1 1 @F @F @F @F 
+
+@Var @RT(8)cMoveBwd @RT(0) @T @F @DT @RT(4)DINT @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+0 @RT(2)11 @RT(17)movement backward 
+@END_Attrib 
+1 1 @F @F @F @F 
+
+@Var @RT(16)cMoveDecompPurge @RT(0) @T @F @DT @RT(4)DINT @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+0 @RT(2)36 @RT(27)decomp movement for purging 
+@END_Attrib 
+1 1 @F @F @F @F 
+
+@Var @RT(15)cMovePlastPurge @RT(0) @T @F @DT @RT(4)DINT @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+0 @RT(2)34 @RT(26)plast movement for purging 
+@END_Attrib 
+1 1 @F @F @F @F 
+
+@Var @RT(18)cCompShutOffNozzle @RT(0) @T @F @DT @RT(4)DINT @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+0 @RT(3)138 @RT(28)Component Shutter for Nozzle 
+@END_Attrib 
+1 1 @F @F @F @F 
+
+@Var @RT(10)cMoveClose @RT(0) @T @F @DT @RT(4)DINT @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+0 @RT(2)51 @RT(44)close movement (for example shut off nozzle) 
+@END_Attrib 
+1 1 @F @F @F @F 
+
+@Var @RT(9)cMoveOpen @RT(0) @T @F @DT @RT(4)DINT @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+0 @RT(2)50 @RT(43)open movement (for example shut off nozzle) 
+@END_Attrib 
+1 1 @F @F @F @F 
+
+@END_Const 
+
+@BEG_Export 
+
+@BEG_Kind 
+@ALGORITHM_BLOCK @RT(15)ABMoveAutoPurge @STRUCTURED_TEXT 
+@RT(0) @RT(0) @RT(0) 
+@END_Kind 
+
+@BEG_Dcl 
+@RT(16)DclTreeContainer 
+7 
+@Var @RT(16)sv_MoveAutoPurge @RT(0) @T @T @DERIVED 0 @T @T @DT @RT(10)tsMoveData @RT(0) @T @T @UNKNOWN 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 8 @F @F @F @F 
+
+@Var @RT(16)sv_PurgeSettings @RT(0) @T @T @DERIVED 0 @T @T @DT @RT(15)tsPurgeSettings @RT(0) @T @T @UNKNOWN 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 8 @F @F @F @F 
+
+@Var @RT(17)sv_rScrewPosition @RT(0) @T @F @DT @RT(4)REAL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(21)actual screw position @RT(0) 
+@END_Attrib 
+1 8 @F @F @F @F 
+
+@Var @RT(16)sv_ActPurgeTimes @RT(0) @T @T @DERIVED 0 @T @T @DT @RT(15)tsActPurgeTimes @RT(0) @T @T @UNKNOWN 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 8 @F @F @F @F 
+
+@Var @RT(18)sv_NumberOfDevices @RT(0) @T @T @DERIVED 0 @T @T @DT @RT(17)tyNumberOfDevices @RT(0) @T @T @UNKNOWN 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 8 @F @F @F @F 
+
+@Var @RT(11)sv_DeviceId @RT(0) @T @T @DERIVED 0 @T @T @DT @RT(10)tsDeviceId @RT(0) @T @T @UNKNOWN 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 8 @F @F @F @F 
+
+@Var @RT(14)evStartRequest @RT(0) @T @T @DERIVED 0 @T @T @DT @RT(15)tevStartRequest @RT(0) @T @T @UNKNOWN 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 7 @F @F @F @F 
+
+@END_Dcl 
+
+@END_Export 
+
+@BEG_Body 
+
+2 
+
+@BEG_Export 
+
+@BEG_Algo 
+@ALGORITHM @RT(9)aRegister @STRUCTURED_TEXT 
+@RT(0) @RT(0) @RT(0) @F @F 
+@END_Algo 
+
+@BEG_Dcl 
+@RT(16)DclTreeContainer 
+1 
+@Var @RT(18)abMovementRegister @RT(0) @T @T @DERIVED 0 @T @T @DT @RT(18)ABMovementRegister @RT(0) @T @T @UNKNOWN 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@END_Dcl 
+
+@END_Export 
+
+@BEG_Export 
+
+@BEG_Algo 
+@ALGORITHM @RT(4)aRun @SEQUENTIAL_FLOW_CHART 
+@RT(0) @RT(0) @RT(0) @F @F 
+@END_Algo 
+
+@BEG_Dcl 
+@RT(16)DclTreeContainer 
+16 
+@Var @RT(6)bReady @RT(0) @T @F @DT @RT(4)BOOL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 3 @F @F @F @F 
+
+@Var @RT(5)bStop @RT(0) @T @F @DT @RT(4)BOOL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 1 @F @F @F @F 
+
+@Var @RT(18)evStartRequestData @RT(0) @T @T @DERIVED 0 @T @T @DT @RT(19)tevStartRequestData @RT(0) @T @T @UNKNOWN 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(8)DeviceId @RT(0) @T @T @DERIVED 0 @T @T @DT @RT(10)tsDeviceId @RT(0) @T @T @UNKNOWN 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(12)fbCheckReady @RT(0) @T @T @DERIVED 0 @T @T @DT @RT(12)FBCheckReady @RT(0) @T @T @UNKNOWN 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(6)iCount @RT(0) @T @F @DT @RT(4)DINT @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(6)fbStop @RT(0) @T @T @DERIVED 0 @T @T @DT @RT(6)FBStop @RT(0) @T @T @UNKNOWN 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(23)bShutOffNozzleAvailable @RT(0) @T @F @DT @RT(4)BOOL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(9)bInitDone @RT(0) @T @F @DT @RT(4)BOOL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(19)pbShutOffNozzleOpen @RT(0) @T @T @REFTO 0 @T @DT @RT(4)BOOL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(21)pbShutOffNozzleClosed @RT(0) @T @T @REFTO 0 @T @DT @RT(4)BOOL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(21)DeviceIdShutOffNozzle @RT(0) @T @T @DERIVED 0 @T @T @DT @RT(10)tsDeviceId @RT(0) @T @T @UNKNOWN 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(17)fbCheckPosReached @RT(0) @T @T @DERIVED 0 @T @T @DT @RT(17)FBCheckPosReached @RT(0) @T @T @UNKNOWN 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(13)fbDebugTrace2 @RT(0) @T @T @DERIVED 0 @T @T @DT @RT(13)FBDebugTrace2 @RT(0) @T @T @UNKNOWN 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(18)dTmpPurgePlastTime @RT(0) @T @T @RENAMED 0 @T @T @DT @RT(4)TIME @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(18)rTmpPurgeDecompPos @RT(0) @T @F @DT @RT(4)REAL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@END_Dcl 
+
+@END_Export 
+
+@BEG_Body 
+@TL(15)
+(**************************************** WARNING ********************************************
+ *** The KEBA Kemro K2 System including software is not intended for safety control tasks! ***
+ ***                       For further information see Comment tab!                        ***
+ *********************************************************************************************)
+
+// movement registration
+sv_MoveAutoPurge.LockGroups[1] := cLockGroupHeatingNozzle;
+sv_MoveAutoPurge.LockGroups[2] := cLockGroupSafetyGateNozzle;
+sv_MoveAutoPurge.LockGroups[3] := cLockGroupSafetyGateMold;
+sv_MoveAutoPurge.LockGroups[4] := cLockGroupMotor;
+
+
+abMovementRegister.aRegister(@sv_MoveAutoPurge);
+
+
+@END_Body 
+
+@@@BEG_Comment@@@ 
+@TL(0)
+
+@@@END_Comment@@@ 
+
+@BEG_SfcBody 
+26 21 27 
+
+@BEG_SfcData 2 
+@StepSeq @RT(4)sseq @F 1 
+@Loop @RT(4)loop @F 2 
+@StepSeq @RT(4)sseq @F 11 
+@Step @RT(7)S_Start @F @T @F @F @RT(0) @F 
+@AcbCont @RT(7)unnamed @F 2 
+@Acb @RT(18)AInitShutOffNozzle @F @F @RT(1)P @RT(0) @F @F @F @F 
+@Acb @RT(6)AStart @F @T @RT(1)P @RT(0) @F @F @T @TL(4)
+bReady := FALSE;
+fbDebugTrace2(nDeviceState, 'AutoPurge started');
+iCount := 0;
+
+@F 
+
+@Trans @RT(6)TStart @F @T @F @F @T @F @TL(2)
+TRUE
+
+@RT(7)Trans21 @F 
+@Step @RT(6)Step17 @F @F @F @F @RT(0) @F 
+@AcbCont @RT(7)unnamed @F 0 
+
+@AltBranch @RT(3)alt @F 2 
+@TransSeq @RT(4)tseq @F 3 
+@Trans @RT(14)TShutOffNozzle @F @T @F @F @T @F @TL(2)
+bShutOffNozzleAvailable
+
+@RT(14)TShutOffNozzle @F 
+@Step @RT(19)S_OpenShutOffNozzle @F @F @F @F @RT(0) @F 
+@AcbCont @RT(7)unnamed @F 2 
+@Acb @RT(10)AStartOpen @F @F @RT(1)P @RT(0) @F @F @F @F 
+@Acb @RT(19)ACheckShutOffNozzle @F @T @RT(1)N @RT(0) @F @F @T @TL(2)
+fbCheckReady(DeviceId := DeviceId);
+
+@F 
+
+@AltBranch @RT(3)alt @F 2 
+@TransSeq @RT(4)tseq @F 1 
+@Trans @RT(18)TShutOffNozzleOpen @F @T @F @F @T @T @TL(2)
+fbCheckReady.bReady AND pbShutOffNozzleOpen^
+
+@RT(18)TShutOffNozzleOpen @F 
+
+@TransSeq @RT(4)tseq @F 2 
+@Trans @RT(6)TStop4 @F @T @F @F @T @T @TL(2)
+bStop
+
+@RT(6)TStop4 @F 
+@Goto @RT(6)S_Stop @F @F 
+
+
+
+@TransSeq @RT(4)tseq @F 1 
+@Trans @RT(16)TNoShutOffNozzle @F @T @T @F @T @F @TL(2)
+NOT bShutOffNozzleAvailable
+
+@RT(16)TNoShutOffNozzle @F 
+
+
+@Loop @RT(4)loop @F 2 
+@StepSeq @RT(4)sseq @F 7 
+@Step @RT(8)S_Inject @F @F @F @F @RT(0) @F 
+@AcbCont @RT(7)unnamed @F 2 
+@Acb @RT(12)AStartInject @F @T @RT(1)P @RT(0) @F @F @T @TL(9)
+// send start request
+DeviceId.CompId := cCompInjection;
+DeviceId.IndexId := sv_DeviceId.IndexId;
+
+evStartRequestData.DeviceId := DeviceId;
+evStartRequestData.MoveDir := cMoveFwd; 
+evStartRequestData.MoveId := cMoveInjectPurge;
+SET_EVENT(evStartRequest, evStartRequestData);
+
+@F 
+@Acb @RT(17)ACheckInjectReady @F @T @RT(1)N @RT(0) @F @F @T @TL(2)
+fbCheckReady(DeviceId := DeviceId);
+
+@F 
+
+@AltBranch @RT(3)alt @F 2 
+@TransSeq @RT(4)tseq @F 1 
+@Trans @RT(12)TInjectReady @F @T @F @F @T @T @TL(3)
+fbCheckReady.bReady AND
+sv_rScrewPosition <= sv_PurgeSettings.InjectParams.rEndPos
+
+@RT(12)TInjectReady @F 
+
+@TransSeq @RT(4)tseq @F 2 
+@Trans @RT(6)TStop1 @F @T @F @F @T @T @TL(2)
+bStop
+
+@RT(6)TStop1 @F 
+@Goto @RT(6)S_Stop @F @F 
+
+
+@Step @RT(8)S_Decomp @F @F @F @F @RT(0) @F 
+@AcbCont @RT(7)unnamed @F 2 
+@Acb @RT(12)AStartDecomp @F @T @RT(1)P @RT(0) @F @F @T @TL(13)
+//copy decomp position to avoid wrongly detecting a error
+//when the value changes while the movement is active
+rTmpPurgeDecompPos := sv_PurgeSettings.DecompParams.rEndPos;
+
+// send start request
+DeviceId.CompId := cCompInjection;
+DeviceId.IndexId := sv_DeviceId.IndexId;
+
+evStartRequestData.DeviceId := DeviceId;
+evStartRequestData.MoveDir := cMoveBwd; 
+evStartRequestData.MoveId := cMoveDecompPurge;
+SET_EVENT(evStartRequest, evStartRequestData);
+
+@F 
+@Acb @RT(17)ACheckDecompReady @F @T @RT(1)N @RT(0) @F @F @T @TL(2)
+fbCheckReady(DeviceId := DeviceId);
+
+@F 
+
+@AltBranch @RT(3)alt @F 2 
+@TransSeq @RT(4)tseq @F 1 
+@Trans @RT(12)TDecompReady @F @T @F @F @T @T @TL(3)
+fbCheckReady.bReady AND
+sv_rScrewPosition >= rTmpPurgeDecompPos
+
+@RT(12)TDecompReady @F 
+
+@TransSeq @RT(4)tseq @F 2 
+@Trans @RT(6)TStop2 @F @T @F @F @T @T @TL(2)
+bStop
+
+@RT(6)TStop2 @F 
+@Goto @RT(6)S_Stop @F @F 
+
+
+@Step @RT(7)S_Plast @F @F @F @F @RT(0) @F 
+@AcbCont @RT(7)unnamed @F 2 
+@Acb @RT(11)AStartPlast @F @T @RT(1)P @RT(0) @F @F @T @TL(13)
+//copy purge set time to avoid wrongly detecting a error
+//when the value changes while the movement is active
+dTmpPurgePlastTime := sv_PurgeSettings.PlastParams.dSetPlastTime;
+
+// send start request
+DeviceId.CompId := cCompInjection;
+DeviceId.IndexId := sv_DeviceId.IndexId;
+
+evStartRequestData.DeviceId := DeviceId;
+evStartRequestData.MoveDir := cMoveBwd; 
+evStartRequestData.MoveId := cMovePlastPurge;
+SET_EVENT(evStartRequest, evStartRequestData);
+
+@F 
+@Acb @RT(16)ACheckPlastReady @F @T @RT(1)N @RT(0) @F @F @T @TL(2)
+fbCheckReady(DeviceId := DeviceId);
+
+@F 
+
+@AltBranch @RT(3)alt @F 2 
+@TransSeq @RT(4)tseq @F 1 
+@Trans @RT(11)TPlastReady @F @T @F @F @T @T @TL(3)
+fbCheckReady.bReady AND
+sv_ActPurgeTimes.dActPlastTime >= dTmpPurgePlastTime
+
+@RT(11)TPlastReady @F 
+
+@TransSeq @RT(4)tseq @F 2 
+@Trans @RT(6)TStop3 @F @T @F @F @T @T @TL(2)
+bStop
+
+@RT(6)TStop3 @F 
+@Goto @RT(6)S_Stop @F @F 
+
+
+@Step @RT(14)S_CheckCounter @F @F @F @F @RT(0) @F 
+@AcbCont @RT(7)unnamed @F 1 
+@Acb @RT(8)ACounter @F @T @RT(1)P @RT(0) @F @F @T @TL(2)
+iCount := iCount + 1;
+
+@F 
+
+
+@Trans @RT(7)TRepeat @F @T @T @T @T @F @TL(2)
+iCount < sv_PurgeSettings.iCount
+
+@RT(7)TRepeat @F 
+
+@Trans @RT(6)TReady @F @T @F @F @T @F @TL(2)
+iCount = sv_PurgeSettings.iCount 
+
+@RT(6)TReady @F 
+@Step @RT(11)S_CheckStop @F @F @F @F @RT(0) @F 
+@AcbCont @RT(7)unnamed @F 0 
+
+@AltBranch @RT(3)alt @F 2 
+@TransSeq @RT(4)tseq @F 3 
+@Trans @RT(5)TStop @F @T @F @F @T @F @TL(2)
+bStop
+
+@RT(5)TStop @F 
+@Step @RT(6)S_Stop @F @F @T @F @RT(0) @F 
+@AcbCont @RT(7)unnamed @F 2 
+@Acb @RT(19)AStopActiveMovement @F @T @RT(1)P @RT(0) @F @F @T @TL(3)
+//stop actual active movement
+fbStop(DeviceId := DeviceId);
+
+@F 
+@Acb @RT(17)AStoppedMoveReady @F @T @RT(1)N @RT(0) @F @F @T @TL(2)
+fbCheckReady(DeviceId := DeviceId);
+
+@F 
+
+@Trans @RT(19)TStoppedDeviceReady @F @T @F @F @T @T @TL(2)
+fbCheckReady.bReady
+
+@RT(19)TStoppedDeviceReady @F 
+
+@TransSeq @RT(4)tseq @F 1 
+@Trans @RT(7)TNoStop @F @T @T @F @T @F @TL(2)
+NOT bStop
+
+@RT(7)TNoStop @F 
+
+
+@Step @RT(6)Step27 @F @F @F @F @RT(0) @F 
+@AcbCont @RT(7)unnamed @F 0 
+
+@AltBranch @RT(3)alt @F 2 
+@TransSeq @RT(4)tseq @F 3 
+@Trans @RT(7)Trans36 @F @T @F @F @T @F @TL(2)
+bShutOffNozzleAvailable
+
+@RT(7)Trans36 @F 
+@Step @RT(20)S_CloseShutOffNozzle @F @F @F @F @RT(0) @F 
+@AcbCont @RT(7)unnamed @F 2 
+@Acb @RT(11)AStartClose @F @F @RT(1)P @RT(0) @F @F @F @F 
+@Acb @RT(13)ACheckShutOff @F @T @RT(1)N @RT(0) @F @F @T @TL(2)
+fbCheckReady(DeviceId := DeviceId);
+
+@F 
+
+@Trans @RT(19)TShutOffNozzleReady @F @T @F @F @T @T @TL(2)
+fbCheckReady.bReady
+
+@RT(20)TShutOffNozzleClosed @F 
+
+@TransSeq @RT(4)tseq @F 1 
+@Trans @RT(7)Trans37 @F @T @T @F @T @F @TL(2)
+NOT bShutOffNozzleAvailable
+
+@RT(7)Trans37 @F 
+
+
+@Step @RT(7)S_Ready @F @F @F @F @RT(0) @F 
+@AcbCont @RT(7)unnamed @F 1 
+@Acb @RT(6)AReady @F @T @RT(1)P @RT(0) @F @F @T @TL(3)
+bReady := TRUE;
+fbDebugTrace2(nDeviceState, 'AutoPurge ready');
+
+@F 
+
+
+@Trans @RT(7)Trans12 @F @T @T @T @T @T @TL(2)
+TRUE
+
+@RT(7)Trans12 @F 
+
+@END_SfcData 
+@SaActions 3 
+@SaText @RT(18)AInitShutOffNozzle 1 @TL(24)
+//check if shut off nozzle is available
+IF NOT bInitDone THEN
+   bShutOffNozzleAvailable := sv_NumberOfDevices[cCompShutOffNozzle] = sv_DeviceId.IndexId;
+END_IF;
+
+IF bShutOffNozzleAvailable AND NOT bInitDone THEN
+   //get pos reached flags of shut off nozzle
+   DeviceIdShutOffNozzle.CompId := cCompShutOffNozzle;
+   DeviceIdShutOffNozzle.IndexId := sv_DeviceId.IndexId;
+   
+   fbCheckPosReached.DeviceId := DeviceIdShutOffNozzle;
+   fbCheckPosReached.MoveDir := cMoveClose;
+   fbCheckPosReached.MoveId := cMoveClose;
+   fbCheckPosReached();
+   pbShutOffNozzleClosed := fbCheckPosReached.pbPosReached;
+   
+   fbCheckPosReached.MoveDir := cMoveOpen;
+   fbCheckPosReached.MoveId := cMoveOpen;
+   fbCheckPosReached();
+   pbShutOffNozzleOpen := fbCheckPosReached.pbPosReached;
+END_IF;
+
+bInitDone := TRUE;
+
+
+@SaText @RT(10)AStartOpen 1 @TL(13)
+(**************************************** WARNING ********************************************
+ *** The KEBA Kemro K2 System including software is not intended for safety control tasks! ***
+ ***                       For further information see Comment tab!                        ***
+ *********************************************************************************************)
+
+// send start request
+DeviceId := DeviceIdShutOffNozzle;
+
+evStartRequestData.DeviceId := DeviceId;
+evStartRequestData.MoveDir := cMoveOpen; 
+evStartRequestData.MoveId := cMoveOpen;
+SET_EVENT(evStartRequest, evStartRequestData);
+
+
+@SaText @RT(11)AStartClose 1 @TL(12)
+(**************************************** WARNING ********************************************
+ *** The KEBA Kemro K2 System including software is not intended for safety control tasks! ***
+ ***                       For further information see Comment tab!                        ***
+ *********************************************************************************************)
+
+// send start request
+DeviceId := DeviceIdShutOffNozzle;
+evStartRequestData.DeviceId := DeviceId;
+evStartRequestData.MoveDir := cMoveClose; 
+evStartRequestData.MoveId := cMoveClose;
+SET_EVENT(evStartRequest, evStartRequestData);
+
+
+@SaTrans 0 
+@SaExits 0 
+@END_SfcBody 
+
+@@@BEG_Comment@@@ 
+@TL(0)
+
+@@@END_Comment@@@ 
+@END_Body 
+
+@END_Contents 

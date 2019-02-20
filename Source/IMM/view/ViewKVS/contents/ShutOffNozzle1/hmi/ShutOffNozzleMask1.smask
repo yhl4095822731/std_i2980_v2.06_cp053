@@ -1,0 +1,171 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<base:Mask xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xmlns:base="http://www.keba.at/viewedit.model.base" widgetId="kvs.mask" name="ShutOffNozzleMask1">
+  <resolution width="714" height="476"/>
+  <position x="1" y="1"/>
+  <attributeValues key="Icon" value="ShutOffNozzle1/hmi/images/iconShutOffNozzle.gif"/>
+  <attributeValues key="Title" value="Shut off nozzle"/>
+  <attributeValues key="Background" value="BG_Desktop:30,30,30"/>
+  <widgetInstances xsi:type="base:ContainerWidgetInstance" widgetId="keplast.kvs.borderpanelsmall" name="panelMain" layoutConstraint="NORTH">
+    <resolution width="714" height="230"/>
+    <position/>
+    <attributeValues key="PreferredSize" value="714, 230"/>
+    <attributeValues key="Title" value="Shut off nozzle"/>
+    <widgetInstances xsi:type="base:ContainerWidgetInstance" widgetId="kvs.panel" name="panelNozzle" layoutConstraint="LEFT">
+      <resolution width="347" height="116"/>
+      <position x="6" y="33"/>
+      <widgetInstances xsi:type="base:ContainerWidgetInstance" widgetId="kvs.panel" name="panelLabelsWrap" layoutConstraint="null">
+        <resolution width="347" height="29"/>
+        <position/>
+        <widgetInstances xsi:type="base:ContainerWidgetInstance" widgetId="kvs.panel" name="container1" layoutConstraint="null">
+          <resolution width="10" height="10"/>
+          <position y="9"/>
+          <layout layoutID="kvs.layout.BorderLayout" name="BorderLayout"/>
+        </widgetInstances>
+        <widgetInstances widgetId="keplast.kvs.klabeltip" name="labelPressure" layoutConstraint="null">
+          <resolution width="65" height="29"/>
+          <position x="158"/>
+          <attributeValues key="Text" value="Pressure"/>
+          <attributeValues key="PreferredSize" value="65, 29"/>
+        </widgetInstances>
+        <widgetInstances widgetId="keplast.kvs.klabeltip" name="labelVelocity" layoutConstraint="null">
+          <resolution width="63" height="29"/>
+          <position x="223"/>
+          <attributeValues key="Text" value="Velocity"/>
+          <attributeValues key="PreferredSize" value="63, 29"/>
+        </widgetInstances>
+        <widgetInstances widgetId="keplast.kvs.klabeltip" name="labelTime" layoutConstraint="null">
+          <resolution width="61" height="29"/>
+          <position x="286"/>
+          <attributeValues key="Text" value="Time"/>
+          <attributeValues key="PreferredSize" value="61, 29"/>
+        </widgetInstances>
+        <layout layoutID="keplast.kvs.layout.beanlayout" name="BeanLayout">
+          <attributeValues key="Hgap" value="0"/>
+        </layout>
+      </widgetInstances>
+      <widgetInstances xsi:type="base:ContainerWidgetInstance" widgetId="kvs.panel" name="panelUnitsWrap" layoutConstraint="null">
+        <resolution width="347" height="29"/>
+        <position y="29"/>
+        <widgetInstances xsi:type="base:ContainerWidgetInstance" widgetId="kvs.panel" name="containerUnitsDummy1" layoutConstraint="null">
+          <resolution width="10" height="10"/>
+          <position x="3" y="9"/>
+          <attributeValues key="PreferredSize" value="10, 10"/>
+          <layout layoutID="kvs.layout.PercentLayout" name="PercentLayout"/>
+        </widgetInstances>
+        <widgetInstances widgetId="keplast.kvs.varlabeltip" name="unitPressure" layoutConstraint="null">
+          <resolution width="63" height="21"/>
+          <position x="158" y="4"/>
+          <attributeValues key="TextLabelType" value="Unit Variable Label"/>
+          <attributeValues key="Variable" value="ShutOffNozzle1.sv_ConstClose.Pressure.Output.rOutputValue"/>
+        </widgetInstances>
+        <widgetInstances widgetId="keplast.kvs.varlabeltip" name="unitVelocity" layoutConstraint="null">
+          <resolution width="63" height="21"/>
+          <position x="221" y="4"/>
+          <attributeValues key="TextLabelType" value="Unit Variable Label"/>
+          <attributeValues key="Variable" value="ShutOffNozzle1.sv_ConstClose.Velocity.Output.rOutputValue"/>
+        </widgetInstances>
+        <widgetInstances widgetId="keplast.kvs.varlabeltip" name="unitTime" layoutConstraint="null">
+          <resolution width="63" height="21"/>
+          <position x="284" y="4"/>
+          <attributeValues key="TextLabelType" value="Unit Variable Label"/>
+          <attributeValues key="Variable" value="ShutOffNozzle1.sv_CloseTimesSet.dSetMoveTime"/>
+        </widgetInstances>
+        <layout layoutID="keplast.kvs.layout.beanlayout" name="BeanLayout">
+          <attributeValues key="UnitWidth" value="63"/>
+        </layout>
+      </widgetInstances>
+      <widgetInstances xsi:type="base:ContainerWidgetInstance" widgetId="kvs.panel" name="panelFieldsClose" layoutConstraint="null">
+        <resolution width="347" height="29"/>
+        <position y="58"/>
+        <widgetInstances widgetId="keplast.kvs.klabeltip" name="labelClose" layoutConstraint="null">
+          <resolution width="155" height="21"/>
+          <position x="3" y="4"/>
+          <attributeValues key="Text" value="Close"/>
+          <attributeValues key="Alignment" value="MIDDLE/LEFT"/>
+        </widgetInstances>
+        <widgetInstances widgetId="kvs.numfieldnew" name="numfieldClosePressure" layoutConstraint="null">
+          <resolution width="60" height="29"/>
+          <position x="161"/>
+          <attributeValues key="Variable" value="ShutOffNozzle1.sv_ConstClose.Pressure.Output.rOutputValue"/>
+          <dynamicAttributes key="Visible">
+            <value function="n1_EQ_const : ViewEditFunctions" equal="false" unequal="true">
+              <parameter key="1" value="kvariable; ShutOffNozzle1.sv_DriveType"/>
+              <parameter key="2" value="double; 1"/>
+            </value>
+          </dynamicAttributes>
+        </widgetInstances>
+        <widgetInstances widgetId="kvs.numfieldnew" name="numfieldCloseVelocity" layoutConstraint="null">
+          <resolution width="60" height="29"/>
+          <position x="224"/>
+          <attributeValues key="Variable" value="ShutOffNozzle1.sv_ConstClose.Velocity.Output.rOutputValue"/>
+          <dynamicAttributes key="Visible">
+            <value function="n1_EQ_const : ViewEditFunctions" equal="false" unequal="true">
+              <parameter key="1" value="kvariable; ShutOffNozzle1.sv_DriveType"/>
+              <parameter key="2" value="double; 1"/>
+            </value>
+          </dynamicAttributes>
+        </widgetInstances>
+        <widgetInstances widgetId="kvs.numfieldnew" name="numfieldCloseTime" layoutConstraint="null">
+          <resolution width="60" height="29"/>
+          <position x="287"/>
+          <attributeValues key="Variable" value="ShutOffNozzle1.sv_CloseTimesSet.dSetMoveTime"/>
+        </widgetInstances>
+        <layout layoutID="keplast.kvs.layout.beanlayout" name="BeanLayout">
+          <attributeValues key="FieldWidth" value="60"/>
+          <attributeValues key="FieldHeight" value="29"/>
+        </layout>
+      </widgetInstances>
+      <widgetInstances xsi:type="base:ContainerWidgetInstance" widgetId="kvs.panel" name="panelFieldsOpen" layoutConstraint="null">
+        <resolution width="347" height="29"/>
+        <position y="87"/>
+        <widgetInstances widgetId="keplast.kvs.klabeltip" name="labelOpen" layoutConstraint="null">
+          <resolution width="155" height="21"/>
+          <position x="3" y="4"/>
+          <attributeValues key="Text" value="Open"/>
+          <attributeValues key="Alignment" value="MIDDLE/LEFT"/>
+        </widgetInstances>
+        <widgetInstances widgetId="kvs.numfieldnew" name="numfieldOpenPressure" layoutConstraint="null">
+          <resolution width="60" height="29"/>
+          <position x="161"/>
+          <attributeValues key="Variable" value="ShutOffNozzle1.sv_ConstOpen.Pressure.Output.rOutputValue"/>
+          <dynamicAttributes key="Visible">
+            <value function="n1_EQ_const : ViewEditFunctions" equal="false" unequal="true">
+              <parameter key="1" value="kvariable; ShutOffNozzle1.sv_DriveType"/>
+              <parameter key="2" value="double; 1"/>
+            </value>
+          </dynamicAttributes>
+        </widgetInstances>
+        <widgetInstances widgetId="kvs.numfieldnew" name="numfieldOpenVelocity" layoutConstraint="null">
+          <resolution width="60" height="29"/>
+          <position x="224"/>
+          <attributeValues key="Variable" value="ShutOffNozzle1.sv_ConstOpen.Velocity.Output.rOutputValue"/>
+          <dynamicAttributes key="Visible">
+            <value function="n1_EQ_const : ViewEditFunctions" equal="false" unequal="true">
+              <parameter key="1" value="kvariable; ShutOffNozzle1.sv_DriveType"/>
+              <parameter key="2" value="double; 1"/>
+            </value>
+          </dynamicAttributes>
+        </widgetInstances>
+        <widgetInstances widgetId="kvs.numfieldnew" name="numfieldOpenTime" layoutConstraint="null">
+          <resolution width="60" height="29"/>
+          <position x="287"/>
+          <attributeValues key="Variable" value="ShutOffNozzle1.sv_OpenTimesSet.dSetMoveTime"/>
+        </widgetInstances>
+        <layout layoutID="keplast.kvs.layout.beanlayout" name="BeanLayout">
+          <attributeValues key="FieldWidth" value="60"/>
+          <attributeValues key="FieldHeight" value="29"/>
+        </layout>
+      </widgetInstances>
+      <layout layoutID="kvs.layout.GridLayout" name="GridLayout">
+        <attributeValues key="Rows" value="4"/>
+        <attributeValues key="Columns" value="1"/>
+      </layout>
+    </widgetInstances>
+    <widgetInstances widgetId="keplast.kvs.separator" name="separator1" layoutConstraint="SEPARATOR">
+      <resolution width="2" height="193"/>
+      <position x="356" y="33"/>
+    </widgetInstances>
+    <layout layoutID="keplast.kvs.layout.horizontalsplitlayout" name="HorizontalSplitLayout"/>
+  </widgetInstances>
+  <layout layoutID="kvs.layout.BorderLayout" name="BorderLayout"/>
+</base:Mask>

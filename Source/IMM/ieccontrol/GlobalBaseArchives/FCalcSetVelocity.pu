@@ -1,0 +1,140 @@
+FUNCTION FCalcSetVelocity : REAL #DUMMY_EDIT_BLOCK
+
+VAR_INPUT
+ rMaxVelocity : REAL (* max. velocity of movement *);
+ rStroke : REAL (* max. stroke of movement *);
+ dMaxMoveTime : TIME (* max. movetime *);
+END_VAR
+
+VAR
+ rSetVelocity : REAL;
+ rSetVelocityRel : REAL;
+ rUsedStroke : REAL := 0.9 (* % of stroke used during movement *);
+ rMaxVelocityRel : REAL := 99.0 (* % of max. velocity used during movement *);
+END_VAR
+#BEGIN_EDIT_BLOCK
+rSetVelocity := rUsedStroke * rStroke / LINT_TO_REAL(TIME_TO_LINT(dMaxMoveTime)) * 1.0e6;
+IF rMaxVelocity > 0.0 THEN
+    IF rSetVelocity > rMaxVelocityRel / 100.0 * rMaxVelocity THEN
+        rSetVelocity := rMaxVelocityRel / 100.0 * rMaxVelocity;
+        rSetVelocityRel := rMaxVelocityRel;
+    END_IF;    
+    rSetVelocityRel := rSetVelocity / rMaxVelocity * 100.0; 
+ELSE
+    rSetVelocity := 0.0;
+    rSetVelocityRel := 100.0;
+END_IF;
+FCalcSetVelocity := rSetVelocityRel;
+
+
+;#END_EDIT_BLOCK END_FUNCTION
+
+
+
+#END_OF_IEC_PART
+
+@Puma @IecEditor 6 120 @Pou 25 
+@@@BEG_Comment@@@
+
+@@@END_Comment@@@
+
+@BEG_Contents 
+
+@BEG_Func 
+@RT(17)FuncTreeContainer 
+0 
+@END_Func 
+
+@BEG_Const 
+@RT(18)ConstTreeContainer 
+0 
+@END_Const 
+
+@BEG_Export 
+
+@BEG_Kind 
+@FUNCTION @RT(16)FCalcSetVelocity @STRUCTURED_TEXT 
+@RT(4)REAL @RT(0) @RT(0) 
+@END_Kind 
+
+@BEG_Dcl 
+@RT(16)DclTreeContainer 
+7 
+@Var @RT(12)rMaxVelocity @RT(0) @T @F @DT @RT(4)REAL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(25)max. velocity of movement @RT(0) 
+@END_Attrib 
+1 1 @F @F @F @F 
+
+@Var @RT(7)rStroke @RT(0) @T @F @DT @RT(4)REAL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(23)max. stroke of movement @RT(0) 
+@END_Attrib 
+1 1 @F @F @F @F 
+
+@Var @RT(12)dMaxMoveTime @RT(0) @T @F @DT @RT(4)TIME @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(13)max. movetime @RT(0) 
+@END_Attrib 
+1 1 @F @F @F @F 
+
+@Var @RT(12)rSetVelocity @RT(0) @T @F @DT @RT(4)REAL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(15)rSetVelocityRel @RT(0) @T @F @DT @RT(4)REAL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(11)rUsedStroke @RT(0) @T @F @DT @RT(4)REAL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(3)0.9 @RT(32)% of stroke used during movement @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(15)rMaxVelocityRel @RT(0) @T @F @DT @RT(4)REAL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(4)99.0 @RT(39)% of max. velocity used during movement @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@END_Dcl 
+
+@END_Export 
+
+@BEG_Body 
+@TL(13)
+rSetVelocity := rUsedStroke * rStroke / LINT_TO_REAL(TIME_TO_LINT(dMaxMoveTime)) * 1.0e6;
+IF rMaxVelocity > 0.0 THEN
+    IF rSetVelocity > rMaxVelocityRel / 100.0 * rMaxVelocity THEN
+        rSetVelocity := rMaxVelocityRel / 100.0 * rMaxVelocity;
+        rSetVelocityRel := rMaxVelocityRel;
+    END_IF;    
+    rSetVelocityRel := rSetVelocity / rMaxVelocity * 100.0; 
+ELSE
+    rSetVelocity := 0.0;
+    rSetVelocityRel := 100.0;
+END_IF;
+FCalcSetVelocity := rSetVelocityRel;
+
+@END_Body 
+
+@END_Contents 

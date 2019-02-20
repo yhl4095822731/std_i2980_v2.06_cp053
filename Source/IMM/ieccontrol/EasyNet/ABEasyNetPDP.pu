@@ -1,0 +1,1931 @@
+IMPORT_OVER_LISTFILE
+ ASSERT
+, GET_SYNC_REFTO
+, cCompOperationMode
+, ALARM_EVENT
+, tnOperationMode
+, tsENEventData
+, tsTraceLevel
+, tevLockUnlock
+, FBLockUnlock
+, tsDeviceId
+, tsAlarm
+, KMB_MeasureBlock
+, KMB_MeasureBlock2
+, tsENBaseEventInfo
+, RTC
+, ALARM_EVENT_DATA
+, KPROT_Status
+, KCAT_Status
+, KMB_Status
+, KSYS_Status
+, KCAT_HandleData
+, ABCheck4KMB2Feature
+, FBOpModeHalfAndAutoLeft
+
+END_IMPORT
+
+ALGORITHM_BLOCK ABEasyNetPDP #DUMMY_EDIT_BLOCK
+
+SYSTEM_VAR
+ sv_OperationMode : tnOperationMode;
+ sv_EasyNetEventData : tsENEventData;
+ sv_EasyNetRTC : DATE_AND_TIME;
+ sv_TraceLevel : tsTraceLevel;
+ sv_bUseProdCounter : BOOL (* use shot counter *);
+ sv_dProdStateProductionDelay : TIME;
+ sv_bAutoCycleRunning : BOOL;
+END_VAR
+
+SYSTEM_OBJECT
+ erTIGEnterStandstillReason : ALARM;
+ evAlarmAutoHalf : ALARM_EVENT;
+ evAlarmAutoManual : ALARM_EVENT;
+ TaskVis : TASK;
+ erProdLimitReached : ALARM;
+ evAlarmFinishCycleAndStop : ALARM_EVENT;
+ evLockUnlock : tevLockUnlock;
+ erAssert : ALARM;
+END_OBJECT
+
+VAR
+ mbStandStill : BOOL;
+ mdStandStillTimeStamp : DT;
+ fbLockUnlock : FBLockUnlock;
+ mbLockAuto : BOOL;
+ mAlarmEnterStandStill : tsAlarm;
+ abProfileEasyNetEvent : KMB_MeasureBlock (* used old measureblock for backward compatibility! *);
+ abProfileEasyNetShot : KMB_MeasureBlock2;
+ mpiStandstillReasonNo : REFTO DINT;
+ mpiMachineState : REFTO DINT;
+ mpiProtocolVarDInt : REFTO DINT;
+ mpiProtocolVarUDInt : REFTO UDINT;
+ mpOperationMode : REFTO tnOperationMode;
+ mPowerOffData : tsENBaseEventInfo;
+ mPowerOnData : tsENBaseEventInfo;
+ mbHasKMB2 : BOOL;
+ fbRTC : RTC;
+ mbProductionStateActive : BOOL;
+ mLastSentProductivityState : DWORD;
+ mAutoManualAlarmData : ALARM_EVENT_DATA;
+ mbRequireStandstillReason : BOOL;
+END_VAR
+
+VAR CONSTANT
+ mcDeviceIDOpMode : tsDeviceId := (CompId:=cCompOperationMode,IndexId:=1);
+END_VAR
+
+FUNCTION fGetProtocolVarValue : ULINT
+ #DUMMY_EDIT_BLOCK
+
+VAR
+ iProtocolVarValue : ULINT;
+END_VAR
+#BEGIN_EDIT_BLOCK
+IF (mpiProtocolVarDInt <> EMPTY) THEN
+   iProtocolVarValue := DINT_TO_ULINT(mpiProtocolVarDInt^);
+ELSE
+   iProtocolVarValue := UDINT_TO_ULINT(mpiProtocolVarUDInt^);
+END_IF;
+
+fGetProtocolVarValue := iProtocolVarValue;
+
+
+;#END_EDIT_BLOCK END_FUNCTION
+
+FUNCTION fGetMachineStateText : STRING(31)
+ #DUMMY_EDIT_BLOCK
+
+VAR_INPUT
+ iProdState : DINT;
+END_VAR
+#BEGIN_EDIT_BLOCK
+IF (iProdState = 0) THEN 
+    fGetMachineStateText := "Setup"; 
+ELSIF (iProdState = 1) THEN 
+    fGetMachineStateText := "Standstill";
+ELSIF (iProdState = 4) THEN    
+    fGetMachineStateText := "Production"; 
+ELSE 
+    fGetMachineStateText := "unknown"; 
+END_IF;       
+                              
+                                 
+
+
+;#END_EDIT_BLOCK END_FUNCTION
+
+FUNCTION fGetMachineStateFromProdState : DINT
+ #DUMMY_EDIT_BLOCK
+
+VAR_INPUT
+ iProdState : DWORD;
+END_VAR
+#BEGIN_EDIT_BLOCK
+fGetMachineStateFromProdState := 0; 
+IF (iProdState = cENEvPS_Setup) THEN 
+      fGetMachineStateFromProdState := 0; 
+ELSIF (iProdState = cENEvPS_Standstill) THEN 
+      fGetMachineStateFromProdState := 1;
+ELSIF (iProdState = cENEvPS_Production) THEN    
+      fGetMachineStateFromProdState := 4; 
+END_IF;       
+                              
+                                 
+
+
+;#END_EDIT_BLOCK END_FUNCTION
+
+FUNCTION fSendEvent : BOOL
+ #DUMMY_EDIT_BLOCK
+
+VAR_IN_OUT
+ evEasyNetEventData : tsENEventData;
+END_VAR
+
+VAR
+ s : STRING(255);
+ dummy : DINT;
+END_VAR
+#BEGIN_EDIT_BLOCK
+(**************************************** WARNING ********************************************
+ *** The KEBA Kemro K2 System including software is not intended for safety control tasks! ***
+ ***                       For further information see Comment tab!                        ***
+ *********************************************************************************************)
+
+// Copy Event input data to PDP Profile Variable
+sv_EasyNetEventData := evEasyNetEventData;
+sv_EasyNetRTC := evEasyNetEventData.dTimeStamp;
+fSendEvent := TRUE;
+
+IF (abProfileEasyNetEvent.DoMeasure() = KMB_Status_NOK) THEN
+      fSendEvent := FALSE;
+      dummy := Print("Error ABEasyNetPDP: sample not ok %d at %s", evEasyNetEventData.iParam1, s);
+END_IF;
+
+IF (sv_TraceLevel.bApplication) THEN
+      s := DT_TO_STRING(evEasyNetEventData.dTimeStamp);
+      dummy := Print("Debug ABEasyNetPDP: event %d at %s", evEasyNetEventData.iParam1, s);
+END_IF;
+
+
+;#END_EDIT_BLOCK END_FUNCTION
+
+FUNCTION fSendOpModeEventWithTime : BOOL
+ #DUMMY_EDIT_BLOCK
+
+VAR_INPUT
+ State : DWORD;
+ BaseEventInfo : tsENBaseEventInfo;
+END_VAR
+
+VAR
+ OperationModeChangeData : tsENEventData;
+ machineState : DINT;
+ s : KPROT_Status;
+ ts : LINT;
+END_VAR
+#BEGIN_EDIT_BLOCK
+fSendOpModeEventWithTime := TRUE; 
+IF (State = mLastSentProductivityState) THEN
+   RETURN;
+END_IF;
+mLastSentProductivityState := State; 
+
+OperationModeChangeData.iType := DWORD_TO_DINT(cENEvType_ProductivityState);
+OperationModeChangeData.dTimeStamp := BaseEventInfo.TimeStamp;
+OperationModeChangeData.iParam1 := DWORD_TO_DINT(State);
+OperationModeChangeData.iParam2 := 0;
+OperationModeChangeData.iParam3 := 0;
+OperationModeChangeData.iParam4 := 0;
+
+IF (mpiMachineState <> EMPTY) THEN
+   machineState := fGetMachineStateFromProdState(State);
+   ts := DATE_TO_LINT(DT_TO_DATE(BaseEventInfo.TimeStamp)) / 1000 + TIME_TO_LINT(TIME_OF_DAY_TO_TIME(DT_TO_TIME_OF_DAY(BaseEventInfo.TimeStamp))) / 1000;
+   mpiMachineState^ := machineState; // workaround compiler bug - no direct function return assignment! 
+   s := KPROT_UserInfoLog("Production state changed to %5s", ts, machineState, BaseEventInfo.iShotCnt, cILogSubClassProductivityState,  fGetMachineStateText(machineState));
+END_IF;
+fSendOpModeEventWithTime := fSendEvent(OperationModeChangeData);
+
+
+;#END_EDIT_BLOCK END_FUNCTION
+
+FUNCTION fSendOpModeEvent : BOOL
+ #DUMMY_EDIT_BLOCK
+
+VAR_INPUT
+ State : DWORD;
+END_VAR
+
+VAR
+ baseEventInfo : tsENBaseEventInfo;
+END_VAR
+#BEGIN_EDIT_BLOCK
+fbRTC();                 
+baseEventInfo.TimeStamp := fbRTC.CDT;
+baseEventInfo.iShotCnt := fGetProtocolVarValue();
+fSendOpModeEvent := fSendOpModeEventWithTime(State, baseEventInfo);
+
+
+;#END_EDIT_BLOCK END_FUNCTION
+
+FUNCTION fSendStandstillChangeEvent : BOOL
+ #DUMMY_EDIT_BLOCK
+
+VAR_INPUT
+ bStart : BOOL (* start of standstill or end of standstill phase *);
+END_VAR
+
+VAR
+ standstillChangeData : tsENEventData;
+ iReason : DINT;
+END_VAR
+#BEGIN_EDIT_BLOCK
+(**************************************** WARNING ********************************************
+ *** The KEBA Kemro K2 System including software is not intended for safety control tasks! ***
+ ***                       For further information see Comment tab!                        ***
+ *********************************************************************************************)
+fSendStandstillChangeEvent := TRUE; 
+IF (mpiStandstillReasonNo <> EMPTY) THEN
+    IF (mpiStandstillReasonNo^ = 0) THEN
+        iReason := 99999;       
+    ELSE 
+        iReason := mpiStandstillReasonNo^;
+    END_IF;
+    //send event to capture EasyNet Event 
+    standstillChangeData.iType := DWORD_TO_DINT(cENEvType_StandStillReason);
+    standstillChangeData.dTimeStamp := mdStandStillTimeStamp;
+    standstillChangeData.iParam1 := iReason;
+    standstillChangeData.iParam2 := 0;        
+    standstillChangeData.iParam3 := BOOL_TO_DINT(bStart);
+    standstillChangeData.iParam4 := 0;
+
+    fSendStandstillChangeEvent := fSendEvent(standstillChangeData);
+
+END_IF;
+
+
+;#END_EDIT_BLOCK END_FUNCTION
+
+ALGORITHM aInit
+
+
+VAR_INPUT
+ dPowerOffTime : DT;
+ dPowerOnTime : DT;
+END_VAR
+
+VAR_TEMP
+ sProtocolVar : STRING(255);
+END_VAR
+
+VAR
+ s3 : KCAT_Status;
+ s2 : KMB_Status;
+ s : KSYS_Status;
+ b : BOOL;
+ pDummy : REFTO tnOperationMode;
+ dummy : DINT;
+ hdl : KCAT_HandleData;
+ iBuf : UDINT;
+ abHasKMB2Feature : ABCheck4KMB2Feature;
+ hdlData : KCAT_HandleData;
+END_VAR
+#BEGIN_EDIT_BLOCK
+(**************************************** WARNING ********************************************
+ *** The KEBA Kemro K2 System including software is not intended for safety control tasks! ***
+ ***                       For further information see Comment tab!                        ***
+ *********************************************************************************************)
+         
+IF (evLockUnlock = EMPTY) THEN 
+   dummy := Print("EasyNet.ABEasyNetPDP: binary incompatible! recompile FU with correct iecproject!");
+   b := ASSERT(FALSE, erAssert);
+END_IF;
+
+// get a reference to the configured infolog productioncounter variable
+hdlData := KCAT_GetHandle("ILOG.varName");
+IF (hdlData.Status <> KCAT_Status_OK) THEN
+   dummy := Print("Easynet Configuration problem: Production Counter for infolog not configured: ILOG.varName");
+   b := ASSERT(FALSE, erAssert);    
+END_IF;
+     
+s3 := KCAT_GetValue(hdlData.Handle, sProtocolVar);
+IF (s3 <> KCAT_Status_OK) THEN
+   dummy := Print("Easynet Configuration problem: cannot read ILOG.varName");
+   b := ASSERT(FALSE, erAssert);    
+END_IF;
+
+mpiProtocolVarDInt := GET_SYNC_REFTO(sProtocolVar, t#0s, s);   
+IF (s <> KSYS_Status_OK) THEN
+    mpiProtocolVarUDInt := GET_SYNC_REFTO(sProtocolVar, t#0s, s);   
+    IF (s <> KSYS_Status_OK) THEN
+        dummy := Print("Easynet Configuration problem: cannot get reference to variable %s of type (U)DINT", sProtocolVar);
+        b := ASSERT(FALSE, erAssert);    
+    END_IF;    
+END_IF;
+
+mPowerOnData.TimeStamp := dPowerOnTime; 
+mPowerOnData.iShotCnt := fGetProtocolVarValue();
+
+mPowerOffData.TimeStamp := dPowerOffTime; 
+mPowerOffData.iShotCnt := fGetProtocolVarValue();
+
+mpiStandstillReasonNo := GET_SYNC_REFTO('TIG.sv_TIG.machineStatus.iStandstillReasonNo', T#0s, s);
+mpiMachineState := GET_SYNC_REFTO('TIG.sv_TIG.machineStatus.iState', T#0s, s);
+
+mAlarmEnterStandStill.AlarmId := erTIGEnterStandstillReason;
+b := ASSERT(s = KSYS_Status_OK, erAssert);
+                           
+s2 := abProfileEasyNetEvent.Connect("EasyNetEvent");
+b := ASSERT(s2 = KMB_Status_OK, erAssert);   
+
+mbHasKMB2 := abHasKMB2Feature.fHasKMB2Feature(); 
+
+IF (mbHasKMB2) THEN
+   // since CR_0063055: requires firmwarepackage with IecSAlgo >= 1.16 or 1.04_1.01 (used in some bugfix packages)
+   // in standard-firmware since P0P 6.30 / KePlast 1.42  
+   // if not available set mbHasKMB2 to false
+   s2 := abProfileEasyNetShot.Connect("EasyNetShot");
+   b := ASSERT(s2 = KMB_Status_OK, erAssert);     
+   s2 := abProfileEasyNetShot.SaveValuesOnce();     
+END_IF;
+
+pDummy := @sv_OperationMode;     // FIXME: workaround for CR_0041252
+mpOperationMode := pDummy;
+b := ASSERT(mpOperationMode <> EMPTY, erAssert);   
+
+mbRequireStandstillReason := TRUE; 
+hdl := KCAT_GetHandle("Application.Application1.EasyNetStandstill.RequireStandstillReason");
+IF (hdl.Status = KCAT_Status_OK) THEN
+   s3 := KCAT_GetValue(hdl.Handle, iBuf);
+   mbRequireStandstillReason := iBuf <> 0;
+END_IF;
+
+START_PROCESS_ALGORITHM(paRun);
+
+
+;#END_EDIT_BLOCK END_ALGORITHM
+
+(*
+@h    ! WARNING !
+@h    The Kemro K2 system (including software) only meets category B according to EN 954-1,
+@h    thus it is not intended for usage in safety-relevant control applications in the field 
+@h    of personal safety (e.g. emergency stop).
+@h    To implement potentially necessary safety-relevant control tasks, always use additional 
+@h    external safety devices that are intended for the particular purpose, and meet the necessary 
+@h    functional safety.
+@h    For further information see EN 954-1 (EN ISO 13849-1) and/or the K2-x00 user manual, chapter 
+@h    "CE conformity, directives and standards".
+
+signals standstill detected (machine was in (half) automatic mode and switched to manual mode because of an alarm
+*)
+
+EVENT_ALGORITHM evaAlarmAutoManual ON TaskVis(5) WITH evAlarmAutoManual, evAlarmAutoHalf,evAlarmFinishCycleAndStop
+
+
+VAR_INPUT
+ evAlarmAutoManualData : ALARM_EVENT_DATA;
+END_VAR
+#BEGIN_EDIT_BLOCK
+(**************************************** WARNING ********************************************
+ *** The KEBA Kemro K2 System including software is not intended for safety control tasks! ***
+ ***                       For further information see Comment tab!                        ***
+ *********************************************************************************************)
+IF (mbProductionStateActive AND (evAlarmAutoManualData.CLASS > 0)) THEN
+   mAutoManualAlarmData := evAlarmAutoManualData; 
+END_IF;
+
+
+
+
+;#END_EDIT_BLOCK END_ALGORITHM
+
+(*
+@h    ! WARNING !
+@h    The Kemro K2 system (including software) only meets category B according to EN 954-1,
+@h    thus it is not intended for usage in safety-relevant control applications in the field 
+@h    of personal safety (e.g. emergency stop).
+@h    To implement potentially necessary safety-relevant control tasks, always use additional 
+@h    external safety devices that are intended for the particular purpose, and meet the necessary 
+@h    functional safety.
+@h    For further information see EN 954-1 (EN ISO 13849-1) and/or the K2-x00 user manual, chapter 
+@h    "CE conformity, directives and standards".
+
+Detects a change on the standstillreason text (because the number/group is in a big structure sv_TIG)
+If a change occures the event will be sent.
+*)
+
+POSTUPDATE_ALGORITHM pStandstillReasonChanged ON TaskVis WITH mpiStandstillReasonNo^
+
+
+VAR
+ b : BOOL;
+END_VAR
+#BEGIN_EDIT_BLOCK
+(**************************************** WARNING ********************************************
+ *** The KEBA Kemro K2 System including software is not intended for safety control tasks! ***
+ ***                       For further information see Comment tab!                        ***
+ *********************************************************************************************)
+
+IF (mpiStandstillReasonNo^ <> 0) THEN
+  IF (mbStandStill) THEN
+     b := fSendStandstillChangeEvent(TRUE);       
+  END_IF;
+  
+  IF (mbLockAuto) THEN
+      fbLockUnlock(
+          DeviceId := mcDeviceIDOpMode,
+          MoveDir := cModeAutomatic, 
+          MoveId := cModeAutomatic, 
+          Alarm := mAlarmEnterStandStill, 
+          Mode := nUnlock);       
+
+     RESET_ALARM(mAlarmEnterStandStill.AlarmId, 
+             mAlarmEnterStandStill.SubId[1], 
+             mAlarmEnterStandStill.SubId[2],
+             mAlarmEnterStandStill.SubId[3],
+             mAlarmEnterStandStill.SubId[4]
+            );      
+      mbLockAuto := FALSE; 
+  END_IF;
+                   
+END_IF;
+
+
+;#END_EDIT_BLOCK END_ALGORITHM
+
+POSTUPDATE_ALGORITHM pOpModeChanged ON TaskVis WITH mpOperationMode^
+
+
+VAR
+ fbOpModeHalfAndAutoLeft : FBOpModeHalfAndAutoLeft;
+ s : KMB_Status;
+END_VAR
+#BEGIN_EDIT_BLOCK
+(**************************************** WARNING ********************************************
+ *** The KEBA Kemro K2 System including software is not intended for safety control tasks! ***
+ ***                       For further information see Comment tab!                        ***
+ *********************************************************************************************)
+       
+fbOpModeHalfAndAutoLeft(sv_OperationMode);
+
+IF (fbOpModeHalfAndAutoLeft.Q) THEN
+    // save profile data when cycle has ended 
+    IF (mbHasKMB2) THEN
+        s := abProfileEasyNetShot.SaveValuesOnce();     
+    END_IF;
+END_IF;
+
+
+
+;#END_EDIT_BLOCK END_ALGORITHM
+
+PROCESS_ALGORITHM paRun ON TaskVis(10)
+
+
+VAR
+ b : BOOL;
+ baseEventDataStart : tsENBaseEventInfo;
+END_VAR
+
+(* IecGraph-Code *)
+
+(* init step *)
+INITIAL_STEP Init:
+AEvPowerOff (P);
+END_STEP
+
+ACTION AEvPowerOff: #BEGIN_EDIT_BLOCK
+// set operationmode events for power off and power on
+
+// set power off event
+IF (TIME_TO_LINT(TOD_TO_TIME(DT_TO_TOD(mPowerOffData.TimeStamp))) > 0) THEN
+    b := fSendOpModeEventWithTime(cENEvPS_PowerOff, mPowerOffData);
+END_IF;
+
+
+;#END_EDIT_BLOCK END_ACTION (*AEvPowerOff*)
+
+(* steps *)
+STEP StateSetup:
+AEvSetup (P);
+END_STEP
+
+ACTION AEvSetup: #BEGIN_EDIT_BLOCK
+b := fSendOpModeEvent(cENEvPS_Setup); 
+
+;#END_EDIT_BLOCK END_ACTION (*AEvSetup*)
+STEP StateProduction:
+AStoreStartTime (P);
+AEvProduction (D, sv_dProdStateProductionDelay);
+END_STEP
+
+ACTION AStoreStartTime: #BEGIN_EDIT_BLOCK
+fbRTC();
+baseEventDataStart.TimeStamp := fbRTC.CDT;
+baseEventDataStart.iShotCnt := fGetProtocolVarValue();
+
+;#END_EDIT_BLOCK END_ACTION (*AStoreStartTime*)
+ACTION AEvProduction: #BEGIN_EDIT_BLOCK
+IF (NOT mbProductionStateActive) THEN
+   IF (mbStandStill) THEN
+      mdStandStillTimeStamp := baseEventDataStart.TimeStamp;
+      b := fSendStandstillChangeEvent(FALSE);    
+   END_IF;
+   IF (mbRequireStandstillReason) THEN
+      mpiStandstillReasonNo^ := 0; 
+   ELSE
+      mpiStandstillReasonNo^ := 99999; // unknown
+   END_IF;
+   b := fSendOpModeEventWithTime(cENEvPS_Production, baseEventDataStart);
+   mbStandStill := FALSE;
+   mAutoManualAlarmData.CLASS := 0; 
+   mbProductionStateActive := TRUE;
+END_IF;     
+
+;#END_EDIT_BLOCK END_ACTION (*AEvProduction*)
+STEP StateDecide:
+ADecideStandstill (P);
+END_STEP
+
+ACTION ADecideStandstill: #BEGIN_EDIT_BLOCK
+IF (mbProductionStateActive) THEN 
+   mbProductionStateActive := FALSE;
+   
+   // standstill classification see CR_0071889 
+   IF (sv_bUseProdCounter) THEN
+      mbStandStill := NOT ((mAutoManualAlarmData.CLASS > 0) AND (mAutoManualAlarmData.NAME = erProdLimitReached));
+   ELSE 
+      mbStandStill := mAutoManualAlarmData.CLASS > 0;     
+   END_IF;
+END_IF;
+
+;#END_EDIT_BLOCK END_ACTION (*ADecideStandstill*)
+STEP StateStandstill:
+AEvStandStill (P);
+END_STEP
+
+ACTION AEvStandStill: #BEGIN_EDIT_BLOCK
+b := fSendOpModeEvent(cENEvPS_Standstill);
+fbRTC();
+mdStandStillTimeStamp := fbRTC.CDT;
+b := fSendStandstillChangeEvent(TRUE); 
+IF (NOT mbLockAuto AND (mpiStandstillReasonNo^ = 0)) THEN
+   mbLockAuto := TRUE; 
+   // set alarm her instead of using fbLockUnlock.bSetAlarmImmediately for better backward compatibility
+   SET_ALARM(mAlarmEnterStandStill.AlarmId, 
+             mAlarmEnterStandStill.SubId[1], 
+             mAlarmEnterStandStill.SubId[2],
+             mAlarmEnterStandStill.SubId[3],
+             mAlarmEnterStandStill.SubId[4],
+             mAlarmEnterStandStill.Param1,
+             mAlarmEnterStandStill.Param2
+            ); 
+   
+   fbLockUnlock(
+       DeviceId := mcDeviceIDOpMode, 
+       MoveDir := cModeAutomatic, 
+       MoveId := cModeAutomatic,
+       Alarm := mAlarmEnterStandStill, 
+       Mode := nLockResume);    
+END_IF;
+
+;#END_EDIT_BLOCK END_ACTION (*AEvStandStill*)
+
+(* transitions *)
+GO_ON_TRANSITION Trans1 (* Trans1 *) FROM Init TO StateSetup :=  #BEGIN_EDIT_BLOCK
+TRUE
+;#END_EDIT_BLOCK
+END_TRANSITION
+
+TRANSITION Trans2 (* Trans2 *) FROM StateSetup TO StateProduction :=  #BEGIN_EDIT_BLOCK
+sv_bAutoCycleRunning
+;#END_EDIT_BLOCK
+END_TRANSITION
+
+GO_ON_TRANSITION Trans6 (* Trans6 *) FROM StateProduction TO StateDecide :=  #BEGIN_EDIT_BLOCK
+sv_OperationMode <= nManual
+;#END_EDIT_BLOCK
+END_TRANSITION
+
+GO_ON_TRANSITION Trans3 (* Trans3 *) FROM StateDecide TO StateStandstill :=  #BEGIN_EDIT_BLOCK
+mbStandStill
+;#END_EDIT_BLOCK
+END_TRANSITION
+
+GO_ON_TRANSITION Trans5 (* Trans5 *) FROM StateDecide TO StateSetup :=  #BEGIN_EDIT_BLOCK
+NOT mbStandStill
+;#END_EDIT_BLOCK
+END_TRANSITION
+
+TRANSITION Trans4 (* Trans4 *) FROM StateStandstill TO StateProduction :=  #BEGIN_EDIT_BLOCK
+sv_bAutoCycleRunning
+;#END_EDIT_BLOCK
+END_TRANSITION
+
+(* end IecGraph-Code *)
+(* sfc-code *)
+(* end sfc-code *)
+
+
+END_ALGORITHM
+
+
+
+END_ALGORITHM_BLOCK
+
+
+
+#END_OF_IEC_PART
+
+@Puma @IecEditor 6 120 @Pou 25 
+@@@BEG_Comment@@@
+
+@@@END_Comment@@@
+
+@BEG_Contents 
+
+@BEG_Func 
+@RT(17)FuncTreeContainer 
+2 
+@Var @RT(6)ASSERT @RT(0) @T @T @DERIVED 0 @F @RT(8)FUNCTION @F 
+@T 
+@BEG_Attrib 
+0 @RT(0) @RT(0) 
+@END_Attrib 
+1 1 @F @F @F @F 
+
+@Var @RT(14)GET_SYNC_REFTO @RT(0) @T @T @DERIVED 0 @F @RT(22)KEBA_STANDARD_FUNCTION @F 
+@T 
+@BEG_Attrib 
+0 @RT(0) @RT(0) 
+@END_Attrib 
+1 1 @F @F @F @F 
+
+@END_Func 
+
+@BEG_Const 
+@RT(18)ConstTreeContainer 
+1 
+@Var @RT(18)cCompOperationMode @RT(0) @T @F @DT @RT(4)DINT @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+0 @RT(3)111 @RT(24)Component Operation Mode 
+@END_Attrib 
+1 1 @F @F @F @F 
+
+@END_Const 
+
+@BEG_Export 
+
+@BEG_Kind 
+@ALGORITHM_BLOCK @RT(12)ABEasyNetPDP @STRUCTURED_TEXT 
+@RT(0) @RT(0) @RT(0) 
+@END_Kind 
+
+@BEG_Dcl 
+@RT(16)DclTreeContainer 
+36 
+@Var @RT(26)erTIGEnterStandstillReason @RT(0) @T @F @DT @RT(5)ALARM @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 7 @F @F @F @F 
+
+@Var @RT(15)evAlarmAutoHalf @RT(0) @T @T @DERIVED 0 @T @T @DT @RT(11)ALARM_EVENT @RT(0) @T @T @UNKNOWN 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 7 @F @F @F @F 
+
+@Var @RT(17)evAlarmAutoManual @RT(0) @T @T @RENAMED 0 @T @T @DT @RT(11)ALARM_EVENT @RT(0) @T @T @UNKNOWN 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 7 @F @F @F @F 
+
+@Var @RT(16)sv_OperationMode @RT(0) @T @T @DERIVED 0 @T @T @DT @RT(15)tnOperationMode @RT(0) @T @T @UNKNOWN 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 8 @F @F @F @F 
+
+@Var @RT(7)TaskVis @RT(0) @T @T @RENAMED 0 @T @T @DT @RT(4)TASK @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 7 @F @F @F @F 
+
+@Var @RT(18)erProdLimitReached @RT(0) @T @F @DT @RT(5)ALARM @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 7 @F @F @F @F 
+
+@Var @RT(19)sv_EasyNetEventData @RT(0) @T @T @DERIVED 0 @T @T @DT @RT(13)tsENEventData @RT(0) @T @T @UNKNOWN 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 8 @F @F @F @F 
+
+@Var @RT(13)sv_EasyNetRTC @RT(0) @T @F @DT @RT(13)DATE_AND_TIME @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 8 @F @F @F @F 
+
+@Var @RT(12)mbStandStill @RT(0) @T @F @DT @RT(4)BOOL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(25)evAlarmFinishCycleAndStop @RT(0) @T @T @DERIVED 0 @T @T @DT @RT(11)ALARM_EVENT @RT(0) @T @T @UNKNOWN 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 7 @F @F @F @F 
+
+@Var @RT(13)sv_TraceLevel @RT(0) @T @T @DERIVED 0 @T @T @DT @RT(12)tsTraceLevel @RT(0) @T @T @UNKNOWN 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 8 @F @F @F @F 
+
+@Var @RT(21)mdStandStillTimeStamp @RT(0) @T @F @DT @RT(2)DT @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(18)sv_bUseProdCounter @RT(0) @T @F @DT @RT(4)BOOL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(16)use shot counter @RT(0) 
+@END_Attrib 
+1 8 @F @F @F @F 
+
+@Var @RT(28)sv_dProdStateProductionDelay @RT(0) @T @F @DT @RT(4)TIME @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 8 @F @F @F @F 
+
+@Var @RT(12)evLockUnlock @RT(0) @T @T @DERIVED 0 @T @T @DT @RT(13)tevLockUnlock @RT(0) @T @T @UNKNOWN 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 7 @F @F @F @F 
+
+@Var @RT(12)fbLockUnlock @RT(0) @T @T @DERIVED 0 @T @T @DT @RT(12)FBLockUnlock @RT(0) @T @T @UNKNOWN 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(10)mbLockAuto @RT(0) @T @F @DT @RT(4)BOOL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(16)mcDeviceIDOpMode @RT(0) @T @T @DERIVED 0 @T @T @DT @RT(10)tsDeviceId @RT(0) @T @T @UNKNOWN 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(39)(CompId:=cCompOperationMode,IndexId:=1) @RT(0) @RT(0) 
+@END_Attrib 
+1 15 @F @F @F @F 
+
+@Var @RT(21)mAlarmEnterStandStill @RT(0) @T @T @DERIVED 0 @T @T @DT @RT(7)tsAlarm @RT(0) @T @T @UNKNOWN 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(21)abProfileEasyNetEvent @RT(0) @T @T @DERIVED 0 @T @T @DT @RT(16)KMB_MeasureBlock @RT(0) @T @T @UNKNOWN 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(49)used old measureblock for backward compatibility! @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(20)abProfileEasyNetShot @RT(0) @T @T @DERIVED 0 @T @T @DT @RT(17)KMB_MeasureBlock2 @RT(0) @T @T @UNKNOWN 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(21)mpiStandstillReasonNo @RT(0) @T @T @REFTO 0 @T @DT @RT(4)DINT @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(15)mpiMachineState @RT(0) @T @T @REFTO 0 @T @DT @RT(4)DINT @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(18)mpiProtocolVarDInt @RT(0) @T @T @REFTO 0 @T @DT @RT(4)DINT @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(19)mpiProtocolVarUDInt @RT(0) @T @T @REFTO 0 @T @DT @RT(5)UDINT @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(20)sv_bAutoCycleRunning @RT(0) @T @F @DT @RT(4)BOOL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 8 @F @F @F @F 
+
+@Var @RT(15)mpOperationMode @RT(0) @T @T @REFTO 0 @F @DERIVED 0 @T @T @DT @RT(15)tnOperationMode @RT(0) @T @T @UNKNOWN 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(8)erAssert @RT(0) @T @F @DT @RT(5)ALARM @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 7 @F @F @F @F 
+
+@Var @RT(13)mPowerOffData @RT(0) @T @T @DERIVED 0 @T @T @DT @RT(17)tsENBaseEventInfo @RT(0) @T @T @UNKNOWN 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(12)mPowerOnData @RT(0) @T @T @DERIVED 0 @T @T @DT @RT(17)tsENBaseEventInfo @RT(0) @T @T @UNKNOWN 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(9)mbHasKMB2 @RT(0) @T @F @DT @RT(4)BOOL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(5)fbRTC @RT(0) @T @T @DERIVED 0 @T @T @DT @RT(3)RTC @RT(0) @T @T @UNKNOWN 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(23)mbProductionStateActive @RT(0) @T @F @DT @RT(4)BOOL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(26)mLastSentProductivityState @RT(0) @T @F @DT @RT(5)DWORD @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(20)mAutoManualAlarmData @RT(0) @T @T @DERIVED 0 @T @T @DT @RT(16)ALARM_EVENT_DATA @RT(0) @T @T @UNKNOWN 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(25)mbRequireStandstillReason @RT(0) @T @F @DT @RT(4)BOOL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@END_Dcl 
+
+@END_Export 
+
+@BEG_Body 
+
+12 
+
+@BEG_Export 
+
+@BEG_Algo 
+@FUNCTION @RT(20)fGetProtocolVarValue @STRUCTURED_TEXT 
+@RT(5)ULINT @RT(0) @RT(0) @F @F 
+@END_Algo 
+
+@BEG_Dcl 
+@RT(16)DclTreeContainer 
+1 
+@Var @RT(17)iProtocolVarValue @RT(0) @T @F @DT @RT(5)ULINT @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@END_Dcl 
+
+@END_Export 
+
+@BEG_Export 
+
+@BEG_Algo 
+@FUNCTION @RT(20)fGetMachineStateText @STRUCTURED_TEXT 
+@RT(10)STRING(31) @RT(0) @RT(0) @F @F 
+@END_Algo 
+
+@BEG_Dcl 
+@RT(16)DclTreeContainer 
+1 
+@Var @RT(10)iProdState @RT(0) @T @F @DT @RT(4)DINT @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 1 @F @F @F @F 
+
+@END_Dcl 
+
+@END_Export 
+
+@BEG_Export 
+
+@BEG_Algo 
+@FUNCTION @RT(29)fGetMachineStateFromProdState @STRUCTURED_TEXT 
+@RT(4)DINT @RT(0) @RT(0) @F @F 
+@END_Algo 
+
+@BEG_Dcl 
+@RT(16)DclTreeContainer 
+1 
+@Var @RT(10)iProdState @RT(0) @T @F @DT @RT(5)DWORD @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 1 @F @F @F @F 
+
+@END_Dcl 
+
+@END_Export 
+
+@BEG_Export 
+
+@BEG_Algo 
+@FUNCTION @RT(10)fSendEvent @STRUCTURED_TEXT 
+@RT(4)BOOL @RT(0) @RT(0) @F @F 
+@END_Algo 
+
+@BEG_Dcl 
+@RT(16)DclTreeContainer 
+3 
+@Var @RT(18)evEasyNetEventData @RT(0) @T @T @DERIVED 0 @T @T @DT @RT(13)tsENEventData @RT(0) @T @T @UNKNOWN 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 2 @F @F @F @F 
+
+@Var @RT(1)s @RT(0) @T @F @DT @RT(11)STRING(255) @RT(0) @T @T @STRING 0 @F @RT(3)255 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(5)dummy @RT(0) @T @F @DT @RT(4)DINT @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@END_Dcl 
+
+@END_Export 
+
+@BEG_Export 
+
+@BEG_Algo 
+@FUNCTION @RT(24)fSendOpModeEventWithTime @STRUCTURED_TEXT 
+@RT(4)BOOL @RT(0) @RT(0) @F @F 
+@END_Algo 
+
+@BEG_Dcl 
+@RT(16)DclTreeContainer 
+6 
+@Var @RT(5)State @RT(0) @T @F @DT @RT(5)DWORD @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 1 @F @F @F @F 
+
+@Var @RT(13)BaseEventInfo @RT(0) @T @T @DERIVED 0 @T @T @DT @RT(17)tsENBaseEventInfo @RT(0) @T @T @UNKNOWN 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 1 @F @F @F @F 
+
+@Var @RT(23)OperationModeChangeData @RT(0) @T @T @DERIVED 0 @T @T @DT @RT(13)tsENEventData @RT(0) @T @T @UNKNOWN 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(12)machineState @RT(0) @T @F @DT @RT(4)DINT @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(1)s @RT(0) @T @T @DERIVED 0 @T @T @DT @RT(12)KPROT_Status @RT(0) @T @T @UNKNOWN 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(2)ts @RT(0) @T @F @DT @RT(4)LINT @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@END_Dcl 
+
+@END_Export 
+
+@BEG_Export 
+
+@BEG_Algo 
+@FUNCTION @RT(16)fSendOpModeEvent @STRUCTURED_TEXT 
+@RT(4)BOOL @RT(0) @RT(0) @F @F 
+@END_Algo 
+
+@BEG_Dcl 
+@RT(16)DclTreeContainer 
+2 
+@Var @RT(5)State @RT(0) @T @F @DT @RT(5)DWORD @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 1 @F @F @F @F 
+
+@Var @RT(13)baseEventInfo @RT(0) @T @T @DERIVED 0 @T @T @DT @RT(17)tsENBaseEventInfo @RT(0) @T @T @UNKNOWN 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@END_Dcl 
+
+@END_Export 
+
+@BEG_Export 
+
+@BEG_Algo 
+@FUNCTION @RT(26)fSendStandstillChangeEvent @STRUCTURED_TEXT 
+@RT(4)BOOL @RT(0) @RT(0) @F @F 
+@END_Algo 
+
+@BEG_Dcl 
+@RT(16)DclTreeContainer 
+3 
+@Var @RT(6)bStart @RT(0) @T @F @DT @RT(4)BOOL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(46)start of standstill or end of standstill phase @RT(0) 
+@END_Attrib 
+1 1 @F @F @F @F 
+
+@Var @RT(20)standstillChangeData @RT(0) @T @T @DERIVED 0 @T @T @DT @RT(13)tsENEventData @RT(0) @T @T @UNKNOWN 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(7)iReason @RT(0) @T @F @DT @RT(4)DINT @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@END_Dcl 
+
+@END_Export 
+
+@BEG_Export 
+
+@BEG_Algo 
+@ALGORITHM @RT(5)aInit @STRUCTURED_TEXT 
+@RT(0) @RT(0) @RT(0) @F @F 
+@END_Algo 
+
+@BEG_Dcl 
+@RT(16)DclTreeContainer 
+13 
+@Var @RT(2)s3 @RT(0) @T @T @DERIVED 0 @T @T @DT @RT(11)KCAT_Status @RT(0) @T @T @UNKNOWN 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(2)s2 @RT(0) @T @T @DERIVED 0 @T @T @DT @RT(10)KMB_Status @RT(0) @T @T @UNKNOWN 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(1)s @RT(0) @T @T @DERIVED 0 @T @T @DT @RT(11)KSYS_Status @RT(0) @T @T @UNKNOWN 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(1)b @RT(0) @T @F @DT @RT(4)BOOL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(6)pDummy @RT(0) @T @T @REFTO 0 @F @DERIVED 0 @T @T @DT @RT(15)tnOperationMode @RT(0) @T @T @UNKNOWN 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(13)dPowerOffTime @RT(0) @T @F @DT @RT(2)DT @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 1 @F @F @F @F 
+
+@Var @RT(12)dPowerOnTime @RT(0) @T @F @DT @RT(2)DT @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 1 @F @F @F @F 
+
+@Var @RT(5)dummy @RT(0) @T @F @DT @RT(4)DINT @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(3)hdl @RT(0) @T @T @DERIVED 0 @T @T @DT @RT(15)KCAT_HandleData @RT(0) @T @T @UNKNOWN 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(4)iBuf @RT(0) @T @F @DT @RT(5)UDINT @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(16)abHasKMB2Feature @RT(0) @T @T @DERIVED 0 @T @T @DT @RT(19)ABCheck4KMB2Feature @RT(0) @T @T @UNKNOWN 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(12)sProtocolVar @RT(0) @T @F @DT @RT(11)STRING(255) @RT(0) @T @T @STRING 0 @F @RT(3)255 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 4 @F @F @F @F 
+
+@Var @RT(7)hdlData @RT(0) @T @T @DERIVED 0 @T @T @DT @RT(15)KCAT_HandleData @RT(0) @T @T @UNKNOWN 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@END_Dcl 
+
+@END_Export 
+
+@BEG_Export 
+
+@BEG_Algo 
+@EVENT_ALGORITHM @RT(18)evaAlarmAutoManual @STRUCTURED_TEXT 
+@RT(0) @RT(60)evAlarmAutoManual, evAlarmAutoHalf,evAlarmFinishCycleAndStop @RT(10)TaskVis(5) @F @F 
+@END_Algo 
+
+@BEG_Dcl 
+@RT(16)DclTreeContainer 
+1 
+@Var @RT(21)evAlarmAutoManualData @RT(0) @T @T @DERIVED 0 @T @T @DT @RT(16)ALARM_EVENT_DATA @RT(0) @T @T @UNKNOWN 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 1 @F @F @F @F 
+
+@END_Dcl 
+
+@END_Export 
+
+@BEG_Export 
+
+@BEG_Algo 
+@POSTUPDATE_ALGORITHM @RT(24)pStandstillReasonChanged @STRUCTURED_TEXT 
+@RT(0) @RT(22)mpiStandstillReasonNo^ @RT(7)TaskVis @F @F 
+@END_Algo 
+
+@BEG_Dcl 
+@RT(16)DclTreeContainer 
+1 
+@Var @RT(1)b @RT(0) @T @F @DT @RT(4)BOOL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@END_Dcl 
+
+@END_Export 
+
+@BEG_Export 
+
+@BEG_Algo 
+@POSTUPDATE_ALGORITHM @RT(14)pOpModeChanged @STRUCTURED_TEXT 
+@RT(0) @RT(16)mpOperationMode^ @RT(7)TaskVis @F @F 
+@END_Algo 
+
+@BEG_Dcl 
+@RT(16)DclTreeContainer 
+2 
+@Var @RT(23)fbOpModeHalfAndAutoLeft @RT(0) @T @T @DERIVED 0 @T @T @DT @RT(23)FBOpModeHalfAndAutoLeft @RT(0) @T @T @UNKNOWN 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(1)s @RT(0) @T @T @DERIVED 0 @T @T @DT @RT(10)KMB_Status @RT(0) @T @T @UNKNOWN 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@END_Dcl 
+
+@END_Export 
+
+@BEG_Export 
+
+@BEG_Algo 
+@PROCESS_ALGORITHM @RT(5)paRun @SEQUENTIAL_FLOW_CHART 
+@RT(0) @RT(0) @RT(11)TaskVis(10) @F @F 
+@END_Algo 
+
+@BEG_Dcl 
+@RT(16)DclTreeContainer 
+2 
+@Var @RT(1)b @RT(0) @T @F @DT @RT(4)BOOL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(18)baseEventDataStart @RT(0) @T @T @DERIVED 0 @T @T @DT @RT(17)tsENBaseEventInfo @RT(0) @T @T @UNKNOWN 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@END_Dcl 
+
+@END_Export 
+
+@BEG_Body 
+@TL(8)
+IF (mpiProtocolVarDInt <> EMPTY) THEN
+   iProtocolVarValue := DINT_TO_ULINT(mpiProtocolVarDInt^);
+ELSE
+   iProtocolVarValue := UDINT_TO_ULINT(mpiProtocolVarUDInt^);
+END_IF;
+
+fGetProtocolVarValue := iProtocolVarValue;
+
+@END_Body 
+
+@@@BEG_Comment@@@ 
+@TL(0)
+
+@@@END_Comment@@@ 
+
+@BEG_Body 
+@TL(12)
+IF (iProdState = 0) THEN 
+    fGetMachineStateText := "Setup"; 
+ELSIF (iProdState = 1) THEN 
+    fGetMachineStateText := "Standstill";
+ELSIF (iProdState = 4) THEN    
+    fGetMachineStateText := "Production"; 
+ELSE 
+    fGetMachineStateText := "unknown"; 
+END_IF;       
+                              
+                                 
+
+@END_Body 
+
+@@@BEG_Comment@@@ 
+@TL(0)
+
+@@@END_Comment@@@ 
+
+@BEG_Body 
+@TL(11)
+fGetMachineStateFromProdState := 0; 
+IF (iProdState = cENEvPS_Setup) THEN 
+      fGetMachineStateFromProdState := 0; 
+ELSIF (iProdState = cENEvPS_Standstill) THEN 
+      fGetMachineStateFromProdState := 1;
+ELSIF (iProdState = cENEvPS_Production) THEN    
+      fGetMachineStateFromProdState := 4; 
+END_IF;       
+                              
+                                 
+
+@END_Body 
+
+@@@BEG_Comment@@@ 
+@TL(0)
+
+@@@END_Comment@@@ 
+
+@BEG_Body 
+@TL(20)
+(**************************************** WARNING ********************************************
+ *** The KEBA Kemro K2 System including software is not intended for safety control tasks! ***
+ ***                       For further information see Comment tab!                        ***
+ *********************************************************************************************)
+
+// Copy Event input data to PDP Profile Variable
+sv_EasyNetEventData := evEasyNetEventData;
+sv_EasyNetRTC := evEasyNetEventData.dTimeStamp;
+fSendEvent := TRUE;
+
+IF (abProfileEasyNetEvent.DoMeasure() = KMB_Status_NOK) THEN
+      fSendEvent := FALSE;
+      dummy := Print("Error ABEasyNetPDP: sample not ok %d at %s", evEasyNetEventData.iParam1, s);
+END_IF;
+
+IF (sv_TraceLevel.bApplication) THEN
+      s := DT_TO_STRING(evEasyNetEventData.dTimeStamp);
+      dummy := Print("Debug ABEasyNetPDP: event %d at %s", evEasyNetEventData.iParam1, s);
+END_IF;
+
+@END_Body 
+
+@@@BEG_Comment@@@ 
+@TL(0)
+
+@@@END_Comment@@@ 
+
+@BEG_Body 
+@TL(21)
+fSendOpModeEventWithTime := TRUE; 
+IF (State = mLastSentProductivityState) THEN
+   RETURN;
+END_IF;
+mLastSentProductivityState := State; 
+
+OperationModeChangeData.iType := DWORD_TO_DINT(cENEvType_ProductivityState);
+OperationModeChangeData.dTimeStamp := BaseEventInfo.TimeStamp;
+OperationModeChangeData.iParam1 := DWORD_TO_DINT(State);
+OperationModeChangeData.iParam2 := 0;
+OperationModeChangeData.iParam3 := 0;
+OperationModeChangeData.iParam4 := 0;
+
+IF (mpiMachineState <> EMPTY) THEN
+   machineState := fGetMachineStateFromProdState(State);
+   ts := DATE_TO_LINT(DT_TO_DATE(BaseEventInfo.TimeStamp)) / 1000 + TIME_TO_LINT(TIME_OF_DAY_TO_TIME(DT_TO_TIME_OF_DAY(BaseEventInfo.TimeStamp))) / 1000;
+   mpiMachineState^ := machineState; // workaround compiler bug - no direct function return assignment! 
+   s := KPROT_UserInfoLog("Production state changed to %5s", ts, machineState, BaseEventInfo.iShotCnt, cILogSubClassProductivityState,  fGetMachineStateText(machineState));
+END_IF;
+fSendOpModeEventWithTime := fSendEvent(OperationModeChangeData);
+
+@END_Body 
+
+@@@BEG_Comment@@@ 
+@TL(0)
+
+@@@END_Comment@@@ 
+
+@BEG_Body 
+@TL(5)
+fbRTC();                 
+baseEventInfo.TimeStamp := fbRTC.CDT;
+baseEventInfo.iShotCnt := fGetProtocolVarValue();
+fSendOpModeEvent := fSendOpModeEventWithTime(State, baseEventInfo);
+
+@END_Body 
+
+@@@BEG_Comment@@@ 
+@TL(0)
+
+@@@END_Comment@@@ 
+
+@BEG_Body 
+@TL(23)
+(**************************************** WARNING ********************************************
+ *** The KEBA Kemro K2 System including software is not intended for safety control tasks! ***
+ ***                       For further information see Comment tab!                        ***
+ *********************************************************************************************)
+fSendStandstillChangeEvent := TRUE; 
+IF (mpiStandstillReasonNo <> EMPTY) THEN
+    IF (mpiStandstillReasonNo^ = 0) THEN
+        iReason := 99999;       
+    ELSE 
+        iReason := mpiStandstillReasonNo^;
+    END_IF;
+    //send event to capture EasyNet Event 
+    standstillChangeData.iType := DWORD_TO_DINT(cENEvType_StandStillReason);
+    standstillChangeData.dTimeStamp := mdStandStillTimeStamp;
+    standstillChangeData.iParam1 := iReason;
+    standstillChangeData.iParam2 := 0;        
+    standstillChangeData.iParam3 := BOOL_TO_DINT(bStart);
+    standstillChangeData.iParam4 := 0;
+
+    fSendStandstillChangeEvent := fSendEvent(standstillChangeData);
+
+END_IF;
+
+@END_Body 
+
+@@@BEG_Comment@@@ 
+@TL(0)
+
+@@@END_Comment@@@ 
+
+@BEG_Body 
+@TL(71)
+(**************************************** WARNING ********************************************
+ *** The KEBA Kemro K2 System including software is not intended for safety control tasks! ***
+ ***                       For further information see Comment tab!                        ***
+ *********************************************************************************************)
+         
+IF (evLockUnlock = EMPTY) THEN 
+   dummy := Print("EasyNet.ABEasyNetPDP: binary incompatible! recompile FU with correct iecproject!");
+   b := ASSERT(FALSE, erAssert);
+END_IF;
+
+// get a reference to the configured infolog productioncounter variable
+hdlData := KCAT_GetHandle("ILOG.varName");
+IF (hdlData.Status <> KCAT_Status_OK) THEN
+   dummy := Print("Easynet Configuration problem: Production Counter for infolog not configured: ILOG.varName");
+   b := ASSERT(FALSE, erAssert);    
+END_IF;
+     
+s3 := KCAT_GetValue(hdlData.Handle, sProtocolVar);
+IF (s3 <> KCAT_Status_OK) THEN
+   dummy := Print("Easynet Configuration problem: cannot read ILOG.varName");
+   b := ASSERT(FALSE, erAssert);    
+END_IF;
+
+mpiProtocolVarDInt := GET_SYNC_REFTO(sProtocolVar, t#0s, s);   
+IF (s <> KSYS_Status_OK) THEN
+    mpiProtocolVarUDInt := GET_SYNC_REFTO(sProtocolVar, t#0s, s);   
+    IF (s <> KSYS_Status_OK) THEN
+        dummy := Print("Easynet Configuration problem: cannot get reference to variable %s of type (U)DINT", sProtocolVar);
+        b := ASSERT(FALSE, erAssert);    
+    END_IF;    
+END_IF;
+
+mPowerOnData.TimeStamp := dPowerOnTime; 
+mPowerOnData.iShotCnt := fGetProtocolVarValue();
+
+mPowerOffData.TimeStamp := dPowerOffTime; 
+mPowerOffData.iShotCnt := fGetProtocolVarValue();
+
+mpiStandstillReasonNo := GET_SYNC_REFTO('TIG.sv_TIG.machineStatus.iStandstillReasonNo', T#0s, s);
+mpiMachineState := GET_SYNC_REFTO('TIG.sv_TIG.machineStatus.iState', T#0s, s);
+
+mAlarmEnterStandStill.AlarmId := erTIGEnterStandstillReason;
+b := ASSERT(s = KSYS_Status_OK, erAssert);
+                           
+s2 := abProfileEasyNetEvent.Connect("EasyNetEvent");
+b := ASSERT(s2 = KMB_Status_OK, erAssert);   
+
+mbHasKMB2 := abHasKMB2Feature.fHasKMB2Feature(); 
+
+IF (mbHasKMB2) THEN
+   // since CR_0063055: requires firmwarepackage with IecSAlgo >= 1.16 or 1.04_1.01 (used in some bugfix packages)
+   // in standard-firmware since P0P 6.30 / KePlast 1.42  
+   // if not available set mbHasKMB2 to false
+   s2 := abProfileEasyNetShot.Connect("EasyNetShot");
+   b := ASSERT(s2 = KMB_Status_OK, erAssert);     
+   s2 := abProfileEasyNetShot.SaveValuesOnce();     
+END_IF;
+
+pDummy := @sv_OperationMode;     // FIXME: workaround for CR_0041252
+mpOperationMode := pDummy;
+b := ASSERT(mpOperationMode <> EMPTY, erAssert);   
+
+mbRequireStandstillReason := TRUE; 
+hdl := KCAT_GetHandle("Application.Application1.EasyNetStandstill.RequireStandstillReason");
+IF (hdl.Status = KCAT_Status_OK) THEN
+   s3 := KCAT_GetValue(hdl.Handle, iBuf);
+   mbRequireStandstillReason := iBuf <> 0;
+END_IF;
+
+START_PROCESS_ALGORITHM(paRun);
+
+@END_Body 
+
+@@@BEG_Comment@@@ 
+@TL(0)
+
+@@@END_Comment@@@ 
+
+@BEG_Body 
+@TL(10)
+(**************************************** WARNING ********************************************
+ *** The KEBA Kemro K2 System including software is not intended for safety control tasks! ***
+ ***                       For further information see Comment tab!                        ***
+ *********************************************************************************************)
+IF (mbProductionStateActive AND (evAlarmAutoManualData.CLASS > 0)) THEN
+   mAutoManualAlarmData := evAlarmAutoManualData; 
+END_IF;
+
+
+
+@END_Body 
+
+@@@BEG_Comment@@@ 
+@TL(11)
+@h    ! WARNING !
+@h    The Kemro K2 system (including software) only meets category B according to EN 954-1,
+@h    thus it is not intended for usage in safety-relevant control applications in the field 
+@h    of personal safety (e.g. emergency stop).
+@h    To implement potentially necessary safety-relevant control tasks, always use additional 
+@h    external safety devices that are intended for the particular purpose, and meet the necessary 
+@h    functional safety.
+@h    For further information see EN 954-1 (EN ISO 13849-1) and/or the K2-x00 user manual, chapter 
+@h    "CE conformity, directives and standards".
+
+signals standstill detected (machine was in (half) automatic mode and switched to manual mode because of an alarm
+@@@END_Comment@@@ 
+
+@BEG_Body 
+@TL(29)
+(**************************************** WARNING ********************************************
+ *** The KEBA Kemro K2 System including software is not intended for safety control tasks! ***
+ ***                       For further information see Comment tab!                        ***
+ *********************************************************************************************)
+
+IF (mpiStandstillReasonNo^ <> 0) THEN
+  IF (mbStandStill) THEN
+     b := fSendStandstillChangeEvent(TRUE);       
+  END_IF;
+  
+  IF (mbLockAuto) THEN
+      fbLockUnlock(
+          DeviceId := mcDeviceIDOpMode,
+          MoveDir := cModeAutomatic, 
+          MoveId := cModeAutomatic, 
+          Alarm := mAlarmEnterStandStill, 
+          Mode := nUnlock);       
+
+     RESET_ALARM(mAlarmEnterStandStill.AlarmId, 
+             mAlarmEnterStandStill.SubId[1], 
+             mAlarmEnterStandStill.SubId[2],
+             mAlarmEnterStandStill.SubId[3],
+             mAlarmEnterStandStill.SubId[4]
+            );      
+      mbLockAuto := FALSE; 
+  END_IF;
+                   
+END_IF;
+
+@END_Body 
+
+@@@BEG_Comment@@@ 
+@TL(12)
+@h    ! WARNING !
+@h    The Kemro K2 system (including software) only meets category B according to EN 954-1,
+@h    thus it is not intended for usage in safety-relevant control applications in the field 
+@h    of personal safety (e.g. emergency stop).
+@h    To implement potentially necessary safety-relevant control tasks, always use additional 
+@h    external safety devices that are intended for the particular purpose, and meet the necessary 
+@h    functional safety.
+@h    For further information see EN 954-1 (EN ISO 13849-1) and/or the K2-x00 user manual, chapter 
+@h    "CE conformity, directives and standards".
+
+Detects a change on the standstillreason text (because the number/group is in a big structure sv_TIG)
+If a change occures the event will be sent.
+@@@END_Comment@@@ 
+
+@BEG_Body 
+@TL(15)
+(**************************************** WARNING ********************************************
+ *** The KEBA Kemro K2 System including software is not intended for safety control tasks! ***
+ ***                       For further information see Comment tab!                        ***
+ *********************************************************************************************)
+       
+fbOpModeHalfAndAutoLeft(sv_OperationMode);
+
+IF (fbOpModeHalfAndAutoLeft.Q) THEN
+    // save profile data when cycle has ended 
+    IF (mbHasKMB2) THEN
+        s := abProfileEasyNetShot.SaveValuesOnce();     
+    END_IF;
+END_IF;
+
+
+@END_Body 
+
+@@@BEG_Comment@@@ 
+@TL(0)
+
+@@@END_Comment@@@ 
+
+@BEG_SfcBody 
+12 6 7 
+
+@BEG_SfcData 2 
+@StepSeq @RT(4)sseq @F 5 
+@Step @RT(4)Init @F @T @F @F @RT(0) @F 
+@AcbCont @RT(7)unnamed @F 1 
+@Acb @RT(11)AEvPowerOff @F @T @RT(1)P @RT(0) @F @F @T @TL(8)
+// set operationmode events for power off and power on
+
+// set power off event
+IF (TIME_TO_LINT(TOD_TO_TIME(DT_TO_TOD(mPowerOffData.TimeStamp))) > 0) THEN
+    b := fSendOpModeEventWithTime(cENEvPS_PowerOff, mPowerOffData);
+END_IF;
+
+
+@F 
+
+@Trans @RT(6)Trans1 @F @T @F @F @T @F @TL(2)
+TRUE
+
+@RT(6)Trans1 @F 
+@Step @RT(10)StateSetup @F @F @T @F @RT(0) @F 
+@AcbCont @RT(7)unnamed @F 1 
+@Acb @RT(8)AEvSetup @F @T @RT(1)P @RT(0) @F @F @T @TL(2)
+b := fSendOpModeEvent(cENEvPS_Setup); 
+
+@F 
+
+@Trans @RT(6)Trans2 @F @T @F @F @T @T @TL(2)
+sv_bAutoCycleRunning
+
+@RT(6)Trans2 @F 
+@Loop @RT(4)loop @F 2 
+@StepSeq @RT(3)seq @F 5 
+@Step @RT(15)StateProduction @F @F @F @F @RT(0) @F 
+@AcbCont @RT(7)unnamed @F 2 
+@Acb @RT(15)AStoreStartTime @F @T @RT(1)P @RT(0) @F @F @T @TL(4)
+fbRTC();
+baseEventDataStart.TimeStamp := fbRTC.CDT;
+baseEventDataStart.iShotCnt := fGetProtocolVarValue();
+
+@F 
+@Acb @RT(13)AEvProduction @F @T @RT(1)D @RT(28)sv_dProdStateProductionDelay @F @F @T @TL(16)
+IF (NOT mbProductionStateActive) THEN
+   IF (mbStandStill) THEN
+      mdStandStillTimeStamp := baseEventDataStart.TimeStamp;
+      b := fSendStandstillChangeEvent(FALSE);    
+   END_IF;
+   IF (mbRequireStandstillReason) THEN
+      mpiStandstillReasonNo^ := 0; 
+   ELSE
+      mpiStandstillReasonNo^ := 99999; // unknown
+   END_IF;
+   b := fSendOpModeEventWithTime(cENEvPS_Production, baseEventDataStart);
+   mbStandStill := FALSE;
+   mAutoManualAlarmData.CLASS := 0; 
+   mbProductionStateActive := TRUE;
+END_IF;     
+
+@F 
+
+@Trans @RT(6)Trans6 @F @T @F @F @T @F @TL(2)
+sv_OperationMode <= nManual
+
+@RT(6)Trans6 @F 
+@Step @RT(11)StateDecide @F @F @F @F @RT(0) @F 
+@AcbCont @RT(7)unnamed @F 1 
+@Acb @RT(17)ADecideStandstill @F @T @RT(1)P @RT(0) @F @F @T @TL(11)
+IF (mbProductionStateActive) THEN 
+   mbProductionStateActive := FALSE;
+   
+   // standstill classification see CR_0071889 
+   IF (sv_bUseProdCounter) THEN
+      mbStandStill := NOT ((mAutoManualAlarmData.CLASS > 0) AND (mAutoManualAlarmData.NAME = erProdLimitReached));
+   ELSE 
+      mbStandStill := mAutoManualAlarmData.CLASS > 0;     
+   END_IF;
+END_IF;
+
+@F 
+
+@AltBranch @RT(3)alt @F 2 
+@TransSeq @RT(4)tseq @F 1 
+@Trans @RT(6)Trans3 @F @T @F @F @T @F @TL(2)
+mbStandStill
+
+@RT(6)Trans3 @F 
+
+@TransSeq @RT(4)tseq @F 2 
+@Trans @RT(6)Trans5 @F @T @F @F @T @F @TL(2)
+NOT mbStandStill
+
+@RT(6)Trans5 @F 
+@Goto @RT(10)StateSetup @F @F 
+
+
+@Step @RT(15)StateStandstill @F @F @F @F @RT(0) @F 
+@AcbCont @RT(7)unnamed @F 1 
+@Acb @RT(13)AEvStandStill @F @T @RT(1)P @RT(0) @F @F @T @TL(24)
+b := fSendOpModeEvent(cENEvPS_Standstill);
+fbRTC();
+mdStandStillTimeStamp := fbRTC.CDT;
+b := fSendStandstillChangeEvent(TRUE); 
+IF (NOT mbLockAuto AND (mpiStandstillReasonNo^ = 0)) THEN
+   mbLockAuto := TRUE; 
+   // set alarm her instead of using fbLockUnlock.bSetAlarmImmediately for better backward compatibility
+   SET_ALARM(mAlarmEnterStandStill.AlarmId, 
+             mAlarmEnterStandStill.SubId[1], 
+             mAlarmEnterStandStill.SubId[2],
+             mAlarmEnterStandStill.SubId[3],
+             mAlarmEnterStandStill.SubId[4],
+             mAlarmEnterStandStill.Param1,
+             mAlarmEnterStandStill.Param2
+            ); 
+   
+   fbLockUnlock(
+       DeviceId := mcDeviceIDOpMode, 
+       MoveDir := cModeAutomatic, 
+       MoveId := cModeAutomatic,
+       Alarm := mAlarmEnterStandStill, 
+       Mode := nLockResume);    
+END_IF;
+
+@F 
+
+
+@Trans @RT(6)Trans4 @F @T @T @T @T @T @TL(2)
+sv_bAutoCycleRunning
+
+@RT(6)Trans4 @F 
+
+@END_SfcData 
+@SaActions 0 
+@SaTrans 0 
+@SaExits 0 
+@END_SfcBody 
+
+@@@BEG_Comment@@@ 
+@TL(0)
+
+@@@END_Comment@@@ 
+@END_Body 
+
+@END_Contents 

@@ -1,0 +1,1548 @@
+(*
+@h    ! WARNING !
+@h    The Kemro K2 system (including software) only meets category B according to EN 954-1,
+@h    thus it is not intended for usage in safety-relevant control applications in the field 
+@h    of personal safety (e.g. emergency stop).
+@h    To implement potentially necessary safety-relevant control tasks, always use additional 
+@h    external safety devices that are intended for the particular purpose, and meet the necessary 
+@h    functional safety.
+@h    For further information see EN 954-1 (EN ISO 13849-1) and/or the K2-x00 user manual, chapter 
+@h    "CE conformity, directives and standards".
+
+- Registers the dummy movements for begin/end of programmed sequence
+  and for StartParallel/EndParallel
+- Listens to movement registration events and creates list of available ODC movements
+  (sv_ODCMovements).
+- create list of all devices, that registered movements for the ODC
+  (sv_ODCDeviceMovements). This list provides the devices with the according movements.
+
+*)
+
+IMPORT_OVER_LISTFILE
+ SET_ALARM
+, GET_SYNC_REFTO
+, cCompPDP
+, cMoveFwd
+, KODC_Movements
+, tevMovementRegister
+, tyMovementRegisterList
+, tsMoveData
+, tsODCDeviceMovementList
+, tsGlbSafetyData
+, tySafetyMovementList
+, tnOperationMode
+, tevMovementRegisterData
+, ABMovementRegister
+, KSYS_Status
+, tsAddDeviceInfo
+
+END_IMPORT
+
+ALGORITHM_BLOCK ABODCMovements #DUMMY_EDIT_BLOCK
+
+SYSTEM_VAR
+ sv_ODCMovements : KODC_Movements;
+ sv_MovementsAvailable : tyMovementRegisterList;
+ sv_bInitDone : BOOL;
+ sv_bInitStart : BOOL;
+ sv_MoveBeginSequence : tsMoveData;
+ sv_MoveEndSequence : tsMoveData;
+ sv_MoveStartParallel : tsMoveData;
+ sv_MoveEndParallel : tsMoveData;
+ sv_MoveStartCondition : tsMoveData;
+ sv_MoveCheckCondition : tsMoveData;
+ sv_ODCDeviceMovements : tsODCDeviceMovementList;
+ sv_bMoveRegisterDone : BOOL;
+ sv_bReadAddDeviceInfoDone : BOOL (* reading of additional device information done (by ODC1) *);
+ sv_SafetyMovements : tySafetyMovementList;
+ sv_MoveIf : tsMoveData;
+ sv_MoveElse : tsMoveData;
+ sv_MoveEndIf : tsMoveData;
+ sv_MoveBeginLoop : tsMoveData;
+ sv_MoveEndLoop : tsMoveData;
+ sv_MoveBeginGroup : tsMoveData;
+ sv_MoveEndGroup : tsMoveData;
+ sv_MoveStartParallelOpen : tsMoveData;
+ sv_MoveEndParallelOpen : tsMoveData;
+ sv_iODCSequenceUpdated : DINT;
+ sv_OperationMode : tnOperationMode;
+END_VAR
+
+SYSTEM_OBJECT
+ EV_Task_3 : TASK;
+ evMovementRegister : tevMovementRegister;
+ erMaxODCMovesExceeded : ALARM;
+ PU_Task_7 : TASK;
+ TaskMid : TASK;
+ erVariableNotFound : ALARM;
+ erInstanceableMovements : ALARM;
+END_OBJECT
+
+VAR_EXTERNAL
+ g_SafetyData : tsGlbSafetyData;
+ g_iODCMoveDevicesRegistered : DINT;
+END_VAR
+
+VAR
+ mbError : BOOL;
+END_VAR
+
+(*
+Listens to movement registration events and creates list of available ODC movements
+(sv_ODCMovements) and of all devices that registered movements for the ODC (sv_ODCDeviceMovements)
+*)
+
+EVENT_ALGORITHM evaMovementRegister ON EV_Task_3 WITH evMovementRegister
+
+
+VAR_INPUT
+ evMovementRegisterData : tevMovementRegisterData;
+END_VAR
+
+VAR_TEMP
+ iDevice : DINT;
+ i : DINT;
+END_VAR
+
+VAR
+ iMovement : DINT;
+ iMovesInDevice : DINT;
+ bFound : BOOL;
+ iSafetyMoveCnt : DINT;
+ iMoveAvailableIdx : UINT (* index to movement available *);
+END_VAR
+#BEGIN_EDIT_BLOCK
+(**************************************** WARNING ********************************************
+ *** The KEBA Kemro K2 System including software is not intended for safety control tasks! ***
+ ***                       For further information see Comment tab!                        ***
+ *********************************************************************************************)
+
+IF (evMovementRegisterData.Mode <> nMoveRegModeFire) OR mbError OR sv_bInitDone THEN
+   //don´t handle register events if error was detected
+   RETURN;
+END_IF;
+
+iMoveAvailableIdx := iMoveAvailableIdx + 1; 
+
+IF iMovement >= cMaxODCMovements THEN
+   //cMaxODCMovements exceeded
+   SET_ALARM(Name := erMaxODCMovesExceeded,
+             SubID1 := cMaxODCMovements);
+   mbError := TRUE;
+   RETURN;
+END_IF;
+
+IF evMovementRegisterData.pMovementData^.sMoveId <> '' THEN
+   //only add movement if sMoveId is not empty
+   iMovement := iMovement + 1;
+   sv_ODCMovements[iMovement].iCompId := evMovementRegisterData.DeviceId.CompId;
+   sv_ODCMovements[iMovement].iIndexId := evMovementRegisterData.DeviceId.IndexId;
+   sv_ODCMovements[iMovement].iMoveDir := evMovementRegisterData.pMovementData^.MoveDir;
+   sv_ODCMovements[iMovement].iMoveId := evMovementRegisterData.pMovementData^.MoveId;
+   sv_ODCMovements[iMovement].piInstancePrio := evMovementRegisterData.pMovementData^.piInstancePrio;
+   sv_ODCMovements[iMovement].sComponent := evMovementRegisterData.sFuName;
+   sv_ODCMovements[iMovement].sMoveId := evMovementRegisterData.pMovementData^.sMoveId;
+   
+   
+   //search if this device is already in the list
+   bFound := FALSE;
+   FOR iDevice := 1 TO cMaxMoveDevicesRegistered DO
+      IF sv_ODCDeviceMovements.Devices[iDevice].DeviceId = evMovementRegisterData.DeviceId THEN
+         //device already in list         
+         bFound := TRUE;
+         EXIT;   
+      END_IF;      
+   END_FOR;
+   
+   IF NOT bFound THEN
+      //add new device entry
+      sv_ODCDeviceMovements.iCount := sv_ODCDeviceMovements.iCount + 1;
+      sv_ODCDeviceMovements.Devices[sv_ODCDeviceMovements.iCount].DeviceId := evMovementRegisterData.DeviceId;
+      sv_ODCDeviceMovements.Devices[sv_ODCDeviceMovements.iCount].sFuName := evMovementRegisterData.sFuName;
+      sv_ODCDeviceMovements.Devices[sv_ODCDeviceMovements.iCount].pbDeviceReady := evMovementRegisterData.pbDeviceReady;      
+      iDevice := sv_ODCDeviceMovements.iCount;
+   END_IF;
+   
+   //add movement
+   sv_ODCDeviceMovements.Devices[iDevice].iNumberOfMovements := sv_ODCDeviceMovements.Devices[iDevice].iNumberOfMovements + 1;
+   iMovesInDevice := sv_ODCDeviceMovements.Devices[iDevice].iNumberOfMovements;
+   sv_ODCDeviceMovements.Devices[iDevice].Movements[iMovesInDevice] := evMovementRegisterData.pMovementData;
+   
+   IF (evMovementRegisterData.pMovementData^.bInstanceable) AND (evMovementRegisterData.pMovementData^.iSafetyIdentifier > 0) THEN
+      i := sv_ODCDeviceMovements.Devices[iDevice].iInstanceableMovements + 1;      
+      IF i <= cMaxSRInstanceableMovements THEN
+         sv_ODCDeviceMovements.Devices[iDevice].InstanceableMovements[i] := iMovesInDevice;
+         sv_ODCDeviceMovements.Devices[iDevice].iInstanceableMovements := i;
+      ELSE
+         //only two safetyrelevant instanceable movements per device are allowed
+         SET_ALARM(Name := erInstanceableMovements,
+                   SubID1 := evMovementRegisterData.DeviceId.CompId,
+                   SubID2 := evMovementRegisterData.DeviceId.IndexId,
+                   SubID3 := cMaxSRInstanceableMovements);
+         mbError := TRUE;
+         RETURN;
+      END_IF;            
+   END_IF;
+     
+   IF (g_SafetyData.bAvailable) THEN
+   //  safety relevant
+      IF (evMovementRegisterData.pMovementData^.iSafetyIdentifier MOD 2 = 1) THEN
+         iSafetyMoveCnt := iSafetyMoveCnt + 1; 
+         sv_SafetyMovements[iSafetyMoveCnt] := iMoveAvailableIdx; 
+         sv_MovementsAvailable[iMoveAvailableIdx].iODCSafetyMovementsEntry := iSafetyMoveCnt; 
+      END_IF;
+   END_IF;
+END_IF;
+   
+
+
+;#END_EDIT_BLOCK END_ALGORITHM
+
+(*
+Registers the dummy movements for begin/end of programmed sequence
+and for StartParallel/EndParallel
+*)
+
+POSTUPDATE_ALGORITHM pInitStart ON PU_Task_7 WITH sv_bInitStart
+
+
+VAR
+ abBeginSequenceRegister : ABMovementRegister;
+ abEndSequenceRegister : ABMovementRegister;
+ abMoveStartParallelRegister : ABMovementRegister;
+ abMoveEndParallelRegister : ABMovementRegister;
+ abMoveStartConditionRegister : ABMovementRegister;
+ abMoveCheckConditionRegister : ABMovementRegister;
+ abMoveIfRegister : ABMovementRegister;
+ abMoveElseRegister : ABMovementRegister;
+ abMoveEndIfRegister : ABMovementRegister;
+ abMoveBeginLoopRegister : ABMovementRegister;
+ abMoveEndLoopRegister : ABMovementRegister;
+ abMoveBeginGroupRegister : ABMovementRegister;
+ abMoveEndGroupRegister : ABMovementRegister;
+ abMoveStartParallelOpenRegister : ABMovementRegister;
+ abMoveEndParallelOpenRegister : ABMovementRegister;
+END_VAR
+#BEGIN_EDIT_BLOCK
+(**************************************** WARNING ********************************************
+ *** The KEBA Kemro K2 System including software is not intended for safety control tasks! ***
+ ***                       For further information see Comment tab!                        ***
+ *********************************************************************************************)
+
+IF sv_bInitStart THEN
+   //register begin programmed sequence    
+   abBeginSequenceRegister.aRegister(@sv_MoveBeginSequence);
+        
+   //register end of programmed sequence
+   abEndSequenceRegister.aRegister(@sv_MoveEndSequence);
+   
+   //register "StartParallel" movement    
+   abMoveStartParallelRegister.aRegister(@sv_MoveStartParallel);
+        
+   //register "EndParallel" movement
+   abMoveEndParallelRegister.aRegister(@sv_MoveEndParallel);
+    
+   //register "StartCondition" movement
+   abMoveStartConditionRegister.aRegister(@sv_MoveStartCondition);
+   
+   //register "CheckCondition" movement
+   abMoveCheckConditionRegister.aRegister(@sv_MoveCheckCondition);
+   
+   //register "If" movement
+   sv_MoveIf.sIconPath := CONCAT(GET_MY_FU_NAME(),"\hmi\images\movIf.gif");
+   abMoveIfRegister.aRegister(@sv_MoveIf);
+   
+   //register "Else" movement
+   abMoveElseRegister.aRegister(@sv_MoveElse);
+   
+   //register "EndIf" movement
+   abMoveEndIfRegister.aRegister(@sv_MoveEndIf);
+   
+   //register "Begin_Loop" movement
+   sv_MoveBeginLoop.sIconPath := CONCAT(GET_MY_FU_NAME(),"\hmi\images\movBeginLoop.gif");
+   abMoveBeginLoopRegister.aRegister(@sv_MoveBeginLoop);
+   
+   //register "End_Loop" movement
+   abMoveEndLoopRegister.aRegister(@sv_MoveEndLoop);
+      
+   //register "Begin_Group" movement
+   abMoveBeginGroupRegister.aRegister(@sv_MoveBeginGroup);
+   
+   //register "End_Group" movement
+   abMoveEndGroupRegister.aRegister(@sv_MoveEndGroup);
+   
+   //register "StartParallelOpen" movement    
+   abMoveStartParallelOpenRegister.aRegister(@sv_MoveStartParallelOpen);
+        
+   //register "EndParallelOpen" movement
+   abMoveEndParallelOpenRegister.aRegister(@sv_MoveEndParallelOpen);
+END_IF; 
+
+
+;#END_EDIT_BLOCK END_ALGORITHM
+
+POSTUPDATE_ALGORITHM pMoveRegisterDone ON PU_Task_7 WITH sv_bMoveRegisterDone
+
+#BEGIN_EDIT_BLOCK
+(**************************************** WARNING ********************************************
+ *** The KEBA Kemro K2 System including software is not intended for safety control tasks! ***
+ ***                       For further information see Comment tab!                        ***
+ *********************************************************************************************)
+
+IF NOT mbError THEN
+   g_iODCMoveDevicesRegistered := sv_ODCDeviceMovements.iCount;
+   START_PROCESS_ALGORITHM(paGetAddDeviceInfo);
+END_IF;
+
+
+
+
+;#END_EDIT_BLOCK END_ALGORITHM
+
+PROCESS_ALGORITHM paGetAddDeviceInfo ON TaskMid
+
+
+VAR_TEMP
+ i : DINT;
+ k : DINT;
+END_VAR
+
+VAR
+ sVarName : STRING(255);
+ state : KSYS_Status;
+ pAddDeviceInfo : REFTO tsAddDeviceInfo;
+ bAddDeviceInfoNeeded : BOOL;
+ bGetDeviceActivated : BOOL;
+ pbDeviceActivated : REFTO BOOL;
+END_VAR
+#BEGIN_EDIT_BLOCK
+(**************************************** WARNING ********************************************
+ *** The KEBA Kemro K2 System including software is not intended for safety control tasks! ***
+ ***                       For further information see Comment tab!                        ***
+ *********************************************************************************************)
+
+FOR i := 1 TO sv_ODCDeviceMovements.iCount DO
+
+   //check if device contains at least one movement of type nODCElementMovement
+   bAddDeviceInfoNeeded := FALSE;
+   FOR k := 1 TO sv_ODCDeviceMovements.Devices[i].iNumberOfMovements DO
+      IF sv_ODCDeviceMovements.Devices[i].Movements[k]^.EditorData.MovementType = nODCElementMovement THEN
+         bAddDeviceInfoNeeded := TRUE;
+         EXIT;
+      END_IF;
+   END_FOR;
+   
+   //create variable name and get reference
+   sVarName := CONCAT(sv_ODCDeviceMovements.Devices[i].sFuName, '.sv_AddDeviceInfo');
+   pAddDeviceInfo := GET_SYNC_REFTO(sVarName, T#0s, state);
+   
+   IF state = KSYS_Status_OK  THEN
+      //copy references and values
+      sv_ODCDeviceMovements.Devices[i].AddDeviceInfo := pAddDeviceInfo^;
+   ELSE
+      IF bAddDeviceInfoNeeded THEN
+         //device info needed but not available -> set alarm
+         SET_ALARM(Name := erVariableNotFound,
+                SubID1 := sv_ODCDeviceMovements.Devices[i].DeviceId.CompId,
+                SubID2 := sv_ODCDeviceMovements.Devices[i].DeviceId.IndexId,
+                Param1 := 'sv_AddDeviceInfo');
+      END_IF;     
+   END_IF;
+
+   
+   //check if device contains at least one movement of type
+   //nODCElementMovement, nODCElementDuration, nODCElementShake or nODCElementEvent
+   bGetDeviceActivated := FALSE;
+   FOR k := 1 TO sv_ODCDeviceMovements.Devices[i].iNumberOfMovements DO
+      IF sv_ODCDeviceMovements.Devices[i].Movements[k]^.EditorData.MovementType = nODCElementMovement OR
+         sv_ODCDeviceMovements.Devices[i].Movements[k]^.EditorData.MovementType = nODCElementDuration OR 
+         sv_ODCDeviceMovements.Devices[i].Movements[k]^.EditorData.MovementType = nODCElementShake OR
+         sv_ODCDeviceMovements.Devices[i].Movements[k]^.EditorData.MovementType = nODCElementEventIn OR
+         sv_ODCDeviceMovements.Devices[i].Movements[k]^.EditorData.MovementType = nODCElementEventOut OR
+         sv_ODCDeviceMovements.Devices[i].Movements[k]^.EditorData.MovementType = nODCElementDelaredInput OR
+         sv_ODCDeviceMovements.Devices[i].Movements[k]^.EditorData.MovementType = nODCElementInstanceableDuration THEN
+         bGetDeviceActivated := TRUE;
+         EXIT;
+      END_IF;
+   END_FOR;
+   
+   IF bGetDeviceActivated THEN
+      //get refto sv_bDeviceActivated
+      sVarName := CONCAT(sv_ODCDeviceMovements.Devices[i].sFuName, '.sv_bDeviceActivated');
+      pbDeviceActivated := GET_SYNC_REFTO(sVarName, T#0s, state);
+      
+      IF state = KSYS_Status_OK  THEN
+         //copy references
+         sv_ODCDeviceMovements.Devices[i].pbDeviceActivated := pbDeviceActivated;
+      ELSE
+         SET_ALARM(Name := erVariableNotFound,
+                     SubID1 := sv_ODCDeviceMovements.Devices[i].DeviceId.CompId,
+                     SubID2 := sv_ODCDeviceMovements.Devices[i].DeviceId.IndexId,
+                     Param1 := 'sv_bDeviceActivated'); 
+      END_IF;
+   END_IF;
+      
+END_FOR;
+
+sv_bReadAddDeviceInfoDone := TRUE;
+
+STOP_PROCESS_ALGORITHM();
+
+
+;#END_EDIT_BLOCK END_ALGORITHM
+
+ALGORITHM aResetActTimes
+
+
+VAR_TEMP
+ iDevice : DINT;
+ iMove : DINT;
+ b : BOOL;
+END_VAR
+
+VAR
+ dNull : TIME := t#0s;
+END_VAR
+#BEGIN_EDIT_BLOCK
+(**************************************** WARNING ********************************************
+ *** The KEBA Kemro K2 System including software is not intended for safety control tasks! ***
+ ***                       For further information see Comment tab!                        ***
+ *********************************************************************************************)
+
+//reset act. move time of all ODC movements which are not part of the programmed sequence
+FOR iDevice := 1 TO sv_ODCDeviceMovements.iCount DO
+   FOR iMove := 1 TO sv_ODCDeviceMovements.Devices[iDevice].iNumberOfMovements DO
+      IF NOT sv_ODCDeviceMovements.Devices[iDevice].Movements[iMove]^.bProgrammedInSequence AND
+         CHECK_REF(sv_ODCDeviceMovements.Devices[iDevice].Movements[iMove]^.pdActiveTimeAct^) THEN
+         b := WRITE_SV_DIRECT(sv_ODCDeviceMovements.Devices[iDevice].Movements[iMove]^.pdActiveTimeAct^, dNull);
+      END_IF;
+   END_FOR;
+END_FOR;
+
+
+;#END_EDIT_BLOCK END_ALGORITHM
+
+POSTUPDATE_ALGORITHM pNewSequence ON PU_Task_7 WITH sv_iODCSequenceUpdated
+
+#BEGIN_EDIT_BLOCK
+(**************************************** WARNING ********************************************
+ *** The KEBA Kemro K2 System including software is not intended for safety control tasks! ***
+ ***                       For further information see Comment tab!                        ***
+ *********************************************************************************************)
+
+//reset act times after a new sequence is created
+aResetActTimes();
+
+
+;#END_EDIT_BLOCK END_ALGORITHM
+
+POSTUPDATE_ALGORITHM pOperationMode ON PU_Task_7 WITH sv_OperationMode
+
+
+VAR
+ PrevOpMode : tnOperationMode := nManual;
+END_VAR
+#BEGIN_EDIT_BLOCK
+(**************************************** WARNING ********************************************
+ *** The KEBA Kemro K2 System including software is not intended for safety control tasks! ***
+ ***                       For further information see Comment tab!                        ***
+ *********************************************************************************************)
+
+
+IF (sv_OperationMode >= nHalfAutomatic) AND (PrevOpMode < nHalfAutomatic) THEN
+   //reset act move times after switching to HA / FA because possibly some movements which
+   //are basically switched off have been executed for example with an "override safety" switch
+   //after the sequence is already created
+   aResetActTimes();
+END_IF;
+
+PrevOpMode := sv_OperationMode;
+
+
+
+
+;#END_EDIT_BLOCK END_ALGORITHM
+
+
+
+END_ALGORITHM_BLOCK
+
+
+
+#END_OF_IEC_PART
+
+@Puma @IecEditor 6 95 @Pou 25 
+@@@BEG_Comment@@@
+@h    ! WARNING !
+@h    The Kemro K2 system (including software) only meets category B according to EN 954-1,
+@h    thus it is not intended for usage in safety-relevant control applications in the field 
+@h    of personal safety (e.g. emergency stop).
+@h    To implement potentially necessary safety-relevant control tasks, always use additional 
+@h    external safety devices that are intended for the particular purpose, and meet the necessary 
+@h    functional safety.
+@h    For further information see EN 954-1 (EN ISO 13849-1) and/or the K2-x00 user manual, chapter 
+@h    "CE conformity, directives and standards".
+
+- Registers the dummy movements for begin/end of programmed sequence
+  and for StartParallel/EndParallel
+- Listens to movement registration events and creates list of available ODC movements
+  (sv_ODCMovements).
+- create list of all devices, that registered movements for the ODC
+  (sv_ODCDeviceMovements). This list provides the devices with the according movements.
+
+@@@END_Comment@@@
+
+@BEG_Contents 
+
+@BEG_Func 
+@RT(17)FuncTreeContainer 
+2 
+@Var @RT(9)SET_ALARM @RT(0) @T @T @DERIVED 0 @F @RT(23)KEBA_STANDARD_PROCEDURE @F 
+@T 
+@BEG_Attrib 
+0 @RT(0) @RT(0) 
+@END_Attrib 
+1 1 @F @F @F @F 
+
+@Var @RT(14)GET_SYNC_REFTO @RT(0) @T @T @DERIVED 0 @F @RT(22)KEBA_STANDARD_FUNCTION @F 
+@T 
+@BEG_Attrib 
+0 @RT(0) @RT(0) 
+@END_Attrib 
+1 1 @F @F @F @F 
+
+@END_Func 
+
+@BEG_Const 
+@RT(18)ConstTreeContainer 
+2 
+@Var @RT(8)cCompPDP @RT(0) @T @F @DT @RT(4)DINT @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+0 @RT(3)119 @RT(30)Component Process Data Package 
+@END_Attrib 
+1 1 @F @F @F @F 
+
+@Var @RT(8)cMoveFwd @RT(0) @T @F @DT @RT(4)DINT @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+0 @RT(2)12 @RT(16)movement forward 
+@END_Attrib 
+1 1 @F @F @F @F 
+
+@END_Const 
+
+@BEG_Export 
+
+@BEG_Kind 
+@ALGORITHM_BLOCK @RT(14)ABODCMovements @STRUCTURED_TEXT 
+@RT(0) @RT(0) @RT(0) 
+@END_Kind 
+
+@BEG_Dcl 
+@RT(16)DclTreeContainer 
+35 
+@Var @RT(15)sv_ODCMovements @RT(0) @T @T @DERIVED 0 @T @T @DT @RT(14)KODC_Movements @RT(0) @T @T @UNKNOWN 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 8 @F @F @F @F 
+
+@Var @RT(9)EV_Task_3 @RT(0) @T @F @DT @RT(4)TASK @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 7 @F @F @F @F 
+
+@Var @RT(18)evMovementRegister @RT(0) @T @T @DERIVED 0 @T @T @DT @RT(19)tevMovementRegister @RT(0) @T @T @UNKNOWN 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 7 @F @F @F @F 
+
+@Var @RT(21)sv_MovementsAvailable @RT(0) @T @T @DERIVED 0 @T @T @DT @RT(22)tyMovementRegisterList @RT(0) @T @T @UNKNOWN 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 8 @F @F @F @F 
+
+@Var @RT(12)sv_bInitDone @RT(0) @T @F @DT @RT(4)BOOL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 8 @F @F @F @F 
+
+@Var @RT(21)erMaxODCMovesExceeded @RT(0) @T @F @DT @RT(5)ALARM @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 7 @F @F @F @F 
+
+@Var @RT(9)PU_Task_7 @RT(0) @T @F @DT @RT(4)TASK @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 7 @F @F @F @F 
+
+@Var @RT(13)sv_bInitStart @RT(0) @T @F @DT @RT(4)BOOL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 8 @F @F @F @F 
+
+@Var @RT(20)sv_MoveBeginSequence @RT(0) @T @T @DERIVED 0 @T @T @DT @RT(10)tsMoveData @RT(0) @T @T @UNKNOWN 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 8 @F @F @F @F 
+
+@Var @RT(18)sv_MoveEndSequence @RT(0) @T @T @DERIVED 0 @T @T @DT @RT(10)tsMoveData @RT(0) @T @T @UNKNOWN 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 8 @F @F @F @F 
+
+@Var @RT(20)sv_MoveStartParallel @RT(0) @T @T @DERIVED 0 @T @T @DT @RT(10)tsMoveData @RT(0) @T @T @UNKNOWN 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 8 @F @F @F @F 
+
+@Var @RT(18)sv_MoveEndParallel @RT(0) @T @T @DERIVED 0 @T @T @DT @RT(10)tsMoveData @RT(0) @T @T @UNKNOWN 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 8 @F @F @F @F 
+
+@Var @RT(21)sv_MoveStartCondition @RT(0) @T @T @DERIVED 0 @T @T @DT @RT(10)tsMoveData @RT(0) @T @T @UNKNOWN 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 8 @F @F @F @F 
+
+@Var @RT(21)sv_MoveCheckCondition @RT(0) @T @T @DERIVED 0 @T @T @DT @RT(10)tsMoveData @RT(0) @T @T @UNKNOWN 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 8 @F @F @F @F 
+
+@Var @RT(21)sv_ODCDeviceMovements @RT(0) @T @T @DERIVED 0 @T @T @DT @RT(23)tsODCDeviceMovementList @RT(0) @T @T @UNKNOWN 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 8 @F @F @F @F 
+
+@Var @RT(20)sv_bMoveRegisterDone @RT(0) @T @T @RENAMED 0 @T @T @DT @RT(4)BOOL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 8 @F @F @F @F 
+
+@Var @RT(12)g_SafetyData @RT(0) @T @T @DERIVED 0 @T @T @DT @RT(15)tsGlbSafetyData @RT(0) @T @T @UNKNOWN 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 6 @F @F @F @F 
+
+@Var @RT(7)TaskMid @RT(0) @T @T @RENAMED 0 @T @T @DT @RT(4)TASK @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 7 @F @F @F @F 
+
+@Var @RT(25)sv_bReadAddDeviceInfoDone @RT(0) @T @F @DT @RT(4)BOOL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(55)reading of additional device information done (by ODC1) @RT(0) 
+@END_Attrib 
+1 8 @F @F @F @F 
+
+@Var @RT(18)sv_SafetyMovements @RT(0) @T @T @DERIVED 0 @T @T @DT @RT(20)tySafetyMovementList @RT(0) @T @T @UNKNOWN 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 8 @F @F @F @F 
+
+@Var @RT(18)erVariableNotFound @RT(0) @T @F @DT @RT(5)ALARM @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 7 @F @F @F @F 
+
+@Var @RT(9)sv_MoveIf @RT(0) @T @T @DERIVED 0 @T @T @DT @RT(10)tsMoveData @RT(0) @T @T @UNKNOWN 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 8 @F @F @F @F 
+
+@Var @RT(11)sv_MoveElse @RT(0) @T @T @DERIVED 0 @T @T @DT @RT(10)tsMoveData @RT(0) @T @T @UNKNOWN 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 8 @F @F @F @F 
+
+@Var @RT(12)sv_MoveEndIf @RT(0) @T @T @DERIVED 0 @T @T @DT @RT(10)tsMoveData @RT(0) @T @T @UNKNOWN 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 8 @F @F @F @F 
+
+@Var @RT(16)sv_MoveBeginLoop @RT(0) @T @T @DERIVED 0 @T @T @DT @RT(10)tsMoveData @RT(0) @T @T @UNKNOWN 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 8 @F @F @F @F 
+
+@Var @RT(14)sv_MoveEndLoop @RT(0) @T @T @DERIVED 0 @T @T @DT @RT(10)tsMoveData @RT(0) @T @T @UNKNOWN 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 8 @F @F @F @F 
+
+@Var @RT(17)sv_MoveBeginGroup @RT(0) @T @T @DERIVED 0 @T @T @DT @RT(10)tsMoveData @RT(0) @T @T @UNKNOWN 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 8 @F @F @F @F 
+
+@Var @RT(15)sv_MoveEndGroup @RT(0) @T @T @DERIVED 0 @T @T @DT @RT(10)tsMoveData @RT(0) @T @T @UNKNOWN 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 8 @F @F @F @F 
+
+@Var @RT(24)sv_MoveStartParallelOpen @RT(0) @T @T @DERIVED 0 @T @T @DT @RT(10)tsMoveData @RT(0) @T @T @UNKNOWN 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 8 @F @F @F @F 
+
+@Var @RT(22)sv_MoveEndParallelOpen @RT(0) @T @T @DERIVED 0 @T @T @DT @RT(10)tsMoveData @RT(0) @T @T @UNKNOWN 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 8 @F @F @F @F 
+
+@Var @RT(27)g_iODCMoveDevicesRegistered @RT(0) @T @F @DT @RT(4)DINT @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 6 @F @F @F @F 
+
+@Var @RT(23)erInstanceableMovements @RT(0) @T @F @DT @RT(5)ALARM @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 7 @F @F @F @F 
+
+@Var @RT(7)mbError @RT(0) @T @F @DT @RT(4)BOOL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(22)sv_iODCSequenceUpdated @RT(0) @T @F @DT @RT(4)DINT @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 8 @F @F @F @F 
+
+@Var @RT(16)sv_OperationMode @RT(0) @T @T @RENAMED 0 @T @T @DT @RT(15)tnOperationMode @RT(0) @T @T @UNKNOWN 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 8 @F @F @F @F 
+
+@END_Dcl 
+
+@END_Export 
+
+@BEG_Body 
+
+7 
+
+@BEG_Export 
+
+@BEG_Algo 
+@EVENT_ALGORITHM @RT(19)evaMovementRegister @STRUCTURED_TEXT 
+@RT(0) @RT(18)evMovementRegister @RT(9)EV_Task_3 @F @F 
+@END_Algo 
+
+@BEG_Dcl 
+@RT(16)DclTreeContainer 
+8 
+@Var @RT(22)evMovementRegisterData @RT(0) @T @T @DERIVED 0 @T @T @DT @RT(23)tevMovementRegisterData @RT(0) @T @T @UNKNOWN 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 1 @F @F @F @F 
+
+@Var @RT(9)iMovement @RT(0) @T @F @DT @RT(4)DINT @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(7)iDevice @RT(0) @T @F @DT @RT(4)DINT @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 4 @F @F @F @F 
+
+@Var @RT(14)iMovesInDevice @RT(0) @T @F @DT @RT(4)DINT @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(6)bFound @RT(0) @T @F @DT @RT(4)BOOL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(14)iSafetyMoveCnt @RT(0) @T @F @DT @RT(4)DINT @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(17)iMoveAvailableIdx @RT(0) @T @F @DT @RT(4)UINT @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(27)index to movement available @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(1)i @RT(0) @T @F @DT @RT(4)DINT @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 4 @F @F @F @F 
+
+@END_Dcl 
+
+@END_Export 
+
+@BEG_Export 
+
+@BEG_Algo 
+@POSTUPDATE_ALGORITHM @RT(10)pInitStart @STRUCTURED_TEXT 
+@RT(0) @RT(13)sv_bInitStart @RT(9)PU_Task_7 @F @F 
+@END_Algo 
+
+@BEG_Dcl 
+@RT(16)DclTreeContainer 
+15 
+@Var @RT(23)abBeginSequenceRegister @RT(0) @T @T @DERIVED 0 @T @T @DT @RT(18)ABMovementRegister @RT(0) @T @T @UNKNOWN 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(21)abEndSequenceRegister @RT(0) @T @T @DERIVED 0 @T @T @DT @RT(18)ABMovementRegister @RT(0) @T @T @UNKNOWN 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(27)abMoveStartParallelRegister @RT(0) @T @T @DERIVED 0 @T @T @DT @RT(18)ABMovementRegister @RT(0) @T @T @UNKNOWN 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(25)abMoveEndParallelRegister @RT(0) @T @T @DERIVED 0 @T @T @DT @RT(18)ABMovementRegister @RT(0) @T @T @UNKNOWN 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(28)abMoveStartConditionRegister @RT(0) @T @T @DERIVED 0 @T @T @DT @RT(18)ABMovementRegister @RT(0) @T @T @UNKNOWN 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(28)abMoveCheckConditionRegister @RT(0) @T @T @DERIVED 0 @T @T @DT @RT(18)ABMovementRegister @RT(0) @T @T @UNKNOWN 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(16)abMoveIfRegister @RT(0) @T @T @DERIVED 0 @T @T @DT @RT(18)ABMovementRegister @RT(0) @T @T @UNKNOWN 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(18)abMoveElseRegister @RT(0) @T @T @DERIVED 0 @T @T @DT @RT(18)ABMovementRegister @RT(0) @T @T @UNKNOWN 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(19)abMoveEndIfRegister @RT(0) @T @T @DERIVED 0 @T @T @DT @RT(18)ABMovementRegister @RT(0) @T @T @UNKNOWN 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(23)abMoveBeginLoopRegister @RT(0) @T @T @DERIVED 0 @T @T @DT @RT(18)ABMovementRegister @RT(0) @T @T @UNKNOWN 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(21)abMoveEndLoopRegister @RT(0) @T @T @DERIVED 0 @T @T @DT @RT(18)ABMovementRegister @RT(0) @T @T @UNKNOWN 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(24)abMoveBeginGroupRegister @RT(0) @T @T @DERIVED 0 @T @T @DT @RT(18)ABMovementRegister @RT(0) @T @T @UNKNOWN 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(22)abMoveEndGroupRegister @RT(0) @T @T @DERIVED 0 @T @T @DT @RT(18)ABMovementRegister @RT(0) @T @T @UNKNOWN 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(31)abMoveStartParallelOpenRegister @RT(0) @T @T @DERIVED 0 @T @T @DT @RT(18)ABMovementRegister @RT(0) @T @T @UNKNOWN 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(29)abMoveEndParallelOpenRegister @RT(0) @T @T @DERIVED 0 @T @T @DT @RT(18)ABMovementRegister @RT(0) @T @T @UNKNOWN 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@END_Dcl 
+
+@END_Export 
+
+@BEG_Export 
+
+@BEG_Algo 
+@POSTUPDATE_ALGORITHM @RT(17)pMoveRegisterDone @STRUCTURED_TEXT 
+@RT(0) @RT(20)sv_bMoveRegisterDone @RT(9)PU_Task_7 @F @F 
+@END_Algo 
+
+@BEG_Dcl 
+@RT(16)DclTreeContainer 
+0 
+@END_Dcl 
+
+@END_Export 
+
+@BEG_Export 
+
+@BEG_Algo 
+@PROCESS_ALGORITHM @RT(18)paGetAddDeviceInfo @STRUCTURED_TEXT 
+@RT(0) @RT(0) @RT(7)TaskMid @F @F 
+@END_Algo 
+
+@BEG_Dcl 
+@RT(16)DclTreeContainer 
+8 
+@Var @RT(8)sVarName @RT(0) @T @F @DT @RT(11)STRING(255) @RT(0) @T @T @STRING 0 @F @RT(3)255 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(5)state @RT(0) @T @T @DERIVED 0 @T @T @DT @RT(11)KSYS_Status @RT(0) @T @T @UNKNOWN 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(14)pAddDeviceInfo @RT(0) @T @T @REFTO 0 @F @DERIVED 0 @T @T @DT @RT(15)tsAddDeviceInfo @RT(0) @T @T @UNKNOWN 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(1)i @RT(0) @T @F @DT @RT(4)DINT @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 4 @F @F @F @F 
+
+@Var @RT(1)k @RT(0) @T @F @DT @RT(4)DINT @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 4 @F @F @F @F 
+
+@Var @RT(20)bAddDeviceInfoNeeded @RT(0) @T @F @DT @RT(4)BOOL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(19)bGetDeviceActivated @RT(0) @T @F @DT @RT(4)BOOL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(17)pbDeviceActivated @RT(0) @T @T @REFTO 0 @T @DT @RT(4)BOOL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@END_Dcl 
+
+@END_Export 
+
+@BEG_Export 
+
+@BEG_Algo 
+@ALGORITHM @RT(14)aResetActTimes @STRUCTURED_TEXT 
+@RT(0) @RT(0) @RT(0) @F @F 
+@END_Algo 
+
+@BEG_Dcl 
+@RT(16)DclTreeContainer 
+4 
+@Var @RT(7)iDevice @RT(0) @T @F @DT @RT(4)DINT @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 4 @F @F @F @F 
+
+@Var @RT(5)iMove @RT(0) @T @F @DT @RT(4)DINT @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 4 @F @F @F @F 
+
+@Var @RT(5)dNull @RT(0) @T @F @DT @RT(4)TIME @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(4)t#0s @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(1)b @RT(0) @T @F @DT @RT(4)BOOL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 4 @F @F @F @F 
+
+@END_Dcl 
+
+@END_Export 
+
+@BEG_Export 
+
+@BEG_Algo 
+@POSTUPDATE_ALGORITHM @RT(12)pNewSequence @STRUCTURED_TEXT 
+@RT(0) @RT(22)sv_iODCSequenceUpdated @RT(9)PU_Task_7 @F @F 
+@END_Algo 
+
+@BEG_Dcl 
+@RT(16)DclTreeContainer 
+0 
+@END_Dcl 
+
+@END_Export 
+
+@BEG_Export 
+
+@BEG_Algo 
+@POSTUPDATE_ALGORITHM @RT(14)pOperationMode @STRUCTURED_TEXT 
+@RT(0) @RT(16)sv_OperationMode @RT(9)PU_Task_7 @F @F 
+@END_Algo 
+
+@BEG_Dcl 
+@RT(16)DclTreeContainer 
+1 
+@Var @RT(10)PrevOpMode @RT(0) @T @T @DERIVED 0 @T @T @DT @RT(15)tnOperationMode @RT(0) @T @T @UNKNOWN 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(7)nManual @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@END_Dcl 
+
+@END_Export 
+
+@BEG_Body 
+@TL(83)
+(**************************************** WARNING ********************************************
+ *** The KEBA Kemro K2 System including software is not intended for safety control tasks! ***
+ ***                       For further information see Comment tab!                        ***
+ *********************************************************************************************)
+
+IF (evMovementRegisterData.Mode <> nMoveRegModeFire) OR mbError OR sv_bInitDone THEN
+   //don´t handle register events if error was detected
+   RETURN;
+END_IF;
+
+iMoveAvailableIdx := iMoveAvailableIdx + 1; 
+
+IF iMovement >= cMaxODCMovements THEN
+   //cMaxODCMovements exceeded
+   SET_ALARM(Name := erMaxODCMovesExceeded,
+             SubID1 := cMaxODCMovements);
+   mbError := TRUE;
+   RETURN;
+END_IF;
+
+IF evMovementRegisterData.pMovementData^.sMoveId <> '' THEN
+   //only add movement if sMoveId is not empty
+   iMovement := iMovement + 1;
+   sv_ODCMovements[iMovement].iCompId := evMovementRegisterData.DeviceId.CompId;
+   sv_ODCMovements[iMovement].iIndexId := evMovementRegisterData.DeviceId.IndexId;
+   sv_ODCMovements[iMovement].iMoveDir := evMovementRegisterData.pMovementData^.MoveDir;
+   sv_ODCMovements[iMovement].iMoveId := evMovementRegisterData.pMovementData^.MoveId;
+   sv_ODCMovements[iMovement].piInstancePrio := evMovementRegisterData.pMovementData^.piInstancePrio;
+   sv_ODCMovements[iMovement].sComponent := evMovementRegisterData.sFuName;
+   sv_ODCMovements[iMovement].sMoveId := evMovementRegisterData.pMovementData^.sMoveId;
+   
+   
+   //search if this device is already in the list
+   bFound := FALSE;
+   FOR iDevice := 1 TO cMaxMoveDevicesRegistered DO
+      IF sv_ODCDeviceMovements.Devices[iDevice].DeviceId = evMovementRegisterData.DeviceId THEN
+         //device already in list         
+         bFound := TRUE;
+         EXIT;   
+      END_IF;      
+   END_FOR;
+   
+   IF NOT bFound THEN
+      //add new device entry
+      sv_ODCDeviceMovements.iCount := sv_ODCDeviceMovements.iCount + 1;
+      sv_ODCDeviceMovements.Devices[sv_ODCDeviceMovements.iCount].DeviceId := evMovementRegisterData.DeviceId;
+      sv_ODCDeviceMovements.Devices[sv_ODCDeviceMovements.iCount].sFuName := evMovementRegisterData.sFuName;
+      sv_ODCDeviceMovements.Devices[sv_ODCDeviceMovements.iCount].pbDeviceReady := evMovementRegisterData.pbDeviceReady;      
+      iDevice := sv_ODCDeviceMovements.iCount;
+   END_IF;
+   
+   //add movement
+   sv_ODCDeviceMovements.Devices[iDevice].iNumberOfMovements := sv_ODCDeviceMovements.Devices[iDevice].iNumberOfMovements + 1;
+   iMovesInDevice := sv_ODCDeviceMovements.Devices[iDevice].iNumberOfMovements;
+   sv_ODCDeviceMovements.Devices[iDevice].Movements[iMovesInDevice] := evMovementRegisterData.pMovementData;
+   
+   IF (evMovementRegisterData.pMovementData^.bInstanceable) AND (evMovementRegisterData.pMovementData^.iSafetyIdentifier > 0) THEN
+      i := sv_ODCDeviceMovements.Devices[iDevice].iInstanceableMovements + 1;      
+      IF i <= cMaxSRInstanceableMovements THEN
+         sv_ODCDeviceMovements.Devices[iDevice].InstanceableMovements[i] := iMovesInDevice;
+         sv_ODCDeviceMovements.Devices[iDevice].iInstanceableMovements := i;
+      ELSE
+         //only two safetyrelevant instanceable movements per device are allowed
+         SET_ALARM(Name := erInstanceableMovements,
+                   SubID1 := evMovementRegisterData.DeviceId.CompId,
+                   SubID2 := evMovementRegisterData.DeviceId.IndexId,
+                   SubID3 := cMaxSRInstanceableMovements);
+         mbError := TRUE;
+         RETURN;
+      END_IF;            
+   END_IF;
+     
+   IF (g_SafetyData.bAvailable) THEN
+   //  safety relevant
+      IF (evMovementRegisterData.pMovementData^.iSafetyIdentifier MOD 2 = 1) THEN
+         iSafetyMoveCnt := iSafetyMoveCnt + 1; 
+         sv_SafetyMovements[iSafetyMoveCnt] := iMoveAvailableIdx; 
+         sv_MovementsAvailable[iMoveAvailableIdx].iODCSafetyMovementsEntry := iSafetyMoveCnt; 
+      END_IF;
+   END_IF;
+END_IF;
+   
+
+@END_Body 
+
+@@@BEG_Comment@@@ 
+@TL(2)
+Listens to movement registration events and creates list of available ODC movements
+(sv_ODCMovements) and of all devices that registered movements for the ODC (sv_ODCDeviceMovements)
+@@@END_Comment@@@ 
+
+@BEG_Body 
+@TL(54)
+(**************************************** WARNING ********************************************
+ *** The KEBA Kemro K2 System including software is not intended for safety control tasks! ***
+ ***                       For further information see Comment tab!                        ***
+ *********************************************************************************************)
+
+IF sv_bInitStart THEN
+   //register begin programmed sequence    
+   abBeginSequenceRegister.aRegister(@sv_MoveBeginSequence);
+        
+   //register end of programmed sequence
+   abEndSequenceRegister.aRegister(@sv_MoveEndSequence);
+   
+   //register "StartParallel" movement    
+   abMoveStartParallelRegister.aRegister(@sv_MoveStartParallel);
+        
+   //register "EndParallel" movement
+   abMoveEndParallelRegister.aRegister(@sv_MoveEndParallel);
+    
+   //register "StartCondition" movement
+   abMoveStartConditionRegister.aRegister(@sv_MoveStartCondition);
+   
+   //register "CheckCondition" movement
+   abMoveCheckConditionRegister.aRegister(@sv_MoveCheckCondition);
+   
+   //register "If" movement
+   sv_MoveIf.sIconPath := CONCAT(GET_MY_FU_NAME(),"\hmi\images\movIf.gif");
+   abMoveIfRegister.aRegister(@sv_MoveIf);
+   
+   //register "Else" movement
+   abMoveElseRegister.aRegister(@sv_MoveElse);
+   
+   //register "EndIf" movement
+   abMoveEndIfRegister.aRegister(@sv_MoveEndIf);
+   
+   //register "Begin_Loop" movement
+   sv_MoveBeginLoop.sIconPath := CONCAT(GET_MY_FU_NAME(),"\hmi\images\movBeginLoop.gif");
+   abMoveBeginLoopRegister.aRegister(@sv_MoveBeginLoop);
+   
+   //register "End_Loop" movement
+   abMoveEndLoopRegister.aRegister(@sv_MoveEndLoop);
+      
+   //register "Begin_Group" movement
+   abMoveBeginGroupRegister.aRegister(@sv_MoveBeginGroup);
+   
+   //register "End_Group" movement
+   abMoveEndGroupRegister.aRegister(@sv_MoveEndGroup);
+   
+   //register "StartParallelOpen" movement    
+   abMoveStartParallelOpenRegister.aRegister(@sv_MoveStartParallelOpen);
+        
+   //register "EndParallelOpen" movement
+   abMoveEndParallelOpenRegister.aRegister(@sv_MoveEndParallelOpen);
+END_IF; 
+
+@END_Body 
+
+@@@BEG_Comment@@@ 
+@TL(2)
+Registers the dummy movements for begin/end of programmed sequence
+and for StartParallel/EndParallel
+@@@END_Comment@@@ 
+
+@BEG_Body 
+@TL(12)
+(**************************************** WARNING ********************************************
+ *** The KEBA Kemro K2 System including software is not intended for safety control tasks! ***
+ ***                       For further information see Comment tab!                        ***
+ *********************************************************************************************)
+
+IF NOT mbError THEN
+   g_iODCMoveDevicesRegistered := sv_ODCDeviceMovements.iCount;
+   START_PROCESS_ALGORITHM(paGetAddDeviceInfo);
+END_IF;
+
+
+
+@END_Body 
+
+@@@BEG_Comment@@@ 
+@TL(0)
+
+@@@END_Comment@@@ 
+
+@BEG_Body 
+@TL(72)
+(**************************************** WARNING ********************************************
+ *** The KEBA Kemro K2 System including software is not intended for safety control tasks! ***
+ ***                       For further information see Comment tab!                        ***
+ *********************************************************************************************)
+
+FOR i := 1 TO sv_ODCDeviceMovements.iCount DO
+
+   //check if device contains at least one movement of type nODCElementMovement
+   bAddDeviceInfoNeeded := FALSE;
+   FOR k := 1 TO sv_ODCDeviceMovements.Devices[i].iNumberOfMovements DO
+      IF sv_ODCDeviceMovements.Devices[i].Movements[k]^.EditorData.MovementType = nODCElementMovement THEN
+         bAddDeviceInfoNeeded := TRUE;
+         EXIT;
+      END_IF;
+   END_FOR;
+   
+   //create variable name and get reference
+   sVarName := CONCAT(sv_ODCDeviceMovements.Devices[i].sFuName, '.sv_AddDeviceInfo');
+   pAddDeviceInfo := GET_SYNC_REFTO(sVarName, T#0s, state);
+   
+   IF state = KSYS_Status_OK  THEN
+      //copy references and values
+      sv_ODCDeviceMovements.Devices[i].AddDeviceInfo := pAddDeviceInfo^;
+   ELSE
+      IF bAddDeviceInfoNeeded THEN
+         //device info needed but not available -> set alarm
+         SET_ALARM(Name := erVariableNotFound,
+                SubID1 := sv_ODCDeviceMovements.Devices[i].DeviceId.CompId,
+                SubID2 := sv_ODCDeviceMovements.Devices[i].DeviceId.IndexId,
+                Param1 := 'sv_AddDeviceInfo');
+      END_IF;     
+   END_IF;
+
+   
+   //check if device contains at least one movement of type
+   //nODCElementMovement, nODCElementDuration, nODCElementShake or nODCElementEvent
+   bGetDeviceActivated := FALSE;
+   FOR k := 1 TO sv_ODCDeviceMovements.Devices[i].iNumberOfMovements DO
+      IF sv_ODCDeviceMovements.Devices[i].Movements[k]^.EditorData.MovementType = nODCElementMovement OR
+         sv_ODCDeviceMovements.Devices[i].Movements[k]^.EditorData.MovementType = nODCElementDuration OR 
+         sv_ODCDeviceMovements.Devices[i].Movements[k]^.EditorData.MovementType = nODCElementShake OR
+         sv_ODCDeviceMovements.Devices[i].Movements[k]^.EditorData.MovementType = nODCElementEventIn OR
+         sv_ODCDeviceMovements.Devices[i].Movements[k]^.EditorData.MovementType = nODCElementEventOut OR
+         sv_ODCDeviceMovements.Devices[i].Movements[k]^.EditorData.MovementType = nODCElementDelaredInput OR
+         sv_ODCDeviceMovements.Devices[i].Movements[k]^.EditorData.MovementType = nODCElementInstanceableDuration THEN
+         bGetDeviceActivated := TRUE;
+         EXIT;
+      END_IF;
+   END_FOR;
+   
+   IF bGetDeviceActivated THEN
+      //get refto sv_bDeviceActivated
+      sVarName := CONCAT(sv_ODCDeviceMovements.Devices[i].sFuName, '.sv_bDeviceActivated');
+      pbDeviceActivated := GET_SYNC_REFTO(sVarName, T#0s, state);
+      
+      IF state = KSYS_Status_OK  THEN
+         //copy references
+         sv_ODCDeviceMovements.Devices[i].pbDeviceActivated := pbDeviceActivated;
+      ELSE
+         SET_ALARM(Name := erVariableNotFound,
+                     SubID1 := sv_ODCDeviceMovements.Devices[i].DeviceId.CompId,
+                     SubID2 := sv_ODCDeviceMovements.Devices[i].DeviceId.IndexId,
+                     Param1 := 'sv_bDeviceActivated'); 
+      END_IF;
+   END_IF;
+      
+END_FOR;
+
+sv_bReadAddDeviceInfoDone := TRUE;
+
+STOP_PROCESS_ALGORITHM();
+
+@END_Body 
+
+@@@BEG_Comment@@@ 
+@TL(0)
+
+@@@END_Comment@@@ 
+
+@BEG_Body 
+@TL(15)
+(**************************************** WARNING ********************************************
+ *** The KEBA Kemro K2 System including software is not intended for safety control tasks! ***
+ ***                       For further information see Comment tab!                        ***
+ *********************************************************************************************)
+
+//reset act. move time of all ODC movements which are not part of the programmed sequence
+FOR iDevice := 1 TO sv_ODCDeviceMovements.iCount DO
+   FOR iMove := 1 TO sv_ODCDeviceMovements.Devices[iDevice].iNumberOfMovements DO
+      IF NOT sv_ODCDeviceMovements.Devices[iDevice].Movements[iMove]^.bProgrammedInSequence AND
+         CHECK_REF(sv_ODCDeviceMovements.Devices[iDevice].Movements[iMove]^.pdActiveTimeAct^) THEN
+         b := WRITE_SV_DIRECT(sv_ODCDeviceMovements.Devices[iDevice].Movements[iMove]^.pdActiveTimeAct^, dNull);
+      END_IF;
+   END_FOR;
+END_FOR;
+
+@END_Body 
+
+@@@BEG_Comment@@@ 
+@TL(0)
+
+@@@END_Comment@@@ 
+
+@BEG_Body 
+@TL(8)
+(**************************************** WARNING ********************************************
+ *** The KEBA Kemro K2 System including software is not intended for safety control tasks! ***
+ ***                       For further information see Comment tab!                        ***
+ *********************************************************************************************)
+
+//reset act times after a new sequence is created
+aResetActTimes();
+
+@END_Body 
+
+@@@BEG_Comment@@@ 
+@TL(0)
+
+@@@END_Comment@@@ 
+
+@BEG_Body 
+@TL(17)
+(**************************************** WARNING ********************************************
+ *** The KEBA Kemro K2 System including software is not intended for safety control tasks! ***
+ ***                       For further information see Comment tab!                        ***
+ *********************************************************************************************)
+
+
+IF (sv_OperationMode >= nHalfAutomatic) AND (PrevOpMode < nHalfAutomatic) THEN
+   //reset act move times after switching to HA / FA because possibly some movements which
+   //are basically switched off have been executed for example with an "override safety" switch
+   //after the sequence is already created
+   aResetActTimes();
+END_IF;
+
+PrevOpMode := sv_OperationMode;
+
+
+
+@END_Body 
+
+@@@BEG_Comment@@@ 
+@TL(0)
+
+@@@END_Comment@@@ 
+@END_Body 
+
+@END_Contents 

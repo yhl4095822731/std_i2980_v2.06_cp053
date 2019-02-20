@@ -1,0 +1,167 @@
+(*
+This FB is used to get the reference of the Movement-variable (sv_MoveXxx) depending on the parameters MoveId and MoveDir
+*)
+
+IMPORT_OVER_LISTFILE
+ tMoveIdent
+, tsMoveData
+, tyMoveDataArray
+
+END_IMPORT
+
+FUNCTION_BLOCK FBGetMovementData #DUMMY_EDIT_BLOCK
+
+VAR_INPUT
+ MoveDir : tMoveIdent (* Movementdirection of the movement which should be found *);
+ MoveId : tMoveIdent (* Movement id of the movement which should be found *);
+END_VAR
+
+VAR_OUTPUT
+ pMoveData : REFTO tsMoveData (* returns a pointer to the movementvariable sv_MoveXxx *);
+ bFound : BOOL (* movementdata has been found *);
+END_VAR
+
+SYSTEM_VAR
+ sv_Movements : tyMoveDataArray;
+ sv_NumberOfMovements : DINT;
+END_VAR
+
+VAR_TEMP
+ i : DINT;
+END_VAR
+#BEGIN_EDIT_BLOCK
+(**************************************** WARNING ********************************************
+ *** The KEBA Kemro K2 System including software is not intended for safety control tasks! ***
+ ***                       For further information see Comment tab!                        ***
+ *********************************************************************************************)
+
+FOR i := 1 TO sv_NumberOfMovements DO
+   //search the Movement-Array for the specified sv_MoveXxx
+   IF (sv_Movements[i]^.MoveDir = MoveDir OR MoveDir = cMoveAll) AND
+      (sv_Movements[i]^.MoveId = MoveId OR MoveId = cMoveAll) THEN
+      
+      pMoveData := sv_Movements[i];
+      bFound := TRUE;
+      RETURN;
+   END_IF;   
+END_FOR;
+
+bFound := FALSE;
+
+
+;#END_EDIT_BLOCK END_FUNCTION_BLOCK
+
+
+
+#END_OF_IEC_PART
+
+@Puma @IecEditor 6 10 @Pou 25 
+@@@BEG_Comment@@@
+This FB is used to get the reference of the Movement-variable (sv_MoveXxx) depending on the parameters MoveId and MoveDir
+@@@END_Comment@@@
+
+@BEG_Contents 
+
+@BEG_Func 
+@RT(17)FuncTreeContainer 
+0 
+@END_Func 
+
+@BEG_Const 
+@RT(18)ConstTreeContainer 
+0 
+@END_Const 
+
+@BEG_Export 
+
+@BEG_Kind 
+@FUNCTION_BLOCK @RT(17)FBGetMovementData @STRUCTURED_TEXT 
+@RT(0) @RT(0) @RT(0) 
+@END_Kind 
+
+@BEG_Dcl 
+@RT(16)DclTreeContainer 
+7 
+@Var @RT(7)MoveDir @RT(0) @T @T @DERIVED 0 @T @T @DT @RT(10)tMoveIdent @RT(0) @T @T @UNKNOWN 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(55)Movementdirection of the movement which should be found @RT(0) 
+@END_Attrib 
+1 1 @F @F @F @F 
+
+@Var @RT(6)MoveId @RT(0) @T @T @DERIVED 0 @T @T @DT @RT(10)tMoveIdent @RT(0) @T @T @UNKNOWN 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(49)Movement id of the movement which should be found @RT(0) 
+@END_Attrib 
+1 1 @F @F @F @F 
+
+@Var @RT(9)pMoveData @RT(0) @T @T @REFTO 0 @F @DERIVED 0 @T @T @DT @RT(10)tsMoveData @RT(0) @T @T @UNKNOWN 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(52)returns a pointer to the movementvariable sv_MoveXxx @RT(0) 
+@END_Attrib 
+1 3 @F @F @F @F 
+
+@Var @RT(6)bFound @RT(0) @T @F @DT @RT(4)BOOL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(27)movementdata has been found @RT(0) 
+@END_Attrib 
+1 3 @F @F @F @F 
+
+@Var @RT(12)sv_Movements @RT(0) @T @T @DERIVED 0 @T @T @DT @RT(15)tyMoveDataArray @RT(0) @T @T @UNKNOWN 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 8 @F @F @F @F 
+
+@Var @RT(20)sv_NumberOfMovements @RT(0) @T @F @DT @RT(4)DINT @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 8 @F @F @F @F 
+
+@Var @RT(1)i @RT(0) @T @F @DT @RT(4)DINT @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 4 @F @F @F @F 
+
+@END_Dcl 
+
+@END_Export 
+
+@BEG_Body 
+@TL(18)
+(**************************************** WARNING ********************************************
+ *** The KEBA Kemro K2 System including software is not intended for safety control tasks! ***
+ ***                       For further information see Comment tab!                        ***
+ *********************************************************************************************)
+
+FOR i := 1 TO sv_NumberOfMovements DO
+   //search the Movement-Array for the specified sv_MoveXxx
+   IF (sv_Movements[i]^.MoveDir = MoveDir OR MoveDir = cMoveAll) AND
+      (sv_Movements[i]^.MoveId = MoveId OR MoveId = cMoveAll) THEN
+      
+      pMoveData := sv_Movements[i];
+      bFound := TRUE;
+      RETURN;
+   END_IF;   
+END_FOR;
+
+bFound := FALSE;
+
+@END_Body 
+
+@END_Contents 

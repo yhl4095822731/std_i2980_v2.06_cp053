@@ -1,0 +1,118 @@
+IMPORT_OVER_LISTFILE
+ FCalcScrewCircumfenceSpeed
+, tsLimitDataReal
+
+END_IMPORT
+
+PLAUSIBILITY_FUNCTION FPlausRotationPlast : tsLimitDataReal
+
+VAR_INPUT
+ DeviceClass : INT;
+ Userlevel : INT;
+END_VAR
+
+SYSTEM_VAR_IN
+ sv_rScrewDiameter : REAL;
+ sv_rMaxRpm : REAL;
+END_VAR
+#BEGIN_EDIT_BLOCK
+(**************************************** WARNING ********************************************
+ *** The KEBA Kemro K2 System including software is not intended for safety control tasks! ***
+ ***                       For further information see Comment tab!                        ***
+ *********************************************************************************************)
+
+//conversion between rpm to cm/s
+FPlausRotationPlast.rLowerLimit := 0.1;
+FPlausRotationPlast.rUpperLimit := FCalcScrewCircumfenceSpeed(sv_rScrewDiameter, sv_rMaxRpm);
+
+
+;#END_EDIT_BLOCK END_FUNCTION
+
+
+
+#END_OF_IEC_PART
+
+@Puma @IecEditor 6 131 @Pou 25 
+@@@BEG_Comment@@@
+
+@@@END_Comment@@@
+
+@BEG_Contents 
+
+@BEG_Func 
+@RT(17)FuncTreeContainer 
+1 
+@Var @RT(26)FCalcScrewCircumfenceSpeed @RT(0) @T @T @DERIVED 0 @F @RT(8)FUNCTION @F 
+@T 
+@BEG_Attrib 
+0 @RT(0) @RT(0) 
+@END_Attrib 
+1 1 @F @F @F @F 
+
+@END_Func 
+
+@BEG_Const 
+@RT(18)ConstTreeContainer 
+0 
+@END_Const 
+
+@BEG_Export 
+
+@BEG_Kind 
+@PLAUSIBILITY_FUNCTION @RT(19)FPlausRotationPlast @STRUCTURED_TEXT 
+@RT(15)tsLimitDataReal @RT(0) @RT(0) 
+@END_Kind 
+
+@BEG_Dcl 
+@RT(16)DclTreeContainer 
+4 
+@Var @RT(11)DeviceClass @RT(0) @T @F @DT @RT(3)INT @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+0 1 @F @F @F @F 
+
+@Var @RT(9)Userlevel @RT(0) @T @F @DT @RT(3)INT @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+0 1 @F @F @F @F 
+
+@Var @RT(17)sv_rScrewDiameter @RT(0) @T @F @DT @RT(4)REAL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 9 @F @F @F @F 
+
+@Var @RT(10)sv_rMaxRpm @RT(0) @T @F @DT @RT(4)REAL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 9 @F @F @F @F 
+
+@END_Dcl 
+
+@END_Export 
+
+@BEG_Body 
+@TL(9)
+(**************************************** WARNING ********************************************
+ *** The KEBA Kemro K2 System including software is not intended for safety control tasks! ***
+ ***                       For further information see Comment tab!                        ***
+ *********************************************************************************************)
+
+//conversion between rpm to cm/s
+FPlausRotationPlast.rLowerLimit := 0.1;
+FPlausRotationPlast.rUpperLimit := FCalcScrewCircumfenceSpeed(sv_rScrewDiameter, sv_rMaxRpm);
+
+@END_Body 
+
+@END_Contents 

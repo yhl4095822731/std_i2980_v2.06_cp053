@@ -1,0 +1,2915 @@
+IMPORT_OVER_LISTFILE
+ GET_SYNC_REFTO
+, GET_TASK_INTERVAL
+, KSYS_Status_OK
+, cMaxZones
+, ABZoneSimu
+, tyZoneArray
+, KSYS_Status
+, KTEMP_PtnParam
+, KAPPL_TempZoneUsedArr
+
+END_IMPORT
+
+ALGORITHM_BLOCK ABMoldTempSimu #DUMMY_EDIT_BLOCK
+
+SYSTEM_VAR
+ sv_bSimulate : BOOL;
+ sv_bInitStart : BOOL;
+END_VAR
+
+SYSTEM_OBJECT
+ TaskSim : TASK;
+ PU_Task_13 : TASK;
+END_OBJECT
+
+VAR
+ abZoneSimu1 : ABZoneSimu;
+ abZoneSimu2 : ABZoneSimu;
+ abZoneSimu3 : ABZoneSimu;
+ abZoneSimu4 : ABZoneSimu;
+ abZoneSimu5 : ABZoneSimu;
+ abZoneSimu6 : ABZoneSimu;
+ abZoneSimu7 : ABZoneSimu;
+ abZoneSimu8 : ABZoneSimu;
+ abZoneSimu9 : ABZoneSimu;
+ abZoneSimu10 : ABZoneSimu;
+ abZoneSimu11 : ABZoneSimu;
+ abZoneSimu12 : ABZoneSimu;
+ abZoneSimu13 : ABZoneSimu;
+ abZoneSimu14 : ABZoneSimu;
+ abZoneSimu15 : ABZoneSimu;
+ abZoneSimu16 : ABZoneSimu;
+ abZoneSimu17 : ABZoneSimu;
+ abZoneSimu18 : ABZoneSimu;
+ abZoneSimu19 : ABZoneSimu;
+ abZoneSimu20 : ABZoneSimu;
+ abZoneSimu21 : ABZoneSimu;
+ abZoneSimu22 : ABZoneSimu;
+ abZoneSimu23 : ABZoneSimu;
+ abZoneSimu24 : ABZoneSimu;
+ abZoneSimu25 : ABZoneSimu;
+ abZoneSimu26 : ABZoneSimu;
+ abZoneSimu27 : ABZoneSimu;
+ abZoneSimu28 : ABZoneSimu;
+ abZoneSimu29 : ABZoneSimu;
+ abZoneSimu30 : ABZoneSimu;
+ abZoneSimu31 : ABZoneSimu;
+ abZoneSimu32 : ABZoneSimu;
+ abZoneSimu33 : ABZoneSimu;
+ abZoneSimu34 : ABZoneSimu;
+ abZoneSimu35 : ABZoneSimu;
+ abZoneSimu36 : ABZoneSimu;
+ abZoneSimu37 : ABZoneSimu;
+ abZoneSimu38 : ABZoneSimu;
+ abZoneSimu39 : ABZoneSimu;
+ abZoneSimu40 : ABZoneSimu;
+ abZoneSimu41 : ABZoneSimu;
+ abZoneSimu42 : ABZoneSimu;
+ abZoneSimu43 : ABZoneSimu;
+ abZoneSimu44 : ABZoneSimu;
+ abZoneSimu45 : ABZoneSimu;
+ abZoneSimu46 : ABZoneSimu;
+ abZoneSimu47 : ABZoneSimu;
+ abZoneSimu48 : ABZoneSimu;
+ abZoneSimu49 : ABZoneSimu;
+ abZoneSimu50 : ABZoneSimu;
+ abZoneSimu51 : ABZoneSimu;
+ abZoneSimu52 : ABZoneSimu;
+ abZoneSimu53 : ABZoneSimu;
+ abZoneSimu54 : ABZoneSimu;
+ abZoneSimu55 : ABZoneSimu;
+ abZoneSimu56 : ABZoneSimu;
+ abZoneSimu57 : ABZoneSimu;
+ abZoneSimu58 : ABZoneSimu;
+ abZoneSimu59 : ABZoneSimu;
+ abZoneSimu60 : ABZoneSimu;
+ abZoneSimu61 : ABZoneSimu;
+ abZoneSimu62 : ABZoneSimu;
+ abZoneSimu63 : ABZoneSimu;
+ abZoneSimu64 : ABZoneSimu;
+ abZoneSimu65 : ABZoneSimu;
+ abZoneSimu66 : ABZoneSimu;
+ abZoneSimu67 : ABZoneSimu;
+ abZoneSimu68 : ABZoneSimu;
+ abZoneSimu69 : ABZoneSimu;
+ abZoneSimu70 : ABZoneSimu;
+ abZoneSimu71 : ABZoneSimu;
+ abZoneSimu72 : ABZoneSimu;
+ mpMoldZoneArray : REFTO tyZoneArray;
+ mbTIHeatingMoldTempLinked : BOOL;
+END_VAR
+
+POSTUPDATE_ALGORITHM pStart ON PU_Task_13 WITH sv_bSimulate,sv_bInitStart
+
+
+VAR
+ Status : KSYS_Status;
+END_VAR
+#BEGIN_EDIT_BLOCK
+IF sv_bSimulate THEN
+    mpMoldZoneArray := GET_SYNC_REFTO('HeatingMold1.sv_ZoneArray', T#0s, Status);
+    IF Status = KSYS_Status_OK THEN
+      mbTIHeatingMoldTempLinked := TRUE;
+      START_PROCESS_ALGORITHM(paSimulate);
+   END_IF;
+END_IF;
+
+
+;#END_EDIT_BLOCK END_ALGORITHM
+
+PROCESS_ALGORITHM paSimulate ON TaskSim
+
+
+VAR_TEMP
+ i : DINT;
+END_VAR
+
+VAR
+ dCycleTime : TIME;
+ s : STRING(255);
+ Plant : KTEMP_PtnParam := (uN:=3,rK:=3.0,rT:=3(T#5s));
+ bTITempZoneLinked : KAPPL_TempZoneUsedArr;
+ rKActVariance : REAL := 0.1;
+ rKActVarianceFactor : REAL := 1.0;
+END_VAR
+
+VAR RETAIN
+ rGain : REAL := 3.0;
+ dTPlant : TIME := T#10s;
+END_VAR
+
+(* IecGraph-Code *)
+
+(* init step *)
+INITIAL_STEP INIT:
+END_STEP
+
+
+(* steps *)
+STEP SIM:
+aInit (P);
+aSimulate (N);
+END_STEP
+
+STEP STOP:
+aStopSimu (P);
+END_STEP
+
+
+(* transitions *)
+TRANSITION SimRequired (* SimRequired *) FROM INIT TO SIM :=  #BEGIN_EDIT_BLOCK
+sv_bSimulate
+;#END_EDIT_BLOCK
+END_TRANSITION
+
+TRANSITION StpSimRequired (* StpSimRequired *) FROM SIM TO STOP :=  #BEGIN_EDIT_BLOCK
+NOT sv_bSimulate
+;#END_EDIT_BLOCK
+END_TRANSITION
+
+TRANSITION Return (* Return *) FROM STOP TO SIM :=  #BEGIN_EDIT_BLOCK
+TRUE
+;#END_EDIT_BLOCK
+END_TRANSITION
+
+(* end IecGraph-Code *)
+(* sfc-code *)
+
+(* stand alone actions *)
+ACTION aInit: #BEGIN_EDIT_BLOCK
+(**************************************** WARNING ********************************************
+ *** The KEBA Kemro K2 System including software is not intended for safety control tasks! ***
+ ***                       For further information see Comment tab!                        ***
+ *********************************************************************************************)
+
+IF mbTIHeatingMoldTempLinked THEN
+   dCycleTime := GET_TASK_INTERVAL();
+   FOR i := 1 TO cMaxZones DO
+      IF CHECK_REF(mpMoldZoneArray^[i].Data^.prActTemp^) THEN
+         bTITempZoneLinked[i]:= TRUE;
+         s := CONCAT('HeatingMold1.ti_InTemp', DINT_TO_STRING(i));
+         IF CHECK_REF(mpMoldZoneArray^[i].Data^.pbOutHeatTOStat^) THEN
+            mpMoldZoneArray^[i].Data^.pbOutHeatTOStat^ := FALSE;
+         END_IF;
+         IF CHECK_REF(mpMoldZoneArray^[i].Data^.pbOutCoolTOStat^) THEN
+            mpMoldZoneArray^[i].Data^.pbOutCoolTOStat^ := FALSE;
+         END_IF;
+         IF CHECK_REF(mpMoldZoneArray^[i].Data^.pbOutHeatDOStat^) THEN
+            mpMoldZoneArray^[i].Data^.pbOutHeatDOStat^ := FALSE;
+         END_IF;
+         IF CHECK_REF(mpMoldZoneArray^[i].Data^.pbOutCoolDOStat^) THEN
+            mpMoldZoneArray^[i].Data^.pbOutCoolDOStat^ := FALSE;
+         END_IF;  
+         IF CHECK_REF(mpMoldZoneArray^[i].Data^.pbActTempStat^) THEN
+            mpMoldZoneArray^[i].Data^.pbActTempStat^ := FALSE;
+         END_IF; 
+         IF CHECK_REF(mpMoldZoneArray^[i].Data^.pbOutHeatPOStat^) THEN
+            mpMoldZoneArray^[i].Data^.pbOutHeatPOStat^ := FALSE;
+         END_IF;
+         IF CHECK_REF(mpMoldZoneArray^[i].Data^.pPowerGroup^.pbInGroupPWIStat^) THEN
+            mpMoldZoneArray^[i].Data^.pPowerGroup^.pbInGroupPWIStat^ := FALSE;
+         END_IF;
+         IF CHECK_REF(mpMoldZoneArray^[i].Data^.pPowerGroup^.pbInGroupCUIStat^) THEN
+            mpMoldZoneArray^[i].Data^.pPowerGroup^.pbInGroupCUIStat^ := FALSE;
+         END_IF;
+         IF CHECK_REF(mpMoldZoneArray^[i].Data^.pPowerGroup^.pbInGroupVOIStat^) THEN
+            mpMoldZoneArray^[i].Data^.pPowerGroup^.pbInGroupVOIStat^ := FALSE;
+         END_IF;                                                             
+         //fbEPUnForceTemp(sSysVar := s);
+      END_IF;
+   END_FOR;
+END_IF;
+
+
+
+
+IF mbTIHeatingMoldTempLinked THEN
+    Plant.uN    := 3;    
+    Plant.rK    := rGain;    
+    Plant.rT[0] := dTPlant;
+    Plant.rT[1] := dTPlant;
+    Plant.rT[2] := dTPlant;
+   
+    abZoneSimu1.aInit(ptnParam:=Plant,
+                      dCycleTime:=dCycleTime,
+                      sZoneName:='HeatingMold1.ti_InTemp1',
+                      bZoneLinked:=bTITempZoneLinked[1]);
+   
+    rKActVarianceFactor := 1.0 + rKActVariance;
+    Plant.rT[0] := dTPlant * rKActVarianceFactor;
+    Plant.rT[1] := Plant.rT[0];
+    Plant.rT[2] := Plant.rT[0];
+   
+    abZoneSimu2.aInit(ptnParam:=Plant,
+                      dCycleTime:=dCycleTime,
+                      sZoneName:='HeatingMold1.ti_InTemp2',
+                      bZoneLinked:=bTITempZoneLinked[2]);
+   
+    rKActVarianceFactor := 1.0 + 2.0 * rKActVariance;
+    Plant.rT[0] := dTPlant * rKActVarianceFactor;
+    Plant.rT[1] := Plant.rT[0];
+    Plant.rT[2] := Plant.rT[0];
+
+    abZoneSimu3.aInit(ptnParam:=Plant,
+                      dCycleTime:=dCycleTime,
+                      sZoneName:='HeatingMold1.ti_InTemp3',
+                      bZoneLinked:=bTITempZoneLinked[3]);
+      
+    rKActVarianceFactor := 1.0 + 3.0 * rKActVariance;
+    Plant.rT[0] := dTPlant * rKActVarianceFactor;
+    Plant.rT[1] := Plant.rT[0];
+    Plant.rT[2] := Plant.rT[0];
+   
+    abZoneSimu4.aInit(ptnParam:=Plant,
+                      dCycleTime:=dCycleTime,
+                      sZoneName:='HeatingMold1.ti_InTemp4',
+                      bZoneLinked:=bTITempZoneLinked[4]);
+
+    rKActVarianceFactor := 1.0 + 4.0 * rKActVariance;
+    Plant.rT[0] := dTPlant * rKActVarianceFactor;
+    Plant.rT[1] := Plant.rT[0];
+    Plant.rT[2] := Plant.rT[0];
+
+    abZoneSimu5.aInit(ptnParam:=Plant,
+                      dCycleTime:=dCycleTime,
+                      sZoneName:='HeatingMold1.ti_InTemp5',
+                      bZoneLinked:=bTITempZoneLinked[5]);
+   
+    rKActVarianceFactor := 1.0 + 5.0 * rKActVariance;
+    Plant.rT[0] := dTPlant * rKActVarianceFactor;
+    Plant.rT[1] := Plant.rT[0];
+    Plant.rT[2] := Plant.rT[0];
+   
+    abZoneSimu6.aInit(ptnParam:=Plant,
+                      dCycleTime:=dCycleTime,
+                      sZoneName:='HeatingMold1.ti_InTemp6',
+                      bZoneLinked:=bTITempZoneLinked[6]);
+   
+    rKActVarianceFactor := 1.0;
+    Plant.rT[0] := dTPlant * rKActVarianceFactor;
+    Plant.rT[1] := Plant.rT[0];
+    Plant.rT[2] := Plant.rT[0];
+   
+    abZoneSimu7.aInit(ptnParam:=Plant,
+                      dCycleTime:=dCycleTime,
+                      sZoneName:='HeatingMold1.ti_InTemp7',
+                      bZoneLinked:=bTITempZoneLinked[7]);
+   
+    rKActVarianceFactor := 1.0 + rKActVariance;
+    Plant.rT[0] := dTPlant * rKActVarianceFactor;
+    Plant.rT[1] := Plant.rT[0];
+    Plant.rT[2] := Plant.rT[0];
+   
+    abZoneSimu8.aInit(ptnParam:=Plant,
+                      dCycleTime:=dCycleTime,
+                      sZoneName:='HeatingMold1.ti_InTemp8',
+                      bZoneLinked:=bTITempZoneLinked[8]);
+   
+    rKActVarianceFactor := 1.0 + 2.0 * rKActVariance;
+    Plant.rT[0] := dTPlant * rKActVarianceFactor;
+    Plant.rT[1] := Plant.rT[0];
+    Plant.rT[2] := Plant.rT[0];
+   
+    abZoneSimu9.aInit(ptnParam:=Plant,
+                      dCycleTime:=dCycleTime,
+                      sZoneName:='HeatingMold1.ti_InTemp9',
+                      bZoneLinked:=bTITempZoneLinked[9]);
+   
+    rKActVarianceFactor := 1.0 + 3.0 * rKActVariance;
+    Plant.rT[0] := dTPlant * rKActVarianceFactor;
+    Plant.rT[1] := Plant.rT[0];
+    Plant.rT[2] := Plant.rT[0];
+   
+    abZoneSimu10.aInit(ptnParam:=Plant,
+                      dCycleTime:=dCycleTime,
+                      sZoneName:='HeatingMold1.ti_InTemp10',
+                      bZoneLinked:=bTITempZoneLinked[10]);
+   
+    rKActVarianceFactor := 1.0 + 4.0 * rKActVariance;
+    Plant.rT[0] := dTPlant * rKActVarianceFactor;
+    Plant.rT[1] := Plant.rT[0];
+    Plant.rT[2] := Plant.rT[0];
+   
+    abZoneSimu11.aInit(ptnParam:=Plant,
+                      dCycleTime:=dCycleTime,
+                      sZoneName:='HeatingMold1.ti_InTemp11',
+                      bZoneLinked:=bTITempZoneLinked[11]);
+   
+    rKActVarianceFactor := 1.0 + 5.0 * rKActVariance;
+    Plant.rT[0] := dTPlant * rKActVarianceFactor;
+    Plant.rT[1] := Plant.rT[0];
+    Plant.rT[2] := Plant.rT[0];
+   
+    abZoneSimu12.aInit(ptnParam:=Plant,
+                      dCycleTime:=dCycleTime,
+                      sZoneName:='HeatingMold1.ti_InTemp12',
+                      bZoneLinked:=bTITempZoneLinked[12]);
+   
+    rKActVarianceFactor := 1.0;
+    Plant.rT[0] := dTPlant * rKActVarianceFactor;
+    Plant.rT[1] := Plant.rT[0];
+    Plant.rT[2] := Plant.rT[0];
+   
+    abZoneSimu13.aInit(ptnParam:=Plant,
+                      dCycleTime:=dCycleTime,
+                      sZoneName:='HeatingMold1.ti_InTemp13',
+                      bZoneLinked:=bTITempZoneLinked[13]);
+   
+    rKActVarianceFactor := 1.0 + rKActVariance;
+    Plant.rT[0] := dTPlant * rKActVarianceFactor;
+    Plant.rT[1] := Plant.rT[0];
+    Plant.rT[2] := Plant.rT[0];
+   
+    abZoneSimu14.aInit(ptnParam:=Plant,
+                      dCycleTime:=dCycleTime,
+                      sZoneName:='HeatingMold1.ti_InTemp14',
+                      bZoneLinked:=bTITempZoneLinked[14]);
+   
+    rKActVarianceFactor := 1.0 + 2.0 * rKActVariance;
+    Plant.rT[0] := dTPlant * rKActVarianceFactor;
+    Plant.rT[1] := Plant.rT[0];
+    Plant.rT[2] := Plant.rT[0];
+   
+    abZoneSimu15.aInit(ptnParam:=Plant,
+                      dCycleTime:=dCycleTime,
+                      sZoneName:='HeatingMold1.ti_InTemp15',
+                      bZoneLinked:=bTITempZoneLinked[15]);
+   
+    rKActVarianceFactor := 1.0 + 3.0 * rKActVariance;
+    Plant.rT[0] := dTPlant * rKActVarianceFactor;
+    Plant.rT[1] := Plant.rT[0];
+    Plant.rT[2] := Plant.rT[0];
+   
+    abZoneSimu16.aInit(ptnParam:=Plant,
+                      dCycleTime:=dCycleTime,
+                      sZoneName:='HeatingMold1.ti_InTemp16',
+                      bZoneLinked:=bTITempZoneLinked[16]);
+   
+    rKActVarianceFactor := 1.0 + 4.0 * rKActVariance;
+    Plant.rT[0] := dTPlant * rKActVarianceFactor;
+    Plant.rT[1] := Plant.rT[0];
+    Plant.rT[2] := Plant.rT[0];
+   
+    abZoneSimu17.aInit(ptnParam:=Plant,
+                      dCycleTime:=dCycleTime,
+                      sZoneName:='HeatingMold1.ti_InTemp17',
+                      bZoneLinked:=bTITempZoneLinked[17]);
+   
+    rKActVarianceFactor := 1.0 + 5.0 * rKActVariance;
+    Plant.rT[0] := dTPlant * rKActVarianceFactor;
+    Plant.rT[1] := Plant.rT[0];
+    Plant.rT[2] := Plant.rT[0];
+   
+    abZoneSimu18.aInit(ptnParam:=Plant,
+                      dCycleTime:=dCycleTime,
+                      sZoneName:='HeatingMold1.ti_InTemp18',
+                      bZoneLinked:=bTITempZoneLinked[18]);
+   
+    rKActVarianceFactor := 1.0;
+    Plant.rT[0] := dTPlant * rKActVarianceFactor;
+    Plant.rT[1] := Plant.rT[0];
+    Plant.rT[2] := Plant.rT[0];
+   
+    abZoneSimu19.aInit(ptnParam:=Plant,
+                      dCycleTime:=dCycleTime,
+                      sZoneName:='HeatingMold1.ti_InTemp19',
+                      bZoneLinked:=bTITempZoneLinked[19]);
+   
+    rKActVarianceFactor := 1.0 + rKActVariance;
+    Plant.rT[0] := dTPlant * rKActVarianceFactor;
+    Plant.rT[1] := Plant.rT[0];
+    Plant.rT[2] := Plant.rT[0];
+   
+    abZoneSimu20.aInit(ptnParam:=Plant,
+                      dCycleTime:=dCycleTime,
+                      sZoneName:='HeatingMold1.ti_InTemp20',
+                      bZoneLinked:=bTITempZoneLinked[20]);
+   
+    rKActVarianceFactor := 1.0 + 2.0 * rKActVariance;
+    Plant.rT[0] := dTPlant * rKActVarianceFactor;
+    Plant.rT[1] := Plant.rT[0];
+    Plant.rT[2] := Plant.rT[0];
+   
+    abZoneSimu21.aInit(ptnParam:=Plant,
+                      dCycleTime:=dCycleTime,
+                      sZoneName:='HeatingMold1.ti_InTemp21',
+                      bZoneLinked:=bTITempZoneLinked[21]);
+   
+    rKActVarianceFactor := 1.0 + 3.0 * rKActVariance;
+    Plant.rT[0] := dTPlant * rKActVarianceFactor;
+    Plant.rT[1] := Plant.rT[0];
+    Plant.rT[2] := Plant.rT[0];
+   
+    abZoneSimu22.aInit(ptnParam:=Plant,
+                      dCycleTime:=dCycleTime,
+                      sZoneName:='HeatingMold1.ti_InTemp22',
+                      bZoneLinked:=bTITempZoneLinked[22]);
+   
+    rKActVarianceFactor := 1.0 + 4.0 * rKActVariance;
+    Plant.rT[0] := dTPlant * rKActVarianceFactor;
+    Plant.rT[1] := Plant.rT[0];
+    Plant.rT[2] := Plant.rT[0];
+   
+    abZoneSimu23.aInit(ptnParam:=Plant,
+                      dCycleTime:=dCycleTime,
+                      sZoneName:='HeatingMold1.ti_InTemp23',
+                      bZoneLinked:=bTITempZoneLinked[23]);
+   
+    rKActVarianceFactor := 1.0 + 5.0 * rKActVariance;
+    Plant.rT[0] := dTPlant * rKActVarianceFactor;
+    Plant.rT[1] := Plant.rT[0];
+    Plant.rT[2] := Plant.rT[0];
+   
+    abZoneSimu24.aInit(ptnParam:=Plant,
+                      dCycleTime:=dCycleTime,
+                      sZoneName:='HeatingMold1.ti_InTemp24',
+                      bZoneLinked:=bTITempZoneLinked[24]);
+   
+    rKActVarianceFactor := 1.0;
+    Plant.rT[0] := dTPlant * rKActVarianceFactor;
+    Plant.rT[1] := Plant.rT[0];
+    Plant.rT[2] := Plant.rT[0];
+   
+    abZoneSimu25.aInit(ptnParam:=Plant,
+                      dCycleTime:=dCycleTime,
+                      sZoneName:='HeatingMold1.ti_InTemp25',
+                      bZoneLinked:=bTITempZoneLinked[25]);
+   
+    rKActVarianceFactor := 1.0 + rKActVariance;
+    Plant.rT[0] := dTPlant * rKActVarianceFactor;
+    Plant.rT[1] := Plant.rT[0];
+    Plant.rT[2] := Plant.rT[0];
+   
+    abZoneSimu26.aInit(ptnParam:=Plant,
+                      dCycleTime:=dCycleTime,
+                      sZoneName:='HeatingMold1.ti_InTemp26',
+                      bZoneLinked:=bTITempZoneLinked[26]);
+   
+    rKActVarianceFactor := 1.0 + 2.0 * rKActVariance;
+    Plant.rT[0] := dTPlant * rKActVarianceFactor;
+    Plant.rT[1] := Plant.rT[0];
+    Plant.rT[2] := Plant.rT[0];
+   
+    abZoneSimu27.aInit(ptnParam:=Plant,
+                      dCycleTime:=dCycleTime,
+                      sZoneName:='HeatingMold1.ti_InTemp27',
+                      bZoneLinked:=bTITempZoneLinked[27]);
+   
+    rKActVarianceFactor := 1.0 + 3.0 * rKActVariance;
+    Plant.rT[0] := dTPlant * rKActVarianceFactor;
+    Plant.rT[1] := Plant.rT[0];
+    Plant.rT[2] := Plant.rT[0];
+   
+    abZoneSimu28.aInit(ptnParam:=Plant,
+                      dCycleTime:=dCycleTime,
+                      sZoneName:='HeatingMold1.ti_InTemp28',
+                      bZoneLinked:=bTITempZoneLinked[28]);
+   
+    rKActVarianceFactor := 1.0 + 4.0 * rKActVariance;
+    Plant.rT[0] := dTPlant * rKActVarianceFactor;
+    Plant.rT[1] := Plant.rT[0];
+    Plant.rT[2] := Plant.rT[0];
+   
+    abZoneSimu29.aInit(ptnParam:=Plant,
+                      dCycleTime:=dCycleTime,
+                      sZoneName:='HeatingMold1.ti_InTemp29',
+                      bZoneLinked:=bTITempZoneLinked[29]);
+   
+    rKActVarianceFactor := 1.0 + 5.0 * rKActVariance;
+    Plant.rT[0] := dTPlant * rKActVarianceFactor;
+    Plant.rT[1] := Plant.rT[0];
+    Plant.rT[2] := Plant.rT[0];
+   
+    abZoneSimu30.aInit(ptnParam:=Plant,
+                      dCycleTime:=dCycleTime,
+                      sZoneName:='HeatingMold1.ti_InTemp30',
+                      bZoneLinked:=bTITempZoneLinked[30]);
+   
+    rKActVarianceFactor := 1.0;
+    Plant.rT[0] := dTPlant * rKActVarianceFactor;
+    Plant.rT[1] := Plant.rT[0];
+    Plant.rT[2] := Plant.rT[0];
+   
+    abZoneSimu31.aInit(ptnParam:=Plant,
+                      dCycleTime:=dCycleTime,
+                      sZoneName:='HeatingMold1.ti_InTemp31',
+                      bZoneLinked:=bTITempZoneLinked[31]);
+   
+    rKActVarianceFactor := 1.0 + rKActVariance;
+    Plant.rT[0] := dTPlant * rKActVarianceFactor;
+    Plant.rT[1] := Plant.rT[0];
+    Plant.rT[2] := Plant.rT[0];
+   
+    abZoneSimu32.aInit(ptnParam:=Plant,
+                      dCycleTime:=dCycleTime,
+                      sZoneName:='HeatingMold1.ti_InTemp32',
+                      bZoneLinked:=bTITempZoneLinked[32]);
+   
+    rKActVarianceFactor := 1.0 + 2.0 * rKActVariance;
+    Plant.rT[0] := dTPlant * rKActVarianceFactor;
+    Plant.rT[1] := Plant.rT[0];
+    Plant.rT[2] := Plant.rT[0];
+   
+    abZoneSimu33.aInit(ptnParam:=Plant,
+                      dCycleTime:=dCycleTime,
+                      sZoneName:='HeatingMold1.ti_InTemp33',
+                      bZoneLinked:=bTITempZoneLinked[33]);
+   
+    rKActVarianceFactor := 1.0 + 3.0 * rKActVariance;
+    Plant.rT[0] := dTPlant * rKActVarianceFactor;
+    Plant.rT[1] := Plant.rT[0];
+    Plant.rT[2] := Plant.rT[0];
+   
+    abZoneSimu34.aInit(ptnParam:=Plant,
+                      dCycleTime:=dCycleTime,
+                      sZoneName:='HeatingMold1.ti_InTemp34',
+                      bZoneLinked:=bTITempZoneLinked[34]);
+   
+    rKActVarianceFactor := 1.0 + 4.0 * rKActVariance;
+    Plant.rT[0] := dTPlant * rKActVarianceFactor;
+    Plant.rT[1] := Plant.rT[0];
+    Plant.rT[2] := Plant.rT[0];
+   
+    abZoneSimu35.aInit(ptnParam:=Plant,
+                      dCycleTime:=dCycleTime,
+                      sZoneName:='HeatingMold1.ti_InTemp35',
+                      bZoneLinked:=bTITempZoneLinked[35]);
+   
+    rKActVarianceFactor := 1.0 + 5.0 * rKActVariance;
+    Plant.rT[0] := dTPlant * rKActVarianceFactor;
+    Plant.rT[1] := Plant.rT[0];
+    Plant.rT[2] := Plant.rT[0];
+   
+    abZoneSimu36.aInit(ptnParam:=Plant,
+                      dCycleTime:=dCycleTime,
+                      sZoneName:='HeatingMold1.ti_InTemp36',
+                      bZoneLinked:=bTITempZoneLinked[36]);
+   
+    rKActVarianceFactor := 1.0;
+    Plant.rT[0] := dTPlant * rKActVarianceFactor;
+    Plant.rT[1] := Plant.rT[0];
+    Plant.rT[2] := Plant.rT[0];
+   
+    abZoneSimu37.aInit(ptnParam:=Plant,
+                      dCycleTime:=dCycleTime,
+                      sZoneName:='HeatingMold1.ti_InTemp37',
+                      bZoneLinked:=bTITempZoneLinked[37]);
+   
+    rKActVarianceFactor := 1.0 + rKActVariance;
+    Plant.rT[0] := dTPlant * rKActVarianceFactor;
+    Plant.rT[1] := Plant.rT[0];
+    Plant.rT[2] := Plant.rT[0];
+   
+    abZoneSimu38.aInit(ptnParam:=Plant,
+                      dCycleTime:=dCycleTime,
+                      sZoneName:='HeatingMold1.ti_InTemp38',
+                      bZoneLinked:=bTITempZoneLinked[38]);
+   
+    rKActVarianceFactor := 1.0 + 2.0 * rKActVariance;
+    Plant.rT[0] := dTPlant * rKActVarianceFactor;
+    Plant.rT[1] := Plant.rT[0];
+    Plant.rT[2] := Plant.rT[0];
+   
+    abZoneSimu39.aInit(ptnParam:=Plant,
+                      dCycleTime:=dCycleTime,
+                      sZoneName:='HeatingMold1.ti_InTemp39',
+                      bZoneLinked:=bTITempZoneLinked[39]);
+   
+    rKActVarianceFactor := 1.0 + 3.0 * rKActVariance;
+    Plant.rT[0] := dTPlant * rKActVarianceFactor;
+    Plant.rT[1] := Plant.rT[0];
+    Plant.rT[2] := Plant.rT[0];
+   
+    abZoneSimu40.aInit(ptnParam:=Plant,
+                      dCycleTime:=dCycleTime,
+                      sZoneName:='HeatingMold1.ti_InTemp40',
+                      bZoneLinked:=bTITempZoneLinked[40]);
+   
+    rKActVarianceFactor := 1.0 + 4.0 * rKActVariance;
+    Plant.rT[0] := dTPlant * rKActVarianceFactor;
+    Plant.rT[1] := Plant.rT[0];
+    Plant.rT[2] := Plant.rT[0];
+   
+    abZoneSimu41.aInit(ptnParam:=Plant,
+                      dCycleTime:=dCycleTime,
+                      sZoneName:='HeatingMold1.ti_InTemp41',
+                      bZoneLinked:=bTITempZoneLinked[41]);
+   
+    rKActVarianceFactor := 1.0 + 5.0 * rKActVariance;
+    Plant.rT[0] := dTPlant * rKActVarianceFactor;
+    Plant.rT[1] := Plant.rT[0];
+    Plant.rT[2] := Plant.rT[0];
+   
+    abZoneSimu42.aInit(ptnParam:=Plant,
+                      dCycleTime:=dCycleTime,
+                      sZoneName:='HeatingMold1.ti_InTemp42',
+                      bZoneLinked:=bTITempZoneLinked[42]);
+   
+    rKActVarianceFactor := 1.0;
+    Plant.rT[0] := dTPlant * rKActVarianceFactor;
+    Plant.rT[1] := Plant.rT[0];
+    Plant.rT[2] := Plant.rT[0];
+   
+    abZoneSimu43.aInit(ptnParam:=Plant,
+                      dCycleTime:=dCycleTime,
+                      sZoneName:='HeatingMold1.ti_InTemp43',
+                      bZoneLinked:=bTITempZoneLinked[43]);
+   
+    rKActVarianceFactor := 1.0 + rKActVariance;
+    Plant.rT[0] := dTPlant * rKActVarianceFactor;
+    Plant.rT[1] := Plant.rT[0];
+    Plant.rT[2] := Plant.rT[0];
+   
+    abZoneSimu44.aInit(ptnParam:=Plant,
+                      dCycleTime:=dCycleTime,
+                      sZoneName:='HeatingMold1.ti_InTemp44',
+                      bZoneLinked:=bTITempZoneLinked[44]);
+   
+    rKActVarianceFactor := 1.0 + 2.0 * rKActVariance;
+    Plant.rT[0] := dTPlant * rKActVarianceFactor;
+    Plant.rT[1] := Plant.rT[0];
+    Plant.rT[2] := Plant.rT[0];
+   
+    abZoneSimu45.aInit(ptnParam:=Plant,
+                      dCycleTime:=dCycleTime,
+                      sZoneName:='HeatingMold1.ti_InTemp45',
+                      bZoneLinked:=bTITempZoneLinked[45]);
+   
+    rKActVarianceFactor := 1.0 + 3.0 * rKActVariance;
+    Plant.rT[0] := dTPlant * rKActVarianceFactor;
+    Plant.rT[1] := Plant.rT[0];
+    Plant.rT[2] := Plant.rT[0];
+   
+    abZoneSimu46.aInit(ptnParam:=Plant,
+                      dCycleTime:=dCycleTime,
+                      sZoneName:='HeatingMold1.ti_InTemp46',
+                      bZoneLinked:=bTITempZoneLinked[46]);
+   
+    rKActVarianceFactor := 1.0 + 4.0 * rKActVariance;
+    Plant.rT[0] := dTPlant * rKActVarianceFactor;
+    Plant.rT[1] := Plant.rT[0];
+    Plant.rT[2] := Plant.rT[0];
+   
+    abZoneSimu47.aInit(ptnParam:=Plant,
+                      dCycleTime:=dCycleTime,
+                      sZoneName:='HeatingMold1.ti_InTemp47',
+                      bZoneLinked:=bTITempZoneLinked[47]);
+   
+    rKActVarianceFactor := 1.0 + 5.0 * rKActVariance;
+    Plant.rT[0] := dTPlant * rKActVarianceFactor;
+    Plant.rT[1] := Plant.rT[0];
+    Plant.rT[2] := Plant.rT[0];
+   
+    abZoneSimu48.aInit(ptnParam:=Plant,
+                      dCycleTime:=dCycleTime,
+                      sZoneName:='HeatingMold1.ti_InTemp48',
+                      bZoneLinked:=bTITempZoneLinked[48]);
+   
+    rKActVarianceFactor := 1.0;
+    Plant.rT[0] := dTPlant * rKActVarianceFactor;
+    Plant.rT[1] := Plant.rT[0];
+    Plant.rT[2] := Plant.rT[0];
+   
+    abZoneSimu49.aInit(ptnParam:=Plant,
+                      dCycleTime:=dCycleTime,
+                      sZoneName:='HeatingMold1.ti_InTemp49',
+                      bZoneLinked:=bTITempZoneLinked[49]);
+   
+    rKActVarianceFactor := 1.0 + rKActVariance;
+    Plant.rT[0] := dTPlant * rKActVarianceFactor;
+    Plant.rT[1] := Plant.rT[0];
+    Plant.rT[2] := Plant.rT[0];
+   
+    abZoneSimu50.aInit(ptnParam:=Plant,
+                      dCycleTime:=dCycleTime,
+                      sZoneName:='HeatingMold1.ti_InTemp50',
+                      bZoneLinked:=bTITempZoneLinked[50]);
+   
+    rKActVarianceFactor := 1.0 + 2.0 * rKActVariance;
+    Plant.rT[0] := dTPlant * rKActVarianceFactor;
+    Plant.rT[1] := Plant.rT[0];
+    Plant.rT[2] := Plant.rT[0];
+   
+    abZoneSimu51.aInit(ptnParam:=Plant,
+                      dCycleTime:=dCycleTime,
+                      sZoneName:='HeatingMold1.ti_InTemp51',
+                      bZoneLinked:=bTITempZoneLinked[51]);
+   
+    rKActVarianceFactor := 1.0 + 3.0 * rKActVariance;
+    Plant.rT[0] := dTPlant * rKActVarianceFactor;
+    Plant.rT[1] := Plant.rT[0];
+    Plant.rT[2] := Plant.rT[0];
+   
+    abZoneSimu52.aInit(ptnParam:=Plant,
+                      dCycleTime:=dCycleTime,
+                      sZoneName:='HeatingMold1.ti_InTemp52',
+                      bZoneLinked:=bTITempZoneLinked[52]);
+   
+    rKActVarianceFactor := 1.0 + 4.0 * rKActVariance;
+    Plant.rT[0] := dTPlant * rKActVarianceFactor;
+    Plant.rT[1] := Plant.rT[0];
+    Plant.rT[2] := Plant.rT[0];
+   
+    abZoneSimu53.aInit(ptnParam:=Plant,
+                      dCycleTime:=dCycleTime,
+                      sZoneName:='HeatingMold1.ti_InTemp53',
+                      bZoneLinked:=bTITempZoneLinked[53]);
+   
+    rKActVarianceFactor := 1.0 + 5.0 * rKActVariance;
+    Plant.rT[0] := dTPlant * rKActVarianceFactor;
+    Plant.rT[1] := Plant.rT[0];
+    Plant.rT[2] := Plant.rT[0];
+   
+    abZoneSimu54.aInit(ptnParam:=Plant,
+                      dCycleTime:=dCycleTime,
+                      sZoneName:='HeatingMold1.ti_InTemp54',
+                      bZoneLinked:=bTITempZoneLinked[54]);
+   
+    rKActVarianceFactor := 1.0;
+    Plant.rT[0] := dTPlant * rKActVarianceFactor;
+    Plant.rT[1] := Plant.rT[0];
+    Plant.rT[2] := Plant.rT[0];
+   
+    abZoneSimu55.aInit(ptnParam:=Plant,
+                      dCycleTime:=dCycleTime,
+                      sZoneName:='HeatingMold1.ti_InTemp55',
+                      bZoneLinked:=bTITempZoneLinked[55]);
+   
+    rKActVarianceFactor := 1.0 + rKActVariance;
+    Plant.rT[0] := dTPlant * rKActVarianceFactor;
+    Plant.rT[1] := Plant.rT[0];
+    Plant.rT[2] := Plant.rT[0];
+   
+    abZoneSimu56.aInit(ptnParam:=Plant,
+                      dCycleTime:=dCycleTime,
+                      sZoneName:='HeatingMold1.ti_InTemp56',
+                      bZoneLinked:=bTITempZoneLinked[56]);
+   
+    rKActVarianceFactor := 1.0 + 2.0 * rKActVariance;
+    Plant.rT[0] := dTPlant * rKActVarianceFactor;
+    Plant.rT[1] := Plant.rT[0];
+    Plant.rT[2] := Plant.rT[0];
+   
+    abZoneSimu57.aInit(ptnParam:=Plant,
+                      dCycleTime:=dCycleTime,
+                      sZoneName:='HeatingMold1.ti_InTemp57',
+                      bZoneLinked:=bTITempZoneLinked[57]);
+   
+    rKActVarianceFactor := 1.0 + 3.0 * rKActVariance;
+    Plant.rT[0] := dTPlant * rKActVarianceFactor;
+    Plant.rT[1] := Plant.rT[0];
+    Plant.rT[2] := Plant.rT[0];
+   
+    abZoneSimu58.aInit(ptnParam:=Plant,
+                      dCycleTime:=dCycleTime,
+                      sZoneName:='HeatingMold1.ti_InTemp58',
+                      bZoneLinked:=bTITempZoneLinked[58]);
+   
+    rKActVarianceFactor := 1.0 + 4.0 * rKActVariance;
+    Plant.rT[0] := dTPlant * rKActVarianceFactor;
+    Plant.rT[1] := Plant.rT[0];
+    Plant.rT[2] := Plant.rT[0];
+   
+    abZoneSimu59.aInit(ptnParam:=Plant,
+                      dCycleTime:=dCycleTime,
+                      sZoneName:='HeatingMold1.ti_InTemp59',
+                      bZoneLinked:=bTITempZoneLinked[59]);
+   
+    rKActVarianceFactor := 1.0 + 5.0 * rKActVariance;
+    Plant.rT[0] := dTPlant * rKActVarianceFactor;
+    Plant.rT[1] := Plant.rT[0];
+    Plant.rT[2] := Plant.rT[0];
+   
+    abZoneSimu60.aInit(ptnParam:=Plant,
+                      dCycleTime:=dCycleTime,
+                      sZoneName:='HeatingMold1.ti_InTemp60',
+                      bZoneLinked:=bTITempZoneLinked[60]);
+   
+    rKActVarianceFactor := 1.0;
+    Plant.rT[0] := dTPlant * rKActVarianceFactor;
+    Plant.rT[1] := Plant.rT[0];
+    Plant.rT[2] := Plant.rT[0];
+   
+    abZoneSimu61.aInit(ptnParam:=Plant,
+                      dCycleTime:=dCycleTime,
+                      sZoneName:='HeatingMold1.ti_InTemp61',
+                      bZoneLinked:=bTITempZoneLinked[61]);
+   
+    rKActVarianceFactor := 1.0 + rKActVariance;
+    Plant.rT[0] := dTPlant * rKActVarianceFactor;
+    Plant.rT[1] := Plant.rT[0];
+    Plant.rT[2] := Plant.rT[0];
+   
+    abZoneSimu62.aInit(ptnParam:=Plant,
+                      dCycleTime:=dCycleTime,
+                      sZoneName:='HeatingMold1.ti_InTemp62',
+                      bZoneLinked:=bTITempZoneLinked[62]);
+   
+    rKActVarianceFactor := 1.0 + 2.0 * rKActVariance;
+    Plant.rT[0] := dTPlant * rKActVarianceFactor;
+    Plant.rT[1] := Plant.rT[0];
+    Plant.rT[2] := Plant.rT[0];
+   
+    abZoneSimu63.aInit(ptnParam:=Plant,
+                      dCycleTime:=dCycleTime,
+                      sZoneName:='HeatingMold1.ti_InTemp63',
+                      bZoneLinked:=bTITempZoneLinked[63]);
+   
+    rKActVarianceFactor := 1.0 + 3.0 * rKActVariance;
+    Plant.rT[0] := dTPlant * rKActVarianceFactor;
+    Plant.rT[1] := Plant.rT[0];
+    Plant.rT[2] := Plant.rT[0];
+   
+    abZoneSimu64.aInit(ptnParam:=Plant,
+                      dCycleTime:=dCycleTime,
+                      sZoneName:='HeatingMold1.ti_InTemp64',
+                      bZoneLinked:=bTITempZoneLinked[64]);
+   
+    rKActVarianceFactor := 1.0 + 4.0 * rKActVariance;
+    Plant.rT[0] := dTPlant * rKActVarianceFactor;
+    Plant.rT[1] := Plant.rT[0];
+    Plant.rT[2] := Plant.rT[0];
+   
+    abZoneSimu65.aInit(ptnParam:=Plant,
+                      dCycleTime:=dCycleTime,
+                      sZoneName:='HeatingMold1.ti_InTemp65',
+                      bZoneLinked:=bTITempZoneLinked[65]);
+   
+    rKActVarianceFactor := 1.0 + 5.0 * rKActVariance;
+    Plant.rT[0] := dTPlant * rKActVarianceFactor;
+    Plant.rT[1] := Plant.rT[0];
+    Plant.rT[2] := Plant.rT[0];
+   
+    abZoneSimu66.aInit(ptnParam:=Plant,
+                      dCycleTime:=dCycleTime,
+                      sZoneName:='HeatingMold1.ti_InTemp66',
+                      bZoneLinked:=bTITempZoneLinked[66]);
+
+   
+    rKActVarianceFactor := 1.0;
+    Plant.rT[0] := dTPlant * rKActVarianceFactor;
+    Plant.rT[1] := Plant.rT[0];
+    Plant.rT[2] := Plant.rT[0];
+   
+    abZoneSimu67.aInit(ptnParam:=Plant,
+                      dCycleTime:=dCycleTime,
+                      sZoneName:='HeatingMold1.ti_InTemp67',
+                      bZoneLinked:=bTITempZoneLinked[67]);
+   
+    rKActVarianceFactor := 1.0 + rKActVariance;
+    Plant.rT[0] := dTPlant * rKActVarianceFactor;
+    Plant.rT[1] := Plant.rT[0];
+    Plant.rT[2] := Plant.rT[0];
+
+    abZoneSimu68.aInit(ptnParam:=Plant,
+                      dCycleTime:=dCycleTime,
+                      sZoneName:='HeatingMold1.ti_InTemp68',
+                      bZoneLinked:=bTITempZoneLinked[68]);
+   
+    rKActVarianceFactor := 1.0 + 2.0 * rKActVariance;
+    Plant.rT[0] := dTPlant * rKActVarianceFactor;
+    Plant.rT[1] := Plant.rT[0];
+    Plant.rT[2] := Plant.rT[0];
+   
+    abZoneSimu69.aInit(ptnParam:=Plant,
+                      dCycleTime:=dCycleTime,
+                      sZoneName:='HeatingMold1.ti_InTemp69',
+                      bZoneLinked:=bTITempZoneLinked[69]);   
+   
+    rKActVarianceFactor := 1.0 + 3.0 * rKActVariance;
+    Plant.rT[0] := dTPlant * rKActVarianceFactor;
+    Plant.rT[1] := Plant.rT[0];
+    Plant.rT[2] := Plant.rT[0];
+   
+    abZoneSimu70.aInit(ptnParam:=Plant,
+                      dCycleTime:=dCycleTime,
+                      sZoneName:='HeatingMold1.ti_InTemp70',
+                      bZoneLinked:=bTITempZoneLinked[70]);   
+   
+    rKActVarianceFactor := 1.0 + 4.0 * rKActVariance;
+    Plant.rT[0] := dTPlant * rKActVarianceFactor;
+    Plant.rT[1] := Plant.rT[0];
+    Plant.rT[2] := Plant.rT[0];
+   
+    abZoneSimu71.aInit(ptnParam:=Plant,
+                      dCycleTime:=dCycleTime,
+                      sZoneName:='HeatingMold1.ti_InTemp71',
+                      bZoneLinked:=bTITempZoneLinked[71]);   
+   
+    rKActVarianceFactor := 1.0 + 5.0 * rKActVariance;
+    Plant.rT[0] := dTPlant * rKActVarianceFactor;
+    Plant.rT[1] := Plant.rT[0];
+    Plant.rT[2] := Plant.rT[0];
+   
+    abZoneSimu72.aInit(ptnParam:=Plant,
+                      dCycleTime:=dCycleTime,
+                      sZoneName:='HeatingMold1.ti_InTemp72',
+                      bZoneLinked:=bTITempZoneLinked[72]);   
+                                                              
+
+END_IF;
+
+;#END_EDIT_BLOCK END_ACTION (*aInit*)
+ACTION aSimulate: #BEGIN_EDIT_BLOCK
+IF mbTIHeatingMoldTempLinked THEN
+    
+    abZoneSimu1.aRun(rControlValue:=mpMoldZoneArray^[1].Data^.rOutputValue);
+    abZoneSimu2.aRun(rControlValue:=mpMoldZoneArray^[2].Data^.rOutputValue);
+    abZoneSimu3.aRun(rControlValue:=mpMoldZoneArray^[3].Data^.rOutputValue);
+    abZoneSimu4.aRun(rControlValue:=mpMoldZoneArray^[4].Data^.rOutputValue);
+    abZoneSimu5.aRun(rControlValue:=mpMoldZoneArray^[5].Data^.rOutputValue);
+    abZoneSimu6.aRun(rControlValue:=mpMoldZoneArray^[6].Data^.rOutputValue);
+    abZoneSimu7.aRun(rControlValue:=mpMoldZoneArray^[7].Data^.rOutputValue);
+    abZoneSimu8.aRun(rControlValue:=mpMoldZoneArray^[8].Data^.rOutputValue);
+    abZoneSimu9.aRun(rControlValue:=mpMoldZoneArray^[9].Data^.rOutputValue);
+    abZoneSimu10.aRun(rControlValue:=mpMoldZoneArray^[10].Data^.rOutputValue);
+    abZoneSimu11.aRun(rControlValue:=mpMoldZoneArray^[11].Data^.rOutputValue);
+    abZoneSimu12.aRun(rControlValue:=mpMoldZoneArray^[12].Data^.rOutputValue);
+    abZoneSimu13.aRun(rControlValue:=mpMoldZoneArray^[13].Data^.rOutputValue);
+    abZoneSimu14.aRun(rControlValue:=mpMoldZoneArray^[14].Data^.rOutputValue);
+    abZoneSimu15.aRun(rControlValue:=mpMoldZoneArray^[15].Data^.rOutputValue);
+    abZoneSimu16.aRun(rControlValue:=mpMoldZoneArray^[16].Data^.rOutputValue);
+    abZoneSimu17.aRun(rControlValue:=mpMoldZoneArray^[17].Data^.rOutputValue);
+    abZoneSimu18.aRun(rControlValue:=mpMoldZoneArray^[18].Data^.rOutputValue);
+    abZoneSimu19.aRun(rControlValue:=mpMoldZoneArray^[19].Data^.rOutputValue);
+    abZoneSimu20.aRun(rControlValue:=mpMoldZoneArray^[20].Data^.rOutputValue);
+    abZoneSimu21.aRun(rControlValue:=mpMoldZoneArray^[21].Data^.rOutputValue);
+    abZoneSimu22.aRun(rControlValue:=mpMoldZoneArray^[22].Data^.rOutputValue);
+    abZoneSimu23.aRun(rControlValue:=mpMoldZoneArray^[23].Data^.rOutputValue);
+    abZoneSimu24.aRun(rControlValue:=mpMoldZoneArray^[24].Data^.rOutputValue);
+    abZoneSimu25.aRun(rControlValue:=mpMoldZoneArray^[25].Data^.rOutputValue);
+    abZoneSimu26.aRun(rControlValue:=mpMoldZoneArray^[26].Data^.rOutputValue);
+    abZoneSimu27.aRun(rControlValue:=mpMoldZoneArray^[27].Data^.rOutputValue);
+    abZoneSimu28.aRun(rControlValue:=mpMoldZoneArray^[28].Data^.rOutputValue);
+    abZoneSimu29.aRun(rControlValue:=mpMoldZoneArray^[29].Data^.rOutputValue);
+    abZoneSimu30.aRun(rControlValue:=mpMoldZoneArray^[30].Data^.rOutputValue);
+    abZoneSimu31.aRun(rControlValue:=mpMoldZoneArray^[31].Data^.rOutputValue);
+    abZoneSimu32.aRun(rControlValue:=mpMoldZoneArray^[32].Data^.rOutputValue);
+    abZoneSimu33.aRun(rControlValue:=mpMoldZoneArray^[33].Data^.rOutputValue);
+    abZoneSimu34.aRun(rControlValue:=mpMoldZoneArray^[34].Data^.rOutputValue);
+    abZoneSimu35.aRun(rControlValue:=mpMoldZoneArray^[35].Data^.rOutputValue);
+    abZoneSimu36.aRun(rControlValue:=mpMoldZoneArray^[36].Data^.rOutputValue);
+    abZoneSimu37.aRun(rControlValue:=mpMoldZoneArray^[37].Data^.rOutputValue);
+    abZoneSimu38.aRun(rControlValue:=mpMoldZoneArray^[38].Data^.rOutputValue);
+    abZoneSimu39.aRun(rControlValue:=mpMoldZoneArray^[39].Data^.rOutputValue);
+    abZoneSimu40.aRun(rControlValue:=mpMoldZoneArray^[40].Data^.rOutputValue);
+    abZoneSimu41.aRun(rControlValue:=mpMoldZoneArray^[41].Data^.rOutputValue);
+    abZoneSimu42.aRun(rControlValue:=mpMoldZoneArray^[42].Data^.rOutputValue);
+    abZoneSimu43.aRun(rControlValue:=mpMoldZoneArray^[43].Data^.rOutputValue);
+    abZoneSimu44.aRun(rControlValue:=mpMoldZoneArray^[44].Data^.rOutputValue);
+    abZoneSimu45.aRun(rControlValue:=mpMoldZoneArray^[45].Data^.rOutputValue);
+    abZoneSimu46.aRun(rControlValue:=mpMoldZoneArray^[46].Data^.rOutputValue);
+    abZoneSimu47.aRun(rControlValue:=mpMoldZoneArray^[47].Data^.rOutputValue);
+    abZoneSimu48.aRun(rControlValue:=mpMoldZoneArray^[48].Data^.rOutputValue);
+    abZoneSimu49.aRun(rControlValue:=mpMoldZoneArray^[49].Data^.rOutputValue);
+    abZoneSimu50.aRun(rControlValue:=mpMoldZoneArray^[50].Data^.rOutputValue);
+    abZoneSimu51.aRun(rControlValue:=mpMoldZoneArray^[51].Data^.rOutputValue);
+    abZoneSimu52.aRun(rControlValue:=mpMoldZoneArray^[52].Data^.rOutputValue);
+    abZoneSimu53.aRun(rControlValue:=mpMoldZoneArray^[53].Data^.rOutputValue);
+    abZoneSimu54.aRun(rControlValue:=mpMoldZoneArray^[54].Data^.rOutputValue);
+    abZoneSimu55.aRun(rControlValue:=mpMoldZoneArray^[55].Data^.rOutputValue);
+    abZoneSimu56.aRun(rControlValue:=mpMoldZoneArray^[56].Data^.rOutputValue);
+    abZoneSimu57.aRun(rControlValue:=mpMoldZoneArray^[57].Data^.rOutputValue);
+    abZoneSimu58.aRun(rControlValue:=mpMoldZoneArray^[58].Data^.rOutputValue);
+    abZoneSimu59.aRun(rControlValue:=mpMoldZoneArray^[59].Data^.rOutputValue);
+    abZoneSimu60.aRun(rControlValue:=mpMoldZoneArray^[60].Data^.rOutputValue);
+    abZoneSimu61.aRun(rControlValue:=mpMoldZoneArray^[61].Data^.rOutputValue);
+    abZoneSimu62.aRun(rControlValue:=mpMoldZoneArray^[62].Data^.rOutputValue);
+    abZoneSimu63.aRun(rControlValue:=mpMoldZoneArray^[63].Data^.rOutputValue);
+    abZoneSimu64.aRun(rControlValue:=mpMoldZoneArray^[64].Data^.rOutputValue);
+    abZoneSimu65.aRun(rControlValue:=mpMoldZoneArray^[65].Data^.rOutputValue);
+    abZoneSimu66.aRun(rControlValue:=mpMoldZoneArray^[66].Data^.rOutputValue);
+    abZoneSimu67.aRun(rControlValue:=mpMoldZoneArray^[67].Data^.rOutputValue);
+    abZoneSimu68.aRun(rControlValue:=mpMoldZoneArray^[68].Data^.rOutputValue);
+    abZoneSimu69.aRun(rControlValue:=mpMoldZoneArray^[69].Data^.rOutputValue);
+    abZoneSimu70.aRun(rControlValue:=mpMoldZoneArray^[70].Data^.rOutputValue);
+    abZoneSimu71.aRun(rControlValue:=mpMoldZoneArray^[71].Data^.rOutputValue);
+    abZoneSimu72.aRun(rControlValue:=mpMoldZoneArray^[72].Data^.rOutputValue);   
+END_IF;
+           
+
+;#END_EDIT_BLOCK END_ACTION (*aSimulate*)
+ACTION aStopSimu: #BEGIN_EDIT_BLOCK
+IF mbTIHeatingMoldTempLinked THEN
+    abZoneSimu1.aUnforce();
+    abZoneSimu2.aUnforce();
+    abZoneSimu3.aUnforce();
+    abZoneSimu4.aUnforce();
+    abZoneSimu5.aUnforce();
+    abZoneSimu6.aUnforce();
+    abZoneSimu7.aUnforce();
+    abZoneSimu8.aUnforce();
+    abZoneSimu9.aUnforce();
+    abZoneSimu10.aUnforce();
+    abZoneSimu11.aUnforce();
+    abZoneSimu12.aUnforce();
+    abZoneSimu13.aUnforce();
+    abZoneSimu14.aUnforce();
+    abZoneSimu15.aUnforce();
+    abZoneSimu16.aUnforce();
+    abZoneSimu17.aUnforce();
+    abZoneSimu18.aUnforce();
+    abZoneSimu19.aUnforce();
+    abZoneSimu20.aUnforce();
+    abZoneSimu21.aUnforce();
+    abZoneSimu22.aUnforce();
+    abZoneSimu23.aUnforce();
+    abZoneSimu24.aUnforce();
+    abZoneSimu25.aUnforce();
+    abZoneSimu26.aUnforce();
+    abZoneSimu27.aUnforce();
+    abZoneSimu28.aUnforce();
+    abZoneSimu29.aUnforce();
+    abZoneSimu30.aUnforce();
+    abZoneSimu31.aUnforce();
+    abZoneSimu32.aUnforce();
+    abZoneSimu33.aUnforce();
+    abZoneSimu34.aUnforce();
+    abZoneSimu35.aUnforce();
+    abZoneSimu36.aUnforce();
+    abZoneSimu37.aUnforce();
+    abZoneSimu38.aUnforce();
+    abZoneSimu39.aUnforce();
+    abZoneSimu40.aUnforce();
+    abZoneSimu41.aUnforce();
+    abZoneSimu42.aUnforce();
+    abZoneSimu43.aUnforce();
+    abZoneSimu44.aUnforce();
+    abZoneSimu45.aUnforce();
+    abZoneSimu46.aUnforce();
+    abZoneSimu47.aUnforce();
+    abZoneSimu48.aUnforce();
+    abZoneSimu49.aUnforce();
+    abZoneSimu50.aUnforce();
+    abZoneSimu51.aUnforce();
+    abZoneSimu52.aUnforce();
+    abZoneSimu53.aUnforce();
+    abZoneSimu54.aUnforce();
+    abZoneSimu55.aUnforce();
+    abZoneSimu56.aUnforce();
+    abZoneSimu57.aUnforce();
+    abZoneSimu58.aUnforce();
+    abZoneSimu59.aUnforce();
+    abZoneSimu60.aUnforce();
+    abZoneSimu61.aUnforce();
+    abZoneSimu62.aUnforce();
+    abZoneSimu63.aUnforce();
+    abZoneSimu64.aUnforce();
+    abZoneSimu65.aUnforce();
+    abZoneSimu66.aUnforce();
+    abZoneSimu67.aUnforce();
+    abZoneSimu68.aUnforce();
+    abZoneSimu69.aUnforce();
+    abZoneSimu70.aUnforce();
+    abZoneSimu71.aUnforce();
+    abZoneSimu72.aUnforce();
+END_IF;
+
+STOP_PROCESS_ALGORITHM();
+
+;#END_EDIT_BLOCK END_ACTION (*aStopSimu*)
+(* end sfc-code *)
+
+
+END_ALGORITHM
+
+
+
+END_ALGORITHM_BLOCK
+
+
+
+#END_OF_IEC_PART
+
+@Puma @IecEditor 6 177 @Pou 25 
+@@@BEG_Comment@@@
+
+@@@END_Comment@@@
+
+@BEG_Contents 
+
+@BEG_Func 
+@RT(17)FuncTreeContainer 
+2 
+@Var @RT(14)GET_SYNC_REFTO @RT(0) @T @T @DERIVED 0 @F @RT(22)KEBA_STANDARD_FUNCTION @F 
+@T 
+@BEG_Attrib 
+0 @RT(0) @RT(0) 
+@END_Attrib 
+1 1 @F @F @F @F 
+
+@Var @RT(17)GET_TASK_INTERVAL @RT(0) @T @T @DERIVED 0 @F @RT(22)KEBA_STANDARD_FUNCTION @F 
+@T 
+@BEG_Attrib 
+0 @RT(0) @RT(0) 
+@END_Attrib 
+1 1 @F @F @F @F 
+
+@END_Func 
+
+@BEG_Const 
+@RT(18)ConstTreeContainer 
+2 
+@Var @RT(14)KSYS_Status_OK @RT(0) @T @T @DERIVED 0 @F @RT(11)KSYS_Status @F 
+@T 
+@BEG_Attrib 
+0 @RT(1)1 @RT(0) 
+@END_Attrib 
+1 1 @F @F @F @F 
+
+@Var @RT(9)cMaxZones @RT(0) @T @F @DT @RT(4)DINT @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+0 @RT(2)72 @RT(27)max number of heating zones 
+@END_Attrib 
+1 1 @F @F @F @F 
+
+@END_Const 
+
+@BEG_Export 
+
+@BEG_Kind 
+@ALGORITHM_BLOCK @RT(14)ABMoldTempSimu @STRUCTURED_TEXT 
+@RT(0) @RT(0) @RT(0) 
+@END_Kind 
+
+@BEG_Dcl 
+@RT(16)DclTreeContainer 
+78 
+@Var @RT(12)sv_bSimulate @RT(0) @T @F @DT @RT(4)BOOL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 8 @F @F @F @F 
+
+@Var @RT(13)sv_bInitStart @RT(0) @T @F @DT @RT(4)BOOL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 8 @F @F @F @F 
+
+@Var @RT(7)TaskSim @RT(0) @T @F @DT @RT(4)TASK @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 7 @F @F @F @F 
+
+@Var @RT(10)PU_Task_13 @RT(0) @T @F @DT @RT(4)TASK @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 7 @F @F @F @F 
+
+@Var @RT(11)abZoneSimu1 @RT(0) @T @T @DERIVED 0 @T @T @DT @RT(10)ABZoneSimu @RT(0) @T @T @UNKNOWN 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(11)abZoneSimu2 @RT(0) @T @T @DERIVED 0 @T @T @DT @RT(10)ABZoneSimu @RT(0) @T @T @UNKNOWN 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(11)abZoneSimu3 @RT(0) @T @T @DERIVED 0 @T @T @DT @RT(10)ABZoneSimu @RT(0) @T @T @UNKNOWN 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(11)abZoneSimu4 @RT(0) @T @T @DERIVED 0 @T @T @DT @RT(10)ABZoneSimu @RT(0) @T @T @UNKNOWN 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(11)abZoneSimu5 @RT(0) @T @T @DERIVED 0 @T @T @DT @RT(10)ABZoneSimu @RT(0) @T @T @UNKNOWN 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(11)abZoneSimu6 @RT(0) @T @T @DERIVED 0 @T @T @DT @RT(10)ABZoneSimu @RT(0) @T @T @UNKNOWN 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(11)abZoneSimu7 @RT(0) @T @T @DERIVED 0 @T @T @DT @RT(10)ABZoneSimu @RT(0) @T @T @UNKNOWN 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(11)abZoneSimu8 @RT(0) @T @T @DERIVED 0 @T @T @DT @RT(10)ABZoneSimu @RT(0) @T @T @UNKNOWN 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(11)abZoneSimu9 @RT(0) @T @T @DERIVED 0 @T @T @DT @RT(10)ABZoneSimu @RT(0) @T @T @UNKNOWN 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(12)abZoneSimu10 @RT(0) @T @T @DERIVED 0 @T @T @DT @RT(10)ABZoneSimu @RT(0) @T @T @UNKNOWN 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(12)abZoneSimu11 @RT(0) @T @T @DERIVED 0 @T @T @DT @RT(10)ABZoneSimu @RT(0) @T @T @UNKNOWN 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(12)abZoneSimu12 @RT(0) @T @T @DERIVED 0 @T @T @DT @RT(10)ABZoneSimu @RT(0) @T @T @UNKNOWN 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(12)abZoneSimu13 @RT(0) @T @T @DERIVED 0 @T @T @DT @RT(10)ABZoneSimu @RT(0) @T @T @UNKNOWN 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(12)abZoneSimu14 @RT(0) @T @T @DERIVED 0 @T @T @DT @RT(10)ABZoneSimu @RT(0) @T @T @UNKNOWN 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(12)abZoneSimu15 @RT(0) @T @T @DERIVED 0 @T @T @DT @RT(10)ABZoneSimu @RT(0) @T @T @UNKNOWN 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(12)abZoneSimu16 @RT(0) @T @T @DERIVED 0 @T @T @DT @RT(10)ABZoneSimu @RT(0) @T @T @UNKNOWN 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(12)abZoneSimu17 @RT(0) @T @T @DERIVED 0 @T @T @DT @RT(10)ABZoneSimu @RT(0) @T @T @UNKNOWN 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(12)abZoneSimu18 @RT(0) @T @T @DERIVED 0 @T @T @DT @RT(10)ABZoneSimu @RT(0) @T @T @UNKNOWN 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(12)abZoneSimu19 @RT(0) @T @T @DERIVED 0 @T @T @DT @RT(10)ABZoneSimu @RT(0) @T @T @UNKNOWN 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(12)abZoneSimu20 @RT(0) @T @T @DERIVED 0 @T @T @DT @RT(10)ABZoneSimu @RT(0) @T @T @UNKNOWN 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(12)abZoneSimu21 @RT(0) @T @T @DERIVED 0 @T @T @DT @RT(10)ABZoneSimu @RT(0) @T @T @UNKNOWN 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(12)abZoneSimu22 @RT(0) @T @T @DERIVED 0 @T @T @DT @RT(10)ABZoneSimu @RT(0) @T @T @UNKNOWN 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(12)abZoneSimu23 @RT(0) @T @T @DERIVED 0 @T @T @DT @RT(10)ABZoneSimu @RT(0) @T @T @UNKNOWN 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(12)abZoneSimu24 @RT(0) @T @T @DERIVED 0 @T @T @DT @RT(10)ABZoneSimu @RT(0) @T @T @UNKNOWN 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(12)abZoneSimu25 @RT(0) @T @T @DERIVED 0 @T @T @DT @RT(10)ABZoneSimu @RT(0) @T @T @UNKNOWN 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(12)abZoneSimu26 @RT(0) @T @T @DERIVED 0 @T @T @DT @RT(10)ABZoneSimu @RT(0) @T @T @UNKNOWN 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(12)abZoneSimu27 @RT(0) @T @T @DERIVED 0 @T @T @DT @RT(10)ABZoneSimu @RT(0) @T @T @UNKNOWN 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(12)abZoneSimu28 @RT(0) @T @T @DERIVED 0 @T @T @DT @RT(10)ABZoneSimu @RT(0) @T @T @UNKNOWN 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(12)abZoneSimu29 @RT(0) @T @T @DERIVED 0 @T @T @DT @RT(10)ABZoneSimu @RT(0) @T @T @UNKNOWN 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(12)abZoneSimu30 @RT(0) @T @T @DERIVED 0 @T @T @DT @RT(10)ABZoneSimu @RT(0) @T @T @UNKNOWN 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(12)abZoneSimu31 @RT(0) @T @T @DERIVED 0 @T @T @DT @RT(10)ABZoneSimu @RT(0) @T @T @UNKNOWN 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(12)abZoneSimu32 @RT(0) @T @T @DERIVED 0 @T @T @DT @RT(10)ABZoneSimu @RT(0) @T @T @UNKNOWN 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(12)abZoneSimu33 @RT(0) @T @T @DERIVED 0 @T @T @DT @RT(10)ABZoneSimu @RT(0) @T @T @UNKNOWN 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(12)abZoneSimu34 @RT(0) @T @T @DERIVED 0 @T @T @DT @RT(10)ABZoneSimu @RT(0) @T @T @UNKNOWN 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(12)abZoneSimu35 @RT(0) @T @T @DERIVED 0 @T @T @DT @RT(10)ABZoneSimu @RT(0) @T @T @UNKNOWN 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(12)abZoneSimu36 @RT(0) @T @T @DERIVED 0 @T @T @DT @RT(10)ABZoneSimu @RT(0) @T @T @UNKNOWN 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(12)abZoneSimu37 @RT(0) @T @T @DERIVED 0 @T @T @DT @RT(10)ABZoneSimu @RT(0) @T @T @UNKNOWN 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(12)abZoneSimu38 @RT(0) @T @T @DERIVED 0 @T @T @DT @RT(10)ABZoneSimu @RT(0) @T @T @UNKNOWN 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(12)abZoneSimu39 @RT(0) @T @T @DERIVED 0 @T @T @DT @RT(10)ABZoneSimu @RT(0) @T @T @UNKNOWN 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(12)abZoneSimu40 @RT(0) @T @T @DERIVED 0 @T @T @DT @RT(10)ABZoneSimu @RT(0) @T @T @UNKNOWN 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(12)abZoneSimu41 @RT(0) @T @T @DERIVED 0 @T @T @DT @RT(10)ABZoneSimu @RT(0) @T @T @UNKNOWN 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(12)abZoneSimu42 @RT(0) @T @T @DERIVED 0 @T @T @DT @RT(10)ABZoneSimu @RT(0) @T @T @UNKNOWN 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(12)abZoneSimu43 @RT(0) @T @T @DERIVED 0 @T @T @DT @RT(10)ABZoneSimu @RT(0) @T @T @UNKNOWN 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(12)abZoneSimu44 @RT(0) @T @T @DERIVED 0 @T @T @DT @RT(10)ABZoneSimu @RT(0) @T @T @UNKNOWN 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(12)abZoneSimu45 @RT(0) @T @T @DERIVED 0 @T @T @DT @RT(10)ABZoneSimu @RT(0) @T @T @UNKNOWN 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(12)abZoneSimu46 @RT(0) @T @T @DERIVED 0 @T @T @DT @RT(10)ABZoneSimu @RT(0) @T @T @UNKNOWN 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(12)abZoneSimu47 @RT(0) @T @T @DERIVED 0 @T @T @DT @RT(10)ABZoneSimu @RT(0) @T @T @UNKNOWN 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(12)abZoneSimu48 @RT(0) @T @T @DERIVED 0 @T @T @DT @RT(10)ABZoneSimu @RT(0) @T @T @UNKNOWN 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(12)abZoneSimu49 @RT(0) @T @T @DERIVED 0 @T @T @DT @RT(10)ABZoneSimu @RT(0) @T @T @UNKNOWN 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(12)abZoneSimu50 @RT(0) @T @T @DERIVED 0 @T @T @DT @RT(10)ABZoneSimu @RT(0) @T @T @UNKNOWN 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(12)abZoneSimu51 @RT(0) @T @T @DERIVED 0 @T @T @DT @RT(10)ABZoneSimu @RT(0) @T @T @UNKNOWN 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(12)abZoneSimu52 @RT(0) @T @T @DERIVED 0 @T @T @DT @RT(10)ABZoneSimu @RT(0) @T @T @UNKNOWN 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(12)abZoneSimu53 @RT(0) @T @T @DERIVED 0 @T @T @DT @RT(10)ABZoneSimu @RT(0) @T @T @UNKNOWN 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(12)abZoneSimu54 @RT(0) @T @T @DERIVED 0 @T @T @DT @RT(10)ABZoneSimu @RT(0) @T @T @UNKNOWN 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(12)abZoneSimu55 @RT(0) @T @T @DERIVED 0 @T @T @DT @RT(10)ABZoneSimu @RT(0) @T @T @UNKNOWN 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(12)abZoneSimu56 @RT(0) @T @T @DERIVED 0 @T @T @DT @RT(10)ABZoneSimu @RT(0) @T @T @UNKNOWN 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(12)abZoneSimu57 @RT(0) @T @T @DERIVED 0 @T @T @DT @RT(10)ABZoneSimu @RT(0) @T @T @UNKNOWN 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(12)abZoneSimu58 @RT(0) @T @T @DERIVED 0 @T @T @DT @RT(10)ABZoneSimu @RT(0) @T @T @UNKNOWN 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(12)abZoneSimu59 @RT(0) @T @T @DERIVED 0 @T @T @DT @RT(10)ABZoneSimu @RT(0) @T @T @UNKNOWN 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(12)abZoneSimu60 @RT(0) @T @T @DERIVED 0 @T @T @DT @RT(10)ABZoneSimu @RT(0) @T @T @UNKNOWN 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(12)abZoneSimu61 @RT(0) @T @T @DERIVED 0 @T @T @DT @RT(10)ABZoneSimu @RT(0) @T @T @UNKNOWN 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(12)abZoneSimu62 @RT(0) @T @T @DERIVED 0 @T @T @DT @RT(10)ABZoneSimu @RT(0) @T @T @UNKNOWN 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(12)abZoneSimu63 @RT(0) @T @T @DERIVED 0 @T @T @DT @RT(10)ABZoneSimu @RT(0) @T @T @UNKNOWN 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(12)abZoneSimu64 @RT(0) @T @T @DERIVED 0 @T @T @DT @RT(10)ABZoneSimu @RT(0) @T @T @UNKNOWN 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(12)abZoneSimu65 @RT(0) @T @T @DERIVED 0 @T @T @DT @RT(10)ABZoneSimu @RT(0) @T @T @UNKNOWN 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(12)abZoneSimu66 @RT(0) @T @T @DERIVED 0 @T @T @DT @RT(10)ABZoneSimu @RT(0) @T @T @UNKNOWN 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(12)abZoneSimu67 @RT(0) @T @T @DERIVED 0 @T @T @DT @RT(10)ABZoneSimu @RT(0) @T @T @UNKNOWN 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(12)abZoneSimu68 @RT(0) @T @T @DERIVED 0 @T @T @DT @RT(10)ABZoneSimu @RT(0) @T @T @UNKNOWN 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(12)abZoneSimu69 @RT(0) @T @T @DERIVED 0 @T @T @DT @RT(10)ABZoneSimu @RT(0) @T @T @UNKNOWN 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(12)abZoneSimu70 @RT(0) @T @T @DERIVED 0 @T @T @DT @RT(10)ABZoneSimu @RT(0) @T @T @UNKNOWN 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(12)abZoneSimu71 @RT(0) @T @T @DERIVED 0 @T @T @DT @RT(10)ABZoneSimu @RT(0) @T @T @UNKNOWN 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(12)abZoneSimu72 @RT(0) @T @T @DERIVED 0 @T @T @DT @RT(10)ABZoneSimu @RT(0) @T @T @UNKNOWN 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(15)mpMoldZoneArray @RT(0) @T @T @REFTO 0 @F @DERIVED 0 @T @T @DT @RT(11)tyZoneArray @RT(0) @T @T @UNKNOWN 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(25)mbTIHeatingMoldTempLinked @RT(0) @T @F @DT @RT(4)BOOL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@END_Dcl 
+
+@END_Export 
+
+@BEG_Body 
+
+2 
+
+@BEG_Export 
+
+@BEG_Algo 
+@POSTUPDATE_ALGORITHM @RT(6)pStart @STRUCTURED_TEXT 
+@RT(0) @RT(26)sv_bSimulate,sv_bInitStart @RT(10)PU_Task_13 @F @F 
+@END_Algo 
+
+@BEG_Dcl 
+@RT(16)DclTreeContainer 
+1 
+@Var @RT(6)Status @RT(0) @T @T @DERIVED 0 @T @T @DT @RT(11)KSYS_Status @RT(0) @T @T @UNKNOWN 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@END_Dcl 
+
+@END_Export 
+
+@BEG_Export 
+
+@BEG_Algo 
+@PROCESS_ALGORITHM @RT(10)paSimulate @SEQUENTIAL_FLOW_CHART 
+@RT(0) @RT(0) @RT(7)TaskSim @F @F 
+@END_Algo 
+
+@BEG_Dcl 
+@RT(16)DclTreeContainer 
+9 
+@Var @RT(1)i @RT(0) @T @F @DT @RT(4)DINT @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 4 @F @F @F @F 
+
+@Var @RT(10)dCycleTime @RT(0) @T @F @DT @RT(4)TIME @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(1)s @RT(0) @T @F @DT @RT(11)STRING(255) @RT(0) @T @T @STRING 0 @F @RT(3)255 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(5)Plant @RT(0) @T @T @DERIVED 0 @T @T @DT @RT(14)KTEMP_PtnParam @RT(0) @T @T @UNKNOWN 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(27)(uN:=3,rK:=3.0,rT:=3(T#5s)) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(17)bTITempZoneLinked @RT(0) @T @T @DERIVED 0 @T @T @DT @RT(21)KAPPL_TempZoneUsedArr @RT(0) @T @T @UNKNOWN 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(13)rKActVariance @RT(0) @T @F @DT @RT(4)REAL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(3)0.1 @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(19)rKActVarianceFactor @RT(0) @T @F @DT @RT(4)REAL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(3)1.0 @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(5)rGain @RT(0) @T @F @DT @RT(4)REAL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(3)3.0 @RT(0) @RT(0) 
+@END_Attrib 
+1 11 @F @F @F @F 
+
+@Var @RT(7)dTPlant @RT(0) @T @F @DT @RT(4)TIME @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(5)T#10s @RT(0) @RT(0) 
+@END_Attrib 
+1 11 @F @F @F @F 
+
+@END_Dcl 
+
+@END_Export 
+
+@BEG_Body 
+@TL(8)
+IF sv_bSimulate THEN
+    mpMoldZoneArray := GET_SYNC_REFTO('HeatingMold1.sv_ZoneArray', T#0s, Status);
+    IF Status = KSYS_Status_OK THEN
+      mbTIHeatingMoldTempLinked := TRUE;
+      START_PROCESS_ALGORITHM(paSimulate);
+   END_IF;
+END_IF;
+
+@END_Body 
+
+@@@BEG_Comment@@@ 
+@TL(0)
+
+@@@END_Comment@@@ 
+
+@BEG_SfcBody 
+4 4 4 
+
+@BEG_SfcData 2 
+@StepSeq @RT(4)sseq @F 3 
+@Step @RT(4)INIT @F @T @F @F @RT(0) @F 
+@AcbCont @RT(7)unnamed @F 0 
+
+@Trans @RT(11)SimRequired @F @T @F @F @T @T @TL(2)
+sv_bSimulate
+
+@RT(11)SimRequired @F 
+@Loop @RT(4)loop @F 2 
+@StepSeq @RT(4)sseq @F 3 
+@Step @RT(3)SIM @F @F @F @F @RT(0) @F 
+@AcbCont @RT(7)unnamed @F 2 
+@Acb @RT(5)aInit @F @F @RT(1)P @RT(0) @F @F @F @F 
+@Acb @RT(9)aSimulate @F @F @RT(1)N @RT(0) @F @F @F @F 
+
+@Trans @RT(14)StpSimRequired @F @T @F @F @T @T @TL(2)
+NOT sv_bSimulate
+
+@RT(14)StpSimRequired @F 
+@Step @RT(4)STOP @F @F @F @F @RT(0) @F 
+@AcbCont @RT(7)unnamed @F 1 
+@Acb @RT(9)aStopSimu @F @F @RT(1)P @RT(0) @F @F @F @F 
+
+
+@Trans @RT(6)Return @F @T @T @T @T @T @TL(2)
+TRUE
+
+@RT(6)Return @F 
+
+@END_SfcData 
+@SaActions 3 
+@SaText @RT(5)aInit 1 @TL(772)
+(**************************************** WARNING ********************************************
+ *** The KEBA Kemro K2 System including software is not intended for safety control tasks! ***
+ ***                       For further information see Comment tab!                        ***
+ *********************************************************************************************)
+
+IF mbTIHeatingMoldTempLinked THEN
+   dCycleTime := GET_TASK_INTERVAL();
+   FOR i := 1 TO cMaxZones DO
+      IF CHECK_REF(mpMoldZoneArray^[i].Data^.prActTemp^) THEN
+         bTITempZoneLinked[i]:= TRUE;
+         s := CONCAT('HeatingMold1.ti_InTemp', DINT_TO_STRING(i));
+         IF CHECK_REF(mpMoldZoneArray^[i].Data^.pbOutHeatTOStat^) THEN
+            mpMoldZoneArray^[i].Data^.pbOutHeatTOStat^ := FALSE;
+         END_IF;
+         IF CHECK_REF(mpMoldZoneArray^[i].Data^.pbOutCoolTOStat^) THEN
+            mpMoldZoneArray^[i].Data^.pbOutCoolTOStat^ := FALSE;
+         END_IF;
+         IF CHECK_REF(mpMoldZoneArray^[i].Data^.pbOutHeatDOStat^) THEN
+            mpMoldZoneArray^[i].Data^.pbOutHeatDOStat^ := FALSE;
+         END_IF;
+         IF CHECK_REF(mpMoldZoneArray^[i].Data^.pbOutCoolDOStat^) THEN
+            mpMoldZoneArray^[i].Data^.pbOutCoolDOStat^ := FALSE;
+         END_IF;  
+         IF CHECK_REF(mpMoldZoneArray^[i].Data^.pbActTempStat^) THEN
+            mpMoldZoneArray^[i].Data^.pbActTempStat^ := FALSE;
+         END_IF; 
+         IF CHECK_REF(mpMoldZoneArray^[i].Data^.pbOutHeatPOStat^) THEN
+            mpMoldZoneArray^[i].Data^.pbOutHeatPOStat^ := FALSE;
+         END_IF;
+         IF CHECK_REF(mpMoldZoneArray^[i].Data^.pPowerGroup^.pbInGroupPWIStat^) THEN
+            mpMoldZoneArray^[i].Data^.pPowerGroup^.pbInGroupPWIStat^ := FALSE;
+         END_IF;
+         IF CHECK_REF(mpMoldZoneArray^[i].Data^.pPowerGroup^.pbInGroupCUIStat^) THEN
+            mpMoldZoneArray^[i].Data^.pPowerGroup^.pbInGroupCUIStat^ := FALSE;
+         END_IF;
+         IF CHECK_REF(mpMoldZoneArray^[i].Data^.pPowerGroup^.pbInGroupVOIStat^) THEN
+            mpMoldZoneArray^[i].Data^.pPowerGroup^.pbInGroupVOIStat^ := FALSE;
+         END_IF;                                                             
+         //fbEPUnForceTemp(sSysVar := s);
+      END_IF;
+   END_FOR;
+END_IF;
+
+
+
+
+IF mbTIHeatingMoldTempLinked THEN
+    Plant.uN    := 3;    
+    Plant.rK    := rGain;    
+    Plant.rT[0] := dTPlant;
+    Plant.rT[1] := dTPlant;
+    Plant.rT[2] := dTPlant;
+   
+    abZoneSimu1.aInit(ptnParam:=Plant,
+                      dCycleTime:=dCycleTime,
+                      sZoneName:='HeatingMold1.ti_InTemp1',
+                      bZoneLinked:=bTITempZoneLinked[1]);
+   
+    rKActVarianceFactor := 1.0 + rKActVariance;
+    Plant.rT[0] := dTPlant * rKActVarianceFactor;
+    Plant.rT[1] := Plant.rT[0];
+    Plant.rT[2] := Plant.rT[0];
+   
+    abZoneSimu2.aInit(ptnParam:=Plant,
+                      dCycleTime:=dCycleTime,
+                      sZoneName:='HeatingMold1.ti_InTemp2',
+                      bZoneLinked:=bTITempZoneLinked[2]);
+   
+    rKActVarianceFactor := 1.0 + 2.0 * rKActVariance;
+    Plant.rT[0] := dTPlant * rKActVarianceFactor;
+    Plant.rT[1] := Plant.rT[0];
+    Plant.rT[2] := Plant.rT[0];
+
+    abZoneSimu3.aInit(ptnParam:=Plant,
+                      dCycleTime:=dCycleTime,
+                      sZoneName:='HeatingMold1.ti_InTemp3',
+                      bZoneLinked:=bTITempZoneLinked[3]);
+      
+    rKActVarianceFactor := 1.0 + 3.0 * rKActVariance;
+    Plant.rT[0] := dTPlant * rKActVarianceFactor;
+    Plant.rT[1] := Plant.rT[0];
+    Plant.rT[2] := Plant.rT[0];
+   
+    abZoneSimu4.aInit(ptnParam:=Plant,
+                      dCycleTime:=dCycleTime,
+                      sZoneName:='HeatingMold1.ti_InTemp4',
+                      bZoneLinked:=bTITempZoneLinked[4]);
+
+    rKActVarianceFactor := 1.0 + 4.0 * rKActVariance;
+    Plant.rT[0] := dTPlant * rKActVarianceFactor;
+    Plant.rT[1] := Plant.rT[0];
+    Plant.rT[2] := Plant.rT[0];
+
+    abZoneSimu5.aInit(ptnParam:=Plant,
+                      dCycleTime:=dCycleTime,
+                      sZoneName:='HeatingMold1.ti_InTemp5',
+                      bZoneLinked:=bTITempZoneLinked[5]);
+   
+    rKActVarianceFactor := 1.0 + 5.0 * rKActVariance;
+    Plant.rT[0] := dTPlant * rKActVarianceFactor;
+    Plant.rT[1] := Plant.rT[0];
+    Plant.rT[2] := Plant.rT[0];
+   
+    abZoneSimu6.aInit(ptnParam:=Plant,
+                      dCycleTime:=dCycleTime,
+                      sZoneName:='HeatingMold1.ti_InTemp6',
+                      bZoneLinked:=bTITempZoneLinked[6]);
+   
+    rKActVarianceFactor := 1.0;
+    Plant.rT[0] := dTPlant * rKActVarianceFactor;
+    Plant.rT[1] := Plant.rT[0];
+    Plant.rT[2] := Plant.rT[0];
+   
+    abZoneSimu7.aInit(ptnParam:=Plant,
+                      dCycleTime:=dCycleTime,
+                      sZoneName:='HeatingMold1.ti_InTemp7',
+                      bZoneLinked:=bTITempZoneLinked[7]);
+   
+    rKActVarianceFactor := 1.0 + rKActVariance;
+    Plant.rT[0] := dTPlant * rKActVarianceFactor;
+    Plant.rT[1] := Plant.rT[0];
+    Plant.rT[2] := Plant.rT[0];
+   
+    abZoneSimu8.aInit(ptnParam:=Plant,
+                      dCycleTime:=dCycleTime,
+                      sZoneName:='HeatingMold1.ti_InTemp8',
+                      bZoneLinked:=bTITempZoneLinked[8]);
+   
+    rKActVarianceFactor := 1.0 + 2.0 * rKActVariance;
+    Plant.rT[0] := dTPlant * rKActVarianceFactor;
+    Plant.rT[1] := Plant.rT[0];
+    Plant.rT[2] := Plant.rT[0];
+   
+    abZoneSimu9.aInit(ptnParam:=Plant,
+                      dCycleTime:=dCycleTime,
+                      sZoneName:='HeatingMold1.ti_InTemp9',
+                      bZoneLinked:=bTITempZoneLinked[9]);
+   
+    rKActVarianceFactor := 1.0 + 3.0 * rKActVariance;
+    Plant.rT[0] := dTPlant * rKActVarianceFactor;
+    Plant.rT[1] := Plant.rT[0];
+    Plant.rT[2] := Plant.rT[0];
+   
+    abZoneSimu10.aInit(ptnParam:=Plant,
+                      dCycleTime:=dCycleTime,
+                      sZoneName:='HeatingMold1.ti_InTemp10',
+                      bZoneLinked:=bTITempZoneLinked[10]);
+   
+    rKActVarianceFactor := 1.0 + 4.0 * rKActVariance;
+    Plant.rT[0] := dTPlant * rKActVarianceFactor;
+    Plant.rT[1] := Plant.rT[0];
+    Plant.rT[2] := Plant.rT[0];
+   
+    abZoneSimu11.aInit(ptnParam:=Plant,
+                      dCycleTime:=dCycleTime,
+                      sZoneName:='HeatingMold1.ti_InTemp11',
+                      bZoneLinked:=bTITempZoneLinked[11]);
+   
+    rKActVarianceFactor := 1.0 + 5.0 * rKActVariance;
+    Plant.rT[0] := dTPlant * rKActVarianceFactor;
+    Plant.rT[1] := Plant.rT[0];
+    Plant.rT[2] := Plant.rT[0];
+   
+    abZoneSimu12.aInit(ptnParam:=Plant,
+                      dCycleTime:=dCycleTime,
+                      sZoneName:='HeatingMold1.ti_InTemp12',
+                      bZoneLinked:=bTITempZoneLinked[12]);
+   
+    rKActVarianceFactor := 1.0;
+    Plant.rT[0] := dTPlant * rKActVarianceFactor;
+    Plant.rT[1] := Plant.rT[0];
+    Plant.rT[2] := Plant.rT[0];
+   
+    abZoneSimu13.aInit(ptnParam:=Plant,
+                      dCycleTime:=dCycleTime,
+                      sZoneName:='HeatingMold1.ti_InTemp13',
+                      bZoneLinked:=bTITempZoneLinked[13]);
+   
+    rKActVarianceFactor := 1.0 + rKActVariance;
+    Plant.rT[0] := dTPlant * rKActVarianceFactor;
+    Plant.rT[1] := Plant.rT[0];
+    Plant.rT[2] := Plant.rT[0];
+   
+    abZoneSimu14.aInit(ptnParam:=Plant,
+                      dCycleTime:=dCycleTime,
+                      sZoneName:='HeatingMold1.ti_InTemp14',
+                      bZoneLinked:=bTITempZoneLinked[14]);
+   
+    rKActVarianceFactor := 1.0 + 2.0 * rKActVariance;
+    Plant.rT[0] := dTPlant * rKActVarianceFactor;
+    Plant.rT[1] := Plant.rT[0];
+    Plant.rT[2] := Plant.rT[0];
+   
+    abZoneSimu15.aInit(ptnParam:=Plant,
+                      dCycleTime:=dCycleTime,
+                      sZoneName:='HeatingMold1.ti_InTemp15',
+                      bZoneLinked:=bTITempZoneLinked[15]);
+   
+    rKActVarianceFactor := 1.0 + 3.0 * rKActVariance;
+    Plant.rT[0] := dTPlant * rKActVarianceFactor;
+    Plant.rT[1] := Plant.rT[0];
+    Plant.rT[2] := Plant.rT[0];
+   
+    abZoneSimu16.aInit(ptnParam:=Plant,
+                      dCycleTime:=dCycleTime,
+                      sZoneName:='HeatingMold1.ti_InTemp16',
+                      bZoneLinked:=bTITempZoneLinked[16]);
+   
+    rKActVarianceFactor := 1.0 + 4.0 * rKActVariance;
+    Plant.rT[0] := dTPlant * rKActVarianceFactor;
+    Plant.rT[1] := Plant.rT[0];
+    Plant.rT[2] := Plant.rT[0];
+   
+    abZoneSimu17.aInit(ptnParam:=Plant,
+                      dCycleTime:=dCycleTime,
+                      sZoneName:='HeatingMold1.ti_InTemp17',
+                      bZoneLinked:=bTITempZoneLinked[17]);
+   
+    rKActVarianceFactor := 1.0 + 5.0 * rKActVariance;
+    Plant.rT[0] := dTPlant * rKActVarianceFactor;
+    Plant.rT[1] := Plant.rT[0];
+    Plant.rT[2] := Plant.rT[0];
+   
+    abZoneSimu18.aInit(ptnParam:=Plant,
+                      dCycleTime:=dCycleTime,
+                      sZoneName:='HeatingMold1.ti_InTemp18',
+                      bZoneLinked:=bTITempZoneLinked[18]);
+   
+    rKActVarianceFactor := 1.0;
+    Plant.rT[0] := dTPlant * rKActVarianceFactor;
+    Plant.rT[1] := Plant.rT[0];
+    Plant.rT[2] := Plant.rT[0];
+   
+    abZoneSimu19.aInit(ptnParam:=Plant,
+                      dCycleTime:=dCycleTime,
+                      sZoneName:='HeatingMold1.ti_InTemp19',
+                      bZoneLinked:=bTITempZoneLinked[19]);
+   
+    rKActVarianceFactor := 1.0 + rKActVariance;
+    Plant.rT[0] := dTPlant * rKActVarianceFactor;
+    Plant.rT[1] := Plant.rT[0];
+    Plant.rT[2] := Plant.rT[0];
+   
+    abZoneSimu20.aInit(ptnParam:=Plant,
+                      dCycleTime:=dCycleTime,
+                      sZoneName:='HeatingMold1.ti_InTemp20',
+                      bZoneLinked:=bTITempZoneLinked[20]);
+   
+    rKActVarianceFactor := 1.0 + 2.0 * rKActVariance;
+    Plant.rT[0] := dTPlant * rKActVarianceFactor;
+    Plant.rT[1] := Plant.rT[0];
+    Plant.rT[2] := Plant.rT[0];
+   
+    abZoneSimu21.aInit(ptnParam:=Plant,
+                      dCycleTime:=dCycleTime,
+                      sZoneName:='HeatingMold1.ti_InTemp21',
+                      bZoneLinked:=bTITempZoneLinked[21]);
+   
+    rKActVarianceFactor := 1.0 + 3.0 * rKActVariance;
+    Plant.rT[0] := dTPlant * rKActVarianceFactor;
+    Plant.rT[1] := Plant.rT[0];
+    Plant.rT[2] := Plant.rT[0];
+   
+    abZoneSimu22.aInit(ptnParam:=Plant,
+                      dCycleTime:=dCycleTime,
+                      sZoneName:='HeatingMold1.ti_InTemp22',
+                      bZoneLinked:=bTITempZoneLinked[22]);
+   
+    rKActVarianceFactor := 1.0 + 4.0 * rKActVariance;
+    Plant.rT[0] := dTPlant * rKActVarianceFactor;
+    Plant.rT[1] := Plant.rT[0];
+    Plant.rT[2] := Plant.rT[0];
+   
+    abZoneSimu23.aInit(ptnParam:=Plant,
+                      dCycleTime:=dCycleTime,
+                      sZoneName:='HeatingMold1.ti_InTemp23',
+                      bZoneLinked:=bTITempZoneLinked[23]);
+   
+    rKActVarianceFactor := 1.0 + 5.0 * rKActVariance;
+    Plant.rT[0] := dTPlant * rKActVarianceFactor;
+    Plant.rT[1] := Plant.rT[0];
+    Plant.rT[2] := Plant.rT[0];
+   
+    abZoneSimu24.aInit(ptnParam:=Plant,
+                      dCycleTime:=dCycleTime,
+                      sZoneName:='HeatingMold1.ti_InTemp24',
+                      bZoneLinked:=bTITempZoneLinked[24]);
+   
+    rKActVarianceFactor := 1.0;
+    Plant.rT[0] := dTPlant * rKActVarianceFactor;
+    Plant.rT[1] := Plant.rT[0];
+    Plant.rT[2] := Plant.rT[0];
+   
+    abZoneSimu25.aInit(ptnParam:=Plant,
+                      dCycleTime:=dCycleTime,
+                      sZoneName:='HeatingMold1.ti_InTemp25',
+                      bZoneLinked:=bTITempZoneLinked[25]);
+   
+    rKActVarianceFactor := 1.0 + rKActVariance;
+    Plant.rT[0] := dTPlant * rKActVarianceFactor;
+    Plant.rT[1] := Plant.rT[0];
+    Plant.rT[2] := Plant.rT[0];
+   
+    abZoneSimu26.aInit(ptnParam:=Plant,
+                      dCycleTime:=dCycleTime,
+                      sZoneName:='HeatingMold1.ti_InTemp26',
+                      bZoneLinked:=bTITempZoneLinked[26]);
+   
+    rKActVarianceFactor := 1.0 + 2.0 * rKActVariance;
+    Plant.rT[0] := dTPlant * rKActVarianceFactor;
+    Plant.rT[1] := Plant.rT[0];
+    Plant.rT[2] := Plant.rT[0];
+   
+    abZoneSimu27.aInit(ptnParam:=Plant,
+                      dCycleTime:=dCycleTime,
+                      sZoneName:='HeatingMold1.ti_InTemp27',
+                      bZoneLinked:=bTITempZoneLinked[27]);
+   
+    rKActVarianceFactor := 1.0 + 3.0 * rKActVariance;
+    Plant.rT[0] := dTPlant * rKActVarianceFactor;
+    Plant.rT[1] := Plant.rT[0];
+    Plant.rT[2] := Plant.rT[0];
+   
+    abZoneSimu28.aInit(ptnParam:=Plant,
+                      dCycleTime:=dCycleTime,
+                      sZoneName:='HeatingMold1.ti_InTemp28',
+                      bZoneLinked:=bTITempZoneLinked[28]);
+   
+    rKActVarianceFactor := 1.0 + 4.0 * rKActVariance;
+    Plant.rT[0] := dTPlant * rKActVarianceFactor;
+    Plant.rT[1] := Plant.rT[0];
+    Plant.rT[2] := Plant.rT[0];
+   
+    abZoneSimu29.aInit(ptnParam:=Plant,
+                      dCycleTime:=dCycleTime,
+                      sZoneName:='HeatingMold1.ti_InTemp29',
+                      bZoneLinked:=bTITempZoneLinked[29]);
+   
+    rKActVarianceFactor := 1.0 + 5.0 * rKActVariance;
+    Plant.rT[0] := dTPlant * rKActVarianceFactor;
+    Plant.rT[1] := Plant.rT[0];
+    Plant.rT[2] := Plant.rT[0];
+   
+    abZoneSimu30.aInit(ptnParam:=Plant,
+                      dCycleTime:=dCycleTime,
+                      sZoneName:='HeatingMold1.ti_InTemp30',
+                      bZoneLinked:=bTITempZoneLinked[30]);
+   
+    rKActVarianceFactor := 1.0;
+    Plant.rT[0] := dTPlant * rKActVarianceFactor;
+    Plant.rT[1] := Plant.rT[0];
+    Plant.rT[2] := Plant.rT[0];
+   
+    abZoneSimu31.aInit(ptnParam:=Plant,
+                      dCycleTime:=dCycleTime,
+                      sZoneName:='HeatingMold1.ti_InTemp31',
+                      bZoneLinked:=bTITempZoneLinked[31]);
+   
+    rKActVarianceFactor := 1.0 + rKActVariance;
+    Plant.rT[0] := dTPlant * rKActVarianceFactor;
+    Plant.rT[1] := Plant.rT[0];
+    Plant.rT[2] := Plant.rT[0];
+   
+    abZoneSimu32.aInit(ptnParam:=Plant,
+                      dCycleTime:=dCycleTime,
+                      sZoneName:='HeatingMold1.ti_InTemp32',
+                      bZoneLinked:=bTITempZoneLinked[32]);
+   
+    rKActVarianceFactor := 1.0 + 2.0 * rKActVariance;
+    Plant.rT[0] := dTPlant * rKActVarianceFactor;
+    Plant.rT[1] := Plant.rT[0];
+    Plant.rT[2] := Plant.rT[0];
+   
+    abZoneSimu33.aInit(ptnParam:=Plant,
+                      dCycleTime:=dCycleTime,
+                      sZoneName:='HeatingMold1.ti_InTemp33',
+                      bZoneLinked:=bTITempZoneLinked[33]);
+   
+    rKActVarianceFactor := 1.0 + 3.0 * rKActVariance;
+    Plant.rT[0] := dTPlant * rKActVarianceFactor;
+    Plant.rT[1] := Plant.rT[0];
+    Plant.rT[2] := Plant.rT[0];
+   
+    abZoneSimu34.aInit(ptnParam:=Plant,
+                      dCycleTime:=dCycleTime,
+                      sZoneName:='HeatingMold1.ti_InTemp34',
+                      bZoneLinked:=bTITempZoneLinked[34]);
+   
+    rKActVarianceFactor := 1.0 + 4.0 * rKActVariance;
+    Plant.rT[0] := dTPlant * rKActVarianceFactor;
+    Plant.rT[1] := Plant.rT[0];
+    Plant.rT[2] := Plant.rT[0];
+   
+    abZoneSimu35.aInit(ptnParam:=Plant,
+                      dCycleTime:=dCycleTime,
+                      sZoneName:='HeatingMold1.ti_InTemp35',
+                      bZoneLinked:=bTITempZoneLinked[35]);
+   
+    rKActVarianceFactor := 1.0 + 5.0 * rKActVariance;
+    Plant.rT[0] := dTPlant * rKActVarianceFactor;
+    Plant.rT[1] := Plant.rT[0];
+    Plant.rT[2] := Plant.rT[0];
+   
+    abZoneSimu36.aInit(ptnParam:=Plant,
+                      dCycleTime:=dCycleTime,
+                      sZoneName:='HeatingMold1.ti_InTemp36',
+                      bZoneLinked:=bTITempZoneLinked[36]);
+   
+    rKActVarianceFactor := 1.0;
+    Plant.rT[0] := dTPlant * rKActVarianceFactor;
+    Plant.rT[1] := Plant.rT[0];
+    Plant.rT[2] := Plant.rT[0];
+   
+    abZoneSimu37.aInit(ptnParam:=Plant,
+                      dCycleTime:=dCycleTime,
+                      sZoneName:='HeatingMold1.ti_InTemp37',
+                      bZoneLinked:=bTITempZoneLinked[37]);
+   
+    rKActVarianceFactor := 1.0 + rKActVariance;
+    Plant.rT[0] := dTPlant * rKActVarianceFactor;
+    Plant.rT[1] := Plant.rT[0];
+    Plant.rT[2] := Plant.rT[0];
+   
+    abZoneSimu38.aInit(ptnParam:=Plant,
+                      dCycleTime:=dCycleTime,
+                      sZoneName:='HeatingMold1.ti_InTemp38',
+                      bZoneLinked:=bTITempZoneLinked[38]);
+   
+    rKActVarianceFactor := 1.0 + 2.0 * rKActVariance;
+    Plant.rT[0] := dTPlant * rKActVarianceFactor;
+    Plant.rT[1] := Plant.rT[0];
+    Plant.rT[2] := Plant.rT[0];
+   
+    abZoneSimu39.aInit(ptnParam:=Plant,
+                      dCycleTime:=dCycleTime,
+                      sZoneName:='HeatingMold1.ti_InTemp39',
+                      bZoneLinked:=bTITempZoneLinked[39]);
+   
+    rKActVarianceFactor := 1.0 + 3.0 * rKActVariance;
+    Plant.rT[0] := dTPlant * rKActVarianceFactor;
+    Plant.rT[1] := Plant.rT[0];
+    Plant.rT[2] := Plant.rT[0];
+   
+    abZoneSimu40.aInit(ptnParam:=Plant,
+                      dCycleTime:=dCycleTime,
+                      sZoneName:='HeatingMold1.ti_InTemp40',
+                      bZoneLinked:=bTITempZoneLinked[40]);
+   
+    rKActVarianceFactor := 1.0 + 4.0 * rKActVariance;
+    Plant.rT[0] := dTPlant * rKActVarianceFactor;
+    Plant.rT[1] := Plant.rT[0];
+    Plant.rT[2] := Plant.rT[0];
+   
+    abZoneSimu41.aInit(ptnParam:=Plant,
+                      dCycleTime:=dCycleTime,
+                      sZoneName:='HeatingMold1.ti_InTemp41',
+                      bZoneLinked:=bTITempZoneLinked[41]);
+   
+    rKActVarianceFactor := 1.0 + 5.0 * rKActVariance;
+    Plant.rT[0] := dTPlant * rKActVarianceFactor;
+    Plant.rT[1] := Plant.rT[0];
+    Plant.rT[2] := Plant.rT[0];
+   
+    abZoneSimu42.aInit(ptnParam:=Plant,
+                      dCycleTime:=dCycleTime,
+                      sZoneName:='HeatingMold1.ti_InTemp42',
+                      bZoneLinked:=bTITempZoneLinked[42]);
+   
+    rKActVarianceFactor := 1.0;
+    Plant.rT[0] := dTPlant * rKActVarianceFactor;
+    Plant.rT[1] := Plant.rT[0];
+    Plant.rT[2] := Plant.rT[0];
+   
+    abZoneSimu43.aInit(ptnParam:=Plant,
+                      dCycleTime:=dCycleTime,
+                      sZoneName:='HeatingMold1.ti_InTemp43',
+                      bZoneLinked:=bTITempZoneLinked[43]);
+   
+    rKActVarianceFactor := 1.0 + rKActVariance;
+    Plant.rT[0] := dTPlant * rKActVarianceFactor;
+    Plant.rT[1] := Plant.rT[0];
+    Plant.rT[2] := Plant.rT[0];
+   
+    abZoneSimu44.aInit(ptnParam:=Plant,
+                      dCycleTime:=dCycleTime,
+                      sZoneName:='HeatingMold1.ti_InTemp44',
+                      bZoneLinked:=bTITempZoneLinked[44]);
+   
+    rKActVarianceFactor := 1.0 + 2.0 * rKActVariance;
+    Plant.rT[0] := dTPlant * rKActVarianceFactor;
+    Plant.rT[1] := Plant.rT[0];
+    Plant.rT[2] := Plant.rT[0];
+   
+    abZoneSimu45.aInit(ptnParam:=Plant,
+                      dCycleTime:=dCycleTime,
+                      sZoneName:='HeatingMold1.ti_InTemp45',
+                      bZoneLinked:=bTITempZoneLinked[45]);
+   
+    rKActVarianceFactor := 1.0 + 3.0 * rKActVariance;
+    Plant.rT[0] := dTPlant * rKActVarianceFactor;
+    Plant.rT[1] := Plant.rT[0];
+    Plant.rT[2] := Plant.rT[0];
+   
+    abZoneSimu46.aInit(ptnParam:=Plant,
+                      dCycleTime:=dCycleTime,
+                      sZoneName:='HeatingMold1.ti_InTemp46',
+                      bZoneLinked:=bTITempZoneLinked[46]);
+   
+    rKActVarianceFactor := 1.0 + 4.0 * rKActVariance;
+    Plant.rT[0] := dTPlant * rKActVarianceFactor;
+    Plant.rT[1] := Plant.rT[0];
+    Plant.rT[2] := Plant.rT[0];
+   
+    abZoneSimu47.aInit(ptnParam:=Plant,
+                      dCycleTime:=dCycleTime,
+                      sZoneName:='HeatingMold1.ti_InTemp47',
+                      bZoneLinked:=bTITempZoneLinked[47]);
+   
+    rKActVarianceFactor := 1.0 + 5.0 * rKActVariance;
+    Plant.rT[0] := dTPlant * rKActVarianceFactor;
+    Plant.rT[1] := Plant.rT[0];
+    Plant.rT[2] := Plant.rT[0];
+   
+    abZoneSimu48.aInit(ptnParam:=Plant,
+                      dCycleTime:=dCycleTime,
+                      sZoneName:='HeatingMold1.ti_InTemp48',
+                      bZoneLinked:=bTITempZoneLinked[48]);
+   
+    rKActVarianceFactor := 1.0;
+    Plant.rT[0] := dTPlant * rKActVarianceFactor;
+    Plant.rT[1] := Plant.rT[0];
+    Plant.rT[2] := Plant.rT[0];
+   
+    abZoneSimu49.aInit(ptnParam:=Plant,
+                      dCycleTime:=dCycleTime,
+                      sZoneName:='HeatingMold1.ti_InTemp49',
+                      bZoneLinked:=bTITempZoneLinked[49]);
+   
+    rKActVarianceFactor := 1.0 + rKActVariance;
+    Plant.rT[0] := dTPlant * rKActVarianceFactor;
+    Plant.rT[1] := Plant.rT[0];
+    Plant.rT[2] := Plant.rT[0];
+   
+    abZoneSimu50.aInit(ptnParam:=Plant,
+                      dCycleTime:=dCycleTime,
+                      sZoneName:='HeatingMold1.ti_InTemp50',
+                      bZoneLinked:=bTITempZoneLinked[50]);
+   
+    rKActVarianceFactor := 1.0 + 2.0 * rKActVariance;
+    Plant.rT[0] := dTPlant * rKActVarianceFactor;
+    Plant.rT[1] := Plant.rT[0];
+    Plant.rT[2] := Plant.rT[0];
+   
+    abZoneSimu51.aInit(ptnParam:=Plant,
+                      dCycleTime:=dCycleTime,
+                      sZoneName:='HeatingMold1.ti_InTemp51',
+                      bZoneLinked:=bTITempZoneLinked[51]);
+   
+    rKActVarianceFactor := 1.0 + 3.0 * rKActVariance;
+    Plant.rT[0] := dTPlant * rKActVarianceFactor;
+    Plant.rT[1] := Plant.rT[0];
+    Plant.rT[2] := Plant.rT[0];
+   
+    abZoneSimu52.aInit(ptnParam:=Plant,
+                      dCycleTime:=dCycleTime,
+                      sZoneName:='HeatingMold1.ti_InTemp52',
+                      bZoneLinked:=bTITempZoneLinked[52]);
+   
+    rKActVarianceFactor := 1.0 + 4.0 * rKActVariance;
+    Plant.rT[0] := dTPlant * rKActVarianceFactor;
+    Plant.rT[1] := Plant.rT[0];
+    Plant.rT[2] := Plant.rT[0];
+   
+    abZoneSimu53.aInit(ptnParam:=Plant,
+                      dCycleTime:=dCycleTime,
+                      sZoneName:='HeatingMold1.ti_InTemp53',
+                      bZoneLinked:=bTITempZoneLinked[53]);
+   
+    rKActVarianceFactor := 1.0 + 5.0 * rKActVariance;
+    Plant.rT[0] := dTPlant * rKActVarianceFactor;
+    Plant.rT[1] := Plant.rT[0];
+    Plant.rT[2] := Plant.rT[0];
+   
+    abZoneSimu54.aInit(ptnParam:=Plant,
+                      dCycleTime:=dCycleTime,
+                      sZoneName:='HeatingMold1.ti_InTemp54',
+                      bZoneLinked:=bTITempZoneLinked[54]);
+   
+    rKActVarianceFactor := 1.0;
+    Plant.rT[0] := dTPlant * rKActVarianceFactor;
+    Plant.rT[1] := Plant.rT[0];
+    Plant.rT[2] := Plant.rT[0];
+   
+    abZoneSimu55.aInit(ptnParam:=Plant,
+                      dCycleTime:=dCycleTime,
+                      sZoneName:='HeatingMold1.ti_InTemp55',
+                      bZoneLinked:=bTITempZoneLinked[55]);
+   
+    rKActVarianceFactor := 1.0 + rKActVariance;
+    Plant.rT[0] := dTPlant * rKActVarianceFactor;
+    Plant.rT[1] := Plant.rT[0];
+    Plant.rT[2] := Plant.rT[0];
+   
+    abZoneSimu56.aInit(ptnParam:=Plant,
+                      dCycleTime:=dCycleTime,
+                      sZoneName:='HeatingMold1.ti_InTemp56',
+                      bZoneLinked:=bTITempZoneLinked[56]);
+   
+    rKActVarianceFactor := 1.0 + 2.0 * rKActVariance;
+    Plant.rT[0] := dTPlant * rKActVarianceFactor;
+    Plant.rT[1] := Plant.rT[0];
+    Plant.rT[2] := Plant.rT[0];
+   
+    abZoneSimu57.aInit(ptnParam:=Plant,
+                      dCycleTime:=dCycleTime,
+                      sZoneName:='HeatingMold1.ti_InTemp57',
+                      bZoneLinked:=bTITempZoneLinked[57]);
+   
+    rKActVarianceFactor := 1.0 + 3.0 * rKActVariance;
+    Plant.rT[0] := dTPlant * rKActVarianceFactor;
+    Plant.rT[1] := Plant.rT[0];
+    Plant.rT[2] := Plant.rT[0];
+   
+    abZoneSimu58.aInit(ptnParam:=Plant,
+                      dCycleTime:=dCycleTime,
+                      sZoneName:='HeatingMold1.ti_InTemp58',
+                      bZoneLinked:=bTITempZoneLinked[58]);
+   
+    rKActVarianceFactor := 1.0 + 4.0 * rKActVariance;
+    Plant.rT[0] := dTPlant * rKActVarianceFactor;
+    Plant.rT[1] := Plant.rT[0];
+    Plant.rT[2] := Plant.rT[0];
+   
+    abZoneSimu59.aInit(ptnParam:=Plant,
+                      dCycleTime:=dCycleTime,
+                      sZoneName:='HeatingMold1.ti_InTemp59',
+                      bZoneLinked:=bTITempZoneLinked[59]);
+   
+    rKActVarianceFactor := 1.0 + 5.0 * rKActVariance;
+    Plant.rT[0] := dTPlant * rKActVarianceFactor;
+    Plant.rT[1] := Plant.rT[0];
+    Plant.rT[2] := Plant.rT[0];
+   
+    abZoneSimu60.aInit(ptnParam:=Plant,
+                      dCycleTime:=dCycleTime,
+                      sZoneName:='HeatingMold1.ti_InTemp60',
+                      bZoneLinked:=bTITempZoneLinked[60]);
+   
+    rKActVarianceFactor := 1.0;
+    Plant.rT[0] := dTPlant * rKActVarianceFactor;
+    Plant.rT[1] := Plant.rT[0];
+    Plant.rT[2] := Plant.rT[0];
+   
+    abZoneSimu61.aInit(ptnParam:=Plant,
+                      dCycleTime:=dCycleTime,
+                      sZoneName:='HeatingMold1.ti_InTemp61',
+                      bZoneLinked:=bTITempZoneLinked[61]);
+   
+    rKActVarianceFactor := 1.0 + rKActVariance;
+    Plant.rT[0] := dTPlant * rKActVarianceFactor;
+    Plant.rT[1] := Plant.rT[0];
+    Plant.rT[2] := Plant.rT[0];
+   
+    abZoneSimu62.aInit(ptnParam:=Plant,
+                      dCycleTime:=dCycleTime,
+                      sZoneName:='HeatingMold1.ti_InTemp62',
+                      bZoneLinked:=bTITempZoneLinked[62]);
+   
+    rKActVarianceFactor := 1.0 + 2.0 * rKActVariance;
+    Plant.rT[0] := dTPlant * rKActVarianceFactor;
+    Plant.rT[1] := Plant.rT[0];
+    Plant.rT[2] := Plant.rT[0];
+   
+    abZoneSimu63.aInit(ptnParam:=Plant,
+                      dCycleTime:=dCycleTime,
+                      sZoneName:='HeatingMold1.ti_InTemp63',
+                      bZoneLinked:=bTITempZoneLinked[63]);
+   
+    rKActVarianceFactor := 1.0 + 3.0 * rKActVariance;
+    Plant.rT[0] := dTPlant * rKActVarianceFactor;
+    Plant.rT[1] := Plant.rT[0];
+    Plant.rT[2] := Plant.rT[0];
+   
+    abZoneSimu64.aInit(ptnParam:=Plant,
+                      dCycleTime:=dCycleTime,
+                      sZoneName:='HeatingMold1.ti_InTemp64',
+                      bZoneLinked:=bTITempZoneLinked[64]);
+   
+    rKActVarianceFactor := 1.0 + 4.0 * rKActVariance;
+    Plant.rT[0] := dTPlant * rKActVarianceFactor;
+    Plant.rT[1] := Plant.rT[0];
+    Plant.rT[2] := Plant.rT[0];
+   
+    abZoneSimu65.aInit(ptnParam:=Plant,
+                      dCycleTime:=dCycleTime,
+                      sZoneName:='HeatingMold1.ti_InTemp65',
+                      bZoneLinked:=bTITempZoneLinked[65]);
+   
+    rKActVarianceFactor := 1.0 + 5.0 * rKActVariance;
+    Plant.rT[0] := dTPlant * rKActVarianceFactor;
+    Plant.rT[1] := Plant.rT[0];
+    Plant.rT[2] := Plant.rT[0];
+   
+    abZoneSimu66.aInit(ptnParam:=Plant,
+                      dCycleTime:=dCycleTime,
+                      sZoneName:='HeatingMold1.ti_InTemp66',
+                      bZoneLinked:=bTITempZoneLinked[66]);
+
+   
+    rKActVarianceFactor := 1.0;
+    Plant.rT[0] := dTPlant * rKActVarianceFactor;
+    Plant.rT[1] := Plant.rT[0];
+    Plant.rT[2] := Plant.rT[0];
+   
+    abZoneSimu67.aInit(ptnParam:=Plant,
+                      dCycleTime:=dCycleTime,
+                      sZoneName:='HeatingMold1.ti_InTemp67',
+                      bZoneLinked:=bTITempZoneLinked[67]);
+   
+    rKActVarianceFactor := 1.0 + rKActVariance;
+    Plant.rT[0] := dTPlant * rKActVarianceFactor;
+    Plant.rT[1] := Plant.rT[0];
+    Plant.rT[2] := Plant.rT[0];
+
+    abZoneSimu68.aInit(ptnParam:=Plant,
+                      dCycleTime:=dCycleTime,
+                      sZoneName:='HeatingMold1.ti_InTemp68',
+                      bZoneLinked:=bTITempZoneLinked[68]);
+   
+    rKActVarianceFactor := 1.0 + 2.0 * rKActVariance;
+    Plant.rT[0] := dTPlant * rKActVarianceFactor;
+    Plant.rT[1] := Plant.rT[0];
+    Plant.rT[2] := Plant.rT[0];
+   
+    abZoneSimu69.aInit(ptnParam:=Plant,
+                      dCycleTime:=dCycleTime,
+                      sZoneName:='HeatingMold1.ti_InTemp69',
+                      bZoneLinked:=bTITempZoneLinked[69]);   
+   
+    rKActVarianceFactor := 1.0 + 3.0 * rKActVariance;
+    Plant.rT[0] := dTPlant * rKActVarianceFactor;
+    Plant.rT[1] := Plant.rT[0];
+    Plant.rT[2] := Plant.rT[0];
+   
+    abZoneSimu70.aInit(ptnParam:=Plant,
+                      dCycleTime:=dCycleTime,
+                      sZoneName:='HeatingMold1.ti_InTemp70',
+                      bZoneLinked:=bTITempZoneLinked[70]);   
+   
+    rKActVarianceFactor := 1.0 + 4.0 * rKActVariance;
+    Plant.rT[0] := dTPlant * rKActVarianceFactor;
+    Plant.rT[1] := Plant.rT[0];
+    Plant.rT[2] := Plant.rT[0];
+   
+    abZoneSimu71.aInit(ptnParam:=Plant,
+                      dCycleTime:=dCycleTime,
+                      sZoneName:='HeatingMold1.ti_InTemp71',
+                      bZoneLinked:=bTITempZoneLinked[71]);   
+   
+    rKActVarianceFactor := 1.0 + 5.0 * rKActVariance;
+    Plant.rT[0] := dTPlant * rKActVarianceFactor;
+    Plant.rT[1] := Plant.rT[0];
+    Plant.rT[2] := Plant.rT[0];
+   
+    abZoneSimu72.aInit(ptnParam:=Plant,
+                      dCycleTime:=dCycleTime,
+                      sZoneName:='HeatingMold1.ti_InTemp72',
+                      bZoneLinked:=bTITempZoneLinked[72]);   
+                                                              
+
+END_IF;
+
+
+@SaText @RT(9)aSimulate 1 @TL(77)
+IF mbTIHeatingMoldTempLinked THEN
+    
+    abZoneSimu1.aRun(rControlValue:=mpMoldZoneArray^[1].Data^.rOutputValue);
+    abZoneSimu2.aRun(rControlValue:=mpMoldZoneArray^[2].Data^.rOutputValue);
+    abZoneSimu3.aRun(rControlValue:=mpMoldZoneArray^[3].Data^.rOutputValue);
+    abZoneSimu4.aRun(rControlValue:=mpMoldZoneArray^[4].Data^.rOutputValue);
+    abZoneSimu5.aRun(rControlValue:=mpMoldZoneArray^[5].Data^.rOutputValue);
+    abZoneSimu6.aRun(rControlValue:=mpMoldZoneArray^[6].Data^.rOutputValue);
+    abZoneSimu7.aRun(rControlValue:=mpMoldZoneArray^[7].Data^.rOutputValue);
+    abZoneSimu8.aRun(rControlValue:=mpMoldZoneArray^[8].Data^.rOutputValue);
+    abZoneSimu9.aRun(rControlValue:=mpMoldZoneArray^[9].Data^.rOutputValue);
+    abZoneSimu10.aRun(rControlValue:=mpMoldZoneArray^[10].Data^.rOutputValue);
+    abZoneSimu11.aRun(rControlValue:=mpMoldZoneArray^[11].Data^.rOutputValue);
+    abZoneSimu12.aRun(rControlValue:=mpMoldZoneArray^[12].Data^.rOutputValue);
+    abZoneSimu13.aRun(rControlValue:=mpMoldZoneArray^[13].Data^.rOutputValue);
+    abZoneSimu14.aRun(rControlValue:=mpMoldZoneArray^[14].Data^.rOutputValue);
+    abZoneSimu15.aRun(rControlValue:=mpMoldZoneArray^[15].Data^.rOutputValue);
+    abZoneSimu16.aRun(rControlValue:=mpMoldZoneArray^[16].Data^.rOutputValue);
+    abZoneSimu17.aRun(rControlValue:=mpMoldZoneArray^[17].Data^.rOutputValue);
+    abZoneSimu18.aRun(rControlValue:=mpMoldZoneArray^[18].Data^.rOutputValue);
+    abZoneSimu19.aRun(rControlValue:=mpMoldZoneArray^[19].Data^.rOutputValue);
+    abZoneSimu20.aRun(rControlValue:=mpMoldZoneArray^[20].Data^.rOutputValue);
+    abZoneSimu21.aRun(rControlValue:=mpMoldZoneArray^[21].Data^.rOutputValue);
+    abZoneSimu22.aRun(rControlValue:=mpMoldZoneArray^[22].Data^.rOutputValue);
+    abZoneSimu23.aRun(rControlValue:=mpMoldZoneArray^[23].Data^.rOutputValue);
+    abZoneSimu24.aRun(rControlValue:=mpMoldZoneArray^[24].Data^.rOutputValue);
+    abZoneSimu25.aRun(rControlValue:=mpMoldZoneArray^[25].Data^.rOutputValue);
+    abZoneSimu26.aRun(rControlValue:=mpMoldZoneArray^[26].Data^.rOutputValue);
+    abZoneSimu27.aRun(rControlValue:=mpMoldZoneArray^[27].Data^.rOutputValue);
+    abZoneSimu28.aRun(rControlValue:=mpMoldZoneArray^[28].Data^.rOutputValue);
+    abZoneSimu29.aRun(rControlValue:=mpMoldZoneArray^[29].Data^.rOutputValue);
+    abZoneSimu30.aRun(rControlValue:=mpMoldZoneArray^[30].Data^.rOutputValue);
+    abZoneSimu31.aRun(rControlValue:=mpMoldZoneArray^[31].Data^.rOutputValue);
+    abZoneSimu32.aRun(rControlValue:=mpMoldZoneArray^[32].Data^.rOutputValue);
+    abZoneSimu33.aRun(rControlValue:=mpMoldZoneArray^[33].Data^.rOutputValue);
+    abZoneSimu34.aRun(rControlValue:=mpMoldZoneArray^[34].Data^.rOutputValue);
+    abZoneSimu35.aRun(rControlValue:=mpMoldZoneArray^[35].Data^.rOutputValue);
+    abZoneSimu36.aRun(rControlValue:=mpMoldZoneArray^[36].Data^.rOutputValue);
+    abZoneSimu37.aRun(rControlValue:=mpMoldZoneArray^[37].Data^.rOutputValue);
+    abZoneSimu38.aRun(rControlValue:=mpMoldZoneArray^[38].Data^.rOutputValue);
+    abZoneSimu39.aRun(rControlValue:=mpMoldZoneArray^[39].Data^.rOutputValue);
+    abZoneSimu40.aRun(rControlValue:=mpMoldZoneArray^[40].Data^.rOutputValue);
+    abZoneSimu41.aRun(rControlValue:=mpMoldZoneArray^[41].Data^.rOutputValue);
+    abZoneSimu42.aRun(rControlValue:=mpMoldZoneArray^[42].Data^.rOutputValue);
+    abZoneSimu43.aRun(rControlValue:=mpMoldZoneArray^[43].Data^.rOutputValue);
+    abZoneSimu44.aRun(rControlValue:=mpMoldZoneArray^[44].Data^.rOutputValue);
+    abZoneSimu45.aRun(rControlValue:=mpMoldZoneArray^[45].Data^.rOutputValue);
+    abZoneSimu46.aRun(rControlValue:=mpMoldZoneArray^[46].Data^.rOutputValue);
+    abZoneSimu47.aRun(rControlValue:=mpMoldZoneArray^[47].Data^.rOutputValue);
+    abZoneSimu48.aRun(rControlValue:=mpMoldZoneArray^[48].Data^.rOutputValue);
+    abZoneSimu49.aRun(rControlValue:=mpMoldZoneArray^[49].Data^.rOutputValue);
+    abZoneSimu50.aRun(rControlValue:=mpMoldZoneArray^[50].Data^.rOutputValue);
+    abZoneSimu51.aRun(rControlValue:=mpMoldZoneArray^[51].Data^.rOutputValue);
+    abZoneSimu52.aRun(rControlValue:=mpMoldZoneArray^[52].Data^.rOutputValue);
+    abZoneSimu53.aRun(rControlValue:=mpMoldZoneArray^[53].Data^.rOutputValue);
+    abZoneSimu54.aRun(rControlValue:=mpMoldZoneArray^[54].Data^.rOutputValue);
+    abZoneSimu55.aRun(rControlValue:=mpMoldZoneArray^[55].Data^.rOutputValue);
+    abZoneSimu56.aRun(rControlValue:=mpMoldZoneArray^[56].Data^.rOutputValue);
+    abZoneSimu57.aRun(rControlValue:=mpMoldZoneArray^[57].Data^.rOutputValue);
+    abZoneSimu58.aRun(rControlValue:=mpMoldZoneArray^[58].Data^.rOutputValue);
+    abZoneSimu59.aRun(rControlValue:=mpMoldZoneArray^[59].Data^.rOutputValue);
+    abZoneSimu60.aRun(rControlValue:=mpMoldZoneArray^[60].Data^.rOutputValue);
+    abZoneSimu61.aRun(rControlValue:=mpMoldZoneArray^[61].Data^.rOutputValue);
+    abZoneSimu62.aRun(rControlValue:=mpMoldZoneArray^[62].Data^.rOutputValue);
+    abZoneSimu63.aRun(rControlValue:=mpMoldZoneArray^[63].Data^.rOutputValue);
+    abZoneSimu64.aRun(rControlValue:=mpMoldZoneArray^[64].Data^.rOutputValue);
+    abZoneSimu65.aRun(rControlValue:=mpMoldZoneArray^[65].Data^.rOutputValue);
+    abZoneSimu66.aRun(rControlValue:=mpMoldZoneArray^[66].Data^.rOutputValue);
+    abZoneSimu67.aRun(rControlValue:=mpMoldZoneArray^[67].Data^.rOutputValue);
+    abZoneSimu68.aRun(rControlValue:=mpMoldZoneArray^[68].Data^.rOutputValue);
+    abZoneSimu69.aRun(rControlValue:=mpMoldZoneArray^[69].Data^.rOutputValue);
+    abZoneSimu70.aRun(rControlValue:=mpMoldZoneArray^[70].Data^.rOutputValue);
+    abZoneSimu71.aRun(rControlValue:=mpMoldZoneArray^[71].Data^.rOutputValue);
+    abZoneSimu72.aRun(rControlValue:=mpMoldZoneArray^[72].Data^.rOutputValue);   
+END_IF;
+           
+
+
+@SaText @RT(9)aStopSimu 1 @TL(77)
+IF mbTIHeatingMoldTempLinked THEN
+    abZoneSimu1.aUnforce();
+    abZoneSimu2.aUnforce();
+    abZoneSimu3.aUnforce();
+    abZoneSimu4.aUnforce();
+    abZoneSimu5.aUnforce();
+    abZoneSimu6.aUnforce();
+    abZoneSimu7.aUnforce();
+    abZoneSimu8.aUnforce();
+    abZoneSimu9.aUnforce();
+    abZoneSimu10.aUnforce();
+    abZoneSimu11.aUnforce();
+    abZoneSimu12.aUnforce();
+    abZoneSimu13.aUnforce();
+    abZoneSimu14.aUnforce();
+    abZoneSimu15.aUnforce();
+    abZoneSimu16.aUnforce();
+    abZoneSimu17.aUnforce();
+    abZoneSimu18.aUnforce();
+    abZoneSimu19.aUnforce();
+    abZoneSimu20.aUnforce();
+    abZoneSimu21.aUnforce();
+    abZoneSimu22.aUnforce();
+    abZoneSimu23.aUnforce();
+    abZoneSimu24.aUnforce();
+    abZoneSimu25.aUnforce();
+    abZoneSimu26.aUnforce();
+    abZoneSimu27.aUnforce();
+    abZoneSimu28.aUnforce();
+    abZoneSimu29.aUnforce();
+    abZoneSimu30.aUnforce();
+    abZoneSimu31.aUnforce();
+    abZoneSimu32.aUnforce();
+    abZoneSimu33.aUnforce();
+    abZoneSimu34.aUnforce();
+    abZoneSimu35.aUnforce();
+    abZoneSimu36.aUnforce();
+    abZoneSimu37.aUnforce();
+    abZoneSimu38.aUnforce();
+    abZoneSimu39.aUnforce();
+    abZoneSimu40.aUnforce();
+    abZoneSimu41.aUnforce();
+    abZoneSimu42.aUnforce();
+    abZoneSimu43.aUnforce();
+    abZoneSimu44.aUnforce();
+    abZoneSimu45.aUnforce();
+    abZoneSimu46.aUnforce();
+    abZoneSimu47.aUnforce();
+    abZoneSimu48.aUnforce();
+    abZoneSimu49.aUnforce();
+    abZoneSimu50.aUnforce();
+    abZoneSimu51.aUnforce();
+    abZoneSimu52.aUnforce();
+    abZoneSimu53.aUnforce();
+    abZoneSimu54.aUnforce();
+    abZoneSimu55.aUnforce();
+    abZoneSimu56.aUnforce();
+    abZoneSimu57.aUnforce();
+    abZoneSimu58.aUnforce();
+    abZoneSimu59.aUnforce();
+    abZoneSimu60.aUnforce();
+    abZoneSimu61.aUnforce();
+    abZoneSimu62.aUnforce();
+    abZoneSimu63.aUnforce();
+    abZoneSimu64.aUnforce();
+    abZoneSimu65.aUnforce();
+    abZoneSimu66.aUnforce();
+    abZoneSimu67.aUnforce();
+    abZoneSimu68.aUnforce();
+    abZoneSimu69.aUnforce();
+    abZoneSimu70.aUnforce();
+    abZoneSimu71.aUnforce();
+    abZoneSimu72.aUnforce();
+END_IF;
+
+STOP_PROCESS_ALGORITHM();
+
+
+@SaTrans 0 
+@SaExits 0 
+@END_SfcBody 
+
+@@@BEG_Comment@@@ 
+@TL(0)
+
+@@@END_Comment@@@ 
+@END_Body 
+
+@END_Contents 

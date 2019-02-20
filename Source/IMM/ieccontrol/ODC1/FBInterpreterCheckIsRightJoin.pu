@@ -1,0 +1,213 @@
+(*
+@h    ! WARNING !
+@h    The Kemro K2 system (including software) only meets category B according to EN 954-1,
+@h    thus it is not intended for usage in safety-relevant control applications in the field 
+@h    of personal safety (e.g. emergency stop).
+@h    To implement potentially necessary safety-relevant control tasks, always use additional 
+@h    external safety devices that are intended for the particular purpose, and meet the necessary 
+@h    functional safety.
+@h    For further information see EN 954-1 (EN ISO 13849-1) and/or the K2-x00 user manual, chapter 
+@h    "CE conformity, directives and standards".
+
+Helper for FBInterpreterFindEndOfParalle.pu
+Check if we have a join on iLine where the leftmost column with a EndParallel
+is iColumnStartBranch
+-> this is used to find the end of a parallel branch
+*)
+
+IMPORT_OVER_LISTFILE
+ cMoveEndParallel
+, KODC_Sequence
+, FBDebugTrace2
+
+END_IMPORT
+
+FUNCTION_BLOCK FBInterpreterCheckIsRightJoin #DUMMY_EDIT_BLOCK
+
+VAR_IN_OUT
+ odcSequence : KODC_Sequence (* [col][line] *);
+END_VAR
+
+VAR_INPUT
+ iColumnStartBranch : DINT;
+ iLine : DINT;
+END_VAR
+
+VAR_OUTPUT
+ bIsJoin : BOOL;
+ bError : BOOL;
+END_VAR
+
+VAR_TEMP
+ iTmpColumn : DINT;
+END_VAR
+
+VAR
+ fbDebugTrace2 : FBDebugTrace2;
+END_VAR
+#BEGIN_EDIT_BLOCK
+bError := FALSE;
+bIsJoin := FALSE;
+
+FOR iTmpColumn := 1 TO cMaxParallelMovements DO
+   IF odcSequence[iTmpColumn][iLine].iMoveId = cMoveEndParallel THEN
+      IF iTmpColumn < iColumnStartBranch THEN
+         fbDebugTrace2(nODCInterpreter, 'found a EndPParallel at pos:x/x, that tries to join to the wrong parent branch');
+         bError := TRUE;
+         RETURN; (* error tried to join to somewhere else
+                  before we got our wanted join *)
+      END_IF;
+      IF iTmpColumn = iColumnStartBranch THEN
+         (* found where this branch joins again with iColumn *)
+         bIsJoin := TRUE;
+         RETURN;
+      END_IF;
+      (* otherwise something else tries to join into this column from the right side
+         this is OK, ignore it *)
+   END_IF;
+END_FOR;
+
+
+;#END_EDIT_BLOCK END_FUNCTION_BLOCK
+
+
+
+#END_OF_IEC_PART
+
+@Puma @IecEditor 6 95 @Pou 25 
+@@@BEG_Comment@@@
+@h    ! WARNING !
+@h    The Kemro K2 system (including software) only meets category B according to EN 954-1,
+@h    thus it is not intended for usage in safety-relevant control applications in the field 
+@h    of personal safety (e.g. emergency stop).
+@h    To implement potentially necessary safety-relevant control tasks, always use additional 
+@h    external safety devices that are intended for the particular purpose, and meet the necessary 
+@h    functional safety.
+@h    For further information see EN 954-1 (EN ISO 13849-1) and/or the K2-x00 user manual, chapter 
+@h    "CE conformity, directives and standards".
+
+Helper for FBInterpreterFindEndOfParalle.pu
+Check if we have a join on iLine where the leftmost column with a EndParallel
+is iColumnStartBranch
+-> this is used to find the end of a parallel branch
+@@@END_Comment@@@
+
+@BEG_Contents 
+
+@BEG_Func 
+@RT(17)FuncTreeContainer 
+0 
+@END_Func 
+
+@BEG_Const 
+@RT(18)ConstTreeContainer 
+1 
+@Var @RT(16)cMoveEndParallel @RT(0) @T @F @DT @RT(0) @RT(0) @T @T @UNKNOWN 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+0 @RT(0) @RT(0) 
+@END_Attrib 
+1 1 @F @F @F @F 
+
+@END_Const 
+
+@BEG_Export 
+
+@BEG_Kind 
+@FUNCTION_BLOCK @RT(29)FBInterpreterCheckIsRightJoin @STRUCTURED_TEXT 
+@RT(0) @RT(0) @RT(0) 
+@END_Kind 
+
+@BEG_Dcl 
+@RT(16)DclTreeContainer 
+7 
+@Var @RT(11)odcSequence @RT(0) @T @T @DERIVED 0 @T @T @DT @RT(13)KODC_Sequence @RT(0) @T @T @UNKNOWN 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(11)[col][line] @RT(0) 
+@END_Attrib 
+1 2 @F @F @F @F 
+
+@Var @RT(18)iColumnStartBranch @RT(0) @T @F @DT @RT(4)DINT @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 1 @F @F @F @F 
+
+@Var @RT(5)iLine @RT(0) @T @F @DT @RT(4)DINT @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 1 @F @F @F @F 
+
+@Var @RT(7)bIsJoin @RT(0) @T @F @DT @RT(4)BOOL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 3 @F @F @F @F 
+
+@Var @RT(6)bError @RT(0) @T @F @DT @RT(4)BOOL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 3 @F @F @F @F 
+
+@Var @RT(10)iTmpColumn @RT(0) @T @F @DT @RT(4)DINT @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 4 @F @F @F @F 
+
+@Var @RT(13)fbDebugTrace2 @RT(0) @T @T @DERIVED 0 @T @T @DT @RT(13)FBDebugTrace2 @RT(0) @T @T @UNKNOWN 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@END_Dcl 
+
+@END_Export 
+
+@BEG_Body 
+@TL(21)
+bError := FALSE;
+bIsJoin := FALSE;
+
+FOR iTmpColumn := 1 TO cMaxParallelMovements DO
+   IF odcSequence[iTmpColumn][iLine].iMoveId = cMoveEndParallel THEN
+      IF iTmpColumn < iColumnStartBranch THEN
+         fbDebugTrace2(nODCInterpreter, 'found a EndPParallel at pos:x/x, that tries to join to the wrong parent branch');
+         bError := TRUE;
+         RETURN; (* error tried to join to somewhere else
+                  before we got our wanted join *)
+      END_IF;
+      IF iTmpColumn = iColumnStartBranch THEN
+         (* found where this branch joins again with iColumn *)
+         bIsJoin := TRUE;
+         RETURN;
+      END_IF;
+      (* otherwise something else tries to join into this column from the right side
+         this is OK, ignore it *)
+   END_IF;
+END_FOR;
+
+@END_Body 
+
+@END_Contents 
+@@@BEG_Password@@@
+NGhzZm9kYzQ=
+@@@END_Password@@@

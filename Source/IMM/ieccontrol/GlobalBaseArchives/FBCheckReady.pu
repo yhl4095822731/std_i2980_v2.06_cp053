@@ -1,0 +1,248 @@
+(*
+Check if the device specified by DeviceId is ready.
+If the device is found pbReady points to the SV of the device
+which contains the ready flag.
+bReady is the value of pbReady^.
+If the device is not found in sv_DeviceMovements, 
+pbReady is EMPTY and bReady is FALSE.
+
+
+!!!!!!!!!!!!!!!!!!!!!!!!!!!    A T T E N T I O N   !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
+fbCheckReady should only be used in Tasks with priority lower than Task EV_Task_3.
+if it is neccessary to use fbCheckReady in Tasks with higher or equal priority than
+EV_Task_3 it must be ensured to EV_Task_3 can run on cycle after call of FBStart()
+to set the ready state to false. 
+if there is no task cycle of EV_Task_3 between call of FBStart() and FBCheckReady()
+FBCheckReady will return true.
+!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
+*)
+
+IMPORT_OVER_LISTFILE
+ cMaxMoveDevicesRegistered
+, tDeviceMovementList
+, tsDeviceId
+
+END_IMPORT
+
+FUNCTION_BLOCK FBCheckReady #DUMMY_EDIT_BLOCK
+
+VAR_OUTPUT
+ bReady : BOOL;
+ pbReady : REFTO BOOL;
+END_VAR
+
+VAR_INPUT
+ DeviceId : tsDeviceId;
+END_VAR
+
+SYSTEM_VAR
+ sv_DeviceMovements : tDeviceMovementList;
+END_VAR
+
+VAR_TEMP
+ i : DINT;
+END_VAR
+
+VAR
+ OldDeviceId : tsDeviceId;
+ Index : DINT;
+END_VAR
+#BEGIN_EDIT_BLOCK
+(**************************************** WARNING ********************************************
+ *** The KEBA Kemro K2 System including software is not intended for safety control tasks! ***
+ ***                       For further information see Comment tab!                        ***
+ *********************************************************************************************)
+
+
+(*!!!!!!!!!!!!!!!!!!!!!!!!!!!    A T T E N T I O N   !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
+fbCheckReady should only be used in Tasks with priority lower than Task EV_Task_3.
+if it is neccessary to use fbCheckReady in Tasks with higher or equal priority than
+EV_Task_3 it must be ensured to EV_Task_3 can run on cycle after call of FBStart()
+to set the ready state to false. 
+if there is no task cycle of EV_Task_3 between call of FBStart() and FBCheckReady()
+FBCheckReady will return true.
+!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!*)
+
+bReady := FALSE;
+pbReady := EMPTY;
+
+IF OldDeviceId = DeviceId THEN  //performance optimisation
+   //when device is not changed, don't search device movement again
+   IF CHECK_REF(sv_DeviceMovements[Index].pbDeviceReady^) THEN
+      bReady := sv_DeviceMovements[Index].pbDeviceReady^;
+      pbReady := sv_DeviceMovements[Index].pbDeviceReady;
+   END_IF;
+ELSE
+   FOR i := 1 TO cMaxMoveDevicesRegistered DO
+      //search for the device
+      IF sv_DeviceMovements[i].DeviceId = DeviceId THEN
+         IF CHECK_REF(sv_DeviceMovements[i].pbDeviceReady^) THEN
+            bReady := sv_DeviceMovements[i].pbDeviceReady^;
+            pbReady := sv_DeviceMovements[i].pbDeviceReady;
+         END_IF;
+         OldDeviceId := DeviceId;
+         Index := i;
+         EXIT;
+      END_IF;
+   END_FOR;
+END_IF;
+
+
+;#END_EDIT_BLOCK END_FUNCTION_BLOCK
+
+
+
+#END_OF_IEC_PART
+
+@Puma @IecEditor 6 86 @Pou 25 
+@@@BEG_Comment@@@
+Check if the device specified by DeviceId is ready.
+If the device is found pbReady points to the SV of the device
+which contains the ready flag.
+bReady is the value of pbReady^.
+If the device is not found in sv_DeviceMovements, 
+pbReady is EMPTY and bReady is FALSE.
+
+
+!!!!!!!!!!!!!!!!!!!!!!!!!!!    A T T E N T I O N   !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
+fbCheckReady should only be used in Tasks with priority lower than Task EV_Task_3.
+if it is neccessary to use fbCheckReady in Tasks with higher or equal priority than
+EV_Task_3 it must be ensured to EV_Task_3 can run on cycle after call of FBStart()
+to set the ready state to false. 
+if there is no task cycle of EV_Task_3 between call of FBStart() and FBCheckReady()
+FBCheckReady will return true.
+!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
+@@@END_Comment@@@
+
+@BEG_Contents 
+
+@BEG_Func 
+@RT(17)FuncTreeContainer 
+0 
+@END_Func 
+
+@BEG_Const 
+@RT(18)ConstTreeContainer 
+1 
+@Var @RT(25)cMaxMoveDevicesRegistered @RT(0) @T @F @DT @RT(4)DINT @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+0 @RT(2)30 @RT(49)max number of devices which are serving movements 
+@END_Attrib 
+1 1 @F @F @F @F 
+
+@END_Const 
+
+@BEG_Export 
+
+@BEG_Kind 
+@FUNCTION_BLOCK @RT(12)FBCheckReady @STRUCTURED_TEXT 
+@RT(0) @RT(0) @RT(0) 
+@END_Kind 
+
+@BEG_Dcl 
+@RT(16)DclTreeContainer 
+7 
+@Var @RT(18)sv_DeviceMovements @RT(0) @T @T @DERIVED 0 @T @T @DT @RT(19)tDeviceMovementList @RT(0) @T @T @UNKNOWN 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 8 @F @F @F @F 
+
+@Var @RT(6)bReady @RT(0) @T @F @DT @RT(4)BOOL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 3 @F @F @F @F 
+
+@Var @RT(7)pbReady @RT(0) @T @T @REFTO 0 @T @DT @RT(4)BOOL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 3 @F @F @F @F 
+
+@Var @RT(8)DeviceId @RT(0) @T @T @DERIVED 0 @F @RT(10)tsDeviceId @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 1 @F @F @F @F 
+
+@Var @RT(1)i @RT(0) @T @F @DT @RT(4)DINT @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 4 @F @F @F @F 
+
+@Var @RT(11)OldDeviceId @RT(0) @T @T @DERIVED 0 @F @RT(10)tsDeviceId @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(5)Index @RT(0) @T @F @DT @RT(4)DINT @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@END_Dcl 
+
+@END_Export 
+
+@BEG_Body 
+@TL(39)
+(**************************************** WARNING ********************************************
+ *** The KEBA Kemro K2 System including software is not intended for safety control tasks! ***
+ ***                       For further information see Comment tab!                        ***
+ *********************************************************************************************)
+
+
+(*!!!!!!!!!!!!!!!!!!!!!!!!!!!    A T T E N T I O N   !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
+fbCheckReady should only be used in Tasks with priority lower than Task EV_Task_3.
+if it is neccessary to use fbCheckReady in Tasks with higher or equal priority than
+EV_Task_3 it must be ensured to EV_Task_3 can run on cycle after call of FBStart()
+to set the ready state to false. 
+if there is no task cycle of EV_Task_3 between call of FBStart() and FBCheckReady()
+FBCheckReady will return true.
+!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!*)
+
+bReady := FALSE;
+pbReady := EMPTY;
+
+IF OldDeviceId = DeviceId THEN  //performance optimisation
+   //when device is not changed, don't search device movement again
+   IF CHECK_REF(sv_DeviceMovements[Index].pbDeviceReady^) THEN
+      bReady := sv_DeviceMovements[Index].pbDeviceReady^;
+      pbReady := sv_DeviceMovements[Index].pbDeviceReady;
+   END_IF;
+ELSE
+   FOR i := 1 TO cMaxMoveDevicesRegistered DO
+      //search for the device
+      IF sv_DeviceMovements[i].DeviceId = DeviceId THEN
+         IF CHECK_REF(sv_DeviceMovements[i].pbDeviceReady^) THEN
+            bReady := sv_DeviceMovements[i].pbDeviceReady^;
+            pbReady := sv_DeviceMovements[i].pbDeviceReady;
+         END_IF;
+         OldDeviceId := DeviceId;
+         Index := i;
+         EXIT;
+      END_IF;
+   END_FOR;
+END_IF;
+
+@END_Body 
+
+@END_Contents 

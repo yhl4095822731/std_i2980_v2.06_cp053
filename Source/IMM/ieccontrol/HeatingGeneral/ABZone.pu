@@ -1,0 +1,4261 @@
+(*
+Algorithm Block controles the function of a heating zon
+*)
+
+IMPORT_OVER_LISTFILE
+ GET_MY_FU_NAME
+, GET_SYNC_REFTO
+, FGetHWPath
+, SET_ALARM
+, KSWO_AddVariable
+, GET_TASK_INTERVAL
+, RESET_ALARM
+, KSYS_Status_OK
+, enZoneModeDisabled
+, cCompHeatingNozzle
+, enZoneModeConstant
+, cMinPulseTimeLimitFactor
+, enZoneTypeBlock
+, cApplPlasticsWrongPWMParams
+, cApplPlasticsWrongTempStabParam
+, cApplPlasticsWrongTempParams
+, cApplPlasticsWrongStabParams
+, cApplPlasticsHeatingTimeout
+, enZoneModePID2pt
+, enZoneModePID3pt
+, enZoneModePID2ptEM
+, enZoneModePID3ptEM
+, KAPPL_TempOpMode_Cooling
+, KCTRL_Stable_OK
+, KTEMP_Opt_State_NoIdent
+, KTEMP_Opt_State_SetvalStepOn
+, enZoneTypeNozzle
+, cApplPlasticsMeanValueTooLow
+, cApplPlasticsHeatingFailure
+, cApplPlasticsOptCalcFailed
+, cApplPlasticsOptTimeout
+, cApplPlasticsHeatingTimeoutWarn
+, enZoneModeMeasure
+, enZoneModeOff
+, enZoneStateOK
+, enZoneModeHeat
+, enZoneModeCool
+, enZoneStateErrorSensor
+, KAPPL_TempOpMode_HeatingCooling
+, KAPPL_TempOpMode_Heating
+, nFullAutomatic
+, nHalfAutomatic
+, enZoneTypeHotrunner
+, tsDeviceId
+, tyZoneArray
+, tnOperationMode
+, KAPPL_TempZoneUsedArr
+, KAPPL_Plastics_HeatZone
+, tsZoneData
+, tsZoneDataRetain
+, ABZoneObservation
+, KSYS_Status
+, KSWO_Status
+, KCTRL_PWM_Param
+, F_TRIG
+, KAPPL_TempControlParam
+
+END_IMPORT
+
+ALGORITHM_BLOCK ABZone #DUMMY_EDIT_BLOCK
+
+SYSTEM_VAR
+ sv_DeviceId : tsDeviceId (* unique Device Identifier *);
+ sv_bReParamGroup : BOOL (* By this var each zone can reparam the groupblock *);
+ sv_TempDiff : REAL (* expected minimum temp.change at 100% heating output per minute; otherwise alarm *);
+ sv_PWMCycleTime : TIME;
+ sv_PWMMinPulseTime : TIME;
+ sv_ZoneArray : tyZoneArray;
+ sv_bGroupHeating : BOOL;
+ sv_rEvaporationTemp : REAL;
+ sv_dEvaporationTime : TIME;
+ sv_rTemperatureRamp : REAL;
+ sv_bKeepWarmActive : BOOL;
+ sv_bUsePidOP : BOOL;
+ sv_OperationMode : tnOperationMode;
+ sv_iNumberOfZones : DINT;
+ sv_bAnyTempSensorTypeChanged : BOOL;
+ sv_dEvaporationTimeBlock : TIME;
+ sv_dSoftstartAlarmTime : TIME;
+ sv_bHeatingUsed : BOOL;
+ sv_bInitDone : BOOL;
+ sv_dObservationTimeHeating : TIME;
+ sv_bUseOutputLimitation : BOOL (* activate output limitation *);
+ sv_UseOutputLimitation : KAPPL_TempZoneUsedArr (* activate output limitation *);
+END_VAR
+
+SYSTEM_OBJECT
+ erVariableMissing : ALARM;
+ TaskHeating : TASK;
+ erHeatingOutput : ALARM;
+ erHeatingOutputPWM : ALARM;
+ erCoolingOutput : ALARM;
+ erSensor : ALARM;
+ erZoneCalcError : ALARM;
+ erInvalidPWMSettings : ALARM;
+ erInvalidStabSettings : ALARM;
+ erInvalidStabilitySettings : ALARM;
+ erInvalidTempControllerSettings : ALARM;
+ erHeatingFailure : ALARM;
+ erSensorPower : ALARM;
+ PU_Task_7 : TASK;
+ erMeanValueTooLow : ALARM;
+ erSwitchToConst : ALARM;
+ erSwitchToEMOP : ALARM;
+ erSensorNotConfig : ALARM;
+ erInvalidSetterSettings : ALARM;
+ erOptimizationFailed : ALARM;
+ erHeatingTimeout : ALARM;
+ erHeatingTimeoutWarning : ALARM;
+END_OBJECT
+
+VAR_EXTERNAL
+ g_bIdentifiactionActive : BOOL;
+END_VAR
+
+VAR
+ abHeatZone : KAPPL_Plastics_HeatZone;
+ mbTOHeatLinked : BOOL;
+ mbTOCoolLinked : BOOL;
+ mbDOHeatLinked : BOOL;
+ mbDOCoolLinked : BOOL;
+ mbPOHeatLinked : BOOL;
+ mbPWILinked : BOOL;
+ mbTILinked : BOOL;
+ mpbTIState : REFTO BOOL;
+ mpbTOHeatState : REFTO BOOL;
+ mpbDOHeatState : REFTO BOOL;
+ mpbPOHeatState : REFTO BOOL;
+ mpbTOCoolState : REFTO BOOL;
+ mpbDOCoolState : REFTO BOOL;
+ mpbPWIState : REFTO BOOL;
+ miIndex : DINT;
+ mbReParam : BOOL;
+ mbZoneInitOK : BOOL;
+ mbHWError : BOOL;
+ mbSensorError : BOOL;
+ mbSensorAlarm : BOOL;
+ mbHeatOutputError : BOOL;
+ mbHeatOutputErrorPWM : BOOL;
+ mbHeatOutputAlarmPWM : BOOL;
+ mbPowerError : BOOL;
+ mbCoolOutputError : BOOL;
+ mpZone : REFTO tsZoneData;
+ mpZoneRetain : REFTO tsZoneDataRetain;
+ mbInitDone : BOOL;
+ mrSetValForZone : REAL;
+ mrZoneActValueSwo : REAL (* for KSWO_AddVariable *);
+ msHWPath : STRING(255);
+ dEvaporationTime : TIME;
+ bIgnoreTimeoutError : BOOL := FALSE;
+ abZoneObservation : ABZoneObservation;
+ mbLimitationActive : BOOL;
+ mpbLimitationUsed : REFTO BOOL;
+ mbLimitationAvailable : BOOL;
+ mbIdentificationActive : BOOL;
+END_VAR
+
+ALGORITHM aInit
+
+
+VAR_INPUT
+ iZoneNumber : DINT;
+END_VAR
+
+VAR
+ Status : KSYS_Status;
+ sSvZone : STRING(255);
+ sSvZoneRetain : STRING(255);
+ sTiInTemp : STRING(255);
+ sOutHeatTO : STRING(255);
+ sOutHeatDO : STRING(255);
+ sOutCoolTO : STRING(255);
+ sOutCoolDO : STRING(255);
+ sOutHeatPO : STRING(255);
+ variableName : STRING(255);
+ swoState : KSWO_Status;
+ sFuName : STRING(32);
+END_VAR
+#BEGIN_EDIT_BLOCK
+(**************************************** WARNING ********************************************
+ *** The KEBA Kemro K2 System including software is not intended for safety control tasks! ***
+ ***                       For further information see Comment tab!                        ***
+ *********************************************************************************************)
+
+
+miIndex := iZoneNumber;
+
+sFuName := GET_MY_FU_NAME();
+sSvZone := CONCAT(sFuName,'.sv_Zone',DINT_TO_STRING(iZoneNumber));
+sSvZoneRetain := CONCAT(sFuName,'.sv_ZoneRetain',DINT_TO_STRING(iZoneNumber));
+sTiInTemp := CONCAT(sFuName,'.ti_InTemp',DINT_TO_STRING(iZoneNumber));
+sOutHeatTO := CONCAT(sFuName,'.to_OutHeat',DINT_TO_STRING(iZoneNumber));
+sOutHeatDO := CONCAT(sFuName,'.do_OutHeat',DINT_TO_STRING(iZoneNumber));
+sOutCoolTO := CONCAT(sFuName,'.to_OutCool',DINT_TO_STRING(iZoneNumber));
+sOutCoolDO := CONCAT(sFuName,'.do_OutCool',DINT_TO_STRING(iZoneNumber));
+sOutHeatPO := CONCAT(sFuName,'.po_OutHeat',DINT_TO_STRING(iZoneNumber));
+
+//getting reference of Zone
+sv_ZoneArray[iZoneNumber].Data := GET_SYNC_REFTO(sSvZone, T#0s, Status);
+IF Status = KSYS_Status_OK THEN
+    mpZone := sv_ZoneArray[iZoneNumber].Data;
+    sv_ZoneArray[iZoneNumber].DataRetain := GET_SYNC_REFTO(sSvZoneRetain, T#0s, Status);
+    
+    IF Status = KSYS_Status_OK THEN
+        mpZoneRetain := sv_ZoneArray[iZoneNumber].DataRetain;
+            
+        //getting reference of Heating Output  (TO)
+        mpZone^.prOutHeatTO := GET_SYNC_REFTO(sOutHeatTO, T#0s, Status);
+        IF Status = KSYS_Status_OK THEN
+            //getting reference of status endpoint
+            mpZone^.pbOutHeatTOStat:= GET_SYNC_REFTO(CONCAT(sOutHeatTO,'_stat'), T#0s, Status);
+            IF Status = KSYS_Status_OK THEN
+                //getting reference of PWM param endpoint
+                mpZone^.pbOutHeatTOPar:= GET_SYNC_REFTO(CONCAT(sOutHeatTO,'_parPWM'), T#0s, Status);  
+                IF Status = KSYS_Status_OK THEN
+                    mbTOHeatLinked := TRUE;
+                END_IF;  
+            END_IF;
+        ELSE
+            //getting reference of Heat Output (DO)
+            mpZone^.pbOutHeatDO := GET_SYNC_REFTO(sOutHeatDO, T#0s, Status);
+            IF Status = KSYS_Status_OK THEN
+                //getting reference of status endpoint
+                mpZone^.pbOutHeatDOStat := GET_SYNC_REFTO(CONCAT(sOutHeatDO,'_stat'), T#0s, Status);
+                IF Status = KSYS_Status_OK THEN
+                    mbDOHeatLinked := TRUE;                    
+                END_IF;
+                
+            ELSE
+                //getting reference of PWM Heating Output (PO)
+                mpZone^.prOutHeatPO := GET_SYNC_REFTO(sOutHeatPO, T#0s, Status);
+                IF Status = KSYS_Status_OK THEN
+                    //getting reference of status endpoint
+                    mpZone^.pbOutHeatPOStat := GET_SYNC_REFTO(CONCAT(sOutHeatPO,'_stat'), T#0s, Status);
+                    IF Status = KSYS_Status_OK THEN
+                        mbPOHeatLinked := TRUE;
+                    END_IF;
+                END_IF;
+                
+            END_IF;
+        END_IF;
+        
+            //getting reference of Cooling Output  (TO)
+        mpZone^.prOutCoolTO:= GET_SYNC_REFTO(sOutCoolTO, T#0s, Status);
+        IF Status = KSYS_Status_OK THEN      
+            //getting reference of status endpoint
+            mpZone^.pbOutCoolTOStat := GET_SYNC_REFTO(CONCAT(sOutCoolTO,'_stat'), T#0s, Status);
+            IF Status = KSYS_Status_OK THEN
+                //getting reference of PWM param endpoint
+                mpZone^.pbOutCoolTOPar := GET_SYNC_REFTO(CONCAT(sOutCoolTO,'_parPWM'), T#0s, Status);  
+                IF Status = KSYS_Status_OK THEN
+                    mbTOCoolLinked := TRUE;
+                END_IF;
+            END_IF;
+        ELSE
+            //getting reference of Cool Output (DO)
+            mpZone^.pbOutCoolDO := GET_SYNC_REFTO(sOutCoolDO, T#0s, Status);
+            IF Status = KSYS_Status_OK THEN
+                //getting reference of status endpoint
+                mpZone^.pbOutCoolDOStat := GET_SYNC_REFTO(CONCAT(sOutCoolDO,'_stat'), T#0s, Status);
+                IF Status = KSYS_Status_OK THEN
+                    mbDOCoolLinked := TRUE;
+                END_IF;
+            END_IF;
+        END_IF;
+        
+        //getting reference of Temperature Input
+        mpZone^.prActTemp := GET_SYNC_REFTO(sTiInTemp, T#0s, Status);
+        IF Status = KSYS_Status_OK THEN
+            //getting reference of status endpoint
+            mpZone^.pbActTempStat := GET_SYNC_REFTO(CONCAT(sTiInTemp,'_stat'), T#0s, Status);
+            IF Status = KSYS_Status_OK THEN
+                //getting reference of sensortype endpoint
+                mpZone^.pHWSensorType := GET_SYNC_REFTO(CONCAT(sTiInTemp,'_sensor'), T#0s, Status);
+                IF Status = KSYS_Status_OK THEN
+                    mbTILinked := TRUE;
+                    msHWPath := FGetHWPath(sTiInTemp, TRUE);                   
+                END_IF;
+            END_IF;
+        END_IF;
+        
+        //HW is ok if any endpoint is linked.  Minimum configuration: TI for measuremode or TO/DO for settermode
+        mpZone^.bHWOK := mbTILinked OR mbDOCoolLinked OR mbDOHeatLinked OR mbTOCoolLinked OR mbTOHeatLinked OR mbPOHeatLinked;
+        mpZone^.bSensorOK := mbTILinked;
+        mpZone^.bOutputOK := mbDOCoolLinked OR mbDOHeatLinked OR mbTOCoolLinked OR mbTOHeatLinked OR mbPOHeatLinked;
+        
+        //init mode with "setter" if the according TI is not linked and the zone is not switched off
+        IF mpZone^.bHWOK AND NOT mbTILinked AND mpZoneRetain^.ModeVis <> enZoneModeDisabled  THEN
+           IF sv_DeviceId.CompId = cCompHeatingNozzle THEN
+              mpZoneRetain^.ModeVis := enZoneModeConstant;
+           END_IF;                      
+        END_IF;
+       
+        //copy to local references for use in postupdate algos
+        mpbTIState     :=    mpZone^.pbActTempStat;
+        mpbTOHeatState :=    mpZone^.pbOutHeatTOStat;
+        mpbDOHeatState :=    mpZone^.pbOutHeatDOStat;
+        mpbTOCoolState :=    mpZone^.pbOutCoolTOStat;
+        mpbDOCoolState :=    mpZone^.pbOutCoolDOStat;
+        mpbPOHeatState :=    mpZone^.pbOutHeatPOStat;
+        IF mpZone^.pPowerGroup <> EMPTY AND mpZone^.pPowerGroup^.bPWILinked THEN
+           mbPWILinked  :=    mpZone^.pPowerGroup^.bPWILinked;
+           mpbPWIState  :=    mpZone^.pPowerGroup^.pbInGroupPWIStat;                               
+        END_IF;
+        sv_ZoneArray[iZoneNumber].bLinked := TRUE;
+        
+        mbInitDone := TRUE;
+        mpZone^.iIndex :=  iZoneNumber;
+    ELSE
+        //zone-sv not linked: zone not available
+        SET_ALARM(Name := erVariableMissing,
+                SubID1 := sv_DeviceId.CompId,
+                SubID2 := sv_DeviceId.IndexId,
+                Param1 := sSvZoneRetain);
+    END_IF;
+ELSE
+   //zone-sv not linked: zone not available
+    SET_ALARM(Name := erVariableMissing,
+            SubID1 := sv_DeviceId.CompId,
+            SubID2 := sv_DeviceId.IndexId,
+            Param1 := sSvZone);
+END_IF;
+
+variableName := CONCAT(sSvZone,'.OutputValue %');
+swoState := KSWO_AddVariable( Task := TaskHeating,
+                             Name := variableName,
+                             Variable := abHeatZone.aTempOutput.rU_PWMOut);  
+
+variableName := CONCAT(sSvZone,'.ActValue °C');
+swoState := KSWO_AddVariable( Task := TaskHeating,
+                             Name := variableName,
+                             Variable := mrZoneActValueSwo);  
+
+variableName := CONCAT(sSvZone,'.SetValue °C');
+swoState := KSWO_AddVariable( Task := TaskHeating,
+                             Name := variableName,
+                             Variable := mrSetValForZone);  
+
+variableName := CONCAT(sSvZone,'.rWAct °C');
+swoState := KSWO_AddVariable( Task := TaskHeating,
+                             Name := variableName,
+                             Variable := abHeatZone.aTempControl.rWAct);
+
+variableName := CONCAT(sSvZone,'.bOutputActive');
+swoState := KSWO_AddVariable( Task := TaskHeating,
+                             Name := variableName,
+                             Variable := abHeatZone.aTempOutput.PWMOut);
+
+abZoneObservation.aCalcParameter.sSvZone := sSvZone;
+abZoneObservation.aCalcParameter.MeasureTask := TaskHeating;
+abZoneObservation.aOptimizeAnalyze.MeasureTask := TaskHeating;
+IF IS_LINKED(sv_bUseOutputLimitation) AND IS_LINKED(sv_UseOutputLimitation) THEN
+   mpbLimitationUsed := @sv_UseOutputLimitation[miIndex];
+   mbLimitationAvailable := TRUE;
+END_IF;
+
+
+
+;#END_EDIT_BLOCK END_ALGORITHM
+
+(*
+This Algorithm Block is for controlling a heating zone.
+*)
+
+ALGORITHM aRun
+
+
+VAR_INPUT
+ bZoneOn : BOOL (* zone is activated *);
+END_VAR
+
+VAR
+ pwmParam : KCTRL_PWM_Param;
+ heatingNotAllowed : BOOL;
+ mInit : BOOL;
+ bPWMOutput : BOOL;
+ fEdgeOptimizationReady : F_TRIG;
+ bOutputAllowed : BOOL;
+ bEnableEmOp : BOOL (* True: when Emergency Operation is enabled *);
+ bAlarmEMOP : BOOL (* True: an alarm of Emergency Operation was set *);
+ rActTemp : REAL;
+ rMaxPowerStart : REAL := 100.0;
+ bIsHotrunner : BOOL;
+ bIsBlock : BOOL;
+ bUseLimitation : BOOL;
+ ZoneRetainParam : KAPPL_TempControlParam;
+ bLimitationActivated : BOOL;
+ iReductionCounter : UDINT := 200 (* 20s = 200 cyles *);
+ iReductionLimit : UDINT := 0;
+END_VAR
+#BEGIN_EDIT_BLOCK
+(**************************************** WARNING ********************************************
+ *** The KEBA Kemro K2 System including software is not intended for safety control tasks! ***
+ ***                       For further information see Comment tab!                        ***
+ *********************************************************************************************)
+IF mbZoneInitOK THEN
+
+   // initialize tempzoneblocks for PID-mode
+   IF (NOT mInit OR mbReParam) THEN
+      
+      IF mbTOHeatLinked THEN
+         //set pwm-params of heating TO 
+         mpZone^.pbOutHeatTOPar^.rCt := LINT_TO_REAL( TIME_TO_LINT(sv_PWMCycleTime)) / 1000000.0;
+         mpZone^.pbOutHeatTOPar^.rMinpt := LINT_TO_REAL( TIME_TO_LINT(sv_PWMMinPulseTime)) / 1000000.0;
+      END_IF; 
+      
+       IF mbTOCoolLinked THEN
+         //set pwm-params of cooling TO
+         mpZone^.pbOutCoolTOPar^.rCt := LINT_TO_REAL( TIME_TO_LINT(sv_PWMCycleTime)) / 1000000.0;
+         mpZone^.pbOutCoolTOPar^.rMinpt := LINT_TO_REAL( TIME_TO_LINT(sv_PWMMinPulseTime)) / 1000000.0;
+      END_IF;  
+      
+      IF sv_PWMMinPulseTime > MULTIME(sv_PWMCycleTime, cMinPulseTimeLimitFactor) THEN
+         sv_PWMMinPulseTime := MULTIME(sv_PWMCycleTime, cMinPulseTimeLimitFactor);
+      END_IF;
+      pwmParam.dMinOnTime := sv_PWMMinPulseTime;
+      abHeatZone.aPar.PWMCycleTime := sv_PWMCycleTime;
+      abHeatZone.aPar.DoPWMCalculation := mbDOHeatLinked OR mbDOCoolLinked;
+      abHeatZone.aPar.PWMParam := pwmParam;
+      abHeatZone.aPar.TempStabilityParam := mpZoneRetain^.StabParam;
+      iReductionLimit := LINT_TO_UDINT(TIME_TO_LINT(sv_PWMCycleTime/TIME_TO_LINT(GET_TASK_INTERVAL())));
+      iReductionCounter := iReductionLimit;
+      bIsBlock := (mpZoneRetain^.ZoneType = enZoneTypeBlock); 
+      bIsHotrunner := mpZoneRetain^.bIsHotrunner; 
+      abHeatZone.aPar.bHotrunner := bIsHotrunner OR bIsBlock; 
+      abHeatZone.aPar.bMoldHeatingBlock := bIsBlock;
+      IF (bIsHotrunner) OR (mpZoneRetain^.bDoOptimizationNext) THEN
+          abHeatZone.aPar.bNoAutoOptimization := FALSE;
+      ELSE    
+          abHeatZone.aPar.bNoAutoOptimization := TRUE;
+      END_IF;                                     
+      rMaxPowerStart := mpZoneRetain^.rSoftstartPower;
+      
+      abHeatZone.aPar.iIndex := miIndex;
+      abHeatZone.aPar();
+      
+      //offset for PWM heating zones -> see CR 41422
+      IF sv_iNumberOfZones <> 0 THEN
+         abHeatZone.aParPWMCycleOffset(rPWMCycleOffset := (DINT_TO_REAL(miIndex-1) / DINT_TO_REAL(sv_iNumberOfZones))); 
+      END_IF;
+       
+      IF abHeatZone.aPar.Error THEN
+         IF abHeatZone.aPar.ErrorInfo = cApplPlasticsWrongPWMParams THEN
+            SET_ALARM(Name := erInvalidPWMSettings,
+                        SubID1 := sv_DeviceId.CompId,
+                        SubID2 := sv_DeviceId.IndexId,
+                        SubID3 := miIndex);
+         ELSIF abHeatZone.aPar.ErrorInfo = cApplPlasticsWrongTempStabParam THEN
+            SET_ALARM(Name := erInvalidStabilitySettings,
+                        SubID1 := sv_DeviceId.CompId,
+                        SubID2 := sv_DeviceId.IndexId,
+                        SubID3 := miIndex);
+         ELSE
+            SET_ALARM(Name := erZoneCalcError,
+                        SubID1 := sv_DeviceId.CompId,
+                        SubID2 := sv_DeviceId.IndexId,
+                        SubID3 := miIndex,
+                        SubID4 := abHeatZone.aPar.ErrorInfo);
+         END_IF;
+         RETURN;
+      END_IF;
+      
+      //Act. temperature is set to 0.0 by initialisation, when sensor is not configured 
+      IF mpZone^.bSensorOK AND
+         mpZoneRetain^.ModeVis <> enZoneModeDisabled AND
+         mpZoneRetain^.ModeVis <> enZoneModeConstant THEN
+         rActTemp := mpZone^.prActTemp^;
+      ELSE
+         rActTemp := 0.0;
+      END_IF;
+       
+      IF bIsHotrunner THEN
+         dEvaporationTime := sv_dEvaporationTime;
+      ELSE
+         dEvaporationTime := sv_dEvaporationTimeBlock;
+      END_IF;
+      abHeatZone.aTempControl(Enable := FALSE,
+                              Optimize := FALSE,
+                              ReParam := TRUE,
+                              Param := mpZoneRetain^.Param,
+                              ActValue := rActTemp,//act. value is needed for initialisation of KCTRL_Stable
+                              bKeepWarmActive := sv_bKeepWarmActive,
+                              bGroupHeating := sv_bGroupHeating,
+                              bUsePidOP := sv_bUsePidOP,
+                              HeatUpRamp := sv_rTemperatureRamp,
+                              MaxHeatingPower := rMaxPowerStart,
+                              EvaporationTemperature := sv_rEvaporationTemp,
+                              EvaporationTime := dEvaporationTime,
+                              MaxTimeLimitingHeating := sv_dSoftstartAlarmTime,
+                              IgnoreTimeoutError := bIgnoreTimeoutError,
+                              ObservationTimeHeating := sv_dObservationTimeHeating,
+                              rReferenceRamp := mpZoneRetain^.rReferenceRamp,
+                              bAnyIdentificationActive := FALSE);
+      IF (abHeatZone.aTempControl.Error) THEN 
+         IF abHeatZone.aTempControl.ErrorInfo = cApplPlasticsWrongTempParams THEN
+            SET_ALARM(Name := erInvalidTempControllerSettings,
+                           SubID1 := sv_DeviceId.CompId,
+                           SubID2 := sv_DeviceId.IndexId,
+                           SubID3 := miIndex);
+         ELSIF abHeatZone.aTempControl.ErrorInfo = cApplPlasticsWrongStabParams THEN
+            SET_ALARM(Name := erInvalidStabSettings,
+                           SubID1 := sv_DeviceId.CompId,
+                           SubID2 := sv_DeviceId.IndexId,
+                           SubID3 := miIndex);
+         ELSIF abHeatZone.aTempControl.ErrorInfo = cApplPlasticsWrongTempStabParam THEN
+            SET_ALARM(Name := erInvalidStabilitySettings,
+                           SubID1 := sv_DeviceId.CompId,
+                           SubID2 := sv_DeviceId.IndexId,
+                           SubID3 := miIndex);   
+         ELSIF abHeatZone.aTempControl.ErrorInfo = cApplPlasticsHeatingTimeout THEN
+            SET_ALARM(Name := erHeatingTimeout,
+                           SubID1 := sv_DeviceId.CompId,
+                           SubID2 := sv_DeviceId.IndexId,
+                           SubID3 := miIndex);   
+         ELSE
+            IF (NOT mbSensorAlarm) THEN
+                SET_ALARM(Name := erZoneCalcError,
+                            SubID1 := sv_DeviceId.CompId,
+                            SubID2 := sv_DeviceId.IndexId,
+                            SubID3 := miIndex,
+                            SubID4 := abHeatZone.aTempControl.ErrorInfo);
+            END_IF; 
+         END_IF;
+         RETURN;
+      END_IF;
+      abHeatZone.aTempOutput.bZoneOn := bZoneOn;
+      abHeatZone.aTempOutput();
+      IF (abHeatZone.aTempOutput.Error) THEN 
+         SET_ALARM(Name := erInvalidPWMSettings,
+                  SubID1 := sv_DeviceId.CompId,
+                  SubID2 := sv_DeviceId.IndexId,
+                  SubID3 := miIndex);
+         RETURN;
+      END_IF;
+   
+      // observe actual temperature rising, limitation of output to avoid high overshoot
+      IF mbLimitationAvailable THEN
+         abZoneObservation.aCalcParameter(rGain := mpZoneRetain^.Param.sysParam.rK,
+                                          dTimeConstant := mpZoneRetain^.Param.sysParam.dT,
+                                          rCutBack := mpZoneRetain^.Param.pidParam.rCB,
+                                          dCycleTime := T#100ms);
+         bUseLimitation := sv_bUseOutputLimitation AND sv_UseOutputLimitation[miIndex] AND (NOT (sv_bUsePidOP AND mpZoneRetain^.Param.bPidOPAvailable));
+      END_IF;
+      bLimitationActivated := FALSE;
+      // copy data from controller
+      ZoneRetainParam := mpZoneRetain^.Param;
+
+      mInit := TRUE;
+      mbReParam := FALSE;
+   END_IF;   
+   
+   CASE mpZoneRetain^.ModeVis OF
+      enZoneModePID2pt,
+      enZoneModePID3pt,
+      enZoneModePID2ptEM,
+      enZoneModePID3ptEM:
+         // cyclic part, zone
+       IF mpZone^.bSensorOK THEN    //PID modes ignored, when no TI-sensor configured
+       
+         IF (heatingNotAllowed) THEN
+            mrSetValForZone := 0.0;
+            iReductionCounter := 0;
+         ELSIF (iReductionCounter < iReductionLimit) THEN
+            // wait until reduction time is elapsed to avoid problems with initialization in cycle time > t#100ms
+            mrSetValForZone := 0.0;
+            iReductionCounter := iReductionCounter + 1;
+         ELSE
+            mrSetValForZone :=  mpZone^.rSetVal;
+         END_IF;
+
+         IF ((mpZoneRetain^.ModeVis = enZoneModePID2pt) OR ( mpZoneRetain^.ModeVis = enZoneModePID3pt)) THEN
+            bEnableEmOp := FALSE;
+         ELSE
+            bEnableEmOp := TRUE;
+         END_IF;   
+            
+         IF bUseLimitation THEN
+               abZoneObservation.aCalcOutputLimit(rActTemperature := mpZone^.prActTemp^,
+                                                  rSetTemperature := mrSetValForZone,
+                                                  rControlValue := mpZone^.rOutputValue,
+                                                  rOutputLimit := ZoneRetainParam.rMaxY,
+                                                  rMaxOutput := mpZoneRetain^.Param.rMaxY,
+                                                  bStart := bZoneOn,
+                                                  bUseLimitation := bUseLimitation AND bZoneOn AND (NOT mpZone^.bIsOptimizing));
+               mbLimitationActive := abZoneObservation.aCalcOutputLimit.bLimitationK ;
+               IF (mbLimitationActive) THEN
+                  IF (NOT bLimitationActivated) THEN
+                     ZoneRetainParam.rMaxY := abZoneObservation.aCalcOutputLimit.rOutputLimitControl;
+                     abHeatZone.aTempControl.ReParam := TRUE;
+                     bLimitationActivated := TRUE; 
+               END_IF;
+            ELSE            
+                  IF (bLimitationActivated OR abZoneObservation.aCalcOutputLimit.bResetOutputLimit) THEN
+                     ZoneRetainParam.rMaxY := abZoneObservation.aCalcOutputLimit.rOutputLimitControl;
+                     abHeatZone.aTempControl.ReParam := TRUE;
+                     bLimitationActivated := FALSE;
+                  END_IF;
+            END_IF;
+         END_IF; 
+         
+         
+         abHeatZone.aTempControl(SetValue := mrSetValForZone,
+                                SetValueAbs := mrSetValForZone, 
+                                ActValue := mpZone^.prActTemp^,                   //zone is always on if cooling
+                                Enable := bZoneOn OR mpZoneRetain^.Param.opMode = KAPPL_TempOpMode_Cooling,
+                                Optimize := mpZone^.bOptimize,
+                                OptimizeAllowed := (mpZone^.Stable = KCTRL_Stable_OK) OR (NOT mpZone^.bOptiOperatingPoint),
+                                TempDiff := sv_TempDiff,
+                                //ReParam := FALSE,
+                                Param := ZoneRetainParam, 
+                                SensorOk := NOT mpZone^.pbActTempStat^,
+                                bKeepWarmActive := sv_bKeepWarmActive,
+                                bGroupHeating := sv_bGroupHeating,
+                                bUsePidOP := sv_bUsePidOP,
+                                HeatUpRamp := sv_rTemperatureRamp,
+                                MaxHeatingPower := rMaxPowerStart,
+                                EvaporationTemperature := sv_rEvaporationTemp,
+                                EvaporationTime := dEvaporationTime,   
+                                GroupHeatingFactor := sv_ZoneArray[miIndex].Data^.PWMFactor,
+                                EnableEmergencyOperation := bEnableEmOp,
+                                MaxTimeLimitingHeating := sv_dSoftstartAlarmTime,
+                                IgnoreTimeoutError := bIgnoreTimeoutError,
+                                bAnyIdentificationActive := g_bIdentifiactionActive);  
+         IF (mbIdentificationActive AND NOT abHeatZone.aTempControl.bSoftstartIdentificationActive) THEN
+            g_bIdentifiactionActive := FALSE;
+         ELSE
+            g_bIdentifiactionActive := g_bIdentifiactionActive OR abHeatZone.aTempControl.bSoftstartIdentificationActive;
+         END_IF;
+         mbIdentificationActive := abHeatZone.aTempControl.bSoftstartIdentificationActive;
+         
+         abHeatZone.aTempControl.ReParam := FALSE; 
+         mpZone^.Stable := abHeatZone.aTempControl.TempStable;
+         mpZone^.rWAct := abHeatZone.aTempControl.rWAct;
+         mpZone^.OptState := abHeatZone.aTempControl.ZoneOptimizationState;
+      
+          IF (mpZone^.bOptimize) THEN
+             abZoneObservation.aOptimizeAnalyze(bStart := mpZone^.bOptimize AND (mpZone^.OptState > KTEMP_Opt_State_NoIdent) AND (mpZone^.OptState <= KTEMP_Opt_State_SetvalStepOn),
+                                                rActTemperature := mpZone^.prActTemp^,
+                                                rControlValue := abHeatZone.aTempControl.OutputValue);
+          ELSE //IF (abHeatZone.aTempControl.NewPidParamsCalculated) THEN
+             abZoneObservation.aOptimizeAnalyze.bStart := FALSE;
+          END_IF;
+      
+         IF abHeatZone.aTempControl.EmergencyOperation THEN
+            IF abHeatZone.aTempControl.bEmergOpPossible THEN
+               abHeatZone.aTempOutput(SetPWMOut := abHeatZone.aTempControl.OutputValue,
+                                bZoneOn := bZoneOn OR mpZoneRetain^.Param.opMode = KAPPL_TempOpMode_Cooling,   //zone is always on if cooling
+                                PWMOut => bPWMOutput);
+               IF NOT bAlarmEMOP THEN
+                  SET_ALARM (Name   := erSwitchToEMOP,
+                             SubID1 := sv_DeviceId.CompId,
+                             SubID2 := sv_DeviceId.IndexId,
+                             SubID3 := miIndex);
+                  bAlarmEMOP := TRUE;
+               END_IF;
+            ELSE            
+               mpZone^.rOutputValue := mpZoneRetain^.rConstValVis; // use Value of SETTER
+               abHeatZone.aTempControl(Enable := FALSE,// disable PID controller 
+                                    ReParam := FALSE,
+                                    bKeepWarmActive := sv_bKeepWarmActive);  
+               abHeatZone.aTempOutput(SetPWMOut := mpZoneRetain^.rConstValVis,
+                                  bZoneOn := bZoneOn,
+                                  PWMOut => bPWMOutput);
+               IF NOT bAlarmEMOP THEN
+                  SET_ALARM (Name   := erSwitchToConst,
+                             SubID1 := sv_DeviceId.CompId,
+                             SubID2 := sv_DeviceId.IndexId,
+                             SubID3 := miIndex);
+                  bAlarmEMOP := TRUE;
+               END_IF;
+            END_IF;
+      
+         ELSE      
+            IF bAlarmEMOP THEN
+               bAlarmEMOP := FALSE ;           
+               RESET_ALARM  (Name   := erSwitchToEMOP,
+                             SubID1 := sv_DeviceId.CompId,
+                             SubID2 := sv_DeviceId.IndexId,
+                             SubID3 := miIndex);
+               RESET_ALARM (Name   := erSwitchToConst,
+                            SubID1 := sv_DeviceId.CompId,
+                            SubID2 := sv_DeviceId.IndexId,
+                            SubID3 := miIndex);
+            END_IF;
+
+            abHeatZone.aTempOutput(SetPWMOut := abHeatZone.aTempControl.OutputValue,
+                                   bZoneOn := bZoneOn OR mpZoneRetain^.Param.opMode = KAPPL_TempOpMode_Cooling,   //zone is always on if cooling
+                                   PWMOut => bPWMOutput);
+         END_IF;
+         
+         mpZone^.rOutputValue := abHeatZone.aTempControl.OutputValue;
+         
+         // copy optimized parameters to sv
+         IF (abHeatZone.aTempControl.NewPidParamsCalculated) THEN
+            IF sv_bUsePidOP THEN
+               mpZoneRetain^.Param.pidParamLastOpt.rKR := mpZoneRetain^.Param.pidParamOP.rKR;
+               mpZoneRetain^.Param.pidParamLastOpt.rKK := mpZoneRetain^.Param.pidParamOP.rKK;
+               mpZoneRetain^.Param.pidParamLastOpt.dTN := mpZoneRetain^.Param.pidParamOP.dTN;
+               mpZoneRetain^.Param.pidParamLastOpt.dTV := mpZoneRetain^.Param.pidParamOP.dTV;
+               mpZoneRetain^.Param.pidParamLastOpt.rCB := mpZoneRetain^.Param.pidParamOP.rCB;
+               mpZoneRetain^.Param.bOldPIDAvailable := TRUE;             
+            ELSE
+               mpZoneRetain^.Param.pidParamLastOpt.rKR := mpZoneRetain^.Param.pidParam.rKR;
+               mpZoneRetain^.Param.pidParamLastOpt.rKK := mpZoneRetain^.Param.pidParam.rKK;
+               mpZoneRetain^.Param.pidParamLastOpt.dTN := mpZoneRetain^.Param.pidParam.dTN;
+               mpZoneRetain^.Param.pidParamLastOpt.dTV := mpZoneRetain^.Param.pidParam.dTV;
+               mpZoneRetain^.Param.pidParamLastOpt.rCB := mpZoneRetain^.Param.pidParam.rCB;
+               mpZoneRetain^.Param.bOldPIDAvailable := TRUE;             
+            END_IF;             
+             
+            mpZoneRetain^.bDoOptimizationNext := FALSE;
+            IF mpZone^.bOptiOperatingPoint AND (mpZoneRetain^.ZoneType = enZoneTypeNozzle) THEN
+                sv_bUsePidOP := TRUE;
+                // SysParam only need for GroupHeating at start 
+                mpZoneRetain^.Param.pidParamOP.rKR := abHeatZone.aTempControl.optPidParams.rKR;
+                mpZoneRetain^.Param.pidParamOP.rKK := abHeatZone.aTempControl.optPidParams.rKR * 10.0; 
+                mpZoneRetain^.Param.pidParamOP.dTN := abHeatZone.aTempControl.optPidParams.dTN;
+                mpZoneRetain^.Param.pidParamOP.dTV := abHeatZone.aTempControl.optPidParams.dTV;
+                // CutBack value is needed from standard heat up optimizing
+                mpZoneRetain^.Param.pidParamOP.rCB := abHeatZone.aTempControl.optPidParams.rCB;
+                IF mpZoneRetain^.Param.pidParam.rCB >= 30.0 THEN
+                   mpZoneRetain^.Param.pidParamOP.rCB := mpZoneRetain^.Param.pidParam.rCB;
+                ELSE
+                   mpZoneRetain^.Param.pidParamOP.rCB := 30.0; 
+                END_IF;
+                mpZoneRetain^.Param.bPidOPAvailable := TRUE;
+             ELSE
+                mpZoneRetain^.Param.pidParam.rKR := abHeatZone.aTempControl.optPidParams.rKR;
+                mpZoneRetain^.Param.pidParam.rKK := abHeatZone.aTempControl.optPidParams.rKR * 10.0; 
+                mpZoneRetain^.Param.pidParam.dTN := abHeatZone.aTempControl.optPidParams.dTN;
+                mpZoneRetain^.Param.pidParam.dTV := abHeatZone.aTempControl.optPidParams.dTV;
+                mpZoneRetain^.Param.sysParam.dT  := abHeatZone.aTempControl.optSysParams.dT;
+                mpZoneRetain^.Param.sysParam.rFehler := abHeatZone.aTempControl.optSysParams.rFehler;  
+                mpZoneRetain^.Param.sysParam.rK := abHeatZone.aTempControl.optSysParams.rK;            
+                mpZoneRetain^.Param.sysParam.rN := abHeatZone.aTempControl.optSysParams.rN;
+                // cut back value is only valid, if value >= 30.0 to avoid oscillation 
+                // around cut back value in case of disturbance while operation 
+                IF (abHeatZone.aTempControl.optPidParams.rCB >= 30.0) THEN
+                   mpZoneRetain^.Param.pidParam.rCB := abHeatZone.aTempControl.optPidParams.rCB;
+                ELSE
+                   mpZoneRetain^.Param.pidParam.rCB := 30.0; 
+                END_IF;
+                // mold heating doesn't use different parameter 
+                IF mpZoneRetain^.ZoneType <> enZoneTypeNozzle THEN // mold heating doesn't use different parameter
+                   mpZoneRetain^.Param.pidParamOP := mpZoneRetain^.Param.pidParam;
+                END_IF;
+            END_IF;    
+            // Reparametrize block
+            abHeatZone.aTempControl(ReParam := TRUE,
+                                    Param := mpZoneRetain^.Param,
+                                    HeatUpRamp := sv_rTemperatureRamp,
+                                    bUsePidOP := sv_bUsePidOP,
+                                    MaxHeatingPower := rMaxPowerStart,
+                                    EvaporationTemperature := sv_rEvaporationTemp,
+                                    EvaporationTime := dEvaporationTime,
+                                    MaxTimeLimitingHeating := sv_dSoftstartAlarmTime,
+                                    rReferenceRamp := mpZoneRetain^.rReferenceRamp); 
+            IF (abHeatZone.aTempControl.Error) THEN 
+               IF abHeatZone.aTempControl.ErrorInfo = cApplPlasticsWrongTempParams THEN
+                  SET_ALARM(Name := erInvalidTempControllerSettings,
+                              SubID1 := sv_DeviceId.CompId,
+                              SubID2 := sv_DeviceId.IndexId,
+                              SubID3 := miIndex);
+               ELSE
+                  IF (NOT mbSensorAlarm) THEN
+                    SET_ALARM(Name := erZoneCalcError,
+                                SubID1 := sv_DeviceId.CompId,
+                                SubID2 := sv_DeviceId.IndexId,
+                                SubID3 := miIndex,
+                                SubID4 := abHeatZone.aTempControl.ErrorInfo);
+                  END_IF;    
+               END_IF;
+               RETURN;
+            END_IF;
+         END_IF;
+         
+         // calculate status flags
+         mpZone^.bIsOptimizing := abHeatZone.aTempControl.OptimizationActive;
+         mpZone^.bEmgOperation := abHeatZone.aTempControl.EmergencyOperation;
+      
+         fEdgeOptimizationReady(CLK := abHeatZone.aTempControl.OptimizationActive);
+         //when warmup optimization is ready, don´t heat up this zone, wait until all other zones are ready
+         IF fEdgeOptimizationReady.Q AND mpZone^.bOptimize THEN
+            heatingNotAllowed := TRUE;
+         ELSIF NOT mpZone^.bOptimize THEN
+            heatingNotAllowed := FALSE;
+         END_IF;
+   
+         // set alarm at temp.supervision fault
+         IF (abHeatZone.aTempControl.Error) THEN
+            IF abHeatZone.aTempControl.ErrorInfo = cApplPlasticsMeanValueTooLow THEN
+               SET_ALARM(Name := erMeanValueTooLow,
+                           SubID1 := sv_DeviceId.CompId,
+                           SubID2 := sv_DeviceId.IndexId,
+                           SubID3 := miIndex);
+            ELSIF abHeatZone.aTempControl.ErrorInfo = cApplPlasticsHeatingFailure THEN
+               SET_ALARM(Name := erHeatingFailure,
+                           SubID1 := sv_DeviceId.CompId,
+                           SubID2 := sv_DeviceId.IndexId,
+                           SubID3 := miIndex);               
+            ELSIF (abHeatZone.aTempControl.ErrorInfo = cApplPlasticsOptCalcFailed OR 
+                   abHeatZone.aTempControl.ErrorInfo = cApplPlasticsOptTimeout) THEN
+               SET_ALARM(Name := erOptimizationFailed,
+                           SubID1 := sv_DeviceId.CompId,
+                           SubID2 := sv_DeviceId.IndexId,
+                           SubID3 := miIndex);               
+            ELSIF abHeatZone.aTempControl.ErrorInfo = cApplPlasticsHeatingTimeout THEN
+               SET_ALARM(Name := erHeatingTimeout,
+                           SubID1 := sv_DeviceId.CompId,
+                           SubID2 := sv_DeviceId.IndexId,
+                           SubID3 := miIndex);   
+               sv_bHeatingUsed := FALSE; 
+            ELSE
+               IF (NOT mbSensorAlarm) THEN
+                    SET_ALARM(Name := erZoneCalcError,
+                                SubID1 := sv_DeviceId.CompId,
+                                SubID2 := sv_DeviceId.IndexId,
+                                SubID3 := miIndex,
+                                SubID4 := abHeatZone.aTempControl.ErrorInfo);
+               END_IF;
+            END_IF;
+         ELSE
+            IF abHeatZone.aTempControl.Warning AND 
+               abHeatZone.aTempControl.WarningInfo = cApplPlasticsHeatingTimeoutWarn THEN
+                SET_ALARM(Name := erHeatingTimeoutWarning,
+                           SubID1 := sv_DeviceId.CompId,
+                           SubID2 := sv_DeviceId.IndexId,
+                           SubID3 := miIndex);   
+            END_IF;
+             
+         END_IF;
+       END_IF;    
+   
+      enZoneModeConstant:    // constant heating
+       
+        // only do constant output if heating is on or zone is a cooling  
+        IF bZoneOn THEN 
+            mpZone^.rOutputValue := mpZoneRetain^.rConstValVis;
+        ELSE
+            mpZone^.rOutputValue := 0.0;
+        END_IF;
+        abHeatZone.aTempControl(Enable := FALSE,// disable PID controller 
+                                ReParam := FALSE,
+                                bKeepWarmActive := sv_bKeepWarmActive);  
+        abHeatZone.aTempOutput(SetPWMOut := ABS(mpZone^.rOutputValue),
+                               bZoneOn := bZoneOn,
+                               PWMOut => bPWMOutput);
+
+      enZoneModeMeasure,
+      enZoneModeDisabled:// no heating for zone
+         abHeatZone.aTempControl(Enable := FALSE, ReParam := FALSE);  // disable PID controller
+         bPWMOutput := FALSE;
+         mpZone^.rOutputValue := 0.0;
+         mpZone^.ActModeDisp := enZoneModeOff;
+         IF mpZoneRetain^.ModeVis = enZoneModeDisabled THEN
+            mpZone^.ActStateDisp := enZoneStateOK;
+         END_IF;
+      
+   END_CASE;
+   
+   (* Reset the PWM alarm if the heating/zone is deactivated *)
+   IF mbHeatOutputAlarmPWM AND NOT mbHeatOutputErrorPWM THEN
+      IF (NOT bZoneOn OR NOT mpZoneRetain^.bUsed) THEN
+         RESET_ALARM(Name := erHeatingOutputPWM,
+                     SubID1 := sv_DeviceId.CompId,
+                     SubID2 := sv_DeviceId.IndexId,
+                     SubID3 := miIndex);  
+         mbHeatOutputAlarmPWM := FALSE;
+      END_IF;
+   END_IF;
+
+   (* Output is allowed if there's no hw-error or if zone is in constant mode and output is ok *) 
+   bOutputAllowed := ((NOT mbHWError AND NOT mbHeatOutputAlarmPWM)
+                      OR (mpZoneRetain^.ModeVis = enZoneModeConstant AND NOT 
+                          (mbHeatOutputError OR mbCoolOutputError OR (mbHeatOutputErrorPWM OR mbHeatOutputAlarmPWM))))
+                      AND NOT mpZone^.bOutputNotAllowed;
+
+   
+   IF bOutputAllowed THEN
+   //OUTPUT   
+      IF mpZone^.rOutputValue > 0.0 THEN
+      //heating
+         IF mbPOHeatLinked THEN
+            //output on PO 
+            mpZone^.prOutHeatPO^ :=mpZone^.rOutputValue;            
+            mpZone^.ActModeDisp := enZoneModeHeat;
+         ELSIF mbTOHeatLinked THEN
+            //output on TO 
+            mpZone^.prOutHeatTO^ :=mpZone^.rOutputValue;            
+            mpZone^.ActModeDisp := enZoneModeHeat;
+         ELSIF mbDOHeatLinked THEN 
+            //output on DO 
+            //mpZone^.pbOutHeatDO^ := bPWMOutput;  //workaround for CR_0024932                        
+            IF sv_PWMMinPulseTime >= t#0.5s THEN
+               //synchronize display mode with digital output if min pulse time >= 0.5 sec
+               IF mpZone^.pbOutHeatDO^ THEN
+                  mpZone^.ActModeDisp := enZoneModeHeat;
+               ELSE
+                  mpZone^.ActModeDisp := enZoneModeOff;
+               END_IF;                  
+            ELSE
+               mpZone^.ActModeDisp := enZoneModeHeat;
+            END_IF;            
+         END_IF;
+         
+         IF mbTOCoolLinked THEN
+            mpZone^.prOutCoolTO^ := 0.0;
+         ELSIF mbDOCoolLinked THEN  
+            mpZone^.pbOutCoolDO^ := FALSE;
+         END_IF;
+      ELSIF mpZone^.rOutputValue < 0.0 THEN
+      //cooling  
+         IF mbPOHeatLinked THEN
+            mpZone^.prOutHeatPO^ := 0.0;         
+         ELSIF mbTOHeatLinked THEN
+            mpZone^.prOutHeatTO^ := 0.0;
+         ELSIF mbDOHeatLinked THEN  
+            mpZone^.pbOutHeatDO^ := FALSE;
+         END_IF;
+      
+         IF mbTOCoolLinked THEN
+            //output on TO 
+            mpZone^.prOutCoolTO^ := ABS(mpZone^.rOutputValue);
+            mpZone^.ActModeDisp := enZoneModeCool;
+         ELSIF mbDOCoolLinked THEN 
+            //output on DO 
+            //mpZone^.pbOutCoolDO^ := bPWMOutput;  //workaround for CR_0024932                        
+            IF sv_PWMMinPulseTime >= t#0.5s THEN
+               //synchronize display mode with digital output if min pulse time >= 0.5 sec
+               IF mpZone^.pbOutCoolDO^ THEN
+                  mpZone^.ActModeDisp := enZoneModeCool;
+               ELSE
+                  mpZone^.ActModeDisp := enZoneModeOff;
+               END_IF;                  
+            ELSE
+               mpZone^.ActModeDisp := enZoneModeCool;
+            END_IF;
+         END_IF;
+      ELSE
+        //Output is 0
+        IF mbPOHeatLinked THEN
+            mpZone^.prOutHeatPO^ := 0.0;         
+        ELSIF mbTOHeatLinked THEN
+            //output on TO 
+            mpZone^.prOutHeatTO^ := 0.0;
+        ELSIF mbDOHeatLinked THEN 
+            //output on DO 
+            mpZone^.pbOutHeatDO^ := FALSE;
+        END_IF;
+         
+        IF mbTOCoolLinked THEN
+            mpZone^.prOutCoolTO^ := 0.0;
+        ELSIF mbDOCoolLinked THEN  
+            mpZone^.pbOutCoolDO^ := FALSE;
+        END_IF; 
+        mpZone^.ActModeDisp := enZoneModeOff;
+      END_IF;
+   END_IF;
+   IF mpZone^.bSensorOK THEN    //ignored when no TI-sensor configured
+       mrZoneActValueSwo := mpZone^.prActTemp^;
+   END_IF;    
+END_IF;   
+
+
+IF NOT mbZoneInitOK OR NOT bOutputAllowed THEN   
+
+//zone not ready for operation -> stop output 
+   IF mbPOHeatLinked THEN
+      mpZone^.prOutHeatPO^ := 0.0;
+   END_IF;
+   IF mbTOHeatLinked THEN
+      mpZone^.prOutHeatTO^ := 0.0;
+   END_IF;   
+   IF mbDOHeatLinked THEN  
+      mpZone^.pbOutHeatDO^ := FALSE;
+   END_IF;
+   
+   IF mbTOCoolLinked THEN
+      mpZone^.prOutCoolTO^ := 0.0;
+   END_IF;   
+   IF mbDOCoolLinked THEN  
+      mpZone^.pbOutCoolDO^ := FALSE;
+   END_IF;
+   //reset vis states
+   mpZone^.ActModeDisp := enZoneModeOff;
+   mpZone^.rOutputValue := 0.0;
+   
+   IF mbHWError THEN
+      mpZone^.ActStateDisp := enZoneStateErrorSensor;  
+   END_IF;
+ELSIF NOT mbHWError THEN
+    
+   mpZone^.ActStateDisp := enZoneStateOK;
+END_IF;
+   
+
+
+;#END_EDIT_BLOCK END_ALGORITHM
+
+POSTUPDATE_ALGORITHM pCheckZoneUsed ON PU_Task_7 WITH mpZoneRetain^.bUsed,mpZone^.iIndex
+
+#BEGIN_EDIT_BLOCK
+(**************************************** WARNING ********************************************
+ *** The KEBA Kemro K2 System including software is not intended for safety control tasks! ***
+ ***                       For further information see Comment tab!                        ***
+ *********************************************************************************************)
+
+IF NOT mbInitDone THEN RETURN; END_IF;
+
+//zone is ready for operation if sv_Zone is linked, Zone is used (sv_iNumberOfZones) and HW config is ok
+mbZoneInitOK := sv_ZoneArray[miIndex].bLinked AND sv_ZoneArray[miIndex].DataRetain^.bUsed AND sv_ZoneArray[miIndex].Data^.bHWOK;
+
+IF mbZoneInitOK THEN
+   START_PROCESS_ALGORITHM(paCheckToleranceError);
+ELSE
+   STOP_PROCESS_ALGORITHM(paCheckToleranceError);
+   // reset tolerance error if not checked
+   mpZone^.bToleranceError := FALSE; 
+END_IF;
+
+
+;#END_EDIT_BLOCK END_ALGORITHM
+
+POSTUPDATE_ALGORITHM pSensorTypeChanged ON PU_Task_7 WITH mpZoneRetain^.SensorTypeVis,mpZone^.iIndex
+
+#BEGIN_EDIT_BLOCK
+(**************************************** WARNING ********************************************
+ *** The KEBA Kemro K2 System including software is not intended for safety control tasks! ***
+ ***                       For further information see Comment tab!                        ***
+ *********************************************************************************************)
+IF NOT mbInitDone THEN RETURN; END_IF;
+
+IF mbTILinked AND miIndex > 0  THEN
+   //writing sensortype to hw
+   sv_ZoneArray[miIndex].Data^.pHWSensorType^ := sv_ZoneArray[miIndex].DataRetain^.SensorTypeVis;
+END_IF;
+
+sv_bAnyTempSensorTypeChanged := TRUE;   // notifies ABThermoWireControl, that any temperature sensor type changed. 
+
+
+
+;#END_EDIT_BLOCK END_ALGORITHM
+
+POSTUPDATE_ALGORITHM pReparamGroup ON PU_Task_7 WITH sv_PWMMinPulseTime,sv_PWMCycleTime,sv_bGroupHeating,sv_dSoftstartAlarmTime,sv_dEvaporationTimeBlock,sv_dEvaporationTime,sv_dObservationTimeHeating
+
+#BEGIN_EDIT_BLOCK
+(**************************************** WARNING ********************************************
+ *** The KEBA Kemro K2 System including software is not intended for safety control tasks! ***
+ ***                       For further information see Comment tab!                        ***
+ *********************************************************************************************)
+IF NOT mbInitDone THEN RETURN; END_IF;
+
+//reparam tempgroup
+sv_bReParamGroup := TRUE;
+
+//reparam zone
+mbReParam := TRUE;
+
+
+;#END_EDIT_BLOCK END_ALGORITHM
+
+POSTUPDATE_ALGORITHM pReparamTolerance ON PU_Task_7 WITH mpZoneRetain^.rUpperTolVis,mpZoneRetain^.rLowerTolVis
+
+#BEGIN_EDIT_BLOCK
+(**************************************** WARNING ********************************************
+ *** The KEBA Kemro K2 System including software is not intended for safety control tasks! ***
+ ***                       For further information see Comment tab!                        ***
+ *********************************************************************************************)
+IF NOT mbInitDone THEN RETURN; END_IF;
+
+//reparam tempgroup
+sv_bReParamGroup := TRUE;
+
+
+;#END_EDIT_BLOCK END_ALGORITHM
+
+POSTUPDATE_ALGORITHM pModeChanged ON PU_Task_7 WITH mpZoneRetain^.ModeVis,mpZone^.iIndex,mpZoneRetain^.bUsed
+
+#BEGIN_EDIT_BLOCK
+(**************************************** WARNING ********************************************
+ *** The KEBA Kemro K2 System including software is not intended for safety control tasks! ***
+ ***                       For further information see Comment tab!                        ***
+ *********************************************************************************************)
+IF NOT mbInitDone THEN RETURN; END_IF;
+
+//Mode is disabled (switched off) when setter mode is activated for hotrunner
+//setter not relevant for fast zones (hotrunner nozzle), but active if zone for heating mold block
+IF (mpZoneRetain^.ModeVis = enZoneModeConstant) AND (GET_MY_FU_NAME() = "HeatingMold1") AND
+    mpZoneRetain^.bIsHotrunner THEN
+    mpZoneRetain^.ModeVis := enZoneModeDisabled;
+END_IF;
+
+IF mpZoneRetain^.ModeVis = enZoneModeConstant THEN
+    //setter mode
+    IF (mbDOCoolLinked OR mbTOCoolLinked) AND (mbDOHeatLinked OR mbTOHeatLinked) THEN
+        //heating and cooling, output: +/- 100%
+        mpZoneRetain^.Param.opMode := KAPPL_TempOpMode_HeatingCooling;     
+        mpZoneRetain^.Param.rMinY := -100.0;
+        mpZoneRetain^.Param.rMaxY := 100.0;
+    ELSIF mbDOCoolLinked OR mbTOCoolLinked THEN
+        //cooling, output: -100% - 0%
+        //only if a cooloutput and no heatoutput configured
+        mpZoneRetain^.Param.opMode := KAPPL_TempOpMode_Cooling;
+        mpZoneRetain^.Param.rMinY := -100.0;
+        mpZoneRetain^.Param.rMaxY := 0.0;
+    ELSE
+        //heating, output: 0-100%
+        //if a heatoutput is configured
+        mpZoneRetain^.Param.opMode := KAPPL_TempOpMode_Heating;
+        mpZoneRetain^.Param.rMinY := 0.0;
+        mpZoneRetain^.Param.rMaxY := 100.0;
+    END_IF;
+    
+    //verify if init const value out of tolerance
+    IF (mpZoneRetain^.rConstValVis < mpZoneRetain^.Param.rMinY) OR
+       (mpZoneRetain^.rConstValVis > mpZoneRetain^.Param.rMaxY) THEN
+        SET_ALARM(Name := erInvalidSetterSettings,
+                  SubID1 := sv_DeviceId.CompId,
+                  SubID2 := sv_DeviceId.IndexId,
+                  SubID3 := miIndex);
+    END_IF;
+    
+ELSE
+    IF mpZoneRetain^.ModeVis = enZoneModePID3pt THEN
+        //PID 3Point controller: heating and cooling, output: +/- 100%
+        mpZoneRetain^.Param.opMode := KAPPL_TempOpMode_HeatingCooling;     
+        mpZoneRetain^.Param.rMinY := -100.0;
+        mpZoneRetain^.Param.rMaxY := 100.0;
+    ELSIF (mbDOCoolLinked OR mbTOCoolLinked)  AND NOT (mbDOHeatLinked OR mbTOHeatLinked) THEN
+        //PID 2Point controller: cooling, output: 0- -100%
+        //only if a cooloutput and no heatoutput configured
+        mpZoneRetain^.Param.opMode := KAPPL_TempOpMode_Cooling;
+        mpZoneRetain^.Param.rMinY := -100.0;
+        mpZoneRetain^.Param.rMaxY := 0.0;
+    ELSE
+        //PID 2Point controller: heating, output: 0-100%
+        //if a heatoutput is configured
+        mpZoneRetain^.Param.opMode := KAPPL_TempOpMode_Heating;
+        mpZoneRetain^.Param.rMinY := 0.0;
+        mpZoneRetain^.Param.rMaxY := 100.0;
+    END_IF;
+    
+    RESET_ALARM(Name := erInvalidSetterSettings,
+                SubID1 := sv_DeviceId.CompId,
+                SubID2 := sv_DeviceId.IndexId,
+                SubID3 := miIndex);
+    
+END_IF;    
+
+// Automatic set of GroupHeating modus
+IF mpZoneRetain^.ModeVis = enZoneModeDisabled
+    OR (NOT mpZoneRetain^.bUsed)
+    OR (NOT mpZone^.bSensorOK)  //when TI sensor not available
+    OR mpZoneRetain^.ModeVis =enZoneModeMeasure 
+    OR mpZoneRetain^.ModeVis = enZoneModeConstant
+    OR (mbDOCoolLinked OR mbTOCoolLinked)  AND NOT (mbDOHeatLinked OR mbTOHeatLinked) THEN
+    mpZoneRetain^.Param.bZoneUsedForGroupHeating := FALSE;
+ELSE
+    mpZoneRetain^.Param.bZoneUsedForGroupHeating := TRUE;
+END_IF;
+
+
+IF mbSensorAlarm AND
+   (mpZoneRetain^.ModeVis = enZoneModeConstant OR 
+    mpZoneRetain^.ModeVis = enZoneModeDisabled )  THEN
+   //reset sensorerror alarm if mode is changed to constant or off
+      RESET_ALARM(Name := erSensor,
+               SubID1 := sv_DeviceId.CompId,
+               SubID2 := sv_DeviceId.IndexId,
+               SubID3 := miIndex);
+   mbSensorAlarm := FALSE;
+ELSIF mbSensorError AND
+   NOT mbSensorAlarm AND
+   mpZoneRetain^.ModeVis <> enZoneModeConstant AND 
+   mpZoneRetain^.ModeVis <> enZoneModeDisabled THEN 
+   
+   SET_ALARM(Name := erSensor,
+            SubID1 := sv_DeviceId.CompId,
+            SubID2 := sv_DeviceId.IndexId,
+            SubID3 := miIndex,
+            Param1 := msHWPath);
+   mbSensorAlarm := TRUE;
+END_IF;
+
+//Set alarm if TI sensor is not configured and mode is not setter or disabled
+IF mpZone^.bHWOK AND (NOT mpZone^.bSensorOK) THEN
+   IF mpZoneRetain^.ModeVis <> enZoneModeDisabled AND mpZoneRetain^.ModeVis <> enZoneModeConstant THEN
+      SET_ALARM(Name := erSensorNotConfig,
+                SubID1 := sv_DeviceId.CompId,
+                SubID2 := sv_DeviceId.IndexId,
+                SubID3 := miIndex);
+   ELSE
+      RESET_ALARM(Name := erSensorNotConfig,
+                SubID1 := sv_DeviceId.CompId,
+                SubID2 := sv_DeviceId.IndexId,
+                SubID3 := miIndex);
+   END_IF;    
+END_IF;
+
+mbReParam := TRUE;
+
+
+
+;#END_EDIT_BLOCK END_ALGORITHM
+
+POSTUPDATE_ALGORITHM pReparamZone ON PU_Task_7 WITH mpZoneRetain^.Param,mpZoneRetain^.rSoftstartPower,mpZoneRetain^.rReferenceRamp,sv_bUseOutputLimitation,mpbLimitationUsed^
+
+#BEGIN_EDIT_BLOCK
+//reparam zone
+mbReParam := TRUE;
+
+
+;#END_EDIT_BLOCK END_ALGORITHM
+
+POSTUPDATE_ALGORITHM pHWStateChanged ON PU_Task_7 WITH mpbTIState^,mpbTOHeatState^,mpbDOHeatState^,mpbTOCoolState^,mpbDOCoolState^,mpbPOHeatState^,mpbPWIState^,mpZone^.iIndex,mpZoneRetain^.bUsed
+
+#BEGIN_EDIT_BLOCK
+(**************************************** WARNING ********************************************
+ *** The KEBA Kemro K2 System including software is not intended for safety control tasks! ***
+ ***                       For further information see Comment tab!                        ***
+ *********************************************************************************************)
+IF NOT mbInitDone THEN RETURN; END_IF;
+
+//error on tempsensor
+IF mbTILinked AND 
+   mpbTIState^ AND 
+   mpZoneRetain^.bUsed THEN
+    
+    mbSensorError := TRUE;
+   
+   IF mpZoneRetain^.ModeVis <> enZoneModeConstant AND 
+      mpZoneRetain^.ModeVis <> enZoneModeDisabled AND 
+      NOT mbSensorAlarm THEN
+      
+      
+      IF (sv_OperationMode = nFullAutomatic OR
+          sv_OperationMode = nHalfAutomatic            ) AND
+         (mpZoneRetain^.ModeVis = enZoneModePID2ptEM OR
+          mpZoneRetain^.ModeVis = enZoneModePID3ptEM   )
+         THEN
+         ; // no alarm because EmergancyOperation possible
+      ELSE      
+      //only set sensorerror alarm if mode is not constant and not off
+         mbSensorAlarm := TRUE;
+         SET_ALARM(Name := erSensor,
+                SubID1 := sv_DeviceId.CompId,
+                SubID2 := sv_DeviceId.IndexId,
+                SubID3 := miIndex,
+                Param1 := msHWPath);
+   END_IF;
+   END_IF;
+ELSIF mbSensorError THEN
+   mbSensorError := FALSE;
+   
+   IF mbSensorAlarm THEN
+         RESET_ALARM(Name := erSensor,
+                  SubID1 := sv_DeviceId.CompId,
+                  SubID2 := sv_DeviceId.IndexId,
+                  SubID3 := miIndex);
+      mbSensorAlarm := FALSE;
+   END_IF;
+END_IF;
+
+//error on heat output
+IF (mbTOHeatLinked AND mpbTOHeatState^ OR
+    mbDOHeatLinked AND mpbDOHeatState^) AND mpZoneRetain^.bUsed THEN
+
+    mbHeatOutputError := TRUE;
+    SET_ALARM(Name := erHeatingOutput,
+                SubID1 := sv_DeviceId.CompId,
+                SubID2 := sv_DeviceId.IndexId,
+                SubID3 := miIndex);
+ELSIF mbHeatOutputError THEN
+    
+    mbHeatOutputError := FALSE;
+    RESET_ALARM(Name := erHeatingOutput,
+                SubID1 := sv_DeviceId.CompId,
+                SubID2 := sv_DeviceId.IndexId,
+                SubID3 := miIndex);
+    
+END_IF;
+
+//error on PO heating output (e.g. cable break)
+IF (mbPOHeatLinked AND mpbPOHeatState^) AND mpZoneRetain^.bUsed THEN
+    // In case of a cable break, the stat flag gets set.
+    // The output has to be set to zero in order to clear the flag again.
+    // The alarm has to be 
+    mbHeatOutputErrorPWM := TRUE;
+    IF NOT mbHeatOutputAlarmPWM THEN
+        SET_ALARM(Name := erHeatingOutputPWM,
+                SubID1 := sv_DeviceId.CompId,
+                SubID2 := sv_DeviceId.IndexId,
+                SubID3 := miIndex);
+         mbHeatOutputAlarmPWM := TRUE;
+    END_IF;
+ELSIF mbHeatOutputErrorPWM THEN
+   // reset in main loop
+   mbHeatOutputErrorPWM := FALSE;
+END_IF;
+
+
+//error on cool output
+IF (mbTOCoolLinked AND mpbTOCoolState^ OR
+    mbDOCoolLinked AND mpbDOCoolState^) AND mpZoneRetain^.bUsed THEN
+    mbCoolOutputError := TRUE;
+    SET_ALARM(Name := erCoolingOutput,
+                SubID1 := sv_DeviceId.CompId,
+                SubID2 := sv_DeviceId.IndexId,
+                SubID3 := miIndex);
+ELSIF mbCoolOutputError  THEN
+    
+    mbCoolOutputError := FALSE;
+    RESET_ALARM(Name := erCoolingOutput,
+                SubID1 := sv_DeviceId.CompId,
+                SubID2 := sv_DeviceId.IndexId,
+                SubID3 := miIndex);
+END_IF;
+
+// error on power sensor input
+IF (mbPWILinked AND mpbPWIState^) AND mpZoneRetain^.bUsed THEN
+   
+   // PWRIN sensor error combines VOLTIN/CURRIN sensor error
+   mbPowerError := TRUE;  
+   
+   SET_ALARM(Name := erSensorPower,
+            SubID1 := sv_DeviceId.CompId,
+            SubID2 := sv_DeviceId.IndexId,
+            SubID3 := miIndex);
+    
+  
+ELSIF mbPowerError THEN
+
+   RESET_ALARM(Name := erSensorPower,
+            SubID1 := sv_DeviceId.CompId,
+            SubID2 := sv_DeviceId.IndexId,
+            SubID3 := miIndex);   
+   mbPowerError := FALSE;
+  
+END_IF;
+
+mbHWError := mbSensorError OR (mbHeatOutputError OR mbHeatOutputErrorPWM) OR mbCoolOutputError OR mbPowerError;
+
+
+
+
+;#END_EDIT_BLOCK END_ALGORITHM
+
+(*
+attention:
+paCheckToleranceError must be executed before ABGroupControl.aRun is called;
+otherwise bToleranceError is not actual when it is needed.
+
+*)
+
+PROCESS_ALGORITHM paCheckToleranceError ON TaskHeating(10)
+
+#BEGIN_EDIT_BLOCK
+(**************************************** WARNING ********************************************
+ *** The KEBA Kemro K2 System including software is not intended for safety control tasks! ***
+ ***                       For further information see Comment tab!                        ***
+ *********************************************************************************************)
+
+(* Zone tolerance supervision *)  
+IF mpZone^.bSensorOK THEN   //tolerance ignored, when no TI sensor 
+    mpZone^.bToleranceError :=  NOT mbSensorError AND
+                                mpZoneRetain^.ModeVis <> enZoneModeDisabled AND
+                                mpZoneRetain^.ModeVis <> enZoneModeMeasure AND
+                                mpZoneRetain^.ModeVis <> enZoneModeConstant AND
+                               (mpZoneRetain^.rSetValVis - mpZone^.prActTemp^ > mpZoneRetain^.rLowerTolVis OR
+                                mpZone^.prActTemp^ - mpZoneRetain^.rSetValVis > mpZoneRetain^.rUpperTolVis);  
+END_IF;
+
+
+;#END_EDIT_BLOCK END_ALGORITHM
+
+(*
+When operation mode changes from eg. nHalfAutomatic or. nFullAutomatic to nManual or nSetup,
+the state of the sensor must be checked again.
+In Full / HalfAutomatic sensor failure can be ingnored in
+"enZoneModePID2ptEM" and "enZoneModePID3ptEM" (=EmergancyOperation).
+But when switch to Manual / Setup. Sensor failure must be displayed.
+
+*)
+
+POSTUPDATE_ALGORITHM pOperationModeChanged ON PU_Task_7 WITH sv_OperationMode
+
+#BEGIN_EDIT_BLOCK
+IF NOT mbInitDone THEN RETURN; END_IF;
+
+//error on tempsensor
+IF mbTILinked AND 
+   mpbTIState^ AND 
+   mpZoneRetain^.bUsed THEN
+    
+   mbSensorError := TRUE;
+   IF sv_OperationMode <> nHalfAutomatic AND
+      sv_OperationMode <> nFullAutomatic AND 
+      NOT mbSensorAlarm AND 
+      (mpZoneRetain^.ModeVis <> enZoneModeConstant) AND 
+      (mpZoneRetain^.ModeVis <> enZoneModeDisabled) THEN
+
+      SET_ALARM(Name := erSensor,
+                SubID1 := sv_DeviceId.CompId,
+                SubID2 := sv_DeviceId.IndexId,
+                SubID3 := miIndex,
+                Param1 := msHWPath);
+   END_IF;
+END_IF;
+
+
+
+;#END_EDIT_BLOCK END_ALGORITHM
+
+POSTUPDATE_ALGORITHM pCheckConstVal ON PU_Task_7 WITH mpZoneRetain^.rConstValVis
+
+#BEGIN_EDIT_BLOCK
+
+IF NOT mbInitDone THEN RETURN; END_IF;
+
+IF mpZoneRetain^.ModeVis = enZoneModeConstant THEN  //setter mode activ
+    //verify if init const value out of range
+    IF (mpZoneRetain^.rConstValVis < mpZoneRetain^.Param.rMinY) OR
+       (mpZoneRetain^.rConstValVis > mpZoneRetain^.Param.rMaxY) THEN
+        SET_ALARM(Name := erInvalidSetterSettings,
+                  SubID1 := sv_DeviceId.CompId,
+                  SubID2 := sv_DeviceId.IndexId,
+                  SubID3 := miIndex);
+    ELSE
+        RESET_ALARM(Name := erInvalidSetterSettings,
+                    SubID1 := sv_DeviceId.CompId,
+                    SubID2 := sv_DeviceId.IndexId,
+                    SubID3 := miIndex);
+    END_IF;
+END_IF;
+
+
+;#END_EDIT_BLOCK END_ALGORITHM
+
+POSTUPDATE_ALGORITHM pCheckZoneType ON PU_Task_7 WITH mpZoneRetain^.bIsHotrunner
+
+#BEGIN_EDIT_BLOCK
+IF (mpZoneRetain^.bIsHotrunner) THEN
+   mpZoneRetain^.ZoneType := enZoneTypeHotrunner;
+   mpZoneRetain^.bDoOptimizationNext := FALSE; 
+   IF (mpZoneRetain^.ModeVis = enZoneModeConstant) AND (GET_MY_FU_NAME() = "HeatingMold1") THEN
+      mpZoneRetain^.ModeVis := enZoneModeDisabled;
+   END_IF;    
+   dEvaporationTime := sv_dEvaporationTime;
+ELSE    
+   IF (GET_MY_FU_NAME() = "HeatingMold1") THEN
+   mpZoneRetain^.ZoneType := enZoneTypeBlock;
+      mpZoneRetain^.bDoOptimizationNext := TRUE; 
+   ELSE    
+      mpZoneRetain^.ZoneType := enZoneTypeNozzle;
+      mpZoneRetain^.bDoOptimizationNext := FALSE; 
+   END_IF;    
+   dEvaporationTime := sv_dEvaporationTimeBlock;
+END_IF;
+mbReParam := TRUE;
+
+
+
+;#END_EDIT_BLOCK END_ALGORITHM
+
+POSTUPDATE_ALGORITHM pCheckEvaporation ON PU_Task_7 WITH sv_dEvaporationTimeBlock,sv_dEvaporationTime,sv_bInitDone
+
+#BEGIN_EDIT_BLOCK
+IF (mpZoneRetain^.bIsHotrunner) THEN
+   dEvaporationTime := sv_dEvaporationTime;
+ELSE    
+   dEvaporationTime := sv_dEvaporationTimeBlock;
+END_IF;
+
+
+;#END_EDIT_BLOCK END_ALGORITHM
+
+
+
+END_ALGORITHM_BLOCK
+
+
+
+#END_OF_IEC_PART
+
+@Puma @IecEditor 6 177 @Pou 25 
+@@@BEG_Comment@@@
+Algorithm Block controles the function of a heating zon
+@@@END_Comment@@@
+
+@BEG_Contents 
+
+@BEG_Func 
+@RT(17)FuncTreeContainer 
+7 
+@Var @RT(14)GET_MY_FU_NAME @RT(0) @T @T @DERIVED 0 @F @RT(22)KEBA_STANDARD_FUNCTION @F 
+@T 
+@BEG_Attrib 
+0 @RT(0) @RT(0) 
+@END_Attrib 
+1 1 @F @F @F @F 
+
+@Var @RT(14)GET_SYNC_REFTO @RT(0) @T @T @DERIVED 0 @F @RT(22)KEBA_STANDARD_FUNCTION @F 
+@T 
+@BEG_Attrib 
+0 @RT(0) @RT(0) 
+@END_Attrib 
+1 1 @F @F @F @F 
+
+@Var @RT(10)FGetHWPath @RT(0) @T @T @DERIVED 0 @F @RT(8)FUNCTION @F 
+@T 
+@BEG_Attrib 
+0 @RT(0) @RT(0) 
+@END_Attrib 
+1 1 @F @F @F @F 
+
+@Var @RT(9)SET_ALARM @RT(0) @T @T @DERIVED 0 @F @RT(23)KEBA_STANDARD_PROCEDURE @F 
+@T 
+@BEG_Attrib 
+0 @RT(0) @RT(0) 
+@END_Attrib 
+1 1 @F @F @F @F 
+
+@Var @RT(16)KSWO_AddVariable @RT(0) @T @T @DERIVED 0 @F @RT(22)KEBA_STANDARD_FUNCTION @F 
+@T 
+@BEG_Attrib 
+0 @RT(0) @RT(0) 
+@END_Attrib 
+1 1 @F @F @F @F 
+
+@Var @RT(17)GET_TASK_INTERVAL @RT(0) @T @T @DERIVED 0 @F @RT(22)KEBA_STANDARD_FUNCTION @F 
+@T 
+@BEG_Attrib 
+0 @RT(0) @RT(0) 
+@END_Attrib 
+1 1 @F @F @F @F 
+
+@Var @RT(11)RESET_ALARM @RT(0) @T @T @DERIVED 0 @F @RT(23)KEBA_STANDARD_PROCEDURE @F 
+@T 
+@BEG_Attrib 
+0 @RT(0) @RT(0) 
+@END_Attrib 
+1 1 @F @F @F @F 
+
+@END_Func 
+
+@BEG_Const 
+@RT(18)ConstTreeContainer 
+36 
+@Var @RT(14)KSYS_Status_OK @RT(0) @T @T @DERIVED 0 @F @RT(11)KSYS_Status @F 
+@T 
+@BEG_Attrib 
+0 @RT(1)1 @RT(0) 
+@END_Attrib 
+1 1 @F @F @F @F 
+
+@Var @RT(18)enZoneModeDisabled @RT(0) @T @T @DERIVED 0 @F @RT(11)tenZoneMode @F 
+@T 
+@BEG_Attrib 
+0 @RT(1)0 @RT(0) 
+@END_Attrib 
+1 1 @F @F @F @F 
+
+@Var @RT(18)cCompHeatingNozzle @RT(0) @T @F @DT @RT(4)DINT @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+0 @RT(3)105 @RT(24)Component Heating Nozzle 
+@END_Attrib 
+1 1 @F @F @F @F 
+
+@Var @RT(18)enZoneModeConstant @RT(0) @T @T @DERIVED 0 @F @RT(11)tenZoneMode @F 
+@T 
+@BEG_Attrib 
+0 @RT(1)2 @RT(0) 
+@END_Attrib 
+1 1 @F @F @F @F 
+
+@Var @RT(24)cMinPulseTimeLimitFactor @RT(0) @T @F @DT @RT(4)REAL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+0 @RT(4)0.05 @RT(21)5%  of pwm cycle time 
+@END_Attrib 
+1 1 @F @F @F @F 
+
+@Var @RT(15)enZoneTypeBlock @RT(0) @T @T @DERIVED 0 @F @RT(11)tenZoneType @F 
+@T 
+@BEG_Attrib 
+0 @RT(1)1 @RT(0) 
+@END_Attrib 
+1 1 @F @F @F @F 
+
+@Var @RT(27)cApplPlasticsWrongPWMParams @RT(0) @T @F @DT @RT(4)DINT @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+0 @RT(4)-165 @RT(109)params for pulse wide modulation output (cycle time, min threshold, min ontime) are zero or not within limits 
+@END_Attrib 
+1 1 @F @F @F @F 
+
+@Var @RT(31)cApplPlasticsWrongTempStabParam @RT(0) @T @F @DT @RT(4)DINT @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+0 @RT(4)-163 @RT(85)Temperature stability params for optimization permission are wrong or not initialized 
+@END_Attrib 
+1 1 @F @F @F @F 
+
+@Var @RT(28)cApplPlasticsWrongTempParams @RT(0) @T @F @DT @RT(4)DINT @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+0 @RT(4)-161 @RT(47)Tempcontrol params are wrong or not initialized 
+@END_Attrib 
+1 1 @F @F @F @F 
+
+@Var @RT(28)cApplPlasticsWrongStabParams @RT(0) @T @F @DT @RT(4)DINT @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+0 @RT(4)-171 @RT(57)Tempcontrol stability params are wrong or not initialized 
+@END_Attrib 
+1 1 @F @F @F @F 
+
+@Var @RT(27)cApplPlasticsHeatingTimeout @RT(0) @T @F @DT @RT(4)DINT @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+0 @RT(4)-193 @RT(20)heating up timed out 
+@END_Attrib 
+1 1 @F @F @F @F 
+
+@Var @RT(16)enZoneModePID2pt @RT(0) @T @T @DERIVED 0 @F @RT(11)tenZoneMode @F 
+@T 
+@BEG_Attrib 
+0 @RT(1)3 @RT(0) 
+@END_Attrib 
+1 1 @F @F @F @F 
+
+@Var @RT(16)enZoneModePID3pt @RT(0) @T @T @DERIVED 0 @F @RT(11)tenZoneMode @F 
+@T 
+@BEG_Attrib 
+0 @RT(1)4 @RT(0) 
+@END_Attrib 
+1 1 @F @F @F @F 
+
+@Var @RT(18)enZoneModePID2ptEM @RT(0) @T @T @DERIVED 0 @F @RT(11)tenZoneMode @F 
+@T 
+@BEG_Attrib 
+0 @RT(1)5 @RT(0) 
+@END_Attrib 
+1 1 @F @F @F @F 
+
+@Var @RT(18)enZoneModePID3ptEM @RT(0) @T @T @DERIVED 0 @F @RT(11)tenZoneMode @F 
+@T 
+@BEG_Attrib 
+0 @RT(1)6 @RT(0) 
+@END_Attrib 
+1 1 @F @F @F @F 
+
+@Var @RT(24)KAPPL_TempOpMode_Cooling @RT(0) @T @T @DERIVED 0 @F @RT(16)KAPPL_TempOpMode @F 
+@T 
+@BEG_Attrib 
+0 @RT(1)1 @RT(0) 
+@END_Attrib 
+1 1 @F @F @F @F 
+
+@Var @RT(15)KCTRL_Stable_OK @RT(0) @T @T @DERIVED 0 @F @RT(18)KCTRL_Stable_State @F 
+@T 
+@BEG_Attrib 
+0 @RT(1)1 @RT(0) 
+@END_Attrib 
+1 1 @F @F @F @F 
+
+@Var @RT(23)KTEMP_Opt_State_NoIdent @RT(0) @T @T @DERIVED 0 @F @RT(15)KTEMP_Opt_State @F 
+@T 
+@BEG_Attrib 
+0 @RT(1)0 @RT(22)No Identification init 
+@END_Attrib 
+1 1 @F @F @F @F 
+
+@Var @RT(28)KTEMP_Opt_State_SetvalStepOn @RT(0) @T @T @DERIVED 0 @F @RT(15)KTEMP_Opt_State @F 
+@T 
+@BEG_Attrib 
+0 @RT(1)2 @RT(21)Setval step activated 
+@END_Attrib 
+1 1 @F @F @F @F 
+
+@Var @RT(16)enZoneTypeNozzle @RT(0) @T @T @DERIVED 0 @F @RT(11)tenZoneType @F 
+@T 
+@BEG_Attrib 
+0 @RT(1)0 @RT(0) 
+@END_Attrib 
+1 1 @F @F @F @F 
+
+@Var @RT(28)cApplPlasticsMeanValueTooLow @RT(0) @T @F @DT @RT(4)DINT @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+0 @RT(4)-184 @RT(31)output mean value to low (< 1%) 
+@END_Attrib 
+1 1 @F @F @F @F 
+
+@Var @RT(27)cApplPlasticsHeatingFailure @RT(0) @T @F @DT @RT(4)DINT @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+0 @RT(4)-192 @RT(30)heating failure, check heating 
+@END_Attrib 
+1 1 @F @F @F @F 
+
+@Var @RT(26)cApplPlasticsOptCalcFailed @RT(0) @T @F @DT @RT(4)DINT @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+0 @RT(4)-182 @RT(50)cyclic tempcontrol optimization calculation failed 
+@END_Attrib 
+1 1 @F @F @F @F 
+
+@Var @RT(23)cApplPlasticsOptTimeout @RT(0) @T @F @DT @RT(4)DINT @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+0 @RT(4)-183 @RT(41)cyclic tempcontrol optimization timed out 
+@END_Attrib 
+1 1 @F @F @F @F 
+
+@Var @RT(31)cApplPlasticsHeatingTimeoutWarn @RT(0) @T @F @DT @RT(4)DINT @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+0 @RT(4)-194 @RT(36)heating up timed out, use full power 
+@END_Attrib 
+1 1 @F @F @F @F 
+
+@Var @RT(17)enZoneModeMeasure @RT(0) @T @T @DERIVED 0 @F @RT(11)tenZoneMode @F 
+@T 
+@BEG_Attrib 
+0 @RT(1)1 @RT(0) 
+@END_Attrib 
+1 1 @F @F @F @F 
+
+@Var @RT(13)enZoneModeOff @RT(0) @T @T @DERIVED 0 @F @RT(15)tenZoneModeDisp @F 
+@T 
+@BEG_Attrib 
+0 @RT(1)0 @RT(37)zone or whole heating is switched off 
+@END_Attrib 
+1 1 @F @F @F @F 
+
+@Var @RT(13)enZoneStateOK @RT(0) @T @T @DERIVED 0 @F @RT(16)tenZoneStateDisp @F 
+@T 
+@BEG_Attrib 
+0 @RT(1)0 @RT(37)zone or whole heating is switched off 
+@END_Attrib 
+1 1 @F @F @F @F 
+
+@Var @RT(14)enZoneModeHeat @RT(0) @T @T @DERIVED 0 @F @RT(15)tenZoneModeDisp @F 
+@T 
+@BEG_Attrib 
+0 @RT(1)1 @RT(26)zone is switched on and ok 
+@END_Attrib 
+1 1 @F @F @F @F 
+
+@Var @RT(14)enZoneModeCool @RT(0) @T @T @DERIVED 0 @F @RT(15)tenZoneModeDisp @F 
+@T 
+@BEG_Attrib 
+0 @RT(1)2 @RT(45)error with this zone (e.g. broken sensorline) 
+@END_Attrib 
+1 1 @F @F @F @F 
+
+@Var @RT(22)enZoneStateErrorSensor @RT(0) @T @T @DERIVED 0 @F @RT(16)tenZoneStateDisp @F 
+@T 
+@BEG_Attrib 
+0 @RT(1)1 @RT(26)zone is switched on and ok 
+@END_Attrib 
+1 1 @F @F @F @F 
+
+@Var @RT(31)KAPPL_TempOpMode_HeatingCooling @RT(0) @T @T @DERIVED 0 @F @RT(16)KAPPL_TempOpMode @F 
+@T 
+@BEG_Attrib 
+0 @RT(1)2 @RT(0) 
+@END_Attrib 
+1 1 @F @F @F @F 
+
+@Var @RT(24)KAPPL_TempOpMode_Heating @RT(0) @T @T @DERIVED 0 @F @RT(16)KAPPL_TempOpMode @F 
+@T 
+@BEG_Attrib 
+0 @RT(1)0 @RT(0) 
+@END_Attrib 
+1 1 @F @F @F @F 
+
+@Var @RT(14)nFullAutomatic @RT(0) @T @T @DERIVED 0 @F @RT(15)tnOperationMode @F 
+@T 
+@BEG_Attrib 
+0 @RT(1)3 @RT(47)confirmation only for the first cycle necessary 
+@END_Attrib 
+1 1 @F @F @F @F 
+
+@Var @RT(14)nHalfAutomatic @RT(0) @T @T @DERIVED 0 @F @RT(15)tnOperationMode @F 
+@T 
+@BEG_Attrib 
+0 @RT(1)2 @RT(34)confirmation every cycle necessary 
+@END_Attrib 
+1 1 @F @F @F @F 
+
+@Var @RT(19)enZoneTypeHotrunner @RT(0) @T @T @DERIVED 0 @F @RT(11)tenZoneType @F 
+@T 
+@BEG_Attrib 
+0 @RT(1)2 @RT(0) 
+@END_Attrib 
+1 1 @F @F @F @F 
+
+@END_Const 
+
+@BEG_Export 
+
+@BEG_Kind 
+@ALGORITHM_BLOCK @RT(6)ABZone @STRUCTURED_TEXT 
+@RT(0) @RT(0) @RT(0) 
+@END_Kind 
+
+@BEG_Dcl 
+@RT(16)DclTreeContainer 
+84 
+@Var @RT(11)sv_DeviceId @RT(0) @T @T @DERIVED 0 @T @T @DT @RT(10)tsDeviceId @RT(0) @T @T @UNKNOWN 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(24)unique Device Identifier @RT(0) 
+@END_Attrib 
+1 8 @F @F @F @F 
+
+@Var @RT(16)sv_bReParamGroup @RT(0) @T @F @DT @RT(4)BOOL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(48)By this var each zone can reparam the groupblock @RT(0) 
+@END_Attrib 
+1 8 @F @F @F @F 
+
+@Var @RT(11)sv_TempDiff @RT(0) @T @F @DT @RT(4)REAL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(79)expected minimum temp.change at 100% heating output per minute; otherwise alarm @RT(0) 
+@END_Attrib 
+1 8 @F @F @F @F 
+
+@Var @RT(15)sv_PWMCycleTime @RT(0) @T @F @DT @RT(4)TIME @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 8 @F @F @F @F 
+
+@Var @RT(18)sv_PWMMinPulseTime @RT(0) @T @F @DT @RT(4)TIME @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 8 @F @F @F @F 
+
+@Var @RT(12)sv_ZoneArray @RT(0) @T @T @DERIVED 0 @T @T @DT @RT(11)tyZoneArray @RT(0) @T @T @UNKNOWN 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 8 @F @F @F @F 
+
+@Var @RT(16)sv_bGroupHeating @RT(0) @T @F @DT @RT(4)BOOL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 8 @F @F @F @F 
+
+@Var @RT(19)sv_rEvaporationTemp @RT(0) @T @F @DT @RT(4)REAL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 8 @F @F @F @F 
+
+@Var @RT(19)sv_dEvaporationTime @RT(0) @T @F @DT @RT(4)TIME @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 8 @F @F @F @F 
+
+@Var @RT(19)sv_rTemperatureRamp @RT(0) @T @F @DT @RT(4)REAL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 8 @F @F @F @F 
+
+@Var @RT(18)sv_bKeepWarmActive @RT(0) @T @F @DT @RT(4)BOOL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 8 @F @F @F @F 
+
+@Var @RT(12)sv_bUsePidOP @RT(0) @T @F @DT @RT(4)BOOL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 8 @F @F @F @F 
+
+@Var @RT(16)sv_OperationMode @RT(0) @T @T @DERIVED 0 @T @T @DT @RT(15)tnOperationMode @RT(0) @T @T @UNKNOWN 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 8 @F @F @F @F 
+
+@Var @RT(17)sv_iNumberOfZones @RT(0) @T @F @DT @RT(4)DINT @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 8 @F @F @F @F 
+
+@Var @RT(28)sv_bAnyTempSensorTypeChanged @RT(0) @T @F @DT @RT(4)BOOL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 8 @F @F @F @F 
+
+@Var @RT(24)sv_dEvaporationTimeBlock @RT(0) @T @F @DT @RT(4)TIME @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 8 @F @F @F @F 
+
+@Var @RT(22)sv_dSoftstartAlarmTime @RT(0) @T @F @DT @RT(4)TIME @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 8 @F @F @F @F 
+
+@Var @RT(15)sv_bHeatingUsed @RT(0) @T @F @DT @RT(4)BOOL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 8 @F @F @F @F 
+
+@Var @RT(12)sv_bInitDone @RT(0) @T @F @DT @RT(4)BOOL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 8 @F @F @F @F 
+
+@Var @RT(26)sv_dObservationTimeHeating @RT(0) @T @F @DT @RT(4)TIME @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 8 @F @F @F @F 
+
+@Var @RT(23)sv_bUseOutputLimitation @RT(0) @T @F @DT @RT(4)BOOL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(26)activate output limitation @RT(0) 
+@END_Attrib 
+1 8 @F @F @F @F 
+
+@Var @RT(22)sv_UseOutputLimitation @RT(0) @T @T @DERIVED 0 @T @T @DT @RT(21)KAPPL_TempZoneUsedArr @RT(0) @T @T @UNKNOWN 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(26)activate output limitation @RT(0) 
+@END_Attrib 
+1 8 @F @F @F @F 
+
+@Var @RT(17)erVariableMissing @RT(0) @T @F @DT @RT(5)ALARM @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 7 @F @F @F @F 
+
+@Var @RT(11)TaskHeating @RT(0) @T @F @DT @RT(4)TASK @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 7 @F @F @F @F 
+
+@Var @RT(15)erHeatingOutput @RT(0) @T @F @DT @RT(5)ALARM @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 7 @F @F @F @F 
+
+@Var @RT(18)erHeatingOutputPWM @RT(0) @T @F @DT @RT(5)ALARM @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 7 @F @F @F @F 
+
+@Var @RT(15)erCoolingOutput @RT(0) @T @F @DT @RT(5)ALARM @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 7 @F @F @F @F 
+
+@Var @RT(8)erSensor @RT(0) @T @F @DT @RT(5)ALARM @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 7 @F @F @F @F 
+
+@Var @RT(15)erZoneCalcError @RT(0) @T @F @DT @RT(5)ALARM @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 7 @F @F @F @F 
+
+@Var @RT(20)erInvalidPWMSettings @RT(0) @T @F @DT @RT(5)ALARM @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 7 @F @F @F @F 
+
+@Var @RT(21)erInvalidStabSettings @RT(0) @T @F @DT @RT(5)ALARM @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 7 @F @F @F @F 
+
+@Var @RT(26)erInvalidStabilitySettings @RT(0) @T @F @DT @RT(5)ALARM @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 7 @F @F @F @F 
+
+@Var @RT(31)erInvalidTempControllerSettings @RT(0) @T @F @DT @RT(5)ALARM @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 7 @F @F @F @F 
+
+@Var @RT(16)erHeatingFailure @RT(0) @T @F @DT @RT(5)ALARM @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 7 @F @F @F @F 
+
+@Var @RT(13)erSensorPower @RT(0) @T @F @DT @RT(5)ALARM @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 7 @F @F @F @F 
+
+@Var @RT(9)PU_Task_7 @RT(0) @T @F @DT @RT(4)TASK @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 7 @F @F @F @F 
+
+@Var @RT(17)erMeanValueTooLow @RT(0) @T @F @DT @RT(5)ALARM @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 7 @F @F @F @F 
+
+@Var @RT(15)erSwitchToConst @RT(0) @T @F @DT @RT(5)ALARM @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 7 @F @F @F @F 
+
+@Var @RT(14)erSwitchToEMOP @RT(0) @T @F @DT @RT(5)ALARM @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 7 @F @F @F @F 
+
+@Var @RT(17)erSensorNotConfig @RT(0) @T @F @DT @RT(5)ALARM @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 7 @F @F @F @F 
+
+@Var @RT(23)erInvalidSetterSettings @RT(0) @T @F @DT @RT(5)ALARM @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 7 @F @F @F @F 
+
+@Var @RT(20)erOptimizationFailed @RT(0) @T @F @DT @RT(5)ALARM @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 7 @F @F @F @F 
+
+@Var @RT(16)erHeatingTimeout @RT(0) @T @F @DT @RT(5)ALARM @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 7 @F @F @F @F 
+
+@Var @RT(23)erHeatingTimeoutWarning @RT(0) @T @F @DT @RT(5)ALARM @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 7 @F @F @F @F 
+
+@Var @RT(23)g_bIdentifiactionActive @RT(0) @T @F @DT @RT(4)BOOL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 6 @F @F @F @F 
+
+@Var @RT(10)abHeatZone @RT(0) @T @T @DERIVED 0 @T @T @DT @RT(23)KAPPL_Plastics_HeatZone @RT(0) @T @T @UNKNOWN 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(14)mbTOHeatLinked @RT(0) @T @F @DT @RT(4)BOOL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(14)mbTOCoolLinked @RT(0) @T @F @DT @RT(4)BOOL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(14)mbDOHeatLinked @RT(0) @T @F @DT @RT(4)BOOL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(14)mbDOCoolLinked @RT(0) @T @F @DT @RT(4)BOOL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(14)mbPOHeatLinked @RT(0) @T @F @DT @RT(4)BOOL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(11)mbPWILinked @RT(0) @T @F @DT @RT(4)BOOL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(10)mbTILinked @RT(0) @T @F @DT @RT(4)BOOL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(10)mpbTIState @RT(0) @T @T @REFTO 0 @T @DT @RT(4)BOOL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(14)mpbTOHeatState @RT(0) @T @T @REFTO 0 @T @DT @RT(4)BOOL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(14)mpbDOHeatState @RT(0) @T @T @REFTO 0 @T @DT @RT(4)BOOL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(14)mpbPOHeatState @RT(0) @T @T @REFTO 0 @T @DT @RT(4)BOOL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(14)mpbTOCoolState @RT(0) @T @T @REFTO 0 @T @DT @RT(4)BOOL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(14)mpbDOCoolState @RT(0) @T @T @REFTO 0 @T @DT @RT(4)BOOL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(11)mpbPWIState @RT(0) @T @T @REFTO 0 @T @DT @RT(4)BOOL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(7)miIndex @RT(0) @T @F @DT @RT(4)DINT @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(9)mbReParam @RT(0) @T @F @DT @RT(4)BOOL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(12)mbZoneInitOK @RT(0) @T @F @DT @RT(4)BOOL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(9)mbHWError @RT(0) @T @F @DT @RT(4)BOOL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(13)mbSensorError @RT(0) @T @F @DT @RT(4)BOOL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(13)mbSensorAlarm @RT(0) @T @F @DT @RT(4)BOOL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(17)mbHeatOutputError @RT(0) @T @F @DT @RT(4)BOOL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(20)mbHeatOutputErrorPWM @RT(0) @T @F @DT @RT(4)BOOL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(20)mbHeatOutputAlarmPWM @RT(0) @T @F @DT @RT(4)BOOL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(12)mbPowerError @RT(0) @T @F @DT @RT(4)BOOL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(17)mbCoolOutputError @RT(0) @T @F @DT @RT(4)BOOL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(6)mpZone @RT(0) @T @T @REFTO 0 @F @DERIVED 0 @T @T @DT @RT(10)tsZoneData @RT(0) @T @T @UNKNOWN 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(12)mpZoneRetain @RT(0) @T @T @REFTO 0 @F @DERIVED 0 @T @T @DT @RT(16)tsZoneDataRetain @RT(0) @T @T @UNKNOWN 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(10)mbInitDone @RT(0) @T @F @DT @RT(4)BOOL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(15)mrSetValForZone @RT(0) @T @F @DT @RT(4)REAL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(17)mrZoneActValueSwo @RT(0) @T @F @DT @RT(4)REAL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(20)for KSWO_AddVariable @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(8)msHWPath @RT(0) @T @F @DT @RT(11)STRING(255) @RT(0) @T @T @STRING 0 @F @RT(3)255 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(16)dEvaporationTime @RT(0) @T @F @DT @RT(4)TIME @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(19)bIgnoreTimeoutError @RT(0) @T @F @DT @RT(4)BOOL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(5)FALSE @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(17)abZoneObservation @RT(0) @T @T @DERIVED 0 @T @T @DT @RT(17)ABZoneObservation @RT(0) @T @T @UNKNOWN 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(18)mbLimitationActive @RT(0) @T @F @DT @RT(4)BOOL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(17)mpbLimitationUsed @RT(0) @T @T @REFTO 0 @T @DT @RT(4)BOOL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(21)mbLimitationAvailable @RT(0) @T @F @DT @RT(4)BOOL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(22)mbIdentificationActive @RT(0) @T @F @DT @RT(4)BOOL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@END_Dcl 
+
+@END_Export 
+
+@BEG_Body 
+
+14 
+
+@BEG_Export 
+
+@BEG_Algo 
+@ALGORITHM @RT(5)aInit @STRUCTURED_TEXT 
+@RT(0) @RT(0) @RT(0) @F @F 
+@END_Algo 
+
+@BEG_Dcl 
+@RT(16)DclTreeContainer 
+13 
+@Var @RT(11)iZoneNumber @RT(0) @T @F @DT @RT(4)DINT @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 1 @F @F @F @F 
+
+@Var @RT(6)Status @RT(0) @T @T @DERIVED 0 @T @T @DT @RT(11)KSYS_Status @RT(0) @T @T @UNKNOWN 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(7)sSvZone @RT(0) @T @F @DT @RT(11)STRING(255) @RT(0) @T @T @STRING 0 @F @RT(3)255 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(13)sSvZoneRetain @RT(0) @T @F @DT @RT(11)STRING(255) @RT(0) @T @T @STRING 0 @F @RT(3)255 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(9)sTiInTemp @RT(0) @T @F @DT @RT(11)STRING(255) @RT(0) @T @T @STRING 0 @F @RT(3)255 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(10)sOutHeatTO @RT(0) @T @F @DT @RT(11)STRING(255) @RT(0) @T @T @STRING 0 @F @RT(3)255 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(10)sOutHeatDO @RT(0) @T @F @DT @RT(11)STRING(255) @RT(0) @T @T @STRING 0 @F @RT(3)255 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(10)sOutCoolTO @RT(0) @T @F @DT @RT(11)STRING(255) @RT(0) @T @T @STRING 0 @F @RT(3)255 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(10)sOutCoolDO @RT(0) @T @F @DT @RT(11)STRING(255) @RT(0) @T @T @STRING 0 @F @RT(3)255 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(10)sOutHeatPO @RT(0) @T @F @DT @RT(11)STRING(255) @RT(0) @T @T @STRING 0 @F @RT(3)255 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(12)variableName @RT(0) @T @F @DT @RT(11)STRING(255) @RT(0) @T @T @STRING 0 @F @RT(3)255 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(8)swoState @RT(0) @T @T @DERIVED 0 @T @T @DT @RT(11)KSWO_Status @RT(0) @T @T @UNKNOWN 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(7)sFuName @RT(0) @T @F @DT @RT(10)STRING(32) @RT(0) @T @T @STRING 0 @F @RT(2)32 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@END_Dcl 
+
+@END_Export 
+
+@BEG_Export 
+
+@BEG_Algo 
+@ALGORITHM @RT(4)aRun @STRUCTURED_TEXT 
+@RT(0) @RT(0) @RT(0) @F @F 
+@END_Algo 
+
+@BEG_Dcl 
+@RT(16)DclTreeContainer 
+18 
+@Var @RT(7)bZoneOn @RT(0) @T @F @DT @RT(4)BOOL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(17)zone is activated @RT(0) 
+@END_Attrib 
+1 1 @F @F @F @F 
+
+@Var @RT(8)pwmParam @RT(0) @T @T @DERIVED 0 @T @T @DT @RT(15)KCTRL_PWM_Param @RT(0) @T @T @UNKNOWN 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(17)heatingNotAllowed @RT(0) @T @F @DT @RT(4)BOOL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(5)mInit @RT(0) @T @F @DT @RT(4)BOOL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(10)bPWMOutput @RT(0) @T @F @DT @RT(4)BOOL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(22)fEdgeOptimizationReady @RT(0) @T @T @DERIVED 0 @T @T @DT @RT(6)F_TRIG @RT(0) @T @T @UNKNOWN 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(14)bOutputAllowed @RT(0) @T @F @DT @RT(4)BOOL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(11)bEnableEmOp @RT(0) @T @F @DT @RT(4)BOOL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(41)True: when Emergency Operation is enabled @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(10)bAlarmEMOP @RT(0) @T @F @DT @RT(4)BOOL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(45)True: an alarm of Emergency Operation was set @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(8)rActTemp @RT(0) @T @F @DT @RT(4)REAL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(14)rMaxPowerStart @RT(0) @T @F @DT @RT(4)REAL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(5)100.0 @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(12)bIsHotrunner @RT(0) @T @F @DT @RT(4)BOOL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(8)bIsBlock @RT(0) @T @F @DT @RT(4)BOOL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(14)bUseLimitation @RT(0) @T @F @DT @RT(4)BOOL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(15)ZoneRetainParam @RT(0) @T @T @DERIVED 0 @T @T @DT @RT(22)KAPPL_TempControlParam @RT(0) @T @T @UNKNOWN 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(20)bLimitationActivated @RT(0) @T @F @DT @RT(4)BOOL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(17)iReductionCounter @RT(0) @T @F @DT @RT(5)UDINT @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(3)200 @RT(15)20s = 200 cyles @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(15)iReductionLimit @RT(0) @T @F @DT @RT(5)UDINT @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(1)0 @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@END_Dcl 
+
+@END_Export 
+
+@BEG_Export 
+
+@BEG_Algo 
+@POSTUPDATE_ALGORITHM @RT(14)pCheckZoneUsed @STRUCTURED_TEXT 
+@RT(0) @RT(34)mpZoneRetain^.bUsed,mpZone^.iIndex @RT(9)PU_Task_7 @F @F 
+@END_Algo 
+
+@BEG_Dcl 
+@RT(16)DclTreeContainer 
+0 
+@END_Dcl 
+
+@END_Export 
+
+@BEG_Export 
+
+@BEG_Algo 
+@POSTUPDATE_ALGORITHM @RT(18)pSensorTypeChanged @STRUCTURED_TEXT 
+@RT(0) @RT(42)mpZoneRetain^.SensorTypeVis,mpZone^.iIndex @RT(9)PU_Task_7 @F @F 
+@END_Algo 
+
+@BEG_Dcl 
+@RT(16)DclTreeContainer 
+0 
+@END_Dcl 
+
+@END_Export 
+
+@BEG_Export 
+
+@BEG_Algo 
+@POSTUPDATE_ALGORITHM @RT(13)pReparamGroup @STRUCTURED_TEXT 
+@RT(0) @RT(146)sv_PWMMinPulseTime,sv_PWMCycleTime,sv_bGroupHeating,sv_dSoftstartAlarmTime,sv_dEvaporationTimeBlock,sv_dEvaporationTime,sv_dObservationTimeHeating @RT(9)PU_Task_7 @F @F 
+@END_Algo 
+
+@BEG_Dcl 
+@RT(16)DclTreeContainer 
+0 
+@END_Dcl 
+
+@END_Export 
+
+@BEG_Export 
+
+@BEG_Algo 
+@POSTUPDATE_ALGORITHM @RT(17)pReparamTolerance @STRUCTURED_TEXT 
+@RT(0) @RT(53)mpZoneRetain^.rUpperTolVis,mpZoneRetain^.rLowerTolVis @RT(9)PU_Task_7 @F @F 
+@END_Algo 
+
+@BEG_Dcl 
+@RT(16)DclTreeContainer 
+0 
+@END_Dcl 
+
+@END_Export 
+
+@BEG_Export 
+
+@BEG_Algo 
+@POSTUPDATE_ALGORITHM @RT(12)pModeChanged @STRUCTURED_TEXT 
+@RT(0) @RT(56)mpZoneRetain^.ModeVis,mpZone^.iIndex,mpZoneRetain^.bUsed @RT(9)PU_Task_7 @F @F 
+@END_Algo 
+
+@BEG_Dcl 
+@RT(16)DclTreeContainer 
+0 
+@END_Dcl 
+
+@END_Export 
+
+@BEG_Export 
+
+@BEG_Algo 
+@POSTUPDATE_ALGORITHM @RT(12)pReparamZone @STRUCTURED_TEXT 
+@RT(0) @RT(121)mpZoneRetain^.Param,mpZoneRetain^.rSoftstartPower,mpZoneRetain^.rReferenceRamp,sv_bUseOutputLimitation,mpbLimitationUsed^ @RT(9)PU_Task_7 @F @F 
+@END_Algo 
+
+@BEG_Dcl 
+@RT(16)DclTreeContainer 
+0 
+@END_Dcl 
+
+@END_Export 
+
+@BEG_Export 
+
+@BEG_Algo 
+@POSTUPDATE_ALGORITHM @RT(15)pHWStateChanged @STRUCTURED_TEXT 
+@RT(0) @RT(139)mpbTIState^,mpbTOHeatState^,mpbDOHeatState^,mpbTOCoolState^,mpbDOCoolState^,mpbPOHeatState^,mpbPWIState^,mpZone^.iIndex,mpZoneRetain^.bUsed @RT(9)PU_Task_7 @F @F 
+@END_Algo 
+
+@BEG_Dcl 
+@RT(16)DclTreeContainer 
+0 
+@END_Dcl 
+
+@END_Export 
+
+@BEG_Export 
+
+@BEG_Algo 
+@PROCESS_ALGORITHM @RT(21)paCheckToleranceError @STRUCTURED_TEXT 
+@RT(0) @RT(0) @RT(15)TaskHeating(10) @F @F 
+@END_Algo 
+
+@BEG_Dcl 
+@RT(16)DclTreeContainer 
+0 
+@END_Dcl 
+
+@END_Export 
+
+@BEG_Export 
+
+@BEG_Algo 
+@POSTUPDATE_ALGORITHM @RT(21)pOperationModeChanged @STRUCTURED_TEXT 
+@RT(0) @RT(16)sv_OperationMode @RT(9)PU_Task_7 @F @F 
+@END_Algo 
+
+@BEG_Dcl 
+@RT(16)DclTreeContainer 
+0 
+@END_Dcl 
+
+@END_Export 
+
+@BEG_Export 
+
+@BEG_Algo 
+@POSTUPDATE_ALGORITHM @RT(14)pCheckConstVal @STRUCTURED_TEXT 
+@RT(0) @RT(26)mpZoneRetain^.rConstValVis @RT(9)PU_Task_7 @F @F 
+@END_Algo 
+
+@BEG_Dcl 
+@RT(16)DclTreeContainer 
+0 
+@END_Dcl 
+
+@END_Export 
+
+@BEG_Export 
+
+@BEG_Algo 
+@POSTUPDATE_ALGORITHM @RT(14)pCheckZoneType @STRUCTURED_TEXT 
+@RT(0) @RT(26)mpZoneRetain^.bIsHotrunner @RT(9)PU_Task_7 @F @F 
+@END_Algo 
+
+@BEG_Dcl 
+@RT(16)DclTreeContainer 
+0 
+@END_Dcl 
+
+@END_Export 
+
+@BEG_Export 
+
+@BEG_Algo 
+@POSTUPDATE_ALGORITHM @RT(17)pCheckEvaporation @STRUCTURED_TEXT 
+@RT(0) @RT(57)sv_dEvaporationTimeBlock,sv_dEvaporationTime,sv_bInitDone @RT(9)PU_Task_7 @F @F 
+@END_Algo 
+
+@BEG_Dcl 
+@RT(16)DclTreeContainer 
+0 
+@END_Dcl 
+
+@END_Export 
+
+@BEG_Body 
+@TL(178)
+(**************************************** WARNING ********************************************
+ *** The KEBA Kemro K2 System including software is not intended for safety control tasks! ***
+ ***                       For further information see Comment tab!                        ***
+ *********************************************************************************************)
+
+
+miIndex := iZoneNumber;
+
+sFuName := GET_MY_FU_NAME();
+sSvZone := CONCAT(sFuName,'.sv_Zone',DINT_TO_STRING(iZoneNumber));
+sSvZoneRetain := CONCAT(sFuName,'.sv_ZoneRetain',DINT_TO_STRING(iZoneNumber));
+sTiInTemp := CONCAT(sFuName,'.ti_InTemp',DINT_TO_STRING(iZoneNumber));
+sOutHeatTO := CONCAT(sFuName,'.to_OutHeat',DINT_TO_STRING(iZoneNumber));
+sOutHeatDO := CONCAT(sFuName,'.do_OutHeat',DINT_TO_STRING(iZoneNumber));
+sOutCoolTO := CONCAT(sFuName,'.to_OutCool',DINT_TO_STRING(iZoneNumber));
+sOutCoolDO := CONCAT(sFuName,'.do_OutCool',DINT_TO_STRING(iZoneNumber));
+sOutHeatPO := CONCAT(sFuName,'.po_OutHeat',DINT_TO_STRING(iZoneNumber));
+
+//getting reference of Zone
+sv_ZoneArray[iZoneNumber].Data := GET_SYNC_REFTO(sSvZone, T#0s, Status);
+IF Status = KSYS_Status_OK THEN
+    mpZone := sv_ZoneArray[iZoneNumber].Data;
+    sv_ZoneArray[iZoneNumber].DataRetain := GET_SYNC_REFTO(sSvZoneRetain, T#0s, Status);
+    
+    IF Status = KSYS_Status_OK THEN
+        mpZoneRetain := sv_ZoneArray[iZoneNumber].DataRetain;
+            
+        //getting reference of Heating Output  (TO)
+        mpZone^.prOutHeatTO := GET_SYNC_REFTO(sOutHeatTO, T#0s, Status);
+        IF Status = KSYS_Status_OK THEN
+            //getting reference of status endpoint
+            mpZone^.pbOutHeatTOStat:= GET_SYNC_REFTO(CONCAT(sOutHeatTO,'_stat'), T#0s, Status);
+            IF Status = KSYS_Status_OK THEN
+                //getting reference of PWM param endpoint
+                mpZone^.pbOutHeatTOPar:= GET_SYNC_REFTO(CONCAT(sOutHeatTO,'_parPWM'), T#0s, Status);  
+                IF Status = KSYS_Status_OK THEN
+                    mbTOHeatLinked := TRUE;
+                END_IF;  
+            END_IF;
+        ELSE
+            //getting reference of Heat Output (DO)
+            mpZone^.pbOutHeatDO := GET_SYNC_REFTO(sOutHeatDO, T#0s, Status);
+            IF Status = KSYS_Status_OK THEN
+                //getting reference of status endpoint
+                mpZone^.pbOutHeatDOStat := GET_SYNC_REFTO(CONCAT(sOutHeatDO,'_stat'), T#0s, Status);
+                IF Status = KSYS_Status_OK THEN
+                    mbDOHeatLinked := TRUE;                    
+                END_IF;
+                
+            ELSE
+                //getting reference of PWM Heating Output (PO)
+                mpZone^.prOutHeatPO := GET_SYNC_REFTO(sOutHeatPO, T#0s, Status);
+                IF Status = KSYS_Status_OK THEN
+                    //getting reference of status endpoint
+                    mpZone^.pbOutHeatPOStat := GET_SYNC_REFTO(CONCAT(sOutHeatPO,'_stat'), T#0s, Status);
+                    IF Status = KSYS_Status_OK THEN
+                        mbPOHeatLinked := TRUE;
+                    END_IF;
+                END_IF;
+                
+            END_IF;
+        END_IF;
+        
+            //getting reference of Cooling Output  (TO)
+        mpZone^.prOutCoolTO:= GET_SYNC_REFTO(sOutCoolTO, T#0s, Status);
+        IF Status = KSYS_Status_OK THEN      
+            //getting reference of status endpoint
+            mpZone^.pbOutCoolTOStat := GET_SYNC_REFTO(CONCAT(sOutCoolTO,'_stat'), T#0s, Status);
+            IF Status = KSYS_Status_OK THEN
+                //getting reference of PWM param endpoint
+                mpZone^.pbOutCoolTOPar := GET_SYNC_REFTO(CONCAT(sOutCoolTO,'_parPWM'), T#0s, Status);  
+                IF Status = KSYS_Status_OK THEN
+                    mbTOCoolLinked := TRUE;
+                END_IF;
+            END_IF;
+        ELSE
+            //getting reference of Cool Output (DO)
+            mpZone^.pbOutCoolDO := GET_SYNC_REFTO(sOutCoolDO, T#0s, Status);
+            IF Status = KSYS_Status_OK THEN
+                //getting reference of status endpoint
+                mpZone^.pbOutCoolDOStat := GET_SYNC_REFTO(CONCAT(sOutCoolDO,'_stat'), T#0s, Status);
+                IF Status = KSYS_Status_OK THEN
+                    mbDOCoolLinked := TRUE;
+                END_IF;
+            END_IF;
+        END_IF;
+        
+        //getting reference of Temperature Input
+        mpZone^.prActTemp := GET_SYNC_REFTO(sTiInTemp, T#0s, Status);
+        IF Status = KSYS_Status_OK THEN
+            //getting reference of status endpoint
+            mpZone^.pbActTempStat := GET_SYNC_REFTO(CONCAT(sTiInTemp,'_stat'), T#0s, Status);
+            IF Status = KSYS_Status_OK THEN
+                //getting reference of sensortype endpoint
+                mpZone^.pHWSensorType := GET_SYNC_REFTO(CONCAT(sTiInTemp,'_sensor'), T#0s, Status);
+                IF Status = KSYS_Status_OK THEN
+                    mbTILinked := TRUE;
+                    msHWPath := FGetHWPath(sTiInTemp, TRUE);                   
+                END_IF;
+            END_IF;
+        END_IF;
+        
+        //HW is ok if any endpoint is linked.  Minimum configuration: TI for measuremode or TO/DO for settermode
+        mpZone^.bHWOK := mbTILinked OR mbDOCoolLinked OR mbDOHeatLinked OR mbTOCoolLinked OR mbTOHeatLinked OR mbPOHeatLinked;
+        mpZone^.bSensorOK := mbTILinked;
+        mpZone^.bOutputOK := mbDOCoolLinked OR mbDOHeatLinked OR mbTOCoolLinked OR mbTOHeatLinked OR mbPOHeatLinked;
+        
+        //init mode with "setter" if the according TI is not linked and the zone is not switched off
+        IF mpZone^.bHWOK AND NOT mbTILinked AND mpZoneRetain^.ModeVis <> enZoneModeDisabled  THEN
+           IF sv_DeviceId.CompId = cCompHeatingNozzle THEN
+              mpZoneRetain^.ModeVis := enZoneModeConstant;
+           END_IF;                      
+        END_IF;
+       
+        //copy to local references for use in postupdate algos
+        mpbTIState     :=    mpZone^.pbActTempStat;
+        mpbTOHeatState :=    mpZone^.pbOutHeatTOStat;
+        mpbDOHeatState :=    mpZone^.pbOutHeatDOStat;
+        mpbTOCoolState :=    mpZone^.pbOutCoolTOStat;
+        mpbDOCoolState :=    mpZone^.pbOutCoolDOStat;
+        mpbPOHeatState :=    mpZone^.pbOutHeatPOStat;
+        IF mpZone^.pPowerGroup <> EMPTY AND mpZone^.pPowerGroup^.bPWILinked THEN
+           mbPWILinked  :=    mpZone^.pPowerGroup^.bPWILinked;
+           mpbPWIState  :=    mpZone^.pPowerGroup^.pbInGroupPWIStat;                               
+        END_IF;
+        sv_ZoneArray[iZoneNumber].bLinked := TRUE;
+        
+        mbInitDone := TRUE;
+        mpZone^.iIndex :=  iZoneNumber;
+    ELSE
+        //zone-sv not linked: zone not available
+        SET_ALARM(Name := erVariableMissing,
+                SubID1 := sv_DeviceId.CompId,
+                SubID2 := sv_DeviceId.IndexId,
+                Param1 := sSvZoneRetain);
+    END_IF;
+ELSE
+   //zone-sv not linked: zone not available
+    SET_ALARM(Name := erVariableMissing,
+            SubID1 := sv_DeviceId.CompId,
+            SubID2 := sv_DeviceId.IndexId,
+            Param1 := sSvZone);
+END_IF;
+
+variableName := CONCAT(sSvZone,'.OutputValue %');
+swoState := KSWO_AddVariable( Task := TaskHeating,
+                             Name := variableName,
+                             Variable := abHeatZone.aTempOutput.rU_PWMOut);  
+
+variableName := CONCAT(sSvZone,'.ActValue °C');
+swoState := KSWO_AddVariable( Task := TaskHeating,
+                             Name := variableName,
+                             Variable := mrZoneActValueSwo);  
+
+variableName := CONCAT(sSvZone,'.SetValue °C');
+swoState := KSWO_AddVariable( Task := TaskHeating,
+                             Name := variableName,
+                             Variable := mrSetValForZone);  
+
+variableName := CONCAT(sSvZone,'.rWAct °C');
+swoState := KSWO_AddVariable( Task := TaskHeating,
+                             Name := variableName,
+                             Variable := abHeatZone.aTempControl.rWAct);
+
+variableName := CONCAT(sSvZone,'.bOutputActive');
+swoState := KSWO_AddVariable( Task := TaskHeating,
+                             Name := variableName,
+                             Variable := abHeatZone.aTempOutput.PWMOut);
+
+abZoneObservation.aCalcParameter.sSvZone := sSvZone;
+abZoneObservation.aCalcParameter.MeasureTask := TaskHeating;
+abZoneObservation.aOptimizeAnalyze.MeasureTask := TaskHeating;
+IF IS_LINKED(sv_bUseOutputLimitation) AND IS_LINKED(sv_UseOutputLimitation) THEN
+   mpbLimitationUsed := @sv_UseOutputLimitation[miIndex];
+   mbLimitationAvailable := TRUE;
+END_IF;
+
+
+@END_Body 
+
+@@@BEG_Comment@@@ 
+@TL(0)
+
+@@@END_Comment@@@ 
+
+@BEG_Body 
+@TL(605)
+(**************************************** WARNING ********************************************
+ *** The KEBA Kemro K2 System including software is not intended for safety control tasks! ***
+ ***                       For further information see Comment tab!                        ***
+ *********************************************************************************************)
+IF mbZoneInitOK THEN
+
+   // initialize tempzoneblocks for PID-mode
+   IF (NOT mInit OR mbReParam) THEN
+      
+      IF mbTOHeatLinked THEN
+         //set pwm-params of heating TO 
+         mpZone^.pbOutHeatTOPar^.rCt := LINT_TO_REAL( TIME_TO_LINT(sv_PWMCycleTime)) / 1000000.0;
+         mpZone^.pbOutHeatTOPar^.rMinpt := LINT_TO_REAL( TIME_TO_LINT(sv_PWMMinPulseTime)) / 1000000.0;
+      END_IF; 
+      
+       IF mbTOCoolLinked THEN
+         //set pwm-params of cooling TO
+         mpZone^.pbOutCoolTOPar^.rCt := LINT_TO_REAL( TIME_TO_LINT(sv_PWMCycleTime)) / 1000000.0;
+         mpZone^.pbOutCoolTOPar^.rMinpt := LINT_TO_REAL( TIME_TO_LINT(sv_PWMMinPulseTime)) / 1000000.0;
+      END_IF;  
+      
+      IF sv_PWMMinPulseTime > MULTIME(sv_PWMCycleTime, cMinPulseTimeLimitFactor) THEN
+         sv_PWMMinPulseTime := MULTIME(sv_PWMCycleTime, cMinPulseTimeLimitFactor);
+      END_IF;
+      pwmParam.dMinOnTime := sv_PWMMinPulseTime;
+      abHeatZone.aPar.PWMCycleTime := sv_PWMCycleTime;
+      abHeatZone.aPar.DoPWMCalculation := mbDOHeatLinked OR mbDOCoolLinked;
+      abHeatZone.aPar.PWMParam := pwmParam;
+      abHeatZone.aPar.TempStabilityParam := mpZoneRetain^.StabParam;
+      iReductionLimit := LINT_TO_UDINT(TIME_TO_LINT(sv_PWMCycleTime/TIME_TO_LINT(GET_TASK_INTERVAL())));
+      iReductionCounter := iReductionLimit;
+      bIsBlock := (mpZoneRetain^.ZoneType = enZoneTypeBlock); 
+      bIsHotrunner := mpZoneRetain^.bIsHotrunner; 
+      abHeatZone.aPar.bHotrunner := bIsHotrunner OR bIsBlock; 
+      abHeatZone.aPar.bMoldHeatingBlock := bIsBlock;
+      IF (bIsHotrunner) OR (mpZoneRetain^.bDoOptimizationNext) THEN
+          abHeatZone.aPar.bNoAutoOptimization := FALSE;
+      ELSE    
+          abHeatZone.aPar.bNoAutoOptimization := TRUE;
+      END_IF;                                     
+      rMaxPowerStart := mpZoneRetain^.rSoftstartPower;
+      
+      abHeatZone.aPar.iIndex := miIndex;
+      abHeatZone.aPar();
+      
+      //offset for PWM heating zones -> see CR 41422
+      IF sv_iNumberOfZones <> 0 THEN
+         abHeatZone.aParPWMCycleOffset(rPWMCycleOffset := (DINT_TO_REAL(miIndex-1) / DINT_TO_REAL(sv_iNumberOfZones))); 
+      END_IF;
+       
+      IF abHeatZone.aPar.Error THEN
+         IF abHeatZone.aPar.ErrorInfo = cApplPlasticsWrongPWMParams THEN
+            SET_ALARM(Name := erInvalidPWMSettings,
+                        SubID1 := sv_DeviceId.CompId,
+                        SubID2 := sv_DeviceId.IndexId,
+                        SubID3 := miIndex);
+         ELSIF abHeatZone.aPar.ErrorInfo = cApplPlasticsWrongTempStabParam THEN
+            SET_ALARM(Name := erInvalidStabilitySettings,
+                        SubID1 := sv_DeviceId.CompId,
+                        SubID2 := sv_DeviceId.IndexId,
+                        SubID3 := miIndex);
+         ELSE
+            SET_ALARM(Name := erZoneCalcError,
+                        SubID1 := sv_DeviceId.CompId,
+                        SubID2 := sv_DeviceId.IndexId,
+                        SubID3 := miIndex,
+                        SubID4 := abHeatZone.aPar.ErrorInfo);
+         END_IF;
+         RETURN;
+      END_IF;
+      
+      //Act. temperature is set to 0.0 by initialisation, when sensor is not configured 
+      IF mpZone^.bSensorOK AND
+         mpZoneRetain^.ModeVis <> enZoneModeDisabled AND
+         mpZoneRetain^.ModeVis <> enZoneModeConstant THEN
+         rActTemp := mpZone^.prActTemp^;
+      ELSE
+         rActTemp := 0.0;
+      END_IF;
+       
+      IF bIsHotrunner THEN
+         dEvaporationTime := sv_dEvaporationTime;
+      ELSE
+         dEvaporationTime := sv_dEvaporationTimeBlock;
+      END_IF;
+      abHeatZone.aTempControl(Enable := FALSE,
+                              Optimize := FALSE,
+                              ReParam := TRUE,
+                              Param := mpZoneRetain^.Param,
+                              ActValue := rActTemp,//act. value is needed for initialisation of KCTRL_Stable
+                              bKeepWarmActive := sv_bKeepWarmActive,
+                              bGroupHeating := sv_bGroupHeating,
+                              bUsePidOP := sv_bUsePidOP,
+                              HeatUpRamp := sv_rTemperatureRamp,
+                              MaxHeatingPower := rMaxPowerStart,
+                              EvaporationTemperature := sv_rEvaporationTemp,
+                              EvaporationTime := dEvaporationTime,
+                              MaxTimeLimitingHeating := sv_dSoftstartAlarmTime,
+                              IgnoreTimeoutError := bIgnoreTimeoutError,
+                              ObservationTimeHeating := sv_dObservationTimeHeating,
+                              rReferenceRamp := mpZoneRetain^.rReferenceRamp,
+                              bAnyIdentificationActive := FALSE);
+      IF (abHeatZone.aTempControl.Error) THEN 
+         IF abHeatZone.aTempControl.ErrorInfo = cApplPlasticsWrongTempParams THEN
+            SET_ALARM(Name := erInvalidTempControllerSettings,
+                           SubID1 := sv_DeviceId.CompId,
+                           SubID2 := sv_DeviceId.IndexId,
+                           SubID3 := miIndex);
+         ELSIF abHeatZone.aTempControl.ErrorInfo = cApplPlasticsWrongStabParams THEN
+            SET_ALARM(Name := erInvalidStabSettings,
+                           SubID1 := sv_DeviceId.CompId,
+                           SubID2 := sv_DeviceId.IndexId,
+                           SubID3 := miIndex);
+         ELSIF abHeatZone.aTempControl.ErrorInfo = cApplPlasticsWrongTempStabParam THEN
+            SET_ALARM(Name := erInvalidStabilitySettings,
+                           SubID1 := sv_DeviceId.CompId,
+                           SubID2 := sv_DeviceId.IndexId,
+                           SubID3 := miIndex);   
+         ELSIF abHeatZone.aTempControl.ErrorInfo = cApplPlasticsHeatingTimeout THEN
+            SET_ALARM(Name := erHeatingTimeout,
+                           SubID1 := sv_DeviceId.CompId,
+                           SubID2 := sv_DeviceId.IndexId,
+                           SubID3 := miIndex);   
+         ELSE
+            IF (NOT mbSensorAlarm) THEN
+                SET_ALARM(Name := erZoneCalcError,
+                            SubID1 := sv_DeviceId.CompId,
+                            SubID2 := sv_DeviceId.IndexId,
+                            SubID3 := miIndex,
+                            SubID4 := abHeatZone.aTempControl.ErrorInfo);
+            END_IF; 
+         END_IF;
+         RETURN;
+      END_IF;
+      abHeatZone.aTempOutput.bZoneOn := bZoneOn;
+      abHeatZone.aTempOutput();
+      IF (abHeatZone.aTempOutput.Error) THEN 
+         SET_ALARM(Name := erInvalidPWMSettings,
+                  SubID1 := sv_DeviceId.CompId,
+                  SubID2 := sv_DeviceId.IndexId,
+                  SubID3 := miIndex);
+         RETURN;
+      END_IF;
+   
+      // observe actual temperature rising, limitation of output to avoid high overshoot
+      IF mbLimitationAvailable THEN
+         abZoneObservation.aCalcParameter(rGain := mpZoneRetain^.Param.sysParam.rK,
+                                          dTimeConstant := mpZoneRetain^.Param.sysParam.dT,
+                                          rCutBack := mpZoneRetain^.Param.pidParam.rCB,
+                                          dCycleTime := T#100ms);
+         bUseLimitation := sv_bUseOutputLimitation AND sv_UseOutputLimitation[miIndex] AND (NOT (sv_bUsePidOP AND mpZoneRetain^.Param.bPidOPAvailable));
+      END_IF;
+      bLimitationActivated := FALSE;
+      // copy data from controller
+      ZoneRetainParam := mpZoneRetain^.Param;
+
+      mInit := TRUE;
+      mbReParam := FALSE;
+   END_IF;   
+   
+   CASE mpZoneRetain^.ModeVis OF
+      enZoneModePID2pt,
+      enZoneModePID3pt,
+      enZoneModePID2ptEM,
+      enZoneModePID3ptEM:
+         // cyclic part, zone
+       IF mpZone^.bSensorOK THEN    //PID modes ignored, when no TI-sensor configured
+       
+         IF (heatingNotAllowed) THEN
+            mrSetValForZone := 0.0;
+            iReductionCounter := 0;
+         ELSIF (iReductionCounter < iReductionLimit) THEN
+            // wait until reduction time is elapsed to avoid problems with initialization in cycle time > t#100ms
+            mrSetValForZone := 0.0;
+            iReductionCounter := iReductionCounter + 1;
+         ELSE
+            mrSetValForZone :=  mpZone^.rSetVal;
+         END_IF;
+
+         IF ((mpZoneRetain^.ModeVis = enZoneModePID2pt) OR ( mpZoneRetain^.ModeVis = enZoneModePID3pt)) THEN
+            bEnableEmOp := FALSE;
+         ELSE
+            bEnableEmOp := TRUE;
+         END_IF;   
+            
+         IF bUseLimitation THEN
+               abZoneObservation.aCalcOutputLimit(rActTemperature := mpZone^.prActTemp^,
+                                                  rSetTemperature := mrSetValForZone,
+                                                  rControlValue := mpZone^.rOutputValue,
+                                                  rOutputLimit := ZoneRetainParam.rMaxY,
+                                                  rMaxOutput := mpZoneRetain^.Param.rMaxY,
+                                                  bStart := bZoneOn,
+                                                  bUseLimitation := bUseLimitation AND bZoneOn AND (NOT mpZone^.bIsOptimizing));
+               mbLimitationActive := abZoneObservation.aCalcOutputLimit.bLimitationK ;
+               IF (mbLimitationActive) THEN
+                  IF (NOT bLimitationActivated) THEN
+                     ZoneRetainParam.rMaxY := abZoneObservation.aCalcOutputLimit.rOutputLimitControl;
+                     abHeatZone.aTempControl.ReParam := TRUE;
+                     bLimitationActivated := TRUE; 
+               END_IF;
+            ELSE            
+                  IF (bLimitationActivated OR abZoneObservation.aCalcOutputLimit.bResetOutputLimit) THEN
+                     ZoneRetainParam.rMaxY := abZoneObservation.aCalcOutputLimit.rOutputLimitControl;
+                     abHeatZone.aTempControl.ReParam := TRUE;
+                     bLimitationActivated := FALSE;
+                  END_IF;
+            END_IF;
+         END_IF; 
+         
+         
+         abHeatZone.aTempControl(SetValue := mrSetValForZone,
+                                SetValueAbs := mrSetValForZone, 
+                                ActValue := mpZone^.prActTemp^,                   //zone is always on if cooling
+                                Enable := bZoneOn OR mpZoneRetain^.Param.opMode = KAPPL_TempOpMode_Cooling,
+                                Optimize := mpZone^.bOptimize,
+                                OptimizeAllowed := (mpZone^.Stable = KCTRL_Stable_OK) OR (NOT mpZone^.bOptiOperatingPoint),
+                                TempDiff := sv_TempDiff,
+                                //ReParam := FALSE,
+                                Param := ZoneRetainParam, 
+                                SensorOk := NOT mpZone^.pbActTempStat^,
+                                bKeepWarmActive := sv_bKeepWarmActive,
+                                bGroupHeating := sv_bGroupHeating,
+                                bUsePidOP := sv_bUsePidOP,
+                                HeatUpRamp := sv_rTemperatureRamp,
+                                MaxHeatingPower := rMaxPowerStart,
+                                EvaporationTemperature := sv_rEvaporationTemp,
+                                EvaporationTime := dEvaporationTime,   
+                                GroupHeatingFactor := sv_ZoneArray[miIndex].Data^.PWMFactor,
+                                EnableEmergencyOperation := bEnableEmOp,
+                                MaxTimeLimitingHeating := sv_dSoftstartAlarmTime,
+                                IgnoreTimeoutError := bIgnoreTimeoutError,
+                                bAnyIdentificationActive := g_bIdentifiactionActive);  
+         IF (mbIdentificationActive AND NOT abHeatZone.aTempControl.bSoftstartIdentificationActive) THEN
+            g_bIdentifiactionActive := FALSE;
+         ELSE
+            g_bIdentifiactionActive := g_bIdentifiactionActive OR abHeatZone.aTempControl.bSoftstartIdentificationActive;
+         END_IF;
+         mbIdentificationActive := abHeatZone.aTempControl.bSoftstartIdentificationActive;
+         
+         abHeatZone.aTempControl.ReParam := FALSE; 
+         mpZone^.Stable := abHeatZone.aTempControl.TempStable;
+         mpZone^.rWAct := abHeatZone.aTempControl.rWAct;
+         mpZone^.OptState := abHeatZone.aTempControl.ZoneOptimizationState;
+      
+          IF (mpZone^.bOptimize) THEN
+             abZoneObservation.aOptimizeAnalyze(bStart := mpZone^.bOptimize AND (mpZone^.OptState > KTEMP_Opt_State_NoIdent) AND (mpZone^.OptState <= KTEMP_Opt_State_SetvalStepOn),
+                                                rActTemperature := mpZone^.prActTemp^,
+                                                rControlValue := abHeatZone.aTempControl.OutputValue);
+          ELSE //IF (abHeatZone.aTempControl.NewPidParamsCalculated) THEN
+             abZoneObservation.aOptimizeAnalyze.bStart := FALSE;
+          END_IF;
+      
+         IF abHeatZone.aTempControl.EmergencyOperation THEN
+            IF abHeatZone.aTempControl.bEmergOpPossible THEN
+               abHeatZone.aTempOutput(SetPWMOut := abHeatZone.aTempControl.OutputValue,
+                                bZoneOn := bZoneOn OR mpZoneRetain^.Param.opMode = KAPPL_TempOpMode_Cooling,   //zone is always on if cooling
+                                PWMOut => bPWMOutput);
+               IF NOT bAlarmEMOP THEN
+                  SET_ALARM (Name   := erSwitchToEMOP,
+                             SubID1 := sv_DeviceId.CompId,
+                             SubID2 := sv_DeviceId.IndexId,
+                             SubID3 := miIndex);
+                  bAlarmEMOP := TRUE;
+               END_IF;
+            ELSE            
+               mpZone^.rOutputValue := mpZoneRetain^.rConstValVis; // use Value of SETTER
+               abHeatZone.aTempControl(Enable := FALSE,// disable PID controller 
+                                    ReParam := FALSE,
+                                    bKeepWarmActive := sv_bKeepWarmActive);  
+               abHeatZone.aTempOutput(SetPWMOut := mpZoneRetain^.rConstValVis,
+                                  bZoneOn := bZoneOn,
+                                  PWMOut => bPWMOutput);
+               IF NOT bAlarmEMOP THEN
+                  SET_ALARM (Name   := erSwitchToConst,
+                             SubID1 := sv_DeviceId.CompId,
+                             SubID2 := sv_DeviceId.IndexId,
+                             SubID3 := miIndex);
+                  bAlarmEMOP := TRUE;
+               END_IF;
+            END_IF;
+      
+         ELSE      
+            IF bAlarmEMOP THEN
+               bAlarmEMOP := FALSE ;           
+               RESET_ALARM  (Name   := erSwitchToEMOP,
+                             SubID1 := sv_DeviceId.CompId,
+                             SubID2 := sv_DeviceId.IndexId,
+                             SubID3 := miIndex);
+               RESET_ALARM (Name   := erSwitchToConst,
+                            SubID1 := sv_DeviceId.CompId,
+                            SubID2 := sv_DeviceId.IndexId,
+                            SubID3 := miIndex);
+            END_IF;
+
+            abHeatZone.aTempOutput(SetPWMOut := abHeatZone.aTempControl.OutputValue,
+                                   bZoneOn := bZoneOn OR mpZoneRetain^.Param.opMode = KAPPL_TempOpMode_Cooling,   //zone is always on if cooling
+                                   PWMOut => bPWMOutput);
+         END_IF;
+         
+         mpZone^.rOutputValue := abHeatZone.aTempControl.OutputValue;
+         
+         // copy optimized parameters to sv
+         IF (abHeatZone.aTempControl.NewPidParamsCalculated) THEN
+            IF sv_bUsePidOP THEN
+               mpZoneRetain^.Param.pidParamLastOpt.rKR := mpZoneRetain^.Param.pidParamOP.rKR;
+               mpZoneRetain^.Param.pidParamLastOpt.rKK := mpZoneRetain^.Param.pidParamOP.rKK;
+               mpZoneRetain^.Param.pidParamLastOpt.dTN := mpZoneRetain^.Param.pidParamOP.dTN;
+               mpZoneRetain^.Param.pidParamLastOpt.dTV := mpZoneRetain^.Param.pidParamOP.dTV;
+               mpZoneRetain^.Param.pidParamLastOpt.rCB := mpZoneRetain^.Param.pidParamOP.rCB;
+               mpZoneRetain^.Param.bOldPIDAvailable := TRUE;             
+            ELSE
+               mpZoneRetain^.Param.pidParamLastOpt.rKR := mpZoneRetain^.Param.pidParam.rKR;
+               mpZoneRetain^.Param.pidParamLastOpt.rKK := mpZoneRetain^.Param.pidParam.rKK;
+               mpZoneRetain^.Param.pidParamLastOpt.dTN := mpZoneRetain^.Param.pidParam.dTN;
+               mpZoneRetain^.Param.pidParamLastOpt.dTV := mpZoneRetain^.Param.pidParam.dTV;
+               mpZoneRetain^.Param.pidParamLastOpt.rCB := mpZoneRetain^.Param.pidParam.rCB;
+               mpZoneRetain^.Param.bOldPIDAvailable := TRUE;             
+            END_IF;             
+             
+            mpZoneRetain^.bDoOptimizationNext := FALSE;
+            IF mpZone^.bOptiOperatingPoint AND (mpZoneRetain^.ZoneType = enZoneTypeNozzle) THEN
+                sv_bUsePidOP := TRUE;
+                // SysParam only need for GroupHeating at start 
+                mpZoneRetain^.Param.pidParamOP.rKR := abHeatZone.aTempControl.optPidParams.rKR;
+                mpZoneRetain^.Param.pidParamOP.rKK := abHeatZone.aTempControl.optPidParams.rKR * 10.0; 
+                mpZoneRetain^.Param.pidParamOP.dTN := abHeatZone.aTempControl.optPidParams.dTN;
+                mpZoneRetain^.Param.pidParamOP.dTV := abHeatZone.aTempControl.optPidParams.dTV;
+                // CutBack value is needed from standard heat up optimizing
+                mpZoneRetain^.Param.pidParamOP.rCB := abHeatZone.aTempControl.optPidParams.rCB;
+                IF mpZoneRetain^.Param.pidParam.rCB >= 30.0 THEN
+                   mpZoneRetain^.Param.pidParamOP.rCB := mpZoneRetain^.Param.pidParam.rCB;
+                ELSE
+                   mpZoneRetain^.Param.pidParamOP.rCB := 30.0; 
+                END_IF;
+                mpZoneRetain^.Param.bPidOPAvailable := TRUE;
+             ELSE
+                mpZoneRetain^.Param.pidParam.rKR := abHeatZone.aTempControl.optPidParams.rKR;
+                mpZoneRetain^.Param.pidParam.rKK := abHeatZone.aTempControl.optPidParams.rKR * 10.0; 
+                mpZoneRetain^.Param.pidParam.dTN := abHeatZone.aTempControl.optPidParams.dTN;
+                mpZoneRetain^.Param.pidParam.dTV := abHeatZone.aTempControl.optPidParams.dTV;
+                mpZoneRetain^.Param.sysParam.dT  := abHeatZone.aTempControl.optSysParams.dT;
+                mpZoneRetain^.Param.sysParam.rFehler := abHeatZone.aTempControl.optSysParams.rFehler;  
+                mpZoneRetain^.Param.sysParam.rK := abHeatZone.aTempControl.optSysParams.rK;            
+                mpZoneRetain^.Param.sysParam.rN := abHeatZone.aTempControl.optSysParams.rN;
+                // cut back value is only valid, if value >= 30.0 to avoid oscillation 
+                // around cut back value in case of disturbance while operation 
+                IF (abHeatZone.aTempControl.optPidParams.rCB >= 30.0) THEN
+                   mpZoneRetain^.Param.pidParam.rCB := abHeatZone.aTempControl.optPidParams.rCB;
+                ELSE
+                   mpZoneRetain^.Param.pidParam.rCB := 30.0; 
+                END_IF;
+                // mold heating doesn't use different parameter 
+                IF mpZoneRetain^.ZoneType <> enZoneTypeNozzle THEN // mold heating doesn't use different parameter
+                   mpZoneRetain^.Param.pidParamOP := mpZoneRetain^.Param.pidParam;
+                END_IF;
+            END_IF;    
+            // Reparametrize block
+            abHeatZone.aTempControl(ReParam := TRUE,
+                                    Param := mpZoneRetain^.Param,
+                                    HeatUpRamp := sv_rTemperatureRamp,
+                                    bUsePidOP := sv_bUsePidOP,
+                                    MaxHeatingPower := rMaxPowerStart,
+                                    EvaporationTemperature := sv_rEvaporationTemp,
+                                    EvaporationTime := dEvaporationTime,
+                                    MaxTimeLimitingHeating := sv_dSoftstartAlarmTime,
+                                    rReferenceRamp := mpZoneRetain^.rReferenceRamp); 
+            IF (abHeatZone.aTempControl.Error) THEN 
+               IF abHeatZone.aTempControl.ErrorInfo = cApplPlasticsWrongTempParams THEN
+                  SET_ALARM(Name := erInvalidTempControllerSettings,
+                              SubID1 := sv_DeviceId.CompId,
+                              SubID2 := sv_DeviceId.IndexId,
+                              SubID3 := miIndex);
+               ELSE
+                  IF (NOT mbSensorAlarm) THEN
+                    SET_ALARM(Name := erZoneCalcError,
+                                SubID1 := sv_DeviceId.CompId,
+                                SubID2 := sv_DeviceId.IndexId,
+                                SubID3 := miIndex,
+                                SubID4 := abHeatZone.aTempControl.ErrorInfo);
+                  END_IF;    
+               END_IF;
+               RETURN;
+            END_IF;
+         END_IF;
+         
+         // calculate status flags
+         mpZone^.bIsOptimizing := abHeatZone.aTempControl.OptimizationActive;
+         mpZone^.bEmgOperation := abHeatZone.aTempControl.EmergencyOperation;
+      
+         fEdgeOptimizationReady(CLK := abHeatZone.aTempControl.OptimizationActive);
+         //when warmup optimization is ready, don´t heat up this zone, wait until all other zones are ready
+         IF fEdgeOptimizationReady.Q AND mpZone^.bOptimize THEN
+            heatingNotAllowed := TRUE;
+         ELSIF NOT mpZone^.bOptimize THEN
+            heatingNotAllowed := FALSE;
+         END_IF;
+   
+         // set alarm at temp.supervision fault
+         IF (abHeatZone.aTempControl.Error) THEN
+            IF abHeatZone.aTempControl.ErrorInfo = cApplPlasticsMeanValueTooLow THEN
+               SET_ALARM(Name := erMeanValueTooLow,
+                           SubID1 := sv_DeviceId.CompId,
+                           SubID2 := sv_DeviceId.IndexId,
+                           SubID3 := miIndex);
+            ELSIF abHeatZone.aTempControl.ErrorInfo = cApplPlasticsHeatingFailure THEN
+               SET_ALARM(Name := erHeatingFailure,
+                           SubID1 := sv_DeviceId.CompId,
+                           SubID2 := sv_DeviceId.IndexId,
+                           SubID3 := miIndex);               
+            ELSIF (abHeatZone.aTempControl.ErrorInfo = cApplPlasticsOptCalcFailed OR 
+                   abHeatZone.aTempControl.ErrorInfo = cApplPlasticsOptTimeout) THEN
+               SET_ALARM(Name := erOptimizationFailed,
+                           SubID1 := sv_DeviceId.CompId,
+                           SubID2 := sv_DeviceId.IndexId,
+                           SubID3 := miIndex);               
+            ELSIF abHeatZone.aTempControl.ErrorInfo = cApplPlasticsHeatingTimeout THEN
+               SET_ALARM(Name := erHeatingTimeout,
+                           SubID1 := sv_DeviceId.CompId,
+                           SubID2 := sv_DeviceId.IndexId,
+                           SubID3 := miIndex);   
+               sv_bHeatingUsed := FALSE; 
+            ELSE
+               IF (NOT mbSensorAlarm) THEN
+                    SET_ALARM(Name := erZoneCalcError,
+                                SubID1 := sv_DeviceId.CompId,
+                                SubID2 := sv_DeviceId.IndexId,
+                                SubID3 := miIndex,
+                                SubID4 := abHeatZone.aTempControl.ErrorInfo);
+               END_IF;
+            END_IF;
+         ELSE
+            IF abHeatZone.aTempControl.Warning AND 
+               abHeatZone.aTempControl.WarningInfo = cApplPlasticsHeatingTimeoutWarn THEN
+                SET_ALARM(Name := erHeatingTimeoutWarning,
+                           SubID1 := sv_DeviceId.CompId,
+                           SubID2 := sv_DeviceId.IndexId,
+                           SubID3 := miIndex);   
+            END_IF;
+             
+         END_IF;
+       END_IF;    
+   
+      enZoneModeConstant:    // constant heating
+       
+        // only do constant output if heating is on or zone is a cooling  
+        IF bZoneOn THEN 
+            mpZone^.rOutputValue := mpZoneRetain^.rConstValVis;
+        ELSE
+            mpZone^.rOutputValue := 0.0;
+        END_IF;
+        abHeatZone.aTempControl(Enable := FALSE,// disable PID controller 
+                                ReParam := FALSE,
+                                bKeepWarmActive := sv_bKeepWarmActive);  
+        abHeatZone.aTempOutput(SetPWMOut := ABS(mpZone^.rOutputValue),
+                               bZoneOn := bZoneOn,
+                               PWMOut => bPWMOutput);
+
+      enZoneModeMeasure,
+      enZoneModeDisabled:// no heating for zone
+         abHeatZone.aTempControl(Enable := FALSE, ReParam := FALSE);  // disable PID controller
+         bPWMOutput := FALSE;
+         mpZone^.rOutputValue := 0.0;
+         mpZone^.ActModeDisp := enZoneModeOff;
+         IF mpZoneRetain^.ModeVis = enZoneModeDisabled THEN
+            mpZone^.ActStateDisp := enZoneStateOK;
+         END_IF;
+      
+   END_CASE;
+   
+   (* Reset the PWM alarm if the heating/zone is deactivated *)
+   IF mbHeatOutputAlarmPWM AND NOT mbHeatOutputErrorPWM THEN
+      IF (NOT bZoneOn OR NOT mpZoneRetain^.bUsed) THEN
+         RESET_ALARM(Name := erHeatingOutputPWM,
+                     SubID1 := sv_DeviceId.CompId,
+                     SubID2 := sv_DeviceId.IndexId,
+                     SubID3 := miIndex);  
+         mbHeatOutputAlarmPWM := FALSE;
+      END_IF;
+   END_IF;
+
+   (* Output is allowed if there's no hw-error or if zone is in constant mode and output is ok *) 
+   bOutputAllowed := ((NOT mbHWError AND NOT mbHeatOutputAlarmPWM)
+                      OR (mpZoneRetain^.ModeVis = enZoneModeConstant AND NOT 
+                          (mbHeatOutputError OR mbCoolOutputError OR (mbHeatOutputErrorPWM OR mbHeatOutputAlarmPWM))))
+                      AND NOT mpZone^.bOutputNotAllowed;
+
+   
+   IF bOutputAllowed THEN
+   //OUTPUT   
+      IF mpZone^.rOutputValue > 0.0 THEN
+      //heating
+         IF mbPOHeatLinked THEN
+            //output on PO 
+            mpZone^.prOutHeatPO^ :=mpZone^.rOutputValue;            
+            mpZone^.ActModeDisp := enZoneModeHeat;
+         ELSIF mbTOHeatLinked THEN
+            //output on TO 
+            mpZone^.prOutHeatTO^ :=mpZone^.rOutputValue;            
+            mpZone^.ActModeDisp := enZoneModeHeat;
+         ELSIF mbDOHeatLinked THEN 
+            //output on DO 
+            //mpZone^.pbOutHeatDO^ := bPWMOutput;  //workaround for CR_0024932                        
+            IF sv_PWMMinPulseTime >= t#0.5s THEN
+               //synchronize display mode with digital output if min pulse time >= 0.5 sec
+               IF mpZone^.pbOutHeatDO^ THEN
+                  mpZone^.ActModeDisp := enZoneModeHeat;
+               ELSE
+                  mpZone^.ActModeDisp := enZoneModeOff;
+               END_IF;                  
+            ELSE
+               mpZone^.ActModeDisp := enZoneModeHeat;
+            END_IF;            
+         END_IF;
+         
+         IF mbTOCoolLinked THEN
+            mpZone^.prOutCoolTO^ := 0.0;
+         ELSIF mbDOCoolLinked THEN  
+            mpZone^.pbOutCoolDO^ := FALSE;
+         END_IF;
+      ELSIF mpZone^.rOutputValue < 0.0 THEN
+      //cooling  
+         IF mbPOHeatLinked THEN
+            mpZone^.prOutHeatPO^ := 0.0;         
+         ELSIF mbTOHeatLinked THEN
+            mpZone^.prOutHeatTO^ := 0.0;
+         ELSIF mbDOHeatLinked THEN  
+            mpZone^.pbOutHeatDO^ := FALSE;
+         END_IF;
+      
+         IF mbTOCoolLinked THEN
+            //output on TO 
+            mpZone^.prOutCoolTO^ := ABS(mpZone^.rOutputValue);
+            mpZone^.ActModeDisp := enZoneModeCool;
+         ELSIF mbDOCoolLinked THEN 
+            //output on DO 
+            //mpZone^.pbOutCoolDO^ := bPWMOutput;  //workaround for CR_0024932                        
+            IF sv_PWMMinPulseTime >= t#0.5s THEN
+               //synchronize display mode with digital output if min pulse time >= 0.5 sec
+               IF mpZone^.pbOutCoolDO^ THEN
+                  mpZone^.ActModeDisp := enZoneModeCool;
+               ELSE
+                  mpZone^.ActModeDisp := enZoneModeOff;
+               END_IF;                  
+            ELSE
+               mpZone^.ActModeDisp := enZoneModeCool;
+            END_IF;
+         END_IF;
+      ELSE
+        //Output is 0
+        IF mbPOHeatLinked THEN
+            mpZone^.prOutHeatPO^ := 0.0;         
+        ELSIF mbTOHeatLinked THEN
+            //output on TO 
+            mpZone^.prOutHeatTO^ := 0.0;
+        ELSIF mbDOHeatLinked THEN 
+            //output on DO 
+            mpZone^.pbOutHeatDO^ := FALSE;
+        END_IF;
+         
+        IF mbTOCoolLinked THEN
+            mpZone^.prOutCoolTO^ := 0.0;
+        ELSIF mbDOCoolLinked THEN  
+            mpZone^.pbOutCoolDO^ := FALSE;
+        END_IF; 
+        mpZone^.ActModeDisp := enZoneModeOff;
+      END_IF;
+   END_IF;
+   IF mpZone^.bSensorOK THEN    //ignored when no TI-sensor configured
+       mrZoneActValueSwo := mpZone^.prActTemp^;
+   END_IF;    
+END_IF;   
+
+
+IF NOT mbZoneInitOK OR NOT bOutputAllowed THEN   
+
+//zone not ready for operation -> stop output 
+   IF mbPOHeatLinked THEN
+      mpZone^.prOutHeatPO^ := 0.0;
+   END_IF;
+   IF mbTOHeatLinked THEN
+      mpZone^.prOutHeatTO^ := 0.0;
+   END_IF;   
+   IF mbDOHeatLinked THEN  
+      mpZone^.pbOutHeatDO^ := FALSE;
+   END_IF;
+   
+   IF mbTOCoolLinked THEN
+      mpZone^.prOutCoolTO^ := 0.0;
+   END_IF;   
+   IF mbDOCoolLinked THEN  
+      mpZone^.pbOutCoolDO^ := FALSE;
+   END_IF;
+   //reset vis states
+   mpZone^.ActModeDisp := enZoneModeOff;
+   mpZone^.rOutputValue := 0.0;
+   
+   IF mbHWError THEN
+      mpZone^.ActStateDisp := enZoneStateErrorSensor;  
+   END_IF;
+ELSIF NOT mbHWError THEN
+    
+   mpZone^.ActStateDisp := enZoneStateOK;
+END_IF;
+   
+
+@END_Body 
+
+@@@BEG_Comment@@@ 
+@TL(1)
+This Algorithm Block is for controlling a heating zone.
+@@@END_Comment@@@ 
+
+@BEG_Body 
+@TL(18)
+(**************************************** WARNING ********************************************
+ *** The KEBA Kemro K2 System including software is not intended for safety control tasks! ***
+ ***                       For further information see Comment tab!                        ***
+ *********************************************************************************************)
+
+IF NOT mbInitDone THEN RETURN; END_IF;
+
+//zone is ready for operation if sv_Zone is linked, Zone is used (sv_iNumberOfZones) and HW config is ok
+mbZoneInitOK := sv_ZoneArray[miIndex].bLinked AND sv_ZoneArray[miIndex].DataRetain^.bUsed AND sv_ZoneArray[miIndex].Data^.bHWOK;
+
+IF mbZoneInitOK THEN
+   START_PROCESS_ALGORITHM(paCheckToleranceError);
+ELSE
+   STOP_PROCESS_ALGORITHM(paCheckToleranceError);
+   // reset tolerance error if not checked
+   mpZone^.bToleranceError := FALSE; 
+END_IF;
+
+@END_Body 
+
+@@@BEG_Comment@@@ 
+@TL(0)
+
+@@@END_Comment@@@ 
+
+@BEG_Body 
+@TL(14)
+(**************************************** WARNING ********************************************
+ *** The KEBA Kemro K2 System including software is not intended for safety control tasks! ***
+ ***                       For further information see Comment tab!                        ***
+ *********************************************************************************************)
+IF NOT mbInitDone THEN RETURN; END_IF;
+
+IF mbTILinked AND miIndex > 0  THEN
+   //writing sensortype to hw
+   sv_ZoneArray[miIndex].Data^.pHWSensorType^ := sv_ZoneArray[miIndex].DataRetain^.SensorTypeVis;
+END_IF;
+
+sv_bAnyTempSensorTypeChanged := TRUE;   // notifies ABThermoWireControl, that any temperature sensor type changed. 
+
+
+@END_Body 
+
+@@@BEG_Comment@@@ 
+@TL(0)
+
+@@@END_Comment@@@ 
+
+@BEG_Body 
+@TL(12)
+(**************************************** WARNING ********************************************
+ *** The KEBA Kemro K2 System including software is not intended for safety control tasks! ***
+ ***                       For further information see Comment tab!                        ***
+ *********************************************************************************************)
+IF NOT mbInitDone THEN RETURN; END_IF;
+
+//reparam tempgroup
+sv_bReParamGroup := TRUE;
+
+//reparam zone
+mbReParam := TRUE;
+
+@END_Body 
+
+@@@BEG_Comment@@@ 
+@TL(0)
+
+@@@END_Comment@@@ 
+
+@BEG_Body 
+@TL(9)
+(**************************************** WARNING ********************************************
+ *** The KEBA Kemro K2 System including software is not intended for safety control tasks! ***
+ ***                       For further information see Comment tab!                        ***
+ *********************************************************************************************)
+IF NOT mbInitDone THEN RETURN; END_IF;
+
+//reparam tempgroup
+sv_bReParamGroup := TRUE;
+
+@END_Body 
+
+@@@BEG_Comment@@@ 
+@TL(0)
+
+@@@END_Comment@@@ 
+
+@BEG_Body 
+@TL(123)
+(**************************************** WARNING ********************************************
+ *** The KEBA Kemro K2 System including software is not intended for safety control tasks! ***
+ ***                       For further information see Comment tab!                        ***
+ *********************************************************************************************)
+IF NOT mbInitDone THEN RETURN; END_IF;
+
+//Mode is disabled (switched off) when setter mode is activated for hotrunner
+//setter not relevant for fast zones (hotrunner nozzle), but active if zone for heating mold block
+IF (mpZoneRetain^.ModeVis = enZoneModeConstant) AND (GET_MY_FU_NAME() = "HeatingMold1") AND
+    mpZoneRetain^.bIsHotrunner THEN
+    mpZoneRetain^.ModeVis := enZoneModeDisabled;
+END_IF;
+
+IF mpZoneRetain^.ModeVis = enZoneModeConstant THEN
+    //setter mode
+    IF (mbDOCoolLinked OR mbTOCoolLinked) AND (mbDOHeatLinked OR mbTOHeatLinked) THEN
+        //heating and cooling, output: +/- 100%
+        mpZoneRetain^.Param.opMode := KAPPL_TempOpMode_HeatingCooling;     
+        mpZoneRetain^.Param.rMinY := -100.0;
+        mpZoneRetain^.Param.rMaxY := 100.0;
+    ELSIF mbDOCoolLinked OR mbTOCoolLinked THEN
+        //cooling, output: -100% - 0%
+        //only if a cooloutput and no heatoutput configured
+        mpZoneRetain^.Param.opMode := KAPPL_TempOpMode_Cooling;
+        mpZoneRetain^.Param.rMinY := -100.0;
+        mpZoneRetain^.Param.rMaxY := 0.0;
+    ELSE
+        //heating, output: 0-100%
+        //if a heatoutput is configured
+        mpZoneRetain^.Param.opMode := KAPPL_TempOpMode_Heating;
+        mpZoneRetain^.Param.rMinY := 0.0;
+        mpZoneRetain^.Param.rMaxY := 100.0;
+    END_IF;
+    
+    //verify if init const value out of tolerance
+    IF (mpZoneRetain^.rConstValVis < mpZoneRetain^.Param.rMinY) OR
+       (mpZoneRetain^.rConstValVis > mpZoneRetain^.Param.rMaxY) THEN
+        SET_ALARM(Name := erInvalidSetterSettings,
+                  SubID1 := sv_DeviceId.CompId,
+                  SubID2 := sv_DeviceId.IndexId,
+                  SubID3 := miIndex);
+    END_IF;
+    
+ELSE
+    IF mpZoneRetain^.ModeVis = enZoneModePID3pt THEN
+        //PID 3Point controller: heating and cooling, output: +/- 100%
+        mpZoneRetain^.Param.opMode := KAPPL_TempOpMode_HeatingCooling;     
+        mpZoneRetain^.Param.rMinY := -100.0;
+        mpZoneRetain^.Param.rMaxY := 100.0;
+    ELSIF (mbDOCoolLinked OR mbTOCoolLinked)  AND NOT (mbDOHeatLinked OR mbTOHeatLinked) THEN
+        //PID 2Point controller: cooling, output: 0- -100%
+        //only if a cooloutput and no heatoutput configured
+        mpZoneRetain^.Param.opMode := KAPPL_TempOpMode_Cooling;
+        mpZoneRetain^.Param.rMinY := -100.0;
+        mpZoneRetain^.Param.rMaxY := 0.0;
+    ELSE
+        //PID 2Point controller: heating, output: 0-100%
+        //if a heatoutput is configured
+        mpZoneRetain^.Param.opMode := KAPPL_TempOpMode_Heating;
+        mpZoneRetain^.Param.rMinY := 0.0;
+        mpZoneRetain^.Param.rMaxY := 100.0;
+    END_IF;
+    
+    RESET_ALARM(Name := erInvalidSetterSettings,
+                SubID1 := sv_DeviceId.CompId,
+                SubID2 := sv_DeviceId.IndexId,
+                SubID3 := miIndex);
+    
+END_IF;    
+
+// Automatic set of GroupHeating modus
+IF mpZoneRetain^.ModeVis = enZoneModeDisabled
+    OR (NOT mpZoneRetain^.bUsed)
+    OR (NOT mpZone^.bSensorOK)  //when TI sensor not available
+    OR mpZoneRetain^.ModeVis =enZoneModeMeasure 
+    OR mpZoneRetain^.ModeVis = enZoneModeConstant
+    OR (mbDOCoolLinked OR mbTOCoolLinked)  AND NOT (mbDOHeatLinked OR mbTOHeatLinked) THEN
+    mpZoneRetain^.Param.bZoneUsedForGroupHeating := FALSE;
+ELSE
+    mpZoneRetain^.Param.bZoneUsedForGroupHeating := TRUE;
+END_IF;
+
+
+IF mbSensorAlarm AND
+   (mpZoneRetain^.ModeVis = enZoneModeConstant OR 
+    mpZoneRetain^.ModeVis = enZoneModeDisabled )  THEN
+   //reset sensorerror alarm if mode is changed to constant or off
+      RESET_ALARM(Name := erSensor,
+               SubID1 := sv_DeviceId.CompId,
+               SubID2 := sv_DeviceId.IndexId,
+               SubID3 := miIndex);
+   mbSensorAlarm := FALSE;
+ELSIF mbSensorError AND
+   NOT mbSensorAlarm AND
+   mpZoneRetain^.ModeVis <> enZoneModeConstant AND 
+   mpZoneRetain^.ModeVis <> enZoneModeDisabled THEN 
+   
+   SET_ALARM(Name := erSensor,
+            SubID1 := sv_DeviceId.CompId,
+            SubID2 := sv_DeviceId.IndexId,
+            SubID3 := miIndex,
+            Param1 := msHWPath);
+   mbSensorAlarm := TRUE;
+END_IF;
+
+//Set alarm if TI sensor is not configured and mode is not setter or disabled
+IF mpZone^.bHWOK AND (NOT mpZone^.bSensorOK) THEN
+   IF mpZoneRetain^.ModeVis <> enZoneModeDisabled AND mpZoneRetain^.ModeVis <> enZoneModeConstant THEN
+      SET_ALARM(Name := erSensorNotConfig,
+                SubID1 := sv_DeviceId.CompId,
+                SubID2 := sv_DeviceId.IndexId,
+                SubID3 := miIndex);
+   ELSE
+      RESET_ALARM(Name := erSensorNotConfig,
+                SubID1 := sv_DeviceId.CompId,
+                SubID2 := sv_DeviceId.IndexId,
+                SubID3 := miIndex);
+   END_IF;    
+END_IF;
+
+mbReParam := TRUE;
+
+
+@END_Body 
+
+@@@BEG_Comment@@@ 
+@TL(0)
+
+@@@END_Comment@@@ 
+
+@BEG_Body 
+@TL(3)
+//reparam zone
+mbReParam := TRUE;
+
+@END_Body 
+
+@@@BEG_Comment@@@ 
+@TL(0)
+
+@@@END_Comment@@@ 
+
+@BEG_Body 
+@TL(127)
+(**************************************** WARNING ********************************************
+ *** The KEBA Kemro K2 System including software is not intended for safety control tasks! ***
+ ***                       For further information see Comment tab!                        ***
+ *********************************************************************************************)
+IF NOT mbInitDone THEN RETURN; END_IF;
+
+//error on tempsensor
+IF mbTILinked AND 
+   mpbTIState^ AND 
+   mpZoneRetain^.bUsed THEN
+    
+    mbSensorError := TRUE;
+   
+   IF mpZoneRetain^.ModeVis <> enZoneModeConstant AND 
+      mpZoneRetain^.ModeVis <> enZoneModeDisabled AND 
+      NOT mbSensorAlarm THEN
+      
+      
+      IF (sv_OperationMode = nFullAutomatic OR
+          sv_OperationMode = nHalfAutomatic            ) AND
+         (mpZoneRetain^.ModeVis = enZoneModePID2ptEM OR
+          mpZoneRetain^.ModeVis = enZoneModePID3ptEM   )
+         THEN
+         ; // no alarm because EmergancyOperation possible
+      ELSE      
+      //only set sensorerror alarm if mode is not constant and not off
+         mbSensorAlarm := TRUE;
+         SET_ALARM(Name := erSensor,
+                SubID1 := sv_DeviceId.CompId,
+                SubID2 := sv_DeviceId.IndexId,
+                SubID3 := miIndex,
+                Param1 := msHWPath);
+   END_IF;
+   END_IF;
+ELSIF mbSensorError THEN
+   mbSensorError := FALSE;
+   
+   IF mbSensorAlarm THEN
+         RESET_ALARM(Name := erSensor,
+                  SubID1 := sv_DeviceId.CompId,
+                  SubID2 := sv_DeviceId.IndexId,
+                  SubID3 := miIndex);
+      mbSensorAlarm := FALSE;
+   END_IF;
+END_IF;
+
+//error on heat output
+IF (mbTOHeatLinked AND mpbTOHeatState^ OR
+    mbDOHeatLinked AND mpbDOHeatState^) AND mpZoneRetain^.bUsed THEN
+
+    mbHeatOutputError := TRUE;
+    SET_ALARM(Name := erHeatingOutput,
+                SubID1 := sv_DeviceId.CompId,
+                SubID2 := sv_DeviceId.IndexId,
+                SubID3 := miIndex);
+ELSIF mbHeatOutputError THEN
+    
+    mbHeatOutputError := FALSE;
+    RESET_ALARM(Name := erHeatingOutput,
+                SubID1 := sv_DeviceId.CompId,
+                SubID2 := sv_DeviceId.IndexId,
+                SubID3 := miIndex);
+    
+END_IF;
+
+//error on PO heating output (e.g. cable break)
+IF (mbPOHeatLinked AND mpbPOHeatState^) AND mpZoneRetain^.bUsed THEN
+    // In case of a cable break, the stat flag gets set.
+    // The output has to be set to zero in order to clear the flag again.
+    // The alarm has to be 
+    mbHeatOutputErrorPWM := TRUE;
+    IF NOT mbHeatOutputAlarmPWM THEN
+        SET_ALARM(Name := erHeatingOutputPWM,
+                SubID1 := sv_DeviceId.CompId,
+                SubID2 := sv_DeviceId.IndexId,
+                SubID3 := miIndex);
+         mbHeatOutputAlarmPWM := TRUE;
+    END_IF;
+ELSIF mbHeatOutputErrorPWM THEN
+   // reset in main loop
+   mbHeatOutputErrorPWM := FALSE;
+END_IF;
+
+
+//error on cool output
+IF (mbTOCoolLinked AND mpbTOCoolState^ OR
+    mbDOCoolLinked AND mpbDOCoolState^) AND mpZoneRetain^.bUsed THEN
+    mbCoolOutputError := TRUE;
+    SET_ALARM(Name := erCoolingOutput,
+                SubID1 := sv_DeviceId.CompId,
+                SubID2 := sv_DeviceId.IndexId,
+                SubID3 := miIndex);
+ELSIF mbCoolOutputError  THEN
+    
+    mbCoolOutputError := FALSE;
+    RESET_ALARM(Name := erCoolingOutput,
+                SubID1 := sv_DeviceId.CompId,
+                SubID2 := sv_DeviceId.IndexId,
+                SubID3 := miIndex);
+END_IF;
+
+// error on power sensor input
+IF (mbPWILinked AND mpbPWIState^) AND mpZoneRetain^.bUsed THEN
+   
+   // PWRIN sensor error combines VOLTIN/CURRIN sensor error
+   mbPowerError := TRUE;  
+   
+   SET_ALARM(Name := erSensorPower,
+            SubID1 := sv_DeviceId.CompId,
+            SubID2 := sv_DeviceId.IndexId,
+            SubID3 := miIndex);
+    
+  
+ELSIF mbPowerError THEN
+
+   RESET_ALARM(Name := erSensorPower,
+            SubID1 := sv_DeviceId.CompId,
+            SubID2 := sv_DeviceId.IndexId,
+            SubID3 := miIndex);   
+   mbPowerError := FALSE;
+  
+END_IF;
+
+mbHWError := mbSensorError OR (mbHeatOutputError OR mbHeatOutputErrorPWM) OR mbCoolOutputError OR mbPowerError;
+
+
+
+@END_Body 
+
+@@@BEG_Comment@@@ 
+@TL(0)
+
+@@@END_Comment@@@ 
+
+@BEG_Body 
+@TL(15)
+(**************************************** WARNING ********************************************
+ *** The KEBA Kemro K2 System including software is not intended for safety control tasks! ***
+ ***                       For further information see Comment tab!                        ***
+ *********************************************************************************************)
+
+(* Zone tolerance supervision *)  
+IF mpZone^.bSensorOK THEN   //tolerance ignored, when no TI sensor 
+    mpZone^.bToleranceError :=  NOT mbSensorError AND
+                                mpZoneRetain^.ModeVis <> enZoneModeDisabled AND
+                                mpZoneRetain^.ModeVis <> enZoneModeMeasure AND
+                                mpZoneRetain^.ModeVis <> enZoneModeConstant AND
+                               (mpZoneRetain^.rSetValVis - mpZone^.prActTemp^ > mpZoneRetain^.rLowerTolVis OR
+                                mpZone^.prActTemp^ - mpZoneRetain^.rSetValVis > mpZoneRetain^.rUpperTolVis);  
+END_IF;
+
+@END_Body 
+
+@@@BEG_Comment@@@ 
+@TL(4)
+attention:
+paCheckToleranceError must be executed before ABGroupControl.aRun is called;
+otherwise bToleranceError is not actual when it is needed.
+
+@@@END_Comment@@@ 
+
+@BEG_Body 
+@TL(23)
+IF NOT mbInitDone THEN RETURN; END_IF;
+
+//error on tempsensor
+IF mbTILinked AND 
+   mpbTIState^ AND 
+   mpZoneRetain^.bUsed THEN
+    
+   mbSensorError := TRUE;
+   IF sv_OperationMode <> nHalfAutomatic AND
+      sv_OperationMode <> nFullAutomatic AND 
+      NOT mbSensorAlarm AND 
+      (mpZoneRetain^.ModeVis <> enZoneModeConstant) AND 
+      (mpZoneRetain^.ModeVis <> enZoneModeDisabled) THEN
+
+      SET_ALARM(Name := erSensor,
+                SubID1 := sv_DeviceId.CompId,
+                SubID2 := sv_DeviceId.IndexId,
+                SubID3 := miIndex,
+                Param1 := msHWPath);
+   END_IF;
+END_IF;
+
+
+@END_Body 
+
+@@@BEG_Comment@@@ 
+@TL(6)
+When operation mode changes from eg. nHalfAutomatic or. nFullAutomatic to nManual or nSetup,
+the state of the sensor must be checked again.
+In Full / HalfAutomatic sensor failure can be ingnored in
+"enZoneModePID2ptEM" and "enZoneModePID3ptEM" (=EmergancyOperation).
+But when switch to Manual / Setup. Sensor failure must be displayed.
+
+@@@END_Comment@@@ 
+
+@BEG_Body 
+@TL(19)
+
+IF NOT mbInitDone THEN RETURN; END_IF;
+
+IF mpZoneRetain^.ModeVis = enZoneModeConstant THEN  //setter mode activ
+    //verify if init const value out of range
+    IF (mpZoneRetain^.rConstValVis < mpZoneRetain^.Param.rMinY) OR
+       (mpZoneRetain^.rConstValVis > mpZoneRetain^.Param.rMaxY) THEN
+        SET_ALARM(Name := erInvalidSetterSettings,
+                  SubID1 := sv_DeviceId.CompId,
+                  SubID2 := sv_DeviceId.IndexId,
+                  SubID3 := miIndex);
+    ELSE
+        RESET_ALARM(Name := erInvalidSetterSettings,
+                    SubID1 := sv_DeviceId.CompId,
+                    SubID2 := sv_DeviceId.IndexId,
+                    SubID3 := miIndex);
+    END_IF;
+END_IF;
+
+@END_Body 
+
+@@@BEG_Comment@@@ 
+@TL(0)
+
+@@@END_Comment@@@ 
+
+@BEG_Body 
+@TL(20)
+IF (mpZoneRetain^.bIsHotrunner) THEN
+   mpZoneRetain^.ZoneType := enZoneTypeHotrunner;
+   mpZoneRetain^.bDoOptimizationNext := FALSE; 
+   IF (mpZoneRetain^.ModeVis = enZoneModeConstant) AND (GET_MY_FU_NAME() = "HeatingMold1") THEN
+      mpZoneRetain^.ModeVis := enZoneModeDisabled;
+   END_IF;    
+   dEvaporationTime := sv_dEvaporationTime;
+ELSE    
+   IF (GET_MY_FU_NAME() = "HeatingMold1") THEN
+   mpZoneRetain^.ZoneType := enZoneTypeBlock;
+      mpZoneRetain^.bDoOptimizationNext := TRUE; 
+   ELSE    
+      mpZoneRetain^.ZoneType := enZoneTypeNozzle;
+      mpZoneRetain^.bDoOptimizationNext := FALSE; 
+   END_IF;    
+   dEvaporationTime := sv_dEvaporationTimeBlock;
+END_IF;
+mbReParam := TRUE;
+
+
+@END_Body 
+
+@@@BEG_Comment@@@ 
+@TL(0)
+
+@@@END_Comment@@@ 
+
+@BEG_Body 
+@TL(6)
+IF (mpZoneRetain^.bIsHotrunner) THEN
+   dEvaporationTime := sv_dEvaporationTime;
+ELSE    
+   dEvaporationTime := sv_dEvaporationTimeBlock;
+END_IF;
+
+@END_Body 
+
+@@@BEG_Comment@@@ 
+@TL(0)
+
+@@@END_Comment@@@ 
+@END_Body 
+
+@END_Contents 

@@ -1,0 +1,1350 @@
+IMPORT_OVER_LISTFILE
+ GET_SYNC_REFTO
+, cCompTieBars
+, cMoveTieBarTopFront
+, cMoveBwd
+, cMoveFwd
+, FBGetSimulationSource
+, tsRequiredPumps
+, tyNumberOfDevices
+, ABForceAnalog
+, ABForceDigital
+, KSYS_Status
+, FBGetRequiredPumps
+
+END_IMPORT
+
+ALGORITHM_BLOCK ABTieBarSimu #DUMMY_EDIT_BLOCK
+
+SYSTEM_VAR
+ sv_bSimulate : BOOL;
+ sv_bInitStart : BOOL;
+ sv_bInitDone : BOOL;
+ sv_NumberOfDevices : tyNumberOfDevices;
+END_VAR
+
+SYSTEM_OBJECT
+ PU_Task_13 : TASK;
+ TaskSim : TASK;
+ TaskAnalog : TASK;
+END_OBJECT
+
+VAR
+ fbGetSimulationSource : FBGetSimulationSource;
+ mpPumpsFwd : REFTO tsRequiredPumps;
+ mpPumpsBwd : REFTO tsRequiredPumps;
+ mprAI_TieBarTopFront : REFTO REAL;
+ mprAI_TieBarTopRear : REFTO REAL;
+ mprAI_TieBarBottomRear : REFTO REAL;
+ mprAI_TieBarBottomFront : REFTO REAL;
+ mpbDO_TieBarTopFrontFwd : REFTO BOOL;
+ mpbDO_TieBarTopRearFwd : REFTO BOOL;
+ mpbDO_TieBarBottomRearFwd : REFTO BOOL;
+ mpbDO_TieBarBottomFrontFwd : REFTO BOOL;
+ mpbDO_TieBarTopFrontBwd : REFTO BOOL;
+ mpbDO_TieBarTopRearBwd : REFTO BOOL;
+ mpbDO_TieBarBottomRearBwd : REFTO BOOL;
+ mpbDO_TieBarBottomFrontBwd : REFTO BOOL;
+ mbAITieBarTopFrontLinked : BOOL;
+ mbAITieBarTopRearLinked : BOOL;
+ mbAITieBarBottomRearLinked : BOOL;
+ mbAITieBarBottomFrontLinked : BOOL;
+ mprVelocityFwd : REFTO REAL;
+ mprVelocityBwd : REFTO REAL;
+ abForcePosTopRear : ABForceAnalog;
+ abForcePosTopFront : ABForceAnalog;
+ abForcePosBottomRear : ABForceAnalog;
+ abForcePosBottomFront : ABForceAnalog;
+ abForceClampCylFwdEnd : ABForceDigital;
+ abForceClampCylBwdEnd : ABForceDigital;
+ mpbFwdToStandStill : REFTO BOOL;
+ mpbHighPresMoldOpenActive : REFTO BOOL;
+ abForceMoldPosition : ABForceAnalog;
+ mprAI_MoldPos : REFTO REAL;
+END_VAR
+
+POSTUPDATE_ALGORITHM pStart ON PU_Task_13 WITH sv_bSimulate,sv_bInitStart
+
+#BEGIN_EDIT_BLOCK
+(**************************************** WARNING ********************************************
+ *** The KEBA Kemro K2 System including software is not intended for safety control tasks! ***
+ ***                       For further information see Comment tab!                        ***
+ *********************************************************************************************)
+
+IF sv_bSimulate AND (sv_NumberOfDevices[cCompTieBars] <> 0) THEN
+   START_PROCESS_ALGORITHM(paSimulate);
+END_IF;    
+
+
+;#END_EDIT_BLOCK END_ALGORITHM
+
+PROCESS_ALGORITHM paSimulate ON TaskAnalog
+
+
+VAR
+ rCylDivision : REAL := 0.01;
+ rTieBarRaw : REAL;
+ rCylTimeFor10V : REAL := 2.0;
+ dCycleTime : TIME;
+ rCycleTime : REAL;
+ bStartValuesSaved : BOOL;
+ rTopFrontVoltage : REAL;
+ rTopRearVoltage : REAL;
+ rBottomFrontVoltage : REAL;
+ rBottomRearVoltage : REAL;
+ rDiffDuringStandStillDetection : REAL := 1.0;
+ rMoldPosRaw : REAL;
+END_VAR
+
+(* IecGraph-Code *)
+
+(* init step *)
+INITIAL_STEP INIT:
+aInit (P);
+END_STEP
+
+
+(* steps *)
+STEP SIM:
+aSimulate (N);
+END_STEP
+
+STEP STOP:
+aStopSimu (P);
+END_STEP
+
+
+(* transitions *)
+TRANSITION SimRequired (* SimRequired *) FROM INIT TO SIM :=  #BEGIN_EDIT_BLOCK
+sv_bSimulate
+;#END_EDIT_BLOCK
+END_TRANSITION
+
+TRANSITION StpSimRequired (* StpSimRequired *) FROM SIM TO STOP :=  #BEGIN_EDIT_BLOCK
+NOT sv_bSimulate
+;#END_EDIT_BLOCK
+END_TRANSITION
+
+TRANSITION Return (* Return *) FROM STOP TO SIM :=  #BEGIN_EDIT_BLOCK
+TRUE
+;#END_EDIT_BLOCK
+END_TRANSITION
+
+(* end IecGraph-Code *)
+(* sfc-code *)
+
+(* stand alone actions *)
+ACTION aInit: #BEGIN_EDIT_BLOCK
+(**************************************** WARNING ********************************************
+ *** The KEBA Kemro K2 System including software is not intended for safety control tasks! ***
+ ***                       For further information see Comment tab!                        ***
+ *********************************************************************************************)
+
+dCycleTime :=  GET_TASK_INTERVAL();
+rCycleTime := (LINT_TO_REAL(TIME_TO_LINT(dCycleTime))) / 1000000.0;
+rCylDivision := 1.0 / rCylTimeFor10V * rCycleTime;
+
+abForceClampCylFwdEnd.aInit('TieBars1.di_ClampCylFwdEnd');
+abForceClampCylBwdEnd.aInit('TieBars1.di_ClampCylBwdEnd');
+abForceClampCylFwdEnd.aSetForceValue(TRUE);
+abForceClampCylBwdEnd.aSetForceValue(TRUE);
+
+//after start up position should not be out of limits
+abForcePosTopFront.aInit(Name := 'TieBars1.ai_CylPosTopFront');
+abForcePosTopRear.aInit(Name := 'TieBars1.ai_CylPosTopRear');
+abForcePosBottomFront.aInit(Name := 'TieBars1.ai_CylPosBottomFront');
+abForcePosBottomRear.aInit(Name := 'TieBars1.ai_CylPosBottomRear');
+abForcePosTopFront.aSetForceValue(5.0);
+abForcePosTopRear.aSetForceValue(5.0);
+abForcePosBottomFront.aSetForceValue(5.0);
+abForcePosBottomRear.aSetForceValue(5.0);
+
+abForceMoldPosition.aInit(Name := 'Mold1.ai_Position');
+
+;#END_EDIT_BLOCK END_ACTION (*aInit*)
+ACTION aSimulate: #BEGIN_EDIT_BLOCK
+(**************************************** WARNING ********************************************
+ *** The KEBA Kemro K2 System including software is not intended for safety control tasks! ***
+ ***                       For further information see Comment tab!                        ***
+ *********************************************************************************************)
+
+IF mpbFwdToStandStill^ THEN
+   IF NOT bStartValuesSaved THEN
+      //save actual voltages at the beginning of fwd to standstill movement
+      rTopFrontVoltage := mprAI_TieBarTopFront^;
+      rTopRearVoltage := mprAI_TieBarTopRear^;
+      rBottomFrontVoltage := mprAI_TieBarBottomFront^;
+      rBottomRearVoltage := mprAI_TieBarBottomRear^;
+      bStartValuesSaved := TRUE;
+   END_IF;
+ELSE
+   bStartValuesSaved := FALSE;
+END_IF;
+
+
+//Tiebar top front 
+IF mbAITieBarTopFrontLinked THEN
+   // when sensor broken                                    
+   IF mprAI_TieBarTopFront^ > 10.0 THEN
+      abForcePosTopFront.aSetForceValue(10.0);
+   ELSIF mprAI_TieBarTopFront^ < 0.0 THEN
+      abForcePosTopFront.aSetForceValue(0.0);
+   ELSE
+      //normal movement simulation  
+      IF mpbDO_TieBarTopFrontBwd^ THEN
+         rTieBarRaw := mprAI_TieBarTopFront^ + MUL(rCylDivision, mprVelocityBwd^);                           
+         abForcePosTopFront.aSetForceValue(MIN(rTieBarRaw,10.0));      
+      ELSIF mpbDO_TieBarTopFrontFwd^ THEN
+         rTieBarRaw := mprAI_TieBarTopFront^ - MUL(rCylDivision, mprVelocityBwd^);   
+         IF mpbFwdToStandStill^ THEN
+            //limit position change during standstill detection
+            rTieBarRaw := MAX(rTieBarRaw, (rTopFrontVoltage - rDiffDuringStandStillDetection)); 
+         END_IF;                           
+         abForcePosTopFront.aSetForceValue(MAX(rTieBarRaw,0.0));     
+      END_IF;
+   END_IF;
+END_IF; 
+
+//Tiebar top rear 
+IF mbAITieBarTopRearLinked THEN
+   // when sensor broken
+   IF mprAI_TieBarTopRear^ > 10.0 THEN
+      abForcePosTopRear.aSetForceValue(10.0);
+   ELSIF mprAI_TieBarTopRear^ < 0.0 THEN
+      abForcePosTopRear.aSetForceValue(0.0);
+   ELSE
+      //normal movement simulation      
+      IF mpbDO_TieBarTopRearBwd^ THEN
+         rTieBarRaw := mprAI_TieBarTopRear^ + MUL(rCylDivision, mprVelocityBwd^); 
+         abForcePosTopRear.aSetForceValue(MIN(rTieBarRaw,10.0));        
+      ELSIF mpbDO_TieBarTopRearFwd^ THEN
+         rTieBarRaw := mprAI_TieBarTopRear^ - MUL(rCylDivision, mprVelocityFwd^); 
+         IF mpbFwdToStandStill^ THEN
+            //limit position change during standstill detection
+            rTieBarRaw := MAX(rTieBarRaw, (rTopRearVoltage - rDiffDuringStandStillDetection)); 
+         END_IF;
+         abForcePosTopRear.aSetForceValue(MAX(rTieBarRaw,0.0));
+      END_IF;
+   END_IF;
+END_IF;
+
+//Tiebar bottom rear 
+IF mbAITieBarBottomRearLinked THEN
+   // when sensor broken
+   IF mprAI_TieBarBottomRear^ > 10.0 THEN
+      abForcePosBottomRear.aSetForceValue(10.0); 
+   ELSIF mprAI_TieBarBottomRear^ < 0.0 THEN
+      abForcePosBottomRear.aSetForceValue(0.0);
+   ELSE
+      //normal movement simulation  
+      IF mpbDO_TieBarBottomRearBwd^ THEN
+         rTieBarRaw := mprAI_TieBarBottomRear^ + MUL(rCylDivision, mprVelocityBwd^); 
+         abForcePosBottomRear.aSetForceValue(MIN(rTieBarRaw,10.0));          
+      ELSIF mpbDO_TieBarBottomRearFwd^ THEN
+         rTieBarRaw := mprAI_TieBarBottomRear^ - MUL(rCylDivision, mprVelocityFwd^); 
+         IF mpbFwdToStandStill^ THEN
+            //limit position change during standstill detection
+            rTieBarRaw := MAX(rTieBarRaw, (rBottomRearVoltage - rDiffDuringStandStillDetection)); 
+         END_IF;
+         abForcePosBottomRear.aSetForceValue(MAX(rTieBarRaw,0.0));
+      END_IF;
+   END_IF;
+END_IF;
+
+//Tiebar bottom front 
+IF mbAITieBarBottomFrontLinked THEN
+   // when sensor broken
+   IF mprAI_TieBarBottomFront^ > 10.0 THEN
+      abForcePosBottomFront.aSetForceValue(10.0);
+   ELSIF mprAI_TieBarBottomFront^ < 0.0 THEN
+      abForcePosBottomFront.aSetForceValue(0.0);
+   ELSE
+      //normal movement simulation  
+      IF mpbDO_TieBarBottomFrontBwd^ THEN
+         rTieBarRaw := mprAI_TieBarBottomFront^ + MUL(rCylDivision, mprVelocityBwd^);                             
+         abForcePosBottomFront.aSetForceValue(MIN(rTieBarRaw,10.0));
+      ELSIF mpbDO_TieBarBottomFrontFwd^ THEN
+         rTieBarRaw := mprAI_TieBarBottomFront^ - MUL(rCylDivision, mprVelocityFwd^); 
+         IF mpbFwdToStandStill^ THEN
+            //limit position change during standstill detection
+            rTieBarRaw := MAX(rTieBarRaw, (rBottomFrontVoltage - rDiffDuringStandStillDetection)); 
+         END_IF;
+         abForcePosBottomFront.aSetForceValue(MAX(rTieBarRaw,0.0));
+      END_IF;
+   END_IF;
+END_IF;
+
+//simulate a slowly increasing mold position during high pressure mold open
+IF mpbHighPresMoldOpenActive^ THEN
+   rMoldPosRaw := mprAI_MoldPos^ + (MUL(rCylDivision,mprVelocityBwd^) / 10.0);
+   abForceMoldPosition.aSetForceValue(MIN(rMoldPosRaw,10.0));
+END_IF;
+
+;#END_EDIT_BLOCK END_ACTION (*aSimulate*)
+ACTION aStopSimu: #BEGIN_EDIT_BLOCK
+(**************************************** WARNING ********************************************
+ *** The KEBA Kemro K2 System including software is not intended for safety control tasks! ***
+ ***                       For further information see Comment tab!                        ***
+ *********************************************************************************************)
+
+IF mbAITieBarTopFrontLinked THEN
+   abForcePosTopFront.aUnforce();
+END_IF;
+
+IF mbAITieBarTopRearLinked THEN
+   abForcePosTopRear.aUnforce();
+END_IF;
+
+IF mbAITieBarBottomRearLinked THEN
+   abForcePosBottomRear.aUnforce();
+END_IF;
+
+IF mbAITieBarBottomFrontLinked THEN
+   abForcePosBottomFront.aUnforce();
+END_IF;
+
+abForceClampCylFwdEnd.aUnforce();
+abForceClampCylBwdEnd.aUnforce();
+abForceMoldPosition.aUnforce();
+
+STOP_PROCESS_ALGORITHM();
+
+;#END_EDIT_BLOCK END_ACTION (*aStopSimu*)
+(* end sfc-code *)
+
+
+END_ALGORITHM
+
+PROCESS_ALGORITHM paInit ON TaskSim AUTOSTART
+
+
+VAR
+ Status : KSYS_Status;
+END_VAR
+#BEGIN_EDIT_BLOCK
+(**************************************** WARNING ********************************************
+ *** The KEBA Kemro K2 System including software is not intended for safety control tasks! ***
+ ***                       For further information see Comment tab!                        ***
+ *********************************************************************************************)
+
+mprAI_TieBarTopFront:= GET_SYNC_REFTO('TieBars1.ai_CylPosTopFront', T#0s, Status);
+mbAITieBarTopFrontLinked := (Status = KSYS_Status_OK); 
+
+mprAI_TieBarTopRear:= GET_SYNC_REFTO('TieBars1.ai_CylPosTopRear', T#0s, Status);
+mbAITieBarTopRearLinked := (Status = KSYS_Status_OK);
+
+mprAI_TieBarBottomRear:= GET_SYNC_REFTO('TieBars1.ai_CylPosBottomRear', T#0s, Status);
+mbAITieBarBottomRearLinked := (Status = KSYS_Status_OK);
+
+mprAI_TieBarBottomFront:= GET_SYNC_REFTO('TieBars1.ai_CylPosBottomFront', T#0s, Status);
+mbAITieBarBottomFrontLinked := (Status = KSYS_Status_OK);
+                                    
+mpbDO_TieBarTopFrontFwd:=GET_SYNC_REFTO('TieBars1.do_TieBarTopFrontFwd', T#0s, Status);
+mpbDO_TieBarTopRearFwd:=GET_SYNC_REFTO('TieBars1.do_TieBarTopRearFwd', T#0s, Status);
+mpbDO_TieBarBottomRearFwd:=GET_SYNC_REFTO('TieBars1.do_TieBarBottomRearFwd', T#0s, Status);
+mpbDO_TieBarBottomFrontFwd:=GET_SYNC_REFTO('TieBars1.do_TieBarBottomFrontFwd', T#0s, Status);
+mpbDO_TieBarTopFrontBwd:=GET_SYNC_REFTO('TieBars1.do_TieBarTopFrontBwd', T#0s, Status);
+mpbDO_TieBarTopRearBwd:=GET_SYNC_REFTO('TieBars1.do_TieBarTopRearBwd', T#0s, Status);
+mpbDO_TieBarBottomRearBwd:=GET_SYNC_REFTO('TieBars1.do_TieBarBottomRearBwd', T#0s, Status);
+mpbDO_TieBarBottomFrontBwd:=GET_SYNC_REFTO('TieBars1.do_TieBarBottomFrontBwd', T#0s, Status);
+
+mpbFwdToStandStill := GET_SYNC_REFTO('TieBars1.sv_bFwdToStandStill', T#0s, Status);
+mpbHighPresMoldOpenActive := GET_SYNC_REFTO('TieBars1.sv_bHighPressureMoldOpenActive', T#0s, Status);
+mprAI_MoldPos := GET_SYNC_REFTO('Mold1.ai_Position', T#0s, Status);
+
+STOP_PROCESS_ALGORITHM();
+
+
+;#END_EDIT_BLOCK END_ALGORITHM
+
+ALGORITHM aGetSimulationSource
+
+#BEGIN_EDIT_BLOCK
+(**************************************** WARNING ********************************************
+ *** The KEBA Kemro K2 System including software is not intended for safety control tasks! ***
+ ***                       For further information see Comment tab!                        ***
+ *********************************************************************************************)
+
+fbGetSimulationSource(pRequiredPumps := mpPumpsFwd,
+                      prVelocity => mprVelocityFwd);
+
+fbGetSimulationSource(pRequiredPumps := mpPumpsBwd,
+                      prVelocity => mprVelocityBwd);
+
+
+
+;#END_EDIT_BLOCK END_ALGORITHM
+
+POSTUPDATE_ALGORITHM pInitDone ON TaskSim WITH sv_bInitDone
+
+
+VAR
+ fbGetRequiredPumps : FBGetRequiredPumps;
+END_VAR
+#BEGIN_EDIT_BLOCK
+(**************************************** WARNING ********************************************
+ *** The KEBA Kemro K2 System including software is not intended for safety control tasks! ***
+ ***                       For further information see Comment tab!                        ***
+ *********************************************************************************************)
+
+//get required pumps for fwd and bwd movement
+fbGetRequiredPumps.DeviceId.CompId := cCompTieBars;
+fbGetRequiredPumps.DeviceId.IndexId := 1;
+
+fbGetRequiredPumps(MoveDir := cMoveFwd,
+                   MoveId := cMoveTieBarTopFront);
+mpPumpsFwd := fbGetRequiredPumps.pPumps;
+
+fbGetRequiredPumps(MoveDir := cMoveFwd,
+                   MoveId := cMoveTieBarTopFront);
+mpPumpsBwd := fbGetRequiredPumps.pPumps;
+
+aGetSimulationSource();
+
+
+
+
+;#END_EDIT_BLOCK END_ALGORITHM
+
+POSTUPDATE_ALGORITHM pRequiredPumps ON TaskSim WITH mpPumpsFwd^.RequiredPumps,mpPumpsBwd^.RequiredPumps
+
+#BEGIN_EDIT_BLOCK
+(**************************************** WARNING ********************************************
+ *** The KEBA Kemro K2 System including software is not intended for safety control tasks! ***
+ ***                       For further information see Comment tab!                        ***
+ *********************************************************************************************)
+
+aGetSimulationSource();
+
+
+;#END_EDIT_BLOCK END_ALGORITHM
+
+
+
+END_ALGORITHM_BLOCK
+
+
+
+#END_OF_IEC_PART
+
+@Puma @IecEditor 6 121 @Pou 25 
+@@@BEG_Comment@@@
+
+@@@END_Comment@@@
+
+@BEG_Contents 
+
+@BEG_Func 
+@RT(17)FuncTreeContainer 
+1 
+@Var @RT(14)GET_SYNC_REFTO @RT(0) @T @T @DERIVED 0 @F @RT(22)KEBA_STANDARD_FUNCTION @F 
+@T 
+@BEG_Attrib 
+0 @RT(0) @RT(0) 
+@END_Attrib 
+1 1 @F @F @F @F 
+
+@END_Func 
+
+@BEG_Const 
+@RT(18)ConstTreeContainer 
+4 
+@Var @RT(12)cCompTieBars @RT(0) @T @F @DT @RT(4)DINT @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+0 @RT(3)160 @RT(39)Component TieBars (for 2 platten IMM´s) 
+@END_Attrib 
+1 1 @F @F @F @F 
+
+@Var @RT(19)cMoveTieBarTopFront @RT(0) @T @F @DT @RT(4)DINT @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+0 @RT(3)401 @RT(16)tiebar top front 
+@END_Attrib 
+1 1 @F @F @F @F 
+
+@Var @RT(8)cMoveBwd @RT(0) @T @F @DT @RT(4)DINT @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+0 @RT(2)11 @RT(17)movement backward 
+@END_Attrib 
+1 1 @F @F @F @F 
+
+@Var @RT(8)cMoveFwd @RT(0) @T @F @DT @RT(4)DINT @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+0 @RT(2)12 @RT(16)movement forward 
+@END_Attrib 
+1 1 @F @F @F @F 
+
+@END_Const 
+
+@BEG_Export 
+
+@BEG_Kind 
+@ALGORITHM_BLOCK @RT(12)ABTieBarSimu @STRUCTURED_TEXT 
+@RT(0) @RT(0) @RT(0) 
+@END_Kind 
+
+@BEG_Dcl 
+@RT(16)DclTreeContainer 
+38 
+@Var @RT(10)PU_Task_13 @RT(0) @T @F @DT @RT(4)TASK @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 7 @F @F @F @F 
+
+@Var @RT(7)TaskSim @RT(0) @T @F @DT @RT(4)TASK @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 7 @F @F @F @F 
+
+@Var @RT(10)TaskAnalog @RT(0) @T @T @RENAMED 0 @T @T @DT @RT(4)TASK @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 7 @F @F @F @F 
+
+@Var @RT(21)fbGetSimulationSource @RT(0) @T @T @DERIVED 0 @T @T @DT @RT(21)FBGetSimulationSource @RT(0) @T @T @UNKNOWN 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(10)mpPumpsFwd @RT(0) @T @T @REFTO 0 @F @DERIVED 0 @T @T @DT @RT(15)tsRequiredPumps @RT(0) @T @T @UNKNOWN 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(10)mpPumpsBwd @RT(0) @T @T @REFTO 0 @F @DERIVED 0 @T @T @DT @RT(15)tsRequiredPumps @RT(0) @T @T @UNKNOWN 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(12)sv_bSimulate @RT(0) @T @F @DT @RT(4)BOOL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 8 @F @F @F @F 
+
+@Var @RT(13)sv_bInitStart @RT(0) @T @F @DT @RT(4)BOOL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 8 @F @F @F @F 
+
+@Var @RT(12)sv_bInitDone @RT(0) @T @T @RENAMED 0 @T @T @DT @RT(4)BOOL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 8 @F @F @F @F 
+
+@Var @RT(20)mprAI_TieBarTopFront @RT(0) @T @T @REFTO 0 @T @DT @RT(4)REAL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(19)mprAI_TieBarTopRear @RT(0) @T @T @REFTO 0 @T @DT @RT(4)REAL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(22)mprAI_TieBarBottomRear @RT(0) @T @T @REFTO 0 @T @DT @RT(4)REAL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(23)mprAI_TieBarBottomFront @RT(0) @T @T @REFTO 0 @T @DT @RT(4)REAL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(23)mpbDO_TieBarTopFrontFwd @RT(0) @T @T @REFTO 0 @T @DT @RT(4)BOOL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(22)mpbDO_TieBarTopRearFwd @RT(0) @T @T @REFTO 0 @T @DT @RT(4)BOOL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(25)mpbDO_TieBarBottomRearFwd @RT(0) @T @T @REFTO 0 @T @DT @RT(4)BOOL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(26)mpbDO_TieBarBottomFrontFwd @RT(0) @T @T @REFTO 0 @T @DT @RT(4)BOOL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(23)mpbDO_TieBarTopFrontBwd @RT(0) @T @T @REFTO 0 @T @DT @RT(4)BOOL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(22)mpbDO_TieBarTopRearBwd @RT(0) @T @T @REFTO 0 @T @DT @RT(4)BOOL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(25)mpbDO_TieBarBottomRearBwd @RT(0) @T @T @REFTO 0 @T @DT @RT(4)BOOL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(26)mpbDO_TieBarBottomFrontBwd @RT(0) @T @T @REFTO 0 @T @DT @RT(4)BOOL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(24)mbAITieBarTopFrontLinked @RT(0) @T @F @DT @RT(4)BOOL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(23)mbAITieBarTopRearLinked @RT(0) @T @F @DT @RT(4)BOOL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(26)mbAITieBarBottomRearLinked @RT(0) @T @F @DT @RT(4)BOOL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(27)mbAITieBarBottomFrontLinked @RT(0) @T @F @DT @RT(4)BOOL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(14)mprVelocityFwd @RT(0) @T @T @REFTO 0 @T @DT @RT(4)REAL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(14)mprVelocityBwd @RT(0) @T @T @REFTO 0 @T @DT @RT(4)REAL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(18)sv_NumberOfDevices @RT(0) @T @T @DERIVED 0 @T @T @DT @RT(17)tyNumberOfDevices @RT(0) @T @T @UNKNOWN 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 8 @F @F @F @F 
+
+@Var @RT(17)abForcePosTopRear @RT(0) @T @T @DERIVED 0 @T @T @DT @RT(13)ABForceAnalog @RT(0) @T @T @UNKNOWN 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(18)abForcePosTopFront @RT(0) @T @T @DERIVED 0 @T @T @DT @RT(13)ABForceAnalog @RT(0) @T @T @UNKNOWN 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(20)abForcePosBottomRear @RT(0) @T @T @DERIVED 0 @T @T @DT @RT(13)ABForceAnalog @RT(0) @T @T @UNKNOWN 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(21)abForcePosBottomFront @RT(0) @T @T @DERIVED 0 @T @T @DT @RT(13)ABForceAnalog @RT(0) @T @T @UNKNOWN 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(21)abForceClampCylFwdEnd @RT(0) @T @T @DERIVED 0 @T @T @DT @RT(14)ABForceDigital @RT(0) @T @T @UNKNOWN 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(21)abForceClampCylBwdEnd @RT(0) @T @T @DERIVED 0 @T @T @DT @RT(14)ABForceDigital @RT(0) @T @T @UNKNOWN 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(18)mpbFwdToStandStill @RT(0) @T @T @REFTO 0 @T @DT @RT(4)BOOL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(25)mpbHighPresMoldOpenActive @RT(0) @T @T @REFTO 0 @T @DT @RT(4)BOOL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(19)abForceMoldPosition @RT(0) @T @T @DERIVED 0 @F @RT(13)ABForceAnalog @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(13)mprAI_MoldPos @RT(0) @T @T @REFTO 0 @T @DT @RT(4)REAL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@END_Dcl 
+
+@END_Export 
+
+@BEG_Body 
+
+6 
+
+@BEG_Export 
+
+@BEG_Algo 
+@POSTUPDATE_ALGORITHM @RT(6)pStart @STRUCTURED_TEXT 
+@RT(0) @RT(26)sv_bSimulate,sv_bInitStart @RT(10)PU_Task_13 @F @F 
+@END_Algo 
+
+@BEG_Dcl 
+@RT(16)DclTreeContainer 
+0 
+@END_Dcl 
+
+@END_Export 
+
+@BEG_Export 
+
+@BEG_Algo 
+@PROCESS_ALGORITHM @RT(10)paSimulate @SEQUENTIAL_FLOW_CHART 
+@RT(0) @RT(0) @RT(10)TaskAnalog @F @F 
+@END_Algo 
+
+@BEG_Dcl 
+@RT(16)DclTreeContainer 
+12 
+@Var @RT(12)rCylDivision @RT(0) @T @F @DT @RT(4)REAL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(4)0.01 @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(10)rTieBarRaw @RT(0) @T @F @DT @RT(4)REAL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(14)rCylTimeFor10V @RT(0) @T @F @DT @RT(4)REAL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(3)2.0 @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(10)dCycleTime @RT(0) @T @F @DT @RT(4)TIME @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(10)rCycleTime @RT(0) @T @F @DT @RT(4)REAL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(17)bStartValuesSaved @RT(0) @T @F @DT @RT(4)BOOL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(16)rTopFrontVoltage @RT(0) @T @F @DT @RT(4)REAL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(15)rTopRearVoltage @RT(0) @T @F @DT @RT(4)REAL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(19)rBottomFrontVoltage @RT(0) @T @F @DT @RT(4)REAL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(18)rBottomRearVoltage @RT(0) @T @F @DT @RT(4)REAL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(30)rDiffDuringStandStillDetection @RT(0) @T @F @DT @RT(4)REAL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(3)1.0 @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(11)rMoldPosRaw @RT(0) @T @F @DT @RT(4)REAL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@END_Dcl 
+
+@END_Export 
+
+@BEG_Export 
+
+@BEG_Algo 
+@PROCESS_ALGORITHM @RT(6)paInit @STRUCTURED_TEXT 
+@RT(0) @RT(0) @RT(7)TaskSim @T @F 
+@END_Algo 
+
+@BEG_Dcl 
+@RT(16)DclTreeContainer 
+1 
+@Var @RT(6)Status @RT(0) @T @T @DERIVED 0 @T @T @DT @RT(11)KSYS_Status @RT(0) @T @T @UNKNOWN 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@END_Dcl 
+
+@END_Export 
+
+@BEG_Export 
+
+@BEG_Algo 
+@ALGORITHM @RT(20)aGetSimulationSource @STRUCTURED_TEXT 
+@RT(0) @RT(0) @RT(0) @F @F 
+@END_Algo 
+
+@BEG_Dcl 
+@RT(16)DclTreeContainer 
+0 
+@END_Dcl 
+
+@END_Export 
+
+@BEG_Export 
+
+@BEG_Algo 
+@POSTUPDATE_ALGORITHM @RT(9)pInitDone @STRUCTURED_TEXT 
+@RT(0) @RT(12)sv_bInitDone @RT(7)TaskSim @F @F 
+@END_Algo 
+
+@BEG_Dcl 
+@RT(16)DclTreeContainer 
+1 
+@Var @RT(18)fbGetRequiredPumps @RT(0) @T @T @DERIVED 0 @T @T @DT @RT(18)FBGetRequiredPumps @RT(0) @T @T @UNKNOWN 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@END_Dcl 
+
+@END_Export 
+
+@BEG_Export 
+
+@BEG_Algo 
+@POSTUPDATE_ALGORITHM @RT(14)pRequiredPumps @STRUCTURED_TEXT 
+@RT(0) @RT(51)mpPumpsFwd^.RequiredPumps,mpPumpsBwd^.RequiredPumps @RT(7)TaskSim @F @F 
+@END_Algo 
+
+@BEG_Dcl 
+@RT(16)DclTreeContainer 
+0 
+@END_Dcl 
+
+@END_Export 
+
+@BEG_Body 
+@TL(9)
+(**************************************** WARNING ********************************************
+ *** The KEBA Kemro K2 System including software is not intended for safety control tasks! ***
+ ***                       For further information see Comment tab!                        ***
+ *********************************************************************************************)
+
+IF sv_bSimulate AND (sv_NumberOfDevices[cCompTieBars] <> 0) THEN
+   START_PROCESS_ALGORITHM(paSimulate);
+END_IF;    
+
+@END_Body 
+
+@@@BEG_Comment@@@ 
+@TL(0)
+
+@@@END_Comment@@@ 
+
+@BEG_SfcBody 
+4 4 4 
+
+@BEG_SfcData 2 
+@StepSeq @RT(4)sseq @F 3 
+@Step @RT(4)INIT @F @T @F @F @RT(0) @F 
+@AcbCont @RT(7)unnamed @F 1 
+@Acb @RT(5)aInit @F @F @RT(1)P @RT(0) @F @F @F @F 
+
+@Trans @RT(11)SimRequired @F @T @F @F @T @T @TL(2)
+sv_bSimulate
+
+@RT(11)SimRequired @F 
+@Loop @RT(4)loop @F 2 
+@StepSeq @RT(4)sseq @F 3 
+@Step @RT(3)SIM @F @F @F @F @RT(0) @F 
+@AcbCont @RT(7)unnamed @F 1 
+@Acb @RT(9)aSimulate @F @F @RT(1)N @RT(0) @F @F @F @F 
+
+@Trans @RT(14)StpSimRequired @F @T @F @F @T @T @TL(2)
+NOT sv_bSimulate
+
+@RT(14)StpSimRequired @F 
+@Step @RT(4)STOP @F @F @F @F @RT(0) @F 
+@AcbCont @RT(7)unnamed @F 1 
+@Acb @RT(9)aStopSimu @F @F @RT(1)P @RT(0) @F @F @F @F 
+
+
+@Trans @RT(6)Return @F @T @T @T @T @T @TL(2)
+TRUE
+
+@RT(6)Return @F 
+
+@END_SfcData 
+@SaActions 3 
+@SaText @RT(5)aInit 1 @TL(26)
+(**************************************** WARNING ********************************************
+ *** The KEBA Kemro K2 System including software is not intended for safety control tasks! ***
+ ***                       For further information see Comment tab!                        ***
+ *********************************************************************************************)
+
+dCycleTime :=  GET_TASK_INTERVAL();
+rCycleTime := (LINT_TO_REAL(TIME_TO_LINT(dCycleTime))) / 1000000.0;
+rCylDivision := 1.0 / rCylTimeFor10V * rCycleTime;
+
+abForceClampCylFwdEnd.aInit('TieBars1.di_ClampCylFwdEnd');
+abForceClampCylBwdEnd.aInit('TieBars1.di_ClampCylBwdEnd');
+abForceClampCylFwdEnd.aSetForceValue(TRUE);
+abForceClampCylBwdEnd.aSetForceValue(TRUE);
+
+//after start up position should not be out of limits
+abForcePosTopFront.aInit(Name := 'TieBars1.ai_CylPosTopFront');
+abForcePosTopRear.aInit(Name := 'TieBars1.ai_CylPosTopRear');
+abForcePosBottomFront.aInit(Name := 'TieBars1.ai_CylPosBottomFront');
+abForcePosBottomRear.aInit(Name := 'TieBars1.ai_CylPosBottomRear');
+abForcePosTopFront.aSetForceValue(5.0);
+abForcePosTopRear.aSetForceValue(5.0);
+abForcePosBottomFront.aSetForceValue(5.0);
+abForcePosBottomRear.aSetForceValue(5.0);
+
+abForceMoldPosition.aInit(Name := 'Mold1.ai_Position');
+
+
+@SaText @RT(9)aSimulate 1 @TL(117)
+(**************************************** WARNING ********************************************
+ *** The KEBA Kemro K2 System including software is not intended for safety control tasks! ***
+ ***                       For further information see Comment tab!                        ***
+ *********************************************************************************************)
+
+IF mpbFwdToStandStill^ THEN
+   IF NOT bStartValuesSaved THEN
+      //save actual voltages at the beginning of fwd to standstill movement
+      rTopFrontVoltage := mprAI_TieBarTopFront^;
+      rTopRearVoltage := mprAI_TieBarTopRear^;
+      rBottomFrontVoltage := mprAI_TieBarBottomFront^;
+      rBottomRearVoltage := mprAI_TieBarBottomRear^;
+      bStartValuesSaved := TRUE;
+   END_IF;
+ELSE
+   bStartValuesSaved := FALSE;
+END_IF;
+
+
+//Tiebar top front 
+IF mbAITieBarTopFrontLinked THEN
+   // when sensor broken                                    
+   IF mprAI_TieBarTopFront^ > 10.0 THEN
+      abForcePosTopFront.aSetForceValue(10.0);
+   ELSIF mprAI_TieBarTopFront^ < 0.0 THEN
+      abForcePosTopFront.aSetForceValue(0.0);
+   ELSE
+      //normal movement simulation  
+      IF mpbDO_TieBarTopFrontBwd^ THEN
+         rTieBarRaw := mprAI_TieBarTopFront^ + MUL(rCylDivision, mprVelocityBwd^);                           
+         abForcePosTopFront.aSetForceValue(MIN(rTieBarRaw,10.0));      
+      ELSIF mpbDO_TieBarTopFrontFwd^ THEN
+         rTieBarRaw := mprAI_TieBarTopFront^ - MUL(rCylDivision, mprVelocityBwd^);   
+         IF mpbFwdToStandStill^ THEN
+            //limit position change during standstill detection
+            rTieBarRaw := MAX(rTieBarRaw, (rTopFrontVoltage - rDiffDuringStandStillDetection)); 
+         END_IF;                           
+         abForcePosTopFront.aSetForceValue(MAX(rTieBarRaw,0.0));     
+      END_IF;
+   END_IF;
+END_IF; 
+
+//Tiebar top rear 
+IF mbAITieBarTopRearLinked THEN
+   // when sensor broken
+   IF mprAI_TieBarTopRear^ > 10.0 THEN
+      abForcePosTopRear.aSetForceValue(10.0);
+   ELSIF mprAI_TieBarTopRear^ < 0.0 THEN
+      abForcePosTopRear.aSetForceValue(0.0);
+   ELSE
+      //normal movement simulation      
+      IF mpbDO_TieBarTopRearBwd^ THEN
+         rTieBarRaw := mprAI_TieBarTopRear^ + MUL(rCylDivision, mprVelocityBwd^); 
+         abForcePosTopRear.aSetForceValue(MIN(rTieBarRaw,10.0));        
+      ELSIF mpbDO_TieBarTopRearFwd^ THEN
+         rTieBarRaw := mprAI_TieBarTopRear^ - MUL(rCylDivision, mprVelocityFwd^); 
+         IF mpbFwdToStandStill^ THEN
+            //limit position change during standstill detection
+            rTieBarRaw := MAX(rTieBarRaw, (rTopRearVoltage - rDiffDuringStandStillDetection)); 
+         END_IF;
+         abForcePosTopRear.aSetForceValue(MAX(rTieBarRaw,0.0));
+      END_IF;
+   END_IF;
+END_IF;
+
+//Tiebar bottom rear 
+IF mbAITieBarBottomRearLinked THEN
+   // when sensor broken
+   IF mprAI_TieBarBottomRear^ > 10.0 THEN
+      abForcePosBottomRear.aSetForceValue(10.0); 
+   ELSIF mprAI_TieBarBottomRear^ < 0.0 THEN
+      abForcePosBottomRear.aSetForceValue(0.0);
+   ELSE
+      //normal movement simulation  
+      IF mpbDO_TieBarBottomRearBwd^ THEN
+         rTieBarRaw := mprAI_TieBarBottomRear^ + MUL(rCylDivision, mprVelocityBwd^); 
+         abForcePosBottomRear.aSetForceValue(MIN(rTieBarRaw,10.0));          
+      ELSIF mpbDO_TieBarBottomRearFwd^ THEN
+         rTieBarRaw := mprAI_TieBarBottomRear^ - MUL(rCylDivision, mprVelocityFwd^); 
+         IF mpbFwdToStandStill^ THEN
+            //limit position change during standstill detection
+            rTieBarRaw := MAX(rTieBarRaw, (rBottomRearVoltage - rDiffDuringStandStillDetection)); 
+         END_IF;
+         abForcePosBottomRear.aSetForceValue(MAX(rTieBarRaw,0.0));
+      END_IF;
+   END_IF;
+END_IF;
+
+//Tiebar bottom front 
+IF mbAITieBarBottomFrontLinked THEN
+   // when sensor broken
+   IF mprAI_TieBarBottomFront^ > 10.0 THEN
+      abForcePosBottomFront.aSetForceValue(10.0);
+   ELSIF mprAI_TieBarBottomFront^ < 0.0 THEN
+      abForcePosBottomFront.aSetForceValue(0.0);
+   ELSE
+      //normal movement simulation  
+      IF mpbDO_TieBarBottomFrontBwd^ THEN
+         rTieBarRaw := mprAI_TieBarBottomFront^ + MUL(rCylDivision, mprVelocityBwd^);                             
+         abForcePosBottomFront.aSetForceValue(MIN(rTieBarRaw,10.0));
+      ELSIF mpbDO_TieBarBottomFrontFwd^ THEN
+         rTieBarRaw := mprAI_TieBarBottomFront^ - MUL(rCylDivision, mprVelocityFwd^); 
+         IF mpbFwdToStandStill^ THEN
+            //limit position change during standstill detection
+            rTieBarRaw := MAX(rTieBarRaw, (rBottomFrontVoltage - rDiffDuringStandStillDetection)); 
+         END_IF;
+         abForcePosBottomFront.aSetForceValue(MAX(rTieBarRaw,0.0));
+      END_IF;
+   END_IF;
+END_IF;
+
+//simulate a slowly increasing mold position during high pressure mold open
+IF mpbHighPresMoldOpenActive^ THEN
+   rMoldPosRaw := mprAI_MoldPos^ + (MUL(rCylDivision,mprVelocityBwd^) / 10.0);
+   abForceMoldPosition.aSetForceValue(MIN(rMoldPosRaw,10.0));
+END_IF;
+
+
+@SaText @RT(9)aStopSimu 1 @TL(27)
+(**************************************** WARNING ********************************************
+ *** The KEBA Kemro K2 System including software is not intended for safety control tasks! ***
+ ***                       For further information see Comment tab!                        ***
+ *********************************************************************************************)
+
+IF mbAITieBarTopFrontLinked THEN
+   abForcePosTopFront.aUnforce();
+END_IF;
+
+IF mbAITieBarTopRearLinked THEN
+   abForcePosTopRear.aUnforce();
+END_IF;
+
+IF mbAITieBarBottomRearLinked THEN
+   abForcePosBottomRear.aUnforce();
+END_IF;
+
+IF mbAITieBarBottomFrontLinked THEN
+   abForcePosBottomFront.aUnforce();
+END_IF;
+
+abForceClampCylFwdEnd.aUnforce();
+abForceClampCylBwdEnd.aUnforce();
+abForceMoldPosition.aUnforce();
+
+STOP_PROCESS_ALGORITHM();
+
+
+@SaTrans 0 
+@SaExits 0 
+@END_SfcBody 
+
+@@@BEG_Comment@@@ 
+@TL(0)
+
+@@@END_Comment@@@ 
+
+@BEG_Body 
+@TL(32)
+(**************************************** WARNING ********************************************
+ *** The KEBA Kemro K2 System including software is not intended for safety control tasks! ***
+ ***                       For further information see Comment tab!                        ***
+ *********************************************************************************************)
+
+mprAI_TieBarTopFront:= GET_SYNC_REFTO('TieBars1.ai_CylPosTopFront', T#0s, Status);
+mbAITieBarTopFrontLinked := (Status = KSYS_Status_OK); 
+
+mprAI_TieBarTopRear:= GET_SYNC_REFTO('TieBars1.ai_CylPosTopRear', T#0s, Status);
+mbAITieBarTopRearLinked := (Status = KSYS_Status_OK);
+
+mprAI_TieBarBottomRear:= GET_SYNC_REFTO('TieBars1.ai_CylPosBottomRear', T#0s, Status);
+mbAITieBarBottomRearLinked := (Status = KSYS_Status_OK);
+
+mprAI_TieBarBottomFront:= GET_SYNC_REFTO('TieBars1.ai_CylPosBottomFront', T#0s, Status);
+mbAITieBarBottomFrontLinked := (Status = KSYS_Status_OK);
+                                    
+mpbDO_TieBarTopFrontFwd:=GET_SYNC_REFTO('TieBars1.do_TieBarTopFrontFwd', T#0s, Status);
+mpbDO_TieBarTopRearFwd:=GET_SYNC_REFTO('TieBars1.do_TieBarTopRearFwd', T#0s, Status);
+mpbDO_TieBarBottomRearFwd:=GET_SYNC_REFTO('TieBars1.do_TieBarBottomRearFwd', T#0s, Status);
+mpbDO_TieBarBottomFrontFwd:=GET_SYNC_REFTO('TieBars1.do_TieBarBottomFrontFwd', T#0s, Status);
+mpbDO_TieBarTopFrontBwd:=GET_SYNC_REFTO('TieBars1.do_TieBarTopFrontBwd', T#0s, Status);
+mpbDO_TieBarTopRearBwd:=GET_SYNC_REFTO('TieBars1.do_TieBarTopRearBwd', T#0s, Status);
+mpbDO_TieBarBottomRearBwd:=GET_SYNC_REFTO('TieBars1.do_TieBarBottomRearBwd', T#0s, Status);
+mpbDO_TieBarBottomFrontBwd:=GET_SYNC_REFTO('TieBars1.do_TieBarBottomFrontBwd', T#0s, Status);
+
+mpbFwdToStandStill := GET_SYNC_REFTO('TieBars1.sv_bFwdToStandStill', T#0s, Status);
+mpbHighPresMoldOpenActive := GET_SYNC_REFTO('TieBars1.sv_bHighPressureMoldOpenActive', T#0s, Status);
+mprAI_MoldPos := GET_SYNC_REFTO('Mold1.ai_Position', T#0s, Status);
+
+STOP_PROCESS_ALGORITHM();
+
+@END_Body 
+
+@@@BEG_Comment@@@ 
+@TL(0)
+
+@@@END_Comment@@@ 
+
+@BEG_Body 
+@TL(12)
+(**************************************** WARNING ********************************************
+ *** The KEBA Kemro K2 System including software is not intended for safety control tasks! ***
+ ***                       For further information see Comment tab!                        ***
+ *********************************************************************************************)
+
+fbGetSimulationSource(pRequiredPumps := mpPumpsFwd,
+                      prVelocity => mprVelocityFwd);
+
+fbGetSimulationSource(pRequiredPumps := mpPumpsBwd,
+                      prVelocity => mprVelocityBwd);
+
+
+@END_Body 
+
+@@@BEG_Comment@@@ 
+@TL(0)
+
+@@@END_Comment@@@ 
+
+@BEG_Body 
+@TL(21)
+(**************************************** WARNING ********************************************
+ *** The KEBA Kemro K2 System including software is not intended for safety control tasks! ***
+ ***                       For further information see Comment tab!                        ***
+ *********************************************************************************************)
+
+//get required pumps for fwd and bwd movement
+fbGetRequiredPumps.DeviceId.CompId := cCompTieBars;
+fbGetRequiredPumps.DeviceId.IndexId := 1;
+
+fbGetRequiredPumps(MoveDir := cMoveFwd,
+                   MoveId := cMoveTieBarTopFront);
+mpPumpsFwd := fbGetRequiredPumps.pPumps;
+
+fbGetRequiredPumps(MoveDir := cMoveFwd,
+                   MoveId := cMoveTieBarTopFront);
+mpPumpsBwd := fbGetRequiredPumps.pPumps;
+
+aGetSimulationSource();
+
+
+
+@END_Body 
+
+@@@BEG_Comment@@@ 
+@TL(0)
+
+@@@END_Comment@@@ 
+
+@BEG_Body 
+@TL(7)
+(**************************************** WARNING ********************************************
+ *** The KEBA Kemro K2 System including software is not intended for safety control tasks! ***
+ ***                       For further information see Comment tab!                        ***
+ *********************************************************************************************)
+
+aGetSimulationSource();
+
+@END_Body 
+
+@@@BEG_Comment@@@ 
+@TL(0)
+
+@@@END_Comment@@@ 
+@END_Body 
+
+@END_Contents 

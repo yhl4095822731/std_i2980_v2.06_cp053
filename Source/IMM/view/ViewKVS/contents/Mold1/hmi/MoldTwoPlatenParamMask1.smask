@@ -1,0 +1,161 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<base:Mask xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xmlns:base="http://www.keba.at/viewedit.model.base" widgetId="kvs.mask" name="MoldTwoPlatenParamMask1">
+  <resolution width="714" height="476"/>
+  <position x="1" y="1"/>
+  <attributeValues key="Icon" value="Mold1/hmi/images/iconMoldTwoPlatenParam.gif"/>
+  <attributeValues key="Background" value="BG_Desktop:30,30,30"/>
+  <attributeValues key="Title" value="Mold two platen parameters "/>
+  <layout layoutID="kvs.layout.BorderLayout" name="BorderLayout">
+    <attributeValues key="Vgap" value="6"/>
+  </layout>
+  <widgetInstances xsi:type="base:ContainerWidgetInstance" widgetId="keplast.kvs.borderpanelsmall" name="panelTieBarSettings" layoutConstraint="NORTH">
+    <resolution width="714" height="240"/>
+    <position/>
+    <attributeValues key="Title" value="Tiebar settings"/>
+    <attributeValues key="Background" value="BG_Panel:220,220,220"/>
+    <layout layoutID="keplast.kvs.layout.horizontalsplitlayout" name="HorizontalSplitLayout"/>
+    <widgetInstances xsi:type="base:ContainerWidgetInstance" widgetId="kvs.panel" name="panelParamsLeft1" layoutConstraint="LEFT">
+      <resolution width="347" height="145"/>
+      <position x="6" y="33"/>
+      <layout layoutID="kvs.layout.GridLayout" name="GridLayout">
+        <attributeValues key="Columns" value="1"/>
+        <attributeValues key="Rows" value="5"/>
+      </layout>
+      <widgetInstances widgetId="keplast.kvs.twonumfieldtext" name="twonumfieldTieBarBwdAll" layoutConstraint="null">
+        <resolution width="347" height="29"/>
+        <position/>
+        <attributeValues key="VariableRight" value="TieBars1.sv_TieBarTargetConst.Velocity.Output.rOutputValue"/>
+        <attributeValues key="VariableLeft" value="TieBars1.sv_TieBarTargetConst.Pressure.Output.rOutputValue"/>
+        <attributeValues key="VariableText" value="TieBars1.sv_TieBarTargetConst.Velocity.Output.rOutputValue"/>
+      </widgetInstances>
+      <widgetInstances widgetId="keplast.kvs.twonumfieldtext" name="twonumfieldPressureHold1" layoutConstraint="null">
+        <resolution width="347" height="29"/>
+        <position y="29"/>
+        <attributeValues key="VariableRight" value="TieBars1.sv_ConstHighPressureHold.Velocity.Output.rOutputValue"/>
+        <attributeValues key="VariableLeft" value="TieBars1.sv_ConstHighPressureHold.Pressure.Output.rOutputValue"/>
+        <attributeValues key="VariableText" value="TieBars1.sv_ConstHighPressureHold.Velocity.Output.rOutputValue"/>
+      </widgetInstances>
+    </widgetInstances>
+    <widgetInstances xsi:type="base:ContainerWidgetInstance" widgetId="kvs.panel" name="panelParamsRight1" layoutConstraint="RIGHT">
+      <resolution width="347" height="203"/>
+      <position x="361" y="33"/>
+      <layout layoutID="kvs.layout.GridLayout" name="GridLayout">
+        <attributeValues key="Rows" value="7"/>
+        <attributeValues key="Columns" value="1"/>
+      </layout>
+      <widgetInstances widgetId="keplast.kvs.actsetnumfieldtext" name="numfieldNutsCloseMaxTime" layoutConstraint="null">
+        <resolution width="347" height="29"/>
+        <position/>
+        <attributeValues key="Variable" value="MoldNuts1.sv_NutsCloseTimesSet.dMaxMoveTime"/>
+        <attributeValues key="VariableActual" value="MoldNuts1.sv_NutsCloseTimesAct.dActMoveTime"/>
+        <attributeValues key="TextLabelType" value="Long Variable Label"/>
+      </widgetInstances>
+      <widgetInstances widgetId="keplast.kvs.actsetnumfieldtext" name="numfieldNutsOpenMaxTime" layoutConstraint="null">
+        <resolution width="347" height="29"/>
+        <position y="29"/>
+        <attributeValues key="Variable" value="MoldNuts1.sv_NutsOpenTimesSet.dMaxMoveTime"/>
+        <attributeValues key="VariableActual" value="MoldNuts1.sv_NutsOpenTimesAct.dActMoveTime"/>
+        <attributeValues key="TextLabelType" value="Long Variable Label"/>
+      </widgetInstances>
+      <widgetInstances widgetId="keplast.kvs.actsetnumfieldtext" name="numfieldTieBarMaxTimeFwd" layoutConstraint="null">
+        <resolution width="347" height="29"/>
+        <position y="58"/>
+        <attributeValues key="VariableActual" value="TieBars1.sv_dActTieBarTargetPosTime"/>
+        <attributeValues key="Variable" value="TieBars1.sv_TieBarFwdTimesSet[5].dMaxMoveTime"/>
+      </widgetInstances>
+      <widgetInstances widgetId="keplast.kvs.actsetnumfieldtext" name="numfieldTieBarMaxTimeBwd" layoutConstraint="null">
+        <resolution width="347" height="29"/>
+        <position y="87"/>
+        <attributeValues key="VariableActual" value="TieBars1.sv_dActTieBarBwdTime"/>
+        <attributeValues key="Variable" value="TieBars1.sv_TieBarBwdTimesSet[5].dMaxMoveTime"/>
+      </widgetInstances>
+      <widgetInstances widgetId="keplast.kvs.actsetnumfieldtext" name="numfieldMaxTimePresBuildUp" layoutConstraint="null">
+        <resolution width="347" height="29"/>
+        <position y="116"/>
+        <attributeValues key="VariableActual" value="TieBars1.sv_HighPressureBuildUpTimesAct.dActMoveTime"/>
+        <attributeValues key="Variable" value="TieBars1.sv_HighPressureBuildUpTimesSet.dMaxMoveTime"/>
+      </widgetInstances>
+      <widgetInstances widgetId="keplast.kvs.actsetnumfieldtext" name="numfieldMaxTimePresRelease" layoutConstraint="null">
+        <resolution width="347" height="29"/>
+        <position y="145"/>
+        <attributeValues key="VariableActual" value="TieBars1.sv_HighPressureReleaseTimesAct.dActMoveTime"/>
+        <attributeValues key="Variable" value="TieBars1.sv_HighPressureReleaseTimesSet.dMaxMoveTime"/>
+      </widgetInstances>
+    </widgetInstances>
+    <widgetInstances widgetId="keplast.kvs.separator" name="separator2" layoutConstraint="SEPARATOR">
+      <resolution width="2" height="203"/>
+      <position x="356" y="33"/>
+    </widgetInstances>
+  </widgetInstances>
+  <widgetInstances xsi:type="base:ContainerWidgetInstance" widgetId="keplast.kvs.borderpanelsmall" name="panelGeneralSettings" layoutConstraint="CENTER">
+    <resolution width="714" height="230"/>
+    <position y="246"/>
+    <attributeValues key="Title" value="General settings"/>
+    <attributeValues key="Background" value="BG_Panel:220,220,220"/>
+    <layout layoutID="keplast.kvs.layout.horizontalsplitlayout" name="HorizontalSplitLayout"/>
+    <widgetInstances xsi:type="base:ContainerWidgetInstance" widgetId="kvs.panel" name="panelParamsLeft2" layoutConstraint="LEFT">
+      <resolution width="347" height="145"/>
+      <position x="6" y="33"/>
+      <layout layoutID="kvs.layout.GridLayout" name="GridLayout">
+        <attributeValues key="Columns" value="1"/>
+        <attributeValues key="Rows" value="5"/>
+      </layout>
+      <widgetInstances widgetId="keplast.kvs.comboboxtext" name="comboboxTieBarSelector" layoutConstraint="null">
+        <resolution width="347" height="29"/>
+        <position/>
+        <attributeValues key="Variable" value="TieBars1.sv_TiebarManualSelection"/>
+        <attributeValues key="TextLabelType" value="Long Variable Label"/>
+      </widgetInstances>
+      <widgetInstances widgetId="keplast.kvs.comboboxtext" name="comboboxholdMode" layoutConstraint="null">
+        <resolution width="347" height="29"/>
+        <position y="29"/>
+        <attributeValues key="Variable" value="TieBars1.sv_HighPressureHoldMode"/>
+      </widgetInstances>
+      <widgetInstances widgetId="keplast.kvs.comboboxtext" name="comboboxUseHiPressMoldOpen" layoutConstraint="null">
+        <resolution width="347" height="29"/>
+        <position y="58"/>
+        <attributeValues key="Variable" value="TieBars1.sv_bHighPressureMoldOpen"/>
+        <attributeValues key="SequencerControlled" value="true"/>
+      </widgetInstances>
+      <widgetInstances widgetId="keplast.kvs.numfieldtext" name="numfieldTieBarFwdDistance" layoutConstraint="null">
+        <resolution width="347" height="29"/>
+        <position y="87"/>
+        <attributeValues key="Variable" value="TieBars1.sv_rFwdDistance"/>
+        <attributeValues key="TextLabelType" value="Long Variable Label"/>
+      </widgetInstances>
+    </widgetInstances>
+    <widgetInstances xsi:type="base:ContainerWidgetInstance" widgetId="kvs.panel" name="panelParamsRight2" layoutConstraint="RIGHT">
+      <resolution width="347" height="145"/>
+      <position x="361" y="33"/>
+      <layout layoutID="kvs.layout.GridLayout" name="GridLayout">
+        <attributeValues key="Rows" value="5"/>
+        <attributeValues key="Columns" value="1"/>
+      </layout>
+      <widgetInstances widgetId="keplast.kvs.actsetnumfieldtext" name="numfieldHighPressureSet" layoutConstraint="null">
+        <resolution width="347" height="29"/>
+        <position/>
+        <attributeValues key="VariableActual" value="TieBars1.sv_rActPressure"/>
+        <attributeValues key="Variable" value="TieBars1.sv_rHighPressureSet"/>
+      </widgetInstances>
+      <widgetInstances widgetId="keplast.kvs.numfieldtext" name="numfieldPressureStage1" layoutConstraint="null">
+        <resolution width="347" height="29"/>
+        <position y="29"/>
+        <attributeValues key="Variable" value="TieBars1.sv_rHighPressLimitStage1"/>
+      </widgetInstances>
+      <widgetInstances widgetId="keplast.kvs.numfieldtext" name="numfieldTieBarPresTolerance" layoutConstraint="null">
+        <resolution width="347" height="29"/>
+        <position y="58"/>
+        <attributeValues key="Variable" value="TieBars1.sv_rHighPressureTolerance"/>
+      </widgetInstances>
+      <widgetInstances widgetId="keplast.kvs.numfieldtext" name="numfieldTieBarPresReachedDelay" layoutConstraint="null">
+        <resolution width="347" height="29"/>
+        <position y="87"/>
+        <attributeValues key="Variable" value="TieBars1.sv_dClampPressureReachedDelay"/>
+      </widgetInstances>
+    </widgetInstances>
+    <widgetInstances widgetId="keplast.kvs.separator" name="separator3" layoutConstraint="SEPARATOR">
+      <resolution width="2" height="193"/>
+      <position x="356" y="33"/>
+    </widgetInstances>
+  </widgetInstances>
+</base:Mask>

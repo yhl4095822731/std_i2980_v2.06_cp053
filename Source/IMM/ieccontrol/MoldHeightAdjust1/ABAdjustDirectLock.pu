@@ -1,0 +1,742 @@
+(*
+@h    ! WARNING !
+@h    The Kemro K2 system (including software) only meets category B according to EN 954-1,
+@h    thus it is not intended for usage in safety-relevant control applications in the field 
+@h    of personal safety (e.g. emergency stop).
+@h    To implement potentially necessary safety-relevant control tasks, always use additional 
+@h    external safety devices that are intended for the particular purpose, and meet the necessary 
+@h    functional safety.
+@h    For further information see EN 954-1 (EN ISO 13849-1) and/or the K2-x00 user manual, chapter 
+@h    "CE conformity, directives and standards". 
+
+Electrical mold height adjust with a input for motor overcurrent / at end pos input
+*)
+
+IMPORT_OVER_LISTFILE
+ SET_ALARM
+, REAL_TO_FORMATTED_STRING
+, tevStartRequest
+, tsTraceLevel
+, tsMoldHeightPositions
+, FBDebugTrace
+, tsDeviceId
+, FBCheckReady
+, FBCheckPosReached
+, FBStop
+, tevStartRequestData
+
+END_IMPORT
+
+ALGORITHM_BLOCK ABAdjustDirectLock #DUMMY_EDIT_BLOCK
+
+SYSTEM_VAR
+ sv_TraceLevel : tsTraceLevel;
+ sv_rMoldPosition : REAL;
+ sv_rMoldPosOffset : REAL;
+ sv_MoldHeightPositions : tsMoldHeightPositions;
+ sv_rActMoldHeightPosition : REAL;
+END_VAR
+
+SYSTEM_OBJECT
+ evStartRequest : tevStartRequest;
+ erMoldHeightAdjustAborted : ALARM;
+ erMoldHeightAdjustFinished : ALARM;
+END_OBJECT
+
+VAR
+ fbDebugTrace : FBDebugTrace;
+END_VAR
+
+(*
+Electric mold height adjust:
+
+stretch toggle lever
+if not possible, move backward until toggle lever can be stretched
+
+move MH forward until standstill
+measure actual position which is mold height and offset
+
+done
+*)
+
+ALGORITHM aRun
+
+
+VAR_INPUT
+ bStop : BOOL;
+ DeviceIdMold : tsDeviceId;
+END_VAR
+
+VAR_OUTPUT
+ bReady : BOOL;
+END_VAR
+
+VAR
+ fbCheckReady : FBCheckReady;
+ fbCheckPosReached : FBCheckPosReached;
+ fbStop : FBStop;
+ evStartRequestData : tevStartRequestData;
+ bMoldOpen : BOOL;
+ bMoldOpenReady : BOOL;
+ bMoldCloseReady : BOOL;
+ bFinished : BOOL;
+ dTimeCloseOpen : TIME := T#2s (* time between close and open *);
+END_VAR
+
+(* IecGraph-Code *)
+
+(* init step *)
+INITIAL_STEP START:
+aPrepareAdjustment (P);
+END_STEP
+
+
+(* steps *)
+STEP S_MFwdUntilStandstill:
+aMoveMoldFwd (P);
+aCheckMoldFwdReady (N);
+END_STEP
+
+STEP S_Wait:
+aCalcMoldHeight (P);
+END_STEP
+
+STEP S_MoldOpenForClampForce:
+aOpenMold (P);
+aCheckMoldOpen (N);
+END_STEP
+
+STEP S_Stop:
+AStop (P);
+END_STEP
+
+ACTION AStop: #BEGIN_EDIT_BLOCK
+//stop active movement
+IF bStop THEN
+   fbStop(DeviceId := DeviceIdMold);
+END_IF;
+
+;#END_EDIT_BLOCK END_ACTION (*AStop*)
+STEP S_Ready:
+AReady (P);
+END_STEP
+
+ACTION AReady: #BEGIN_EDIT_BLOCK
+IF bFinished THEN
+   SET_ALARM(erMoldHeightAdjustFinished);
+ELSE
+   SET_ALARM(erMoldHeightAdjustAborted);
+END_IF;
+
+bReady := TRUE;
+
+;#END_EDIT_BLOCK END_ACTION (*AReady*)
+
+(* transitions *)
+TRANSITION TStart (* Trans1 *) FROM START TO S_MFwdUntilStandstill :=  #BEGIN_EDIT_BLOCK
+TRUE
+;#END_EDIT_BLOCK
+END_TRANSITION
+
+TRANSITION TAdjFwdReady (* Trans41 *) FROM S_MFwdUntilStandstill TO S_Wait :=  #BEGIN_EDIT_BLOCK
+bMoldCloseReady
+;#END_EDIT_BLOCK
+END_TRANSITION
+
+TRANSITION TWait (* Trans77 *) FROM S_Wait TO S_MoldOpenForClampForce :=  #BEGIN_EDIT_BLOCK
+S_Wait.T > dTimeCloseOpen
+;#END_EDIT_BLOCK
+END_TRANSITION
+
+TRANSITION Trans64 (* Trans64 *) FROM S_MoldOpenForClampForce TO S_Stop :=  #BEGIN_EDIT_BLOCK
+bMoldOpenReady OR
+bStop
+;#END_EDIT_BLOCK
+END_TRANSITION
+
+TRANSITION TStopAdjFwd (* Trans42 *) FROM S_MFwdUntilStandstill TO S_Stop :=  #BEGIN_EDIT_BLOCK
+bStop
+;#END_EDIT_BLOCK
+END_TRANSITION
+
+GO_ON_TRANSITION TReady (* Trans32 *) FROM S_Stop TO S_Ready :=  #BEGIN_EDIT_BLOCK
+TRUE
+;#END_EDIT_BLOCK
+END_TRANSITION
+
+TRANSITION Trans33 (* Trans33 *) FROM S_Ready TO START :=  #BEGIN_EDIT_BLOCK
+TRUE
+;#END_EDIT_BLOCK
+END_TRANSITION
+
+(* end IecGraph-Code *)
+(* sfc-code *)
+
+(* stand alone actions *)
+ACTION aPrepareAdjustment: #BEGIN_EDIT_BLOCK
+(**************************************** WARNING ********************************************
+ *** The KEBA Kemro K2 System including software is not intended for safety control tasks! ***
+ ***                       For further information see Comment tab!                        ***
+ *********************************************************************************************)
+
+bReady := FALSE;
+bFinished := FALSE;
+
+IF sv_TraceLevel.bApplication THEN   
+   fbDebugTrace(sText := 'DirectLockMoldHeightAuto: start');
+END_IF;
+
+
+;#END_EDIT_BLOCK END_ACTION (*aPrepareAdjustment*)
+ACTION aOpenMold: #BEGIN_EDIT_BLOCK
+(**************************************** WARNING ********************************************
+ *** The KEBA Kemro K2 System including software is not intended for safety control tasks! ***
+ ***                       For further information see Comment tab!                        ***
+ *********************************************************************************************)
+
+bMoldOpenReady := FALSE;
+
+// Start the mold open movement
+IF sv_TraceLevel.bApplication THEN   
+   fbDebugTrace(sText := 'DirectLockMoldHeightAuto: opening Mold');
+END_IF;
+
+evStartRequestData.DeviceId := DeviceIdMold;
+evStartRequestData.MoveDir := cMoveBwd; 
+evStartRequestData.MoveId := cMoveBwd;
+SET_EVENT(evStartRequest, evStartRequestData); 
+
+;#END_EDIT_BLOCK END_ACTION (*aOpenMold*)
+ACTION aCheckMoldOpen: #BEGIN_EDIT_BLOCK
+(**************************************** WARNING ********************************************
+ *** The KEBA Kemro K2 System including software is not intended for safety control tasks! ***
+ ***                       For further information see Comment tab!                        ***
+ *********************************************************************************************)
+
+// Check the status of mold open movement
+// - Finished
+// - PositionReached
+fbCheckReady(DeviceId := DeviceIdMold,
+             bReady => bMoldOpenReady);
+
+fbCheckPosReached(DeviceId := DeviceIdMold,
+                  MoveDir := cMoveBwd,
+                  MoveId := cMoveBwd,
+                  bPosReached => bMoldOpen);
+
+IF bMoldOpenReady OR bMoldOpen THEN
+   bFinished := TRUE;
+   bMoldOpenReady := TRUE;
+   fbStop(DeviceId := DeviceIdMold);
+END_IF;
+
+;#END_EDIT_BLOCK END_ACTION (*aCheckMoldOpen*)
+ACTION aMoveMoldFwd: #BEGIN_EDIT_BLOCK
+(**************************************** WARNING ********************************************
+ *** The KEBA Kemro K2 System including software is not intended for safety control tasks! ***
+ ***                       For further information see Comment tab!                        ***
+ *********************************************************************************************)
+
+IF sv_TraceLevel.bApplication THEN   
+   fbDebugTrace(sText := 'DirectLockMoldHeightAuto: Mold forward until standstill');
+END_IF;
+
+//set offset to 0.0
+//this way we make sure we do not move to negative position, which could cause error messages
+sv_rMoldPosOffset := 0.0;
+
+// Start the mold height forward movement
+evStartRequestData.DeviceId := DeviceIdMold;
+evStartRequestData.MoveDir := cMoveFwd; 
+evStartRequestData.MoveId := cMoveFwdForMHAdjust;
+SET_EVENT(evStartRequest, evStartRequestData); 
+
+;#END_EDIT_BLOCK END_ACTION (*aMoveMoldFwd*)
+ACTION aCheckMoldFwdReady: #BEGIN_EDIT_BLOCK
+(**************************************** WARNING ********************************************
+ *** The KEBA Kemro K2 System including software is not intended for safety control tasks! ***
+ ***                       For further information see Comment tab!                        ***
+ *********************************************************************************************)
+
+fbCheckReady(DeviceId := DeviceIdMold,
+             bReady => bMoldCloseReady);
+
+
+;#END_EDIT_BLOCK END_ACTION (*aCheckMoldFwdReady*)
+ACTION aCalcMoldHeight: #BEGIN_EDIT_BLOCK
+(**************************************** WARNING ********************************************
+ *** The KEBA Kemro K2 System including software is not intended for safety control tasks! ***
+ ***                       For further information see Comment tab!                        ***
+ *********************************************************************************************)
+
+// mold height identical with offset
+sv_rMoldPosOffset := sv_rMoldPosition; 
+sv_MoldHeightPositions.rOriginMoldHeightPosition := sv_rMoldPosition;
+sv_rActMoldHeightPosition := sv_rMoldPosition;
+
+
+;#END_EDIT_BLOCK END_ACTION (*aCalcMoldHeight*)
+(* end sfc-code *)
+
+
+END_ALGORITHM
+
+
+
+END_ALGORITHM_BLOCK
+
+
+
+#END_OF_IEC_PART
+
+@Puma @IecEditor 6 97 @Pou 25 
+@@@BEG_Comment@@@
+@h    ! WARNING !
+@h    The Kemro K2 system (including software) only meets category B according to EN 954-1,
+@h    thus it is not intended for usage in safety-relevant control applications in the field 
+@h    of personal safety (e.g. emergency stop).
+@h    To implement potentially necessary safety-relevant control tasks, always use additional 
+@h    external safety devices that are intended for the particular purpose, and meet the necessary 
+@h    functional safety.
+@h    For further information see EN 954-1 (EN ISO 13849-1) and/or the K2-x00 user manual, chapter 
+@h    "CE conformity, directives and standards". 
+
+Electrical mold height adjust with a input for motor overcurrent / at end pos input
+@@@END_Comment@@@
+
+@BEG_Contents 
+
+@BEG_Func 
+@RT(17)FuncTreeContainer 
+2 
+@Var @RT(9)SET_ALARM @RT(0) @T @T @DERIVED 0 @F @RT(23)KEBA_STANDARD_PROCEDURE @F 
+@T 
+@BEG_Attrib 
+0 @RT(0) @RT(0) 
+@END_Attrib 
+1 1 @F @F @F @F 
+
+@Var @RT(24)REAL_TO_FORMATTED_STRING @RT(0) @T @T @DERIVED 0 @F @RT(22)KEBA_STANDARD_FUNCTION @F 
+@T 
+@BEG_Attrib 
+0 @RT(0) @RT(0) 
+@END_Attrib 
+1 1 @F @F @F @F 
+
+@END_Func 
+
+@BEG_Const 
+@RT(18)ConstTreeContainer 
+0 
+@END_Const 
+
+@BEG_Export 
+
+@BEG_Kind 
+@ALGORITHM_BLOCK @RT(18)ABAdjustDirectLock @STRUCTURED_TEXT 
+@RT(0) @RT(0) @RT(0) 
+@END_Kind 
+
+@BEG_Dcl 
+@RT(16)DclTreeContainer 
+9 
+@Var @RT(14)evStartRequest @RT(0) @T @T @DERIVED 0 @T @T @DT @RT(15)tevStartRequest @RT(0) @T @T @UNKNOWN 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 7 @F @F @F @F 
+
+@Var @RT(25)erMoldHeightAdjustAborted @RT(0) @T @F @DT @RT(5)ALARM @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 7 @F @F @F @F 
+
+@Var @RT(26)erMoldHeightAdjustFinished @RT(0) @T @F @DT @RT(5)ALARM @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 7 @F @F @F @F 
+
+@Var @RT(13)sv_TraceLevel @RT(0) @T @T @DERIVED 0 @T @T @DT @RT(12)tsTraceLevel @RT(0) @T @T @UNKNOWN 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 8 @F @F @F @F 
+
+@Var @RT(16)sv_rMoldPosition @RT(0) @T @F @DT @RT(4)REAL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 8 @F @F @F @F 
+
+@Var @RT(17)sv_rMoldPosOffset @RT(0) @T @T @RENAMED 0 @T @T @DT @RT(4)REAL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 8 @F @F @F @F 
+
+@Var @RT(22)sv_MoldHeightPositions @RT(0) @T @T @DERIVED 0 @T @T @DT @RT(21)tsMoldHeightPositions @RT(0) @T @T @UNKNOWN 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 8 @F @F @F @F 
+
+@Var @RT(25)sv_rActMoldHeightPosition @RT(0) @T @F @DT @RT(4)REAL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 8 @F @F @F @F 
+
+@Var @RT(12)fbDebugTrace @RT(0) @T @T @DERIVED 0 @T @T @DT @RT(12)FBDebugTrace @RT(0) @T @T @UNKNOWN 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@END_Dcl 
+
+@END_Export 
+
+@BEG_Body 
+
+1 
+
+@BEG_Export 
+
+@BEG_Algo 
+@ALGORITHM @RT(4)aRun @SEQUENTIAL_FLOW_CHART 
+@RT(0) @RT(0) @RT(0) @F @F 
+@END_Algo 
+
+@BEG_Dcl 
+@RT(16)DclTreeContainer 
+12 
+@Var @RT(5)bStop @RT(0) @T @F @DT @RT(4)BOOL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 1 @F @F @F @F 
+
+@Var @RT(12)DeviceIdMold @RT(0) @T @T @DERIVED 0 @T @T @DT @RT(10)tsDeviceId @RT(0) @T @T @UNKNOWN 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 1 @F @F @F @F 
+
+@Var @RT(6)bReady @RT(0) @T @F @DT @RT(4)BOOL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 3 @F @F @F @F 
+
+@Var @RT(12)fbCheckReady @RT(0) @T @T @DERIVED 0 @T @T @DT @RT(12)FBCheckReady @RT(0) @T @T @UNKNOWN 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(17)fbCheckPosReached @RT(0) @T @T @DERIVED 0 @T @T @DT @RT(17)FBCheckPosReached @RT(0) @T @T @UNKNOWN 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(6)fbStop @RT(0) @T @T @DERIVED 0 @T @T @DT @RT(6)FBStop @RT(0) @T @T @UNKNOWN 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(18)evStartRequestData @RT(0) @T @T @DERIVED 0 @T @T @DT @RT(19)tevStartRequestData @RT(0) @T @T @UNKNOWN 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(9)bMoldOpen @RT(0) @T @F @DT @RT(4)BOOL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(14)bMoldOpenReady @RT(0) @T @F @DT @RT(4)BOOL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(15)bMoldCloseReady @RT(0) @T @F @DT @RT(4)BOOL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(9)bFinished @RT(0) @T @F @DT @RT(4)BOOL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(14)dTimeCloseOpen @RT(0) @T @F @DT @RT(4)TIME @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(4)T#2s @RT(27)time between close and open @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@END_Dcl 
+
+@END_Export 
+
+@BEG_SfcBody 
+67 51 79 
+
+@BEG_SfcData 2 
+@StepSeq @RT(4)sseq @F 1 
+@Loop @RT(4)loop @F 2 
+@StepSeq @RT(3)seq @F 7 
+@Step @RT(5)START @F @T @F @F @RT(0) @F 
+@AcbCont @RT(7)unnamed @F 1 
+@Acb @RT(18)aPrepareAdjustment @F @F @RT(1)P @RT(0) @F @F @T @F 
+
+@Trans @RT(6)TStart @F @T @F @F @T @T @TL(2)
+TRUE
+
+@RT(6)Trans1 @F 
+@Step @RT(21)S_MFwdUntilStandstill @F @F @F @F @RT(0) @F 
+@AcbCont @RT(7)unnamed @F 2 
+@Acb @RT(12)aMoveMoldFwd @F @F @RT(1)P @RT(0) @F @F @T @F 
+@Acb @RT(18)aCheckMoldFwdReady @F @F @RT(1)N @RT(0) @F @F @T @F 
+
+@AltBranch @RT(3)alt @F 2 
+@TransSeq @RT(4)tseq @F 5 
+@Trans @RT(12)TAdjFwdReady @F @T @F @F @T @T @TL(2)
+bMoldCloseReady
+
+@RT(7)Trans41 @F 
+@Step @RT(6)S_Wait @F @F @F @F @RT(0) @F 
+@AcbCont @RT(7)unnamed @F 1 
+@Acb @RT(15)aCalcMoldHeight @F @F @RT(1)P @RT(0) @F @F @F @F 
+
+@Trans @RT(5)TWait @F @T @F @F @T @T @TL(2)
+S_Wait.T > dTimeCloseOpen
+
+@RT(7)Trans77 @F 
+@Step @RT(23)S_MoldOpenForClampForce @F @F @F @F @RT(0) @F 
+@AcbCont @RT(7)unnamed @F 2 
+@Acb @RT(9)aOpenMold @F @F @RT(1)P @RT(0) @F @F @T @F 
+@Acb @RT(14)aCheckMoldOpen @F @F @RT(1)N @RT(0) @F @F @T @F 
+
+@Trans @RT(7)Trans64 @F @T @F @F @T @T @TL(3)
+bMoldOpenReady OR
+bStop
+
+@RT(7)Trans64 @F 
+
+@TransSeq @RT(4)tseq @F 2 
+@Trans @RT(11)TStopAdjFwd @F @T @F @F @T @T @TL(2)
+bStop
+
+@RT(7)Trans42 @F 
+@Goto @RT(6)S_Stop @F @F 
+
+
+@Step @RT(6)S_Stop @F @F @T @F @RT(0) @F 
+@AcbCont @RT(7)unnamed @F 1 
+@Acb @RT(5)AStop @F @T @RT(1)P @RT(0) @F @F @T @TL(5)
+//stop active movement
+IF bStop THEN
+   fbStop(DeviceId := DeviceIdMold);
+END_IF;
+
+@F 
+
+@Trans @RT(6)TReady @F @T @F @F @T @F @TL(2)
+TRUE
+
+@RT(7)Trans32 @F 
+@Step @RT(7)S_Ready @F @F @F @F @RT(0) @F 
+@AcbCont @RT(7)unnamed @F 1 
+@Acb @RT(6)AReady @F @T @RT(1)P @RT(0) @F @F @T @TL(8)
+IF bFinished THEN
+   SET_ALARM(erMoldHeightAdjustFinished);
+ELSE
+   SET_ALARM(erMoldHeightAdjustAborted);
+END_IF;
+
+bReady := TRUE;
+
+@F 
+
+
+@Trans @RT(7)Trans33 @F @T @T @T @T @T @TL(2)
+TRUE
+
+@RT(7)Trans33 @F 
+
+@END_SfcData 
+@SaActions 6 
+@SaText @RT(18)aPrepareAdjustment 1 @TL(13)
+(**************************************** WARNING ********************************************
+ *** The KEBA Kemro K2 System including software is not intended for safety control tasks! ***
+ ***                       For further information see Comment tab!                        ***
+ *********************************************************************************************)
+
+bReady := FALSE;
+bFinished := FALSE;
+
+IF sv_TraceLevel.bApplication THEN   
+   fbDebugTrace(sText := 'DirectLockMoldHeightAuto: start');
+END_IF;
+
+
+
+@SaText @RT(9)aOpenMold 1 @TL(17)
+(**************************************** WARNING ********************************************
+ *** The KEBA Kemro K2 System including software is not intended for safety control tasks! ***
+ ***                       For further information see Comment tab!                        ***
+ *********************************************************************************************)
+
+bMoldOpenReady := FALSE;
+
+// Start the mold open movement
+IF sv_TraceLevel.bApplication THEN   
+   fbDebugTrace(sText := 'DirectLockMoldHeightAuto: opening Mold');
+END_IF;
+
+evStartRequestData.DeviceId := DeviceIdMold;
+evStartRequestData.MoveDir := cMoveBwd; 
+evStartRequestData.MoveId := cMoveBwd;
+SET_EVENT(evStartRequest, evStartRequestData); 
+
+
+@SaText @RT(14)aCheckMoldOpen 1 @TL(22)
+(**************************************** WARNING ********************************************
+ *** The KEBA Kemro K2 System including software is not intended for safety control tasks! ***
+ ***                       For further information see Comment tab!                        ***
+ *********************************************************************************************)
+
+// Check the status of mold open movement
+// - Finished
+// - PositionReached
+fbCheckReady(DeviceId := DeviceIdMold,
+             bReady => bMoldOpenReady);
+
+fbCheckPosReached(DeviceId := DeviceIdMold,
+                  MoveDir := cMoveBwd,
+                  MoveId := cMoveBwd,
+                  bPosReached => bMoldOpen);
+
+IF bMoldOpenReady OR bMoldOpen THEN
+   bFinished := TRUE;
+   bMoldOpenReady := TRUE;
+   fbStop(DeviceId := DeviceIdMold);
+END_IF;
+
+
+@SaText @RT(12)aMoveMoldFwd 1 @TL(19)
+(**************************************** WARNING ********************************************
+ *** The KEBA Kemro K2 System including software is not intended for safety control tasks! ***
+ ***                       For further information see Comment tab!                        ***
+ *********************************************************************************************)
+
+IF sv_TraceLevel.bApplication THEN   
+   fbDebugTrace(sText := 'DirectLockMoldHeightAuto: Mold forward until standstill');
+END_IF;
+
+//set offset to 0.0
+//this way we make sure we do not move to negative position, which could cause error messages
+sv_rMoldPosOffset := 0.0;
+
+// Start the mold height forward movement
+evStartRequestData.DeviceId := DeviceIdMold;
+evStartRequestData.MoveDir := cMoveFwd; 
+evStartRequestData.MoveId := cMoveFwdForMHAdjust;
+SET_EVENT(evStartRequest, evStartRequestData); 
+
+
+@SaText @RT(18)aCheckMoldFwdReady 1 @TL(9)
+(**************************************** WARNING ********************************************
+ *** The KEBA Kemro K2 System including software is not intended for safety control tasks! ***
+ ***                       For further information see Comment tab!                        ***
+ *********************************************************************************************)
+
+fbCheckReady(DeviceId := DeviceIdMold,
+             bReady => bMoldCloseReady);
+
+
+
+@SaText @RT(15)aCalcMoldHeight 1 @TL(11)
+(**************************************** WARNING ********************************************
+ *** The KEBA Kemro K2 System including software is not intended for safety control tasks! ***
+ ***                       For further information see Comment tab!                        ***
+ *********************************************************************************************)
+
+// mold height identical with offset
+sv_rMoldPosOffset := sv_rMoldPosition; 
+sv_MoldHeightPositions.rOriginMoldHeightPosition := sv_rMoldPosition;
+sv_rActMoldHeightPosition := sv_rMoldPosition;
+
+
+
+@SaTrans 0 
+@SaExits 0 
+@END_SfcBody 
+
+@@@BEG_Comment@@@ 
+@TL(9)
+Electric mold height adjust:
+
+stretch toggle lever
+if not possible, move backward until toggle lever can be stretched
+
+move MH forward until standstill
+measure actual position which is mold height and offset
+
+done
+@@@END_Comment@@@ 
+@END_Body 
+
+@END_Contents 

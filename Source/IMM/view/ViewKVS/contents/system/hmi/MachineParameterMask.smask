@@ -1,0 +1,1723 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<base:Mask xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xmlns:base="http://www.keba.at/viewedit.model.base" widgetId="kvs.mask" name="MachineParameterMask">
+  <resolution width="684" height="476"/>
+  <position x="1" y="1"/>
+  <attributeValues key="Title" value="Machine parameter"/>
+  <attributeValues key="Icon" value="system/hmi/images/maskicons/iconMachSpec.gif"/>
+  <attributeValues key="Background" value="BG_Desktop:30,30,30"/>
+  <attributeValues key="DisplayLevel" value="12"/>
+  <layout layoutID="kvs.layout.BorderLayout" name="BorderLayout"/>
+  <widgetInstances xsi:type="base:MultiPageWidgetInstance" widgetId="keplast.kvs.tabpanelplast" name="tabPanelPlast1" layoutConstraint="CENTER">
+    <resolution width="684" height="476"/>
+    <position/>
+    <attributeValues key="Tabs" value="Machine limits, Tab1; Stroke / Diameter, Tab2; Stroke / Diameter 2, Tab4; Max. Velocity, Tab3; Thermo comp., Tab6"/>
+    <attributeValues key="SelectedPage" value="1"/>
+    <pages widgetId="keplast.kvs.tabpanelplast.container" name="Tab1">
+      <resolution width="684" height="446"/>
+      <position/>
+      <attributeValues key="Background" value="BG_Panel:220,220,220"/>
+      <attributeValues key="HelpSubID" value="general"/>
+      <border name="EmptyBorder" id="kv.border.EmptyBorder"/>
+      <layout layoutID="keplast.kvs.layout.horizontalsplitlayout" name="HorizontalSplitLayout"/>
+      <widgetInstances xsi:type="base:ContainerWidgetInstance" widgetId="kvs.panel" name="panelLeft1" layoutConstraint="LEFT">
+        <resolution width="336" height="440"/>
+        <position x="3"/>
+        <attributeValues key="PreferredSize" value="350, 481"/>
+        <layout layoutID="kvs.layout.VerticalFlowLayout" name="VerticalFlowLayout">
+          <attributeValues key="Vgap" value="3"/>
+          <attributeValues key="Hgap" value="0"/>
+          <attributeValues key="OuterGaps" value="false"/>
+        </layout>
+        <widgetInstances xsi:type="base:ContainerWidgetInstance" widgetId="keplast.kvs.borderpanelsmall" name="panelMoldHeight" layoutConstraint="null">
+          <resolution width="336" height="153"/>
+          <position/>
+          <attributeValues key="Title" value="Mold adjust"/>
+          <layout layoutID="kvs.layout.GridLayout" name="GridLayout">
+            <attributeValues key="Rows" value="4"/>
+            <attributeValues key="Columns" value="1"/>
+          </layout>
+          <widgetInstances widgetId="keplast.kvs.numfieldtext" name="numfieldStrokeMoldAdjMin" layoutConstraint="null">
+            <resolution width="330" height="29"/>
+            <position x="3" y="33"/>
+            <attributeValues key="Variable" value="MoldHeightAdjust1.sv_MoldHeightPositions.rMinMoldHeightPosition"/>
+          </widgetInstances>
+          <widgetInstances widgetId="keplast.kvs.numfieldtext" name="numfieldStrokeMoldAdjMax" layoutConstraint="null">
+            <resolution width="330" height="29"/>
+            <position x="3" y="62"/>
+            <attributeValues key="Variable" value="MoldHeightAdjust1.sv_MoldHeightPositions.rMaxMoldHeightPosition"/>
+          </widgetInstances>
+          <widgetInstances widgetId="keplast.kvs.checkactsetnumfieldtext" name="twonumfieldMoldAdjust" layoutConstraint="null">
+            <resolution width="330" height="29"/>
+            <position x="3" y="91"/>
+            <attributeValues key="Variable" value="MoldHeightAdjust1.sv_MoldHeightPositions.rOriginMoldHeightPosition"/>
+            <attributeValues key="VariableActual" value="MoldHeightAdjust1.sv_rActMoldHeightPosition"/>
+            <attributeValues key="VariableCheckBox" value="MoldHeightAdjust1.sv_bSetMoldHeightOrigin"/>
+          </widgetInstances>
+          <widgetInstances widgetId="keplast.kvs.checknumfieldtext" name="chknumfieldDistPerImp" layoutConstraint="null">
+            <resolution width="330" height="29"/>
+            <position x="3" y="120"/>
+            <attributeValues key="Variable" value="MoldHeightAdjust1.sv_MoldHeightSetPosMeasurement.rSecondPositionForCalculation"/>
+            <attributeValues key="VariableCheckBox" value="MoldHeightAdjust1.sv_bCalculateDistancePerImpulse"/>
+          </widgetInstances>
+        </widgetInstances>
+        <widgetInstances xsi:type="base:ContainerWidgetInstance" widgetId="keplast.kvs.borderpanelsmall" name="panelFlow" layoutConstraint="null">
+          <resolution width="336" height="124"/>
+          <position y="156"/>
+          <attributeValues key="Title" value="Flow"/>
+          <dynamicAttributes key="Create">
+            <value function="hasAnyPump : UserFunctions" equal="true" unequal="false"/>
+          </dynamicAttributes>
+          <layout layoutID="kvs.layout.VerticalFlowLayout" name="VerticalFlowLayout">
+            <attributeValues key="Hgap" value="0"/>
+            <attributeValues key="Vgap" value="0"/>
+          </layout>
+          <widgetInstances widgetId="keplast.kvs.numfieldtext" name="numfieldAbsFlowPump1" layoutConstraint="null">
+            <resolution width="330" height="29"/>
+            <position x="3" y="33"/>
+            <attributeValues key="Variable" value="Pump1.sv_rAbsFlow"/>
+          </widgetInstances>
+          <widgetInstances widgetId="keplast.kvs.numfieldtext" name="numfieldAbsFlowPump2" layoutConstraint="null">
+            <resolution width="330" height="29"/>
+            <position x="3" y="62"/>
+            <attributeValues key="Variable" value="Pump2.sv_rAbsFlow"/>
+            <dynamicAttributes key="Create">
+              <value function="doesDeviceExist : UserFunctions" equal="true" unequal="false">
+                <parameter key="1" value="devicename;PlastFunctionUtils.createDeviceName(&quot;Pump2&quot;)"/>
+              </value>
+            </dynamicAttributes>
+          </widgetInstances>
+          <widgetInstances widgetId="keplast.kvs.numfieldtext" name="numfieldAbsFlowPump3" layoutConstraint="null">
+            <resolution width="330" height="29"/>
+            <position x="3" y="91"/>
+            <attributeValues key="Variable" value="Pump3.sv_rAbsFlow"/>
+            <dynamicAttributes key="Create">
+              <value function="doesDeviceExist : UserFunctions" equal="true" unequal="false">
+                <parameter key="1" value="devicename;PlastFunctionUtils.createDeviceName(&quot;Pump3&quot;)"/>
+              </value>
+            </dynamicAttributes>
+          </widgetInstances>
+        </widgetInstances>
+        <widgetInstances xsi:type="base:ContainerWidgetInstance" widgetId="keplast.kvs.borderpanelsmall" name="panelScrew" layoutConstraint="null">
+          <resolution width="336" height="95"/>
+          <position y="283"/>
+          <attributeValues key="Title" value="Screw"/>
+          <layout layoutID="kvs.layout.GridLayout" name="GridLayout">
+            <attributeValues key="Rows" value="2"/>
+            <attributeValues key="Columns" value="1"/>
+          </layout>
+          <widgetInstances widgetId="keplast.kvs.numfieldtext" name="numfieldMaxRpm" layoutConstraint="null">
+            <resolution width="330" height="29"/>
+            <position x="3" y="33"/>
+            <attributeValues key="Variable" value="Injection1.sv_rMaxRpm"/>
+          </widgetInstances>
+          <widgetInstances widgetId="keplast.kvs.numfieldtext" name="numfieldScrewRpmGain1" layoutConstraint="null">
+            <resolution width="330" height="29"/>
+            <position x="3" y="62"/>
+            <attributeValues key="Variable" value="Injection1.sv_iScrewGain"/>
+            <dynamicAttributes key="Create">
+              <value function="doesVariableExist : UserFunctions" equal="false" unequal="true">
+                <parameter key="1" value="variableasstring; PlastFunctionUtils.createVariableString(&quot;Injection1.sv_ServoInject.iID&quot;)"/>
+              </value>
+            </dynamicAttributes>
+          </widgetInstances>
+        </widgetInstances>
+      </widgetInstances>
+      <widgetInstances xsi:type="base:ContainerWidgetInstance" widgetId="kvs.panel" name="panelRight1" layoutConstraint="RIGHT">
+        <resolution width="336" height="440"/>
+        <position x="345"/>
+        <attributeValues key="PreferredSize" value="350, 503"/>
+        <layout layoutID="kvs.layout.VerticalFlowLayout" name="VerticalFlowLayout">
+          <attributeValues key="Hgap" value="0"/>
+          <attributeValues key="Vgap" value="3"/>
+          <attributeValues key="Alignment" value="TOP"/>
+          <attributeValues key="OuterGaps" value="false"/>
+        </layout>
+        <widgetInstances xsi:type="base:ContainerWidgetInstance" widgetId="keplast.kvs.borderpanelsmall" name="panelClampForce" layoutConstraint="null">
+          <resolution width="336" height="327"/>
+          <position/>
+          <attributeValues key="Title" value="Pressure and clamping force"/>
+          <layout layoutID="kvs.layout.VerticalFlowLayout" name="VerticalFlowLayout">
+            <attributeValues key="Hgap" value="0"/>
+            <attributeValues key="Vgap" value="0"/>
+          </layout>
+          <widgetInstances widgetId="keplast.kvs.numfieldtext" name="numfieldPressureMaxPump1" layoutConstraint="null">
+            <resolution width="330" height="29"/>
+            <position x="3" y="33"/>
+            <attributeValues key="Variable" value="system.sv_rMaximumPressure"/>
+            <dynamicAttributes key="Create">
+              <value function="hasAnyPump : UserFunctions" equal="true" unequal="false"/>
+            </dynamicAttributes>
+          </widgetInstances>
+          <widgetInstances widgetId="keplast.kvs.numfieldtext" name="numfieldPressureMaxPump2" layoutConstraint="null">
+            <resolution width="330" height="29"/>
+            <position x="3" y="62"/>
+            <attributeValues key="Variable" value="Pump2.sv_rMaxPressure"/>
+            <dynamicAttributes key="Create">
+              <value function="doesDeviceExist : UserFunctions" equal="true" unequal="false">
+                <parameter key="1" value="devicename;PlastFunctionUtils.createDeviceName(&quot;Pump2&quot;)"/>
+              </value>
+            </dynamicAttributes>
+          </widgetInstances>
+          <widgetInstances widgetId="keplast.kvs.numfieldtext" name="numfieldPressureMaxPump3" layoutConstraint="null">
+            <resolution width="330" height="29"/>
+            <position x="3" y="91"/>
+            <attributeValues key="Variable" value="Pump3.sv_rMaxPressure"/>
+            <dynamicAttributes key="Create">
+              <value function="doesDeviceExist : UserFunctions" equal="true" unequal="false">
+                <parameter key="1" value="devicename;PlastFunctionUtils.createDeviceName(&quot;Pump3&quot;)"/>
+              </value>
+            </dynamicAttributes>
+          </widgetInstances>
+          <widgetInstances widgetId="keplast.kvs.numfieldtext" name="numfieldBackPressureMaxHMI" layoutConstraint="null">
+            <resolution width="330" height="29"/>
+            <position x="3" y="120"/>
+            <attributeValues key="Variable" value="system.sv_rMaxBackPressure"/>
+          </widgetInstances>
+          <widgetInstances widgetId="keplast.kvs.numfieldtext" name="numfieldMldAdjstMaxPress" layoutConstraint="null">
+            <resolution width="330" height="29"/>
+            <position x="3" y="149"/>
+            <attributeValues key="Variable" value="MoldHeight1.sv_MoldHeightOutput.rMaxAdjustPressure"/>
+            <dynamicAttributes key="Create">
+              <value function="doesDeviceExist : UserFunctions" equal="true" unequal="false">
+                <parameter key="1" value="devicename;PlastFunctionUtils.createDeviceName(&quot;MoldHeight1&quot;)"/>
+              </value>
+            </dynamicAttributes>
+          </widgetInstances>
+          <widgetInstances widgetId="keplast.kvs.numfieldtext" name="numFieldText1" layoutConstraint="null">
+            <resolution width="330" height="29"/>
+            <position x="3" y="178"/>
+            <attributeValues key="Variable" value="MoldHeight1.sv_MoldHeightOutput.rMaxAdjustVelocity"/>
+            <dynamicAttributes key="Create">
+              <value function="doesDeviceExist : UserFunctions" equal="true" unequal="false">
+                <parameter key="1" value="devicename;PlastFunctionUtils.createDeviceName(&quot;MoldHeight1&quot;)"/>
+              </value>
+            </dynamicAttributes>
+          </widgetInstances>
+          <widgetInstances widgetId="keplast.kvs.numfieldtext" name="numfieldMaxInjPresAllow" layoutConstraint="null">
+            <resolution width="330" height="29"/>
+            <position x="3" y="207"/>
+            <dynamicAttributes key="Variable">
+              <value function="isDeviceElectric : UserFunctions" equal="Injection1.sv_rMaxPressureFwdSpec" unequal="Injection1.sv_rMaxInjPresAllow">
+                <parameter key="1" value="devicename; PlastFunctionUtils.createDeviceName(&quot;Injection1&quot;)"/>
+              </value>
+            </dynamicAttributes>
+          </widgetInstances>
+          <widgetInstances widgetId="keplast.kvs.numfieldtext" name="numfieldMaxHoldPresAllow" layoutConstraint="null">
+            <resolution width="330" height="29"/>
+            <position x="3" y="236"/>
+            <dynamicAttributes key="Variable">
+              <value function="isDeviceElectric : UserFunctions" equal="Injection1.sv_rMaxPressureHoldSpec" unequal="Injection1.sv_rMaxHoldPresAllow">
+                <parameter key="1" value="devicename; PlastFunctionUtils.createDeviceName(&quot;Injection1&quot;)"/>
+              </value>
+            </dynamicAttributes>
+          </widgetInstances>
+          <widgetInstances widgetId="keplast.kvs.numfieldtext" name="numfieldMoldProtectPressure" layoutConstraint="null">
+            <resolution width="330" height="29"/>
+            <position x="3" y="265"/>
+            <attributeValues key="Variable" value="Mold1.sv_rMaxPressureProtect"/>
+          </widgetInstances>
+          <widgetInstances widgetId="keplast.kvs.numfieldtext" name="numfieldMoldAdjustForceMax" layoutConstraint="null">
+            <resolution width="330" height="29"/>
+            <position x="3" y="294"/>
+            <attributeValues key="Variable" value="Mold1.sv_ClampForce.rMaxClampForce"/>
+            <dynamicAttributes key="Editable">
+              <value function="hasOption : UserFunctions" equal="false" unequal="true">
+                <parameter key="1" value="devicename; PlastFunctionUtils.createDeviceName(&quot;Mold1&quot;)"/>
+                <parameter key="2" value="machineoptionid; system.hmi.MachineEquipment.SUB_OPTION_MOLD_DIRECTLOCK"/>
+              </value>
+            </dynamicAttributes>
+          </widgetInstances>
+        </widgetInstances>
+      </widgetInstances>
+    </pages>
+    <pages widgetId="keplast.kvs.tabpanelplast.container" name="Tab2">
+      <resolution width="684" height="446"/>
+      <position/>
+      <attributeValues key="Background" value="BG_Panel:220,220,220"/>
+      <attributeValues key="HelpSubID" value="stroke"/>
+      <attributeValues key="CreateOnTabShowAction" value="true"/>
+      <layout layoutID="keplast.kvs.layout.horizontalsplitlayout" name="HorizontalSplitLayout"/>
+      <widgetInstances xsi:type="base:ContainerWidgetInstance" widgetId="kvs.panel" name="panelSeparator2" layoutConstraint="SEPARATOR">
+        <resolution height="440"/>
+        <position x="342"/>
+        <attributeValues key="PreferredSize" value="0, 440"/>
+        <layout layoutID="kvs.layout.PercentLayout" name="PercentLayout"/>
+      </widgetInstances>
+      <widgetInstances xsi:type="base:ContainerWidgetInstance" widgetId="kvs.panel" name="panelLeft2" layoutConstraint="LEFT">
+        <resolution width="336" height="440"/>
+        <position x="3"/>
+        <attributeValues key="PreferredSize" value="350, 529"/>
+        <layout layoutID="kvs.layout.VerticalFlowLayout" name="VerticalFlowLayout">
+          <attributeValues key="Hgap" value="0"/>
+          <attributeValues key="Vgap" value="3"/>
+          <attributeValues key="OuterGaps" value="false"/>
+        </layout>
+        <widgetInstances xsi:type="base:ContainerWidgetInstance" widgetId="keplast.kvs.borderpanelsmall" name="panelMold2" layoutConstraint="null">
+          <resolution width="336" height="240"/>
+          <position/>
+          <attributeValues key="Title" value="Mold"/>
+          <layout layoutID="kvs.layout.GridLayout" name="GridLayout">
+            <attributeValues key="Rows" value="7"/>
+            <attributeValues key="Columns" value="1"/>
+          </layout>
+          <widgetInstances widgetId="keplast.kvs.numfieldtext" name="numfieldStrokeMold" layoutConstraint="null">
+            <resolution width="330" height="29"/>
+            <position x="3" y="33"/>
+            <dynamicAttributes key="Variable">
+              <value function="doesDeviceExist : UserFunctions" equal="Mold1.sv_rMoldStroke" unequal="Mold1.sv_rMaxMoldStroke">
+                <parameter key="1" value="devicename;PlastFunctionUtils.createDeviceName(&quot;MoldHeight1&quot;)"/>
+              </value>
+            </dynamicAttributes>
+          </widgetInstances>
+          <widgetInstances widgetId="keplast.kvs.numfieldtext" name="numfieldMoldCylDiameter" layoutConstraint="null">
+            <resolution width="330" height="29"/>
+            <position x="3" y="62"/>
+            <attributeValues key="Variable" value="Mold1.sv_CylinderData.rCylinderDiameter"/>
+            <dynamicAttributes key="Create">
+              <value function="isDeviceHydraulic : UserFunctions" equal="true" unequal="false">
+                <parameter key="1" value="devicename; PlastFunctionUtils.createDeviceName(&quot;Mold1&quot;)"/>
+              </value>
+            </dynamicAttributes>
+          </widgetInstances>
+          <widgetInstances widgetId="keplast.kvs.numfieldtext" name="numfieldMoldPRodDiameter" layoutConstraint="null">
+            <resolution width="330" height="29"/>
+            <position x="3" y="91"/>
+            <attributeValues key="Variable" value="Mold1.sv_CylinderData.rPistonRodDiameter"/>
+            <dynamicAttributes key="Create">
+              <value function="isDeviceHydraulic : UserFunctions" equal="true" unequal="false">
+                <parameter key="1" value="devicename; PlastFunctionUtils.createDeviceName(&quot;Mold1&quot;)"/>
+              </value>
+            </dynamicAttributes>
+          </widgetInstances>
+          <widgetInstances widgetId="keplast.kvs.numfieldtext" name="numfieldMoldPlungerDiameter" layoutConstraint="null">
+            <resolution width="330" height="29"/>
+            <position x="3" y="120"/>
+            <attributeValues key="Variable" value="Mold1.sv_CylinderData.rPlungerDiameter"/>
+            <dynamicAttributes key="Create">
+              <value function="hasOption_AND_hasOption : UserFunctions" equal="true" unequal="false">
+                <parameter key="1" value="devicename; PlastFunctionUtils.createDeviceName(&quot;Mold1&quot;)"/>
+                <parameter key="2" value="machineoptionid; system.hmi.MachineEquipment.HYDRAULIC"/>
+                <parameter key="3" value="machineoptionid; system.hmi.MachineEquipment.SUB_OPTION_MOLD_DIRECTLOCK"/>
+              </value>
+            </dynamicAttributes>
+          </widgetInstances>
+          <widgetInstances widgetId="keplast.kvs.numfieldtext" name="numfieldMoldNumOfCylinders" layoutConstraint="null">
+            <resolution width="330" height="29"/>
+            <position x="3" y="149"/>
+            <attributeValues key="Variable" value="Mold1.sv_CylinderData.iNumCylinders"/>
+            <dynamicAttributes key="Visible">
+              <value function="isDeviceHydraulic : UserFunctions" equal="true" unequal="false">
+                <parameter key="1" value="devicename; PlastFunctionUtils.createDeviceName(&quot;Mold1&quot;)"/>
+              </value>
+            </dynamicAttributes>
+            <dynamicAttributes key="Create">
+              <value function="isDeviceElectric : UserFunctions" equal="false" unequal="true">
+                <parameter key="1" value="devicename; PlastFunctionUtils.createDeviceName(&quot;Mold1&quot;)"/>
+              </value>
+            </dynamicAttributes>
+          </widgetInstances>
+          <widgetInstances widgetId="keplast.kvs.checkboxtext" name="chkBoxMoldUseSmallSize" layoutConstraint="null">
+            <resolution width="330" height="29"/>
+            <position x="3" y="178"/>
+            <attributeValues key="Variable" value="Mold1.sv_CylinderData.bUseSmallSize"/>
+            <dynamicAttributes key="Create">
+              <value function="isDeviceHydraulic : UserFunctions" equal="true" unequal="false">
+                <parameter key="1" value="devicename; PlastFunctionUtils.createDeviceName(&quot;Mold1&quot;)"/>
+              </value>
+            </dynamicAttributes>
+          </widgetInstances>
+          <widgetInstances widgetId="keplast.kvs.checkboxtext" name="chkBoxMoldMoveWithPlunger" layoutConstraint="null">
+            <resolution width="330" height="29"/>
+            <position x="3" y="207"/>
+            <attributeValues key="Variable" value="Mold1.sv_CylinderData.bMoveWithPlunger"/>
+            <dynamicAttributes key="Create">
+              <value function="hasOption_AND_hasOption : UserFunctions" equal="true" unequal="false">
+                <parameter key="1" value="devicename; PlastFunctionUtils.createDeviceName(&quot;Mold1&quot;)"/>
+                <parameter key="2" value="machineoptionid; system.hmi.MachineEquipment.HYDRAULIC"/>
+                <parameter key="3" value="machineoptionid; system.hmi.MachineEquipment.SUB_OPTION_MOLD_DIRECTLOCK"/>
+              </value>
+            </dynamicAttributes>
+          </widgetInstances>
+        </widgetInstances>
+        <widgetInstances xsi:type="base:ContainerWidgetInstance" widgetId="keplast.kvs.borderpanelsmall" name="panelEjector2" layoutConstraint="null">
+          <resolution width="336" height="182"/>
+          <position y="243"/>
+          <attributeValues key="Title" value="Ejector"/>
+          <layout layoutID="kvs.layout.GridLayout" name="GridLayout">
+            <attributeValues key="Rows" value="5"/>
+            <attributeValues key="Columns" value="1"/>
+          </layout>
+          <widgetInstances widgetId="keplast.kvs.numfieldtext" name="numfieldStrokeEjector" layoutConstraint="null">
+            <resolution width="330" height="29"/>
+            <position x="3" y="33"/>
+            <attributeValues key="Variable" value="Ejector1.sv_rEjectorStroke"/>
+            <dynamicAttributes key="Create">
+              <value function="hasOption_OR_doesVariableExist : UserFunctions" equal="true" unequal="false">
+                <parameter key="1" value="devicename;PlastFunctionUtils.createDeviceName(&quot;Ejector1&quot;)"/>
+                <parameter key="2" value="machineoptionid;system.hmi.MachineEquipment.ELECTRIC"/>
+                <parameter key="3" value="variableasstring;PlastFunctionUtils.createVariableString(&quot;Ejector1.ai_Position&quot;)"/>
+              </value>
+            </dynamicAttributes>
+          </widgetInstances>
+          <widgetInstances widgetId="keplast.kvs.numfieldtext" name="numfieldEjectorCylDiameter" layoutConstraint="null">
+            <resolution width="330" height="29"/>
+            <position x="3" y="62"/>
+            <attributeValues key="Variable" value="Ejector1.sv_CylinderData.rCylinderDiameter"/>
+            <dynamicAttributes key="Create">
+              <value function="isDeviceHydraulic : UserFunctions" equal="true" unequal="false">
+                <parameter key="1" value="devicename; PlastFunctionUtils.createDeviceName(&quot;Ejector1&quot;)"/>
+              </value>
+            </dynamicAttributes>
+          </widgetInstances>
+          <widgetInstances widgetId="keplast.kvs.numfieldtext" name="numfieldEjectorPRodDiameter" layoutConstraint="null">
+            <resolution width="330" height="29"/>
+            <position x="3" y="91"/>
+            <attributeValues key="Variable" value="Ejector1.sv_CylinderData.rPistonRodDiameter"/>
+            <dynamicAttributes key="Create">
+              <value function="isDeviceHydraulic : UserFunctions" equal="true" unequal="false">
+                <parameter key="1" value="devicename; PlastFunctionUtils.createDeviceName(&quot;Ejector1&quot;)"/>
+              </value>
+            </dynamicAttributes>
+          </widgetInstances>
+          <widgetInstances widgetId="keplast.kvs.numfieldtext" name="numfieldEjectorNumOfCylinders" layoutConstraint="null">
+            <resolution width="330" height="29"/>
+            <position x="3" y="120"/>
+            <attributeValues key="Variable" value="Ejector1.sv_CylinderData.iNumCylinders"/>
+            <dynamicAttributes key="Create">
+              <value function="isDeviceHydraulic : UserFunctions" equal="true" unequal="false">
+                <parameter key="1" value="devicename; PlastFunctionUtils.createDeviceName(&quot;Ejector1&quot;)"/>
+              </value>
+            </dynamicAttributes>
+          </widgetInstances>
+          <widgetInstances widgetId="keplast.kvs.checkboxtext" name="chkBoxEjectorUseSmallSize" layoutConstraint="null">
+            <resolution width="330" height="29"/>
+            <position x="3" y="149"/>
+            <attributeValues key="Variable" value="Ejector1.sv_CylinderData.bUseSmallSize"/>
+            <dynamicAttributes key="Create">
+              <value function="isDeviceHydraulic : UserFunctions" equal="true" unequal="false">
+                <parameter key="1" value="devicename; PlastFunctionUtils.createDeviceName(&quot;Ejector1&quot;)"/>
+              </value>
+            </dynamicAttributes>
+          </widgetInstances>
+        </widgetInstances>
+        <widgetInstances widgetId="keplast.kvs.helper.compwidgetattributehelper" name="warnMessageDialogHelperTitle" layoutConstraint="null">
+          <resolution width="1" height="1"/>
+          <position x="1" y="1"/>
+          <attributeValues key="TextAttribute" value="Warning"/>
+        </widgetInstances>
+        <widgetInstances widgetId="keplast.kvs.helper.compwidgetattributehelper" name="warnMessageDialogHelperMessage" layoutConstraint="null">
+          <resolution width="1" height="1"/>
+          <position x="1" y="1"/>
+          <attributeValues key="TextAttribute" value="Attention!&#xA;&#xA;Changes of cylinder parameters can cause inappropriate machine operation.&#xA;Re-calibration of hydraulic system necessary after any changes."/>
+        </widgetInstances>
+      </widgetInstances>
+      <widgetInstances xsi:type="base:ContainerWidgetInstance" widgetId="kvs.panel" name="panelRight2" layoutConstraint="RIGHT">
+        <resolution width="336" height="440"/>
+        <position x="345"/>
+        <attributeValues key="PreferredSize" value="350, 508"/>
+        <layout layoutID="kvs.layout.VerticalFlowLayout" name="VerticalFlowLayout">
+          <attributeValues key="Hgap" value="0"/>
+          <attributeValues key="Vgap" value="3"/>
+          <attributeValues key="OuterGaps" value="false"/>
+        </layout>
+        <widgetInstances xsi:type="base:ContainerWidgetInstance" widgetId="keplast.kvs.borderpanelsmall" name="panelInject2" layoutConstraint="null">
+          <resolution width="336" height="240"/>
+          <position/>
+          <attributeValues key="Title" value="Inject"/>
+          <layout layoutID="kvs.layout.GridLayout" name="GridLayout">
+            <attributeValues key="Rows" value="7"/>
+            <attributeValues key="Columns" value="1"/>
+          </layout>
+          <widgetInstances widgetId="keplast.kvs.numfieldtext" name="numfieldStrokeScrew" layoutConstraint="null">
+            <resolution width="330" height="29"/>
+            <position x="3" y="33"/>
+            <attributeValues key="Variable" value="Injection1.sv_rScrewStroke"/>
+          </widgetInstances>
+          <widgetInstances widgetId="keplast.kvs.numfieldtext" name="numfieldInjectionScrewDiameter" layoutConstraint="null">
+            <resolution width="330" height="29"/>
+            <position x="3" y="62"/>
+            <attributeValues key="Variable" value="Injection1.sv_rScrewDiameter"/>
+          </widgetInstances>
+          <widgetInstances widgetId="keplast.kvs.numfieldtext" name="numfieldInjectionCylDiameter" layoutConstraint="null">
+            <resolution width="330" height="29"/>
+            <position x="3" y="91"/>
+            <attributeValues key="Variable" value="Injection1.sv_CylinderData.rCylinderDiameter"/>
+            <dynamicAttributes key="Create">
+              <value function="isDeviceHydraulic : UserFunctions" equal="true" unequal="false">
+                <parameter key="1" value="devicename; PlastFunctionUtils.createDeviceName(&quot;Injection1&quot;)"/>
+              </value>
+            </dynamicAttributes>
+          </widgetInstances>
+          <widgetInstances widgetId="keplast.kvs.numfieldtext" name="numfieldInjectionPRodDiameter" layoutConstraint="null">
+            <resolution width="330" height="29"/>
+            <position x="3" y="120"/>
+            <attributeValues key="Variable" value="Injection1.sv_CylinderData.rPistonRodDiameter"/>
+            <dynamicAttributes key="Create">
+              <value function="isDeviceHydraulic : UserFunctions" equal="true" unequal="false">
+                <parameter key="1" value="devicename; PlastFunctionUtils.createDeviceName(&quot;Injection1&quot;)"/>
+              </value>
+            </dynamicAttributes>
+          </widgetInstances>
+          <widgetInstances widgetId="keplast.kvs.numfieldtext" name="numfieldInjectionNumOfCylinders" layoutConstraint="null">
+            <resolution width="330" height="29"/>
+            <position x="3" y="149"/>
+            <attributeValues key="Variable" value="Injection1.sv_CylinderData.iNumCylinders"/>
+            <dynamicAttributes key="Create">
+              <value function="isDeviceHydraulic : UserFunctions" equal="true" unequal="false">
+                <parameter key="1" value="devicename; PlastFunctionUtils.createDeviceName(&quot;Injection1&quot;)"/>
+              </value>
+            </dynamicAttributes>
+          </widgetInstances>
+          <widgetInstances widgetId="keplast.kvs.checkboxtext" name="chkBoxInjectionUseSmallSize" layoutConstraint="null">
+            <resolution width="330" height="29"/>
+            <position x="3" y="178"/>
+            <attributeValues key="Variable" value="Injection1.sv_CylinderData.bUseSmallSize"/>
+            <dynamicAttributes key="Create">
+              <value function="isDeviceHydraulic : UserFunctions" equal="true" unequal="false">
+                <parameter key="1" value="devicename; PlastFunctionUtils.createDeviceName(&quot;Injection1&quot;)"/>
+              </value>
+            </dynamicAttributes>
+          </widgetInstances>
+        </widgetInstances>
+        <widgetInstances xsi:type="base:ContainerWidgetInstance" widgetId="keplast.kvs.borderpanelsmall" name="panelNozzle2" layoutConstraint="null">
+          <resolution width="336" height="182"/>
+          <position y="243"/>
+          <attributeValues key="Title" value="Nozzle"/>
+          <layout layoutID="kvs.layout.GridLayout" name="GridLayout">
+            <attributeValues key="Rows" value="5"/>
+            <attributeValues key="Columns" value="1"/>
+          </layout>
+          <widgetInstances widgetId="keplast.kvs.numfieldtext" name="numfieldStrokeNozzle" layoutConstraint="null">
+            <resolution width="330" height="29"/>
+            <position x="3" y="33"/>
+            <attributeValues key="Variable" value="Nozzle1.sv_rNozzleStroke"/>
+            <dynamicAttributes key="Create">
+              <value function="hasOption_OR_doesVariableExist : UserFunctions" equal="true" unequal="false">
+                <parameter key="1" value="devicename; PlastFunctionUtils.createDeviceName(&quot;Nozzle1&quot;)"/>
+                <parameter key="2" value="machineoptionid; system.hmi.MachineEquipment.ELECTRIC"/>
+                <parameter key="3" value="variableasstring; PlastFunctionUtils.createVariableString(&quot;Nozzle1.ai_Position&quot;)"/>
+              </value>
+            </dynamicAttributes>
+          </widgetInstances>
+          <widgetInstances widgetId="keplast.kvs.numfieldtext" name="numfieldNozzleCylDiameter" layoutConstraint="null">
+            <resolution width="330" height="29"/>
+            <position x="3" y="62"/>
+            <attributeValues key="Variable" value="Nozzle1.sv_CylinderData.rCylinderDiameter"/>
+            <dynamicAttributes key="Create">
+              <value function="isDeviceHydraulic : UserFunctions" equal="true" unequal="false">
+                <parameter key="1" value="devicename; PlastFunctionUtils.createDeviceName(&quot;Nozzle1&quot;)"/>
+              </value>
+            </dynamicAttributes>
+          </widgetInstances>
+          <widgetInstances widgetId="keplast.kvs.numfieldtext" name="numfieldNozzlePRodDiameter" layoutConstraint="null">
+            <resolution width="330" height="29"/>
+            <position x="3" y="91"/>
+            <attributeValues key="Variable" value="Nozzle1.sv_CylinderData.rPistonRodDiameter"/>
+            <dynamicAttributes key="Create">
+              <value function="isDeviceHydraulic : UserFunctions" equal="true" unequal="false">
+                <parameter key="1" value="devicename; PlastFunctionUtils.createDeviceName(&quot;Nozzle1&quot;)"/>
+              </value>
+            </dynamicAttributes>
+          </widgetInstances>
+          <widgetInstances widgetId="keplast.kvs.numfieldtext" name="numfieldNozzleNumOfCylinders" layoutConstraint="null">
+            <resolution width="330" height="29"/>
+            <position x="3" y="120"/>
+            <attributeValues key="Variable" value="Nozzle1.sv_CylinderData.iNumCylinders"/>
+            <dynamicAttributes key="Create">
+              <value function="isDeviceHydraulic : UserFunctions" equal="true" unequal="false">
+                <parameter key="1" value="devicename; PlastFunctionUtils.createDeviceName(&quot;Nozzle1&quot;)"/>
+              </value>
+            </dynamicAttributes>
+          </widgetInstances>
+          <widgetInstances widgetId="keplast.kvs.checkboxtext" name="chkBoxNozzleUseSmallSize" layoutConstraint="null">
+            <resolution width="330" height="29"/>
+            <position x="3" y="149"/>
+            <attributeValues key="Variable" value="Nozzle1.sv_CylinderData.bUseSmallSize"/>
+            <dynamicAttributes key="Create">
+              <value function="isDeviceHydraulic : UserFunctions" equal="true" unequal="false">
+                <parameter key="1" value="devicename; PlastFunctionUtils.createDeviceName(&quot;Nozzle1&quot;)"/>
+              </value>
+            </dynamicAttributes>
+          </widgetInstances>
+        </widgetInstances>
+      </widgetInstances>
+    </pages>
+    <pages widgetId="keplast.kvs.tabpanelplast.container" name="Tab4">
+      <resolution width="684" height="446"/>
+      <position/>
+      <attributeValues key="HelpSubID" value="stroke2"/>
+      <attributeValues key="Background" value="BG_Panel:220,220,220"/>
+      <attributeValues key="CreateOnTabShowAction" value="true"/>
+      <dynamicAttributes key="Create">
+        <value function="doesDeviceExist_OR_doesDeviceExist : UserFunctions" equal="true" unequal="false">
+          <parameter key="1" value="devicename;PlastFunctionUtils.createDeviceName(&quot;SlideTable1&quot;)"/>
+          <parameter key="2" value="devicename;PlastFunctionUtils.createDeviceName(&quot;TieBars1&quot;)"/>
+        </value>
+      </dynamicAttributes>
+      <layout layoutID="keplast.kvs.layout.horizontalsplitlayout" name="HorizontalSplitLayout"/>
+      <widgetInstances xsi:type="base:ContainerWidgetInstance" widgetId="kvs.panel" name="container4" layoutConstraint="SEPARATOR">
+        <resolution width="10" height="440"/>
+        <position x="337"/>
+        <attributeValues key="Background" value="BG_Panel:220,220,220"/>
+        <layout layoutID="kvs.layout.PercentLayout" name="PercentLayout"/>
+      </widgetInstances>
+      <widgetInstances xsi:type="base:ContainerWidgetInstance" widgetId="kvs.panel" name="container3" layoutConstraint="RIGHT">
+        <resolution width="331" height="440"/>
+        <position x="350"/>
+        <attributeValues key="PreferredSize" value="346, 440"/>
+        <attributeValues key="Background" value="BG_Panel:220,220,220"/>
+        <layout layoutID="kvs.layout.VerticalFlowLayout" name="VerticalFlowLayout">
+          <attributeValues key="Hgap" value="0"/>
+          <attributeValues key="Vgap" value="3"/>
+          <attributeValues key="OuterGaps" value="false"/>
+        </layout>
+      </widgetInstances>
+      <widgetInstances xsi:type="base:ContainerWidgetInstance" widgetId="kvs.panel" name="container1" layoutConstraint="LEFT">
+        <resolution width="331" height="440"/>
+        <position x="3"/>
+        <attributeValues key="Background" value="BG_Panel:220,220,220"/>
+        <attributeValues key="PreferredSize" value="346, 440"/>
+        <layout layoutID="kvs.layout.VerticalFlowLayout" name="VerticalFlowLayout">
+          <attributeValues key="Hgap" value="0"/>
+          <attributeValues key="Vgap" value="3"/>
+          <attributeValues key="OuterGaps" value="false"/>
+        </layout>
+        <widgetInstances xsi:type="base:ContainerWidgetInstance" widgetId="keplast.kvs.borderpanelsmall" name="borderPanel1" layoutConstraint="null">
+          <resolution width="331" height="182"/>
+          <position/>
+          <attributeValues key="Title" value="Slide Table"/>
+          <dynamicAttributes key="Create">
+            <value function="doesVariableExist : UserFunctions" equal="true" unequal="false">
+              <parameter key="1" value="variableasstring;PlastFunctionUtils.createVariableString(&quot;SlideTable1.ai_Position&quot;)"/>
+            </value>
+          </dynamicAttributes>
+          <layout layoutID="kvs.layout.GridLayout" name="GridLayout">
+            <attributeValues key="Rows" value="5"/>
+            <attributeValues key="Columns" value="1"/>
+          </layout>
+          <widgetInstances widgetId="keplast.kvs.numfieldtext" name="fMaxStrokeSlide" layoutConstraint="null">
+            <resolution width="325" height="29"/>
+            <position x="3" y="33"/>
+            <attributeValues key="Variable" value="SlideTable1.sv_rStroke"/>
+            <dynamicAttributes key="Create">
+              <value function="doesVariableExist : UserFunctions" equal="true" unequal="false">
+                <parameter key="1" value="variableasstring;PlastFunctionUtils.createVariableString(&quot;SlideTable1.ai_Position&quot;)"/>
+              </value>
+            </dynamicAttributes>
+          </widgetInstances>
+          <widgetInstances widgetId="keplast.kvs.numfieldtext" name="fCylDiameterSlide" layoutConstraint="null">
+            <resolution width="325" height="29"/>
+            <position x="3" y="62"/>
+            <attributeValues key="Variable" value="SlideTable1.sv_CylinderData.rCylinderDiameter"/>
+          </widgetInstances>
+          <widgetInstances widgetId="keplast.kvs.numfieldtext" name="fPistonRodDiamSlide" layoutConstraint="null">
+            <resolution width="325" height="29"/>
+            <position x="3" y="91"/>
+            <attributeValues key="Variable" value="SlideTable1.sv_CylinderData.rPistonRodDiameter"/>
+          </widgetInstances>
+          <widgetInstances widgetId="keplast.kvs.numfieldtext" name="fNumbCylSlide" layoutConstraint="null">
+            <resolution width="325" height="29"/>
+            <position x="3" y="120"/>
+            <attributeValues key="Variable" value="SlideTable1.sv_CylinderData.iNumCylinders"/>
+          </widgetInstances>
+          <widgetInstances widgetId="keplast.kvs.checkboxtext" name="ckbMoveRingArea" layoutConstraint="null">
+            <resolution width="325" height="29"/>
+            <position x="3" y="149"/>
+            <attributeValues key="PreferredSize" value="10, 29"/>
+            <attributeValues key="UnitFieldWidth" value="38"/>
+            <attributeValues key="CheckboxSize" value="29"/>
+            <attributeValues key="Variable" value="SlideTable1.sv_CylinderData.bUseSmallSize"/>
+          </widgetInstances>
+        </widgetInstances>
+        <widgetInstances xsi:type="base:ContainerWidgetInstance" widgetId="keplast.kvs.borderpanelsmall" name="borderTieBar" layoutConstraint="null">
+          <resolution width="331" height="182"/>
+          <position y="185"/>
+          <attributeValues key="Title" value="Tiebars"/>
+          <dynamicAttributes key="Create">
+            <value function="doesDeviceExist : UserFunctions" equal="true" unequal="false">
+              <parameter key="1" value="devicename;PlastFunctionUtils.createDeviceName(&quot;TieBars1&quot;)"/>
+            </value>
+          </dynamicAttributes>
+          <layout layoutID="kvs.layout.GridLayout" name="GridLayout">
+            <attributeValues key="Rows" value="5"/>
+            <attributeValues key="Columns" value="1"/>
+          </layout>
+          <widgetInstances widgetId="keplast.kvs.numfieldtext" name="fMaxStrokeTieBar" layoutConstraint="null">
+            <resolution width="325" height="29"/>
+            <position x="3" y="33"/>
+            <attributeValues key="Variable" value="TieBars1.sv_rTieBarStroke"/>
+          </widgetInstances>
+          <widgetInstances widgetId="keplast.kvs.numfieldtext" name="fCylDiameterTieBar" layoutConstraint="null">
+            <resolution width="325" height="29"/>
+            <position x="3" y="62"/>
+            <attributeValues key="Variable" value="TieBars1.sv_CylinderData.rCylinderDiameter"/>
+          </widgetInstances>
+          <widgetInstances widgetId="keplast.kvs.numfieldtext" name="fPistonRodDiamTieBar" layoutConstraint="null">
+            <resolution width="325" height="29"/>
+            <position x="3" y="91"/>
+            <attributeValues key="Variable" value="TieBars1.sv_CylinderData.rPistonRodDiameter"/>
+          </widgetInstances>
+          <widgetInstances widgetId="keplast.kvs.numfieldtext" name="fNumbCylTieBar" layoutConstraint="null">
+            <resolution width="325" height="29"/>
+            <position x="3" y="120"/>
+            <attributeValues key="Variable" value="TieBars1.sv_CylinderData.iNumCylinders"/>
+            <attributeValues key="TextLabelType" value="Long Variable Label"/>
+          </widgetInstances>
+          <widgetInstances widgetId="keplast.kvs.checkboxtext" name="ckbMoveRingArea1" layoutConstraint="null">
+            <resolution width="325" height="29"/>
+            <position x="3" y="149"/>
+            <attributeValues key="PreferredSize" value="10, 29"/>
+            <attributeValues key="UnitFieldWidth" value="38"/>
+            <attributeValues key="CheckboxSize" value="29"/>
+            <attributeValues key="Variable" value="TieBars1.sv_CylinderData.bUseSmallSize"/>
+          </widgetInstances>
+        </widgetInstances>
+      </widgetInstances>
+    </pages>
+    <pages widgetId="keplast.kvs.tabpanelplast.container" name="Tab3">
+      <resolution width="684" height="446"/>
+      <position/>
+      <attributeValues key="Background" value="BG_Panel:220,220,220"/>
+      <attributeValues key="HelpSubID" value="maxvelocity"/>
+      <layout layoutID="keplast.kvs.layout.horizontalsplitlayout" name="HorizontalSplitLayout"/>
+      <widgetInstances xsi:type="base:ContainerWidgetInstance" widgetId="kvs.panel" name="panelLeft3" layoutConstraint="LEFT">
+        <resolution width="351" height="440"/>
+        <position x="3"/>
+        <attributeValues key="PreferredSize" value="350, 442"/>
+        <layout layoutID="kvs.layout.VerticalFlowLayout" name="VerticalFlowLayout">
+          <attributeValues key="Hgap" value="0"/>
+          <attributeValues key="Vgap" value="3"/>
+          <attributeValues key="OuterGaps" value="false"/>
+        </layout>
+        <widgetInstances xsi:type="base:ContainerWidgetInstance" widgetId="keplast.kvs.borderpanelsmall" name="panelMold" layoutConstraint="null">
+          <resolution width="351" height="95"/>
+          <position/>
+          <attributeValues key="Title" value="Mold"/>
+          <layout layoutID="kvs.layout.GridLayout" name="GridLayout">
+            <attributeValues key="Rows" value="2"/>
+            <attributeValues key="Columns" value="1"/>
+          </layout>
+          <widgetInstances widgetId="keplast.kvs.actsetnumfieldtext" name="fMoldMaxSpeedFwd" layoutConstraint="null">
+            <resolution width="345" height="29"/>
+            <position x="3" y="33"/>
+            <attributeValues key="Variable" value="Mold1.sv_rMaxSpeedFwd"/>
+            <attributeValues key="VariableActual" value="Mold1.sv_rMaxSpeedFwdCalib"/>
+          </widgetInstances>
+          <widgetInstances widgetId="keplast.kvs.actsetnumfieldtext" name="fMoldMaxSpeedBwd" layoutConstraint="null">
+            <resolution width="345" height="29"/>
+            <position x="3" y="62"/>
+            <attributeValues key="Variable" value="Mold1.sv_rMaxSpeedBwd"/>
+            <attributeValues key="VariableActual" value="Mold1.sv_rMaxSpeedBwdCalib"/>
+          </widgetInstances>
+        </widgetInstances>
+        <widgetInstances xsi:type="base:ContainerWidgetInstance" widgetId="keplast.kvs.borderpanelsmall" name="panelEjector" layoutConstraint="null">
+          <resolution width="351" height="95"/>
+          <position y="98"/>
+          <attributeValues key="Title" value="Ejector"/>
+          <layout layoutID="kvs.layout.GridLayout" name="GridLayout">
+            <attributeValues key="Rows" value="2"/>
+            <attributeValues key="Columns" value="1"/>
+          </layout>
+          <widgetInstances widgetId="keplast.kvs.actsetnumfieldtext" name="fEjeMaxSpeedFwd" layoutConstraint="null">
+            <resolution width="345" height="29"/>
+            <position x="3" y="33"/>
+            <attributeValues key="Variable" value="Ejector1.sv_rMaxSpeedFwd"/>
+            <attributeValues key="VariableActual" value="Ejector1.sv_rMaxSpeedFwdCalib"/>
+          </widgetInstances>
+          <widgetInstances widgetId="keplast.kvs.actsetnumfieldtext" name="fEjeMaxSpeedBwd" layoutConstraint="null">
+            <resolution width="345" height="29"/>
+            <position x="3" y="62"/>
+            <attributeValues key="Variable" value="Ejector1.sv_rMaxSpeedBwd"/>
+            <attributeValues key="VariableActual" value="Ejector1.sv_rMaxSpeedBwdCalib"/>
+          </widgetInstances>
+        </widgetInstances>
+        <widgetInstances xsi:type="base:ContainerWidgetInstance" widgetId="keplast.kvs.borderpanelsmall" name="panelScrew2" layoutConstraint="null">
+          <resolution width="351" height="66"/>
+          <position y="196"/>
+          <attributeValues key="Title" value="Screw"/>
+          <layout layoutID="kvs.layout.GridLayout" name="GridLayout">
+            <attributeValues key="Rows" value="1"/>
+            <attributeValues key="Columns" value="1"/>
+          </layout>
+          <widgetInstances widgetId="keplast.kvs.actsetnumfieldtext" name="fScrewMaxSpeed" layoutConstraint="null">
+            <resolution width="345" height="29"/>
+            <position x="3" y="33"/>
+            <attributeValues key="VariableActual" value="Injection1.sv_rMaxRpm"/>
+            <attributeValues key="Variable" value="Injection1.sv_rMaxRpmProfile"/>
+          </widgetInstances>
+        </widgetInstances>
+        <widgetInstances xsi:type="base:ContainerWidgetInstance" widgetId="keplast.kvs.borderpanelsmall" name="panelTieBars" layoutConstraint="null">
+          <resolution width="351" height="95"/>
+          <position y="265"/>
+          <attributeValues key="Title" value="Tie bars"/>
+          <attributeValues key="Visible" value="true"/>
+          <dynamicAttributes key="Create">
+            <value function="doesDeviceExist : UserFunctions" equal="true" unequal="false">
+              <parameter key="1" value="devicename;PlastFunctionUtils.createDeviceName(&quot;TieBars1&quot;)"/>
+            </value>
+          </dynamicAttributes>
+          <layout layoutID="kvs.layout.GridLayout" name="GridLayout">
+            <attributeValues key="Rows" value="2"/>
+            <attributeValues key="Columns" value="1"/>
+          </layout>
+          <widgetInstances widgetId="keplast.kvs.actsetnumfieldtext" name="fTieBarMaxSpeedFwd" layoutConstraint="null">
+            <resolution width="345" height="29"/>
+            <position x="3" y="33"/>
+            <attributeValues key="Variable" value="TieBars1.sv_rMaxSpeedFwd"/>
+            <attributeValues key="VariableActual" value="TieBars1.sv_rMaxSpeedFwdCalc"/>
+          </widgetInstances>
+          <widgetInstances widgetId="keplast.kvs.actsetnumfieldtext" name="fTieBarMaxSpeedBwd" layoutConstraint="null">
+            <resolution width="345" height="29"/>
+            <position x="3" y="62"/>
+            <attributeValues key="Variable" value="TieBars1.sv_rMaxSpeedBwd"/>
+            <attributeValues key="VariableActual" value="TieBars1.sv_rMaxSpeedBwdCalc"/>
+          </widgetInstances>
+        </widgetInstances>
+      </widgetInstances>
+      <widgetInstances xsi:type="base:ContainerWidgetInstance" widgetId="kvs.panel" name="panelRight3" layoutConstraint="RIGHT">
+        <resolution width="351" height="440"/>
+        <position x="360"/>
+        <attributeValues key="PreferredSize" value="350, 442"/>
+        <layout layoutID="kvs.layout.VerticalFlowLayout" name="VerticalFlowLayout">
+          <attributeValues key="Hgap" value="0"/>
+          <attributeValues key="Vgap" value="3"/>
+          <attributeValues key="OuterGaps" value="false"/>
+        </layout>
+        <widgetInstances xsi:type="base:ContainerWidgetInstance" widgetId="keplast.kvs.borderpanelsmall" name="panelInjection" layoutConstraint="null">
+          <resolution width="351" height="124"/>
+          <position/>
+          <attributeValues key="Title" value="Inject"/>
+          <layout layoutID="kvs.layout.VerticalFlowLayout" name="VerticalFlowLayout">
+            <attributeValues key="Hgap" value="0"/>
+            <attributeValues key="Vgap" value="0"/>
+          </layout>
+          <widgetInstances widgetId="keplast.kvs.actsetnumfieldtext" name="fInjMaxSpeedFwd" layoutConstraint="null">
+            <resolution width="345" height="29"/>
+            <position x="3" y="33"/>
+            <attributeValues key="Variable" value="Injection1.sv_rMaxSpeedFwd"/>
+            <attributeValues key="VariableActual" value="Injection1.sv_rMaxSpeedFwdCalib"/>
+          </widgetInstances>
+          <widgetInstances widgetId="keplast.kvs.actsetnumfieldtext" name="fInjMaxSpeedBwd" layoutConstraint="null">
+            <resolution width="345" height="29"/>
+            <position x="3" y="62"/>
+            <attributeValues key="Variable" value="Injection1.sv_rMaxSpeedBwd"/>
+            <attributeValues key="VariableActual" value="Injection1.sv_rMaxSpeedBwdCalib"/>
+          </widgetInstances>
+          <widgetInstances widgetId="keplast.kvs.numfieldtext" name="numfieldSpeedFactorInjectAccu" layoutConstraint="null">
+            <resolution width="345" height="29"/>
+            <position x="3" y="91"/>
+            <attributeValues key="Variable" value="Injection1.sv_rMaxSpeedFwdAccu"/>
+            <dynamicAttributes key="Create">
+              <value function="doesDeviceExist : UserFunctions" equal="true" unequal="false">
+                <parameter key="1" value="devicename; PlastFunctionUtils.createDeviceName(&quot;Accumulator1&quot;)"/>
+              </value>
+            </dynamicAttributes>
+          </widgetInstances>
+        </widgetInstances>
+        <widgetInstances xsi:type="base:ContainerWidgetInstance" widgetId="keplast.kvs.borderpanelsmall" name="panelNozzle" layoutConstraint="null">
+          <resolution width="351" height="95"/>
+          <position y="127"/>
+          <attributeValues key="Title" value="Nozzle"/>
+          <dynamicAttributes key="Create">
+            <value function="hasOption_AND_doesVariableExist : UserFunctions" equal="true" unequal="false">
+              <parameter key="1" value="devicename; PlastFunctionUtils.createDeviceName(&quot;Nozzle1&quot;)"/>
+              <parameter key="2" value="machineoptionid; system.hmi.MachineEquipment.HYDRAULIC"/>
+              <parameter key="3" value="variableasstring; PlastFunctionUtils.createVariableString(&quot;Nozzle1.ai_Position&quot;)"/>
+            </value>
+          </dynamicAttributes>
+          <layout layoutID="kvs.layout.GridLayout" name="GridLayout">
+            <attributeValues key="Rows" value="2"/>
+            <attributeValues key="Columns" value="1"/>
+          </layout>
+          <widgetInstances widgetId="keplast.kvs.actsetnumfieldtext" name="fNzlEleMaxSpeedFwd" layoutConstraint="null">
+            <resolution width="345" height="29"/>
+            <position x="3" y="33"/>
+            <attributeValues key="Variable" value="Nozzle1.sv_rMaxSpeedFwd"/>
+            <attributeValues key="VariableActual" value="Nozzle1.sv_rMaxSpeedFwdCalib"/>
+          </widgetInstances>
+          <widgetInstances widgetId="keplast.kvs.actsetnumfieldtext" name="fNzlEleMaxSpeedBwd" layoutConstraint="null">
+            <resolution width="345" height="29"/>
+            <position x="3" y="62"/>
+            <attributeValues key="Variable" value="Nozzle1.sv_rMaxSpeedBwd"/>
+            <attributeValues key="VariableActual" value="Nozzle1.sv_rMaxSpeedBwdCalib"/>
+            <attributeValues key="PreComma" value="-1"/>
+          </widgetInstances>
+        </widgetInstances>
+        <widgetInstances xsi:type="base:ContainerWidgetInstance" widgetId="keplast.kvs.borderpanelsmall" name="panelNozzle_ASM" layoutConstraint="null">
+          <resolution width="351" height="95"/>
+          <position y="225"/>
+          <attributeValues key="Title" value="Nozzle"/>
+          <dynamicAttributes key="Create">
+            <value function="hasOption_AND_NOT_hasOption : UserFunctions" equal="true" unequal="false">
+              <parameter key="1" value="devicename; PlastFunctionUtils.createDeviceName(&quot;Nozzle1&quot;)"/>
+              <parameter key="2" value="machineoptionid; system.hmi.MachineEquipment.ELECTRIC"/>
+              <parameter key="3" value="machineoptionid; system.hmi.MachineEquipment.MAIN_OPTION_NOZZLE_ASM"/>
+            </value>
+          </dynamicAttributes>
+          <layout layoutID="kvs.layout.GridLayout" name="GridLayout">
+            <attributeValues key="Rows" value="2"/>
+            <attributeValues key="Columns" value="1"/>
+          </layout>
+          <widgetInstances widgetId="keplast.kvs.actsetnumfieldtext" name="fNzlASMMaxSpeedFwd" layoutConstraint="null">
+            <resolution width="345" height="29"/>
+            <position x="3" y="33"/>
+            <attributeValues key="Variable" value="Nozzle1.sv_rMaxSpeedFwd"/>
+            <attributeValues key="VariableActual" value="Nozzle1.sv_rMaxSpeedFwdCalc"/>
+          </widgetInstances>
+          <widgetInstances widgetId="keplast.kvs.actsetnumfieldtext" name="fNzlASMMaxSpeedBwd" layoutConstraint="null">
+            <resolution width="345" height="29"/>
+            <position x="3" y="62"/>
+            <attributeValues key="Variable" value="Nozzle1.sv_rMaxSpeedBwd"/>
+            <attributeValues key="VariableActual" value="Nozzle1.sv_rMaxSpeedBwdCalc"/>
+          </widgetInstances>
+        </widgetInstances>
+        <widgetInstances xsi:type="base:ContainerWidgetInstance" widgetId="keplast.kvs.borderpanelsmall" name="panelSlideTable" layoutConstraint="null">
+          <resolution width="351" height="95"/>
+          <position y="323"/>
+          <attributeValues key="Title" value="Slide table"/>
+          <attributeValues key="Visible" value="true"/>
+          <dynamicAttributes key="Create">
+            <value function="doesVariableExist : UserFunctions" equal="true" unequal="false">
+              <parameter key="1" value="variableasstring;PlastFunctionUtils.createVariableString(&quot;SlideTable1.ai_Position&quot;)"/>
+            </value>
+          </dynamicAttributes>
+          <layout layoutID="kvs.layout.GridLayout" name="GridLayout">
+            <attributeValues key="Rows" value="2"/>
+            <attributeValues key="Columns" value="1"/>
+          </layout>
+          <widgetInstances widgetId="keplast.kvs.actsetnumfieldtext" name="fSlideMaxSpeedFwd" layoutConstraint="null">
+            <resolution width="345" height="29"/>
+            <position x="3" y="33"/>
+            <attributeValues key="Variable" value="SlideTable1.sv_rMaxSpeedFwd"/>
+            <attributeValues key="VariableActual" value="SlideTable1.sv_rMaxSpeedFwdCalc"/>
+          </widgetInstances>
+          <widgetInstances widgetId="keplast.kvs.actsetnumfieldtext" name="fSlideMaxSpeedBwd" layoutConstraint="null">
+            <resolution width="345" height="29"/>
+            <position x="3" y="62"/>
+            <attributeValues key="Variable" value="SlideTable1.sv_rMaxSpeedBwd"/>
+            <attributeValues key="VariableActual" value="SlideTable1.sv_rMaxSpeedBwdCalc"/>
+          </widgetInstances>
+        </widgetInstances>
+      </widgetInstances>
+    </pages>
+    <pages widgetId="keplast.kvs.tabpanelplast.container" name="Tab6">
+      <resolution width="684" height="446"/>
+      <position/>
+      <attributeValues key="Background" value="BG_Panel:220,220,220"/>
+      <attributeValues key="CreateOnTabShowAction" value="true"/>
+      <attributeValues key="HelpSubID" value="thermocomp"/>
+      <layout layoutID="kvs.layout.BorderLayout" name="BorderLayout"/>
+      <widgetInstances xsi:type="base:ContainerWidgetInstance" widgetId="kvs.panel" name="panelMainTemp" layoutConstraint="CENTER">
+        <resolution width="714" height="400"/>
+        <position y="40"/>
+        <layout layoutID="keplast.kvs.layout.horizontalsplitlayout" name="HorizontalSplitLayout">
+          <attributeValues key="PercentLeft" value="62"/>
+          <attributeValues key="PercentRight" value="38"/>
+        </layout>
+        <widgetInstances xsi:type="base:ContainerWidgetInstance" widgetId="kvs.panel" name="panelQuickSet" layoutConstraint="RIGHT">
+          <resolution width="266" height="196"/>
+          <position x="445"/>
+          <border name="TitledBorder" id="kv.border.TitledBorder">
+            <attributeValues key="TitleText" value="Quick Set TI0 - TI7"/>
+          </border>
+          <layout layoutID="kvs.layout.VerticalFlowLayout" name="VerticalFlowLayout">
+            <attributeValues key="Vgap" value="0"/>
+          </layout>
+          <widgetInstances xsi:type="base:ContainerWidgetInstance" widgetId="kvs.panel" name="panelQuickUse" layoutConstraint="null">
+            <resolution width="250" height="29"/>
+            <position x="8" y="33"/>
+            <layout layoutID="kvs.layout.FlowLayout" name="FlowLayout">
+              <attributeValues key="Alignment" value="LEFT"/>
+              <attributeValues key="Vgap" value="0"/>
+            </layout>
+            <widgetInstances widgetId="kvs.varlabel" name="labQuickUse_New" layoutConstraint="null">
+              <resolution width="161" height="21"/>
+              <position x="5" y="4"/>
+              <attributeValues key="PreferredSize" value="161, 21"/>
+              <attributeValues key="Variable" value="system.sv_ThermoData[0].bIsUsed"/>
+              <attributeValues key="LabelType" value="Short Variable Label"/>
+              <attributeValues key="Alignment" value="MIDDLE/LEFT"/>
+            </widgetInstances>
+            <widgetInstances widgetId="kvs.checkboxstd" name="cbQuickUse" layoutConstraint="null">
+              <resolution width="29" height="29"/>
+              <position x="171"/>
+              <attributeValues key="PreferredSize" value="29, 29"/>
+              <attributeValues key="InputLevel" value="12"/>
+              <attributeValues key="Description" value="Use length compensation"/>
+            </widgetInstances>
+          </widgetInstances>
+          <widgetInstances xsi:type="base:ContainerWidgetInstance" widgetId="kvs.panel" name="panelQuickLength" layoutConstraint="null">
+            <resolution width="250" height="29"/>
+            <position x="8" y="62"/>
+            <layout layoutID="kvs.layout.FlowLayout" name="FlowLayout">
+              <attributeValues key="Alignment" value="LEFT"/>
+              <attributeValues key="Vgap" value="0"/>
+            </layout>
+            <widgetInstances widgetId="kvs.varlabel" name="labQuickLength_New" layoutConstraint="null">
+              <resolution width="130" height="21"/>
+              <position x="5" y="4"/>
+              <attributeValues key="LabelType" value="Short Variable Label"/>
+              <attributeValues key="Variable" value="system.sv_ThermoData[0].rCableLength"/>
+              <attributeValues key="Alignment" value="MIDDLE/LEFT"/>
+              <attributeValues key="PreferredSize" value="130, 21"/>
+            </widgetInstances>
+            <widgetInstances widgetId="kvs.numfieldstdnew" name="nfQuickLength" layoutConstraint="null">
+              <resolution width="60" height="29"/>
+              <position x="140"/>
+              <attributeValues key="PreComma" value="3"/>
+              <attributeValues key="PostComma" value="1"/>
+              <attributeValues key="PlausibilityRangesString" value="0.5; 100.0"/>
+              <attributeValues key="InputLevel" value="12"/>
+              <attributeValues key="PreferredSize" value="60, 29"/>
+              <attributeValues key="Description" value="Cable length"/>
+            </widgetInstances>
+            <widgetInstances widgetId="kvs.varlabel" name="labQuickLengthUnit_New" layoutConstraint="null">
+              <resolution width="30" height="21"/>
+              <position x="205" y="4"/>
+              <attributeValues key="Variable" value="system.sv_ThermoData[0].rCableLength"/>
+              <attributeValues key="PreferredSize" value="30, 21"/>
+              <attributeValues key="Alignment" value="MIDDLE/LEFT"/>
+            </widgetInstances>
+          </widgetInstances>
+          <widgetInstances xsi:type="base:ContainerWidgetInstance" widgetId="kvs.panel" name="panelQuickDiameter" layoutConstraint="null">
+            <resolution width="250" height="29"/>
+            <position x="8" y="91"/>
+            <layout layoutID="kvs.layout.FlowLayout" name="FlowLayout">
+              <attributeValues key="Alignment" value="LEFT"/>
+              <attributeValues key="Vgap" value="0"/>
+            </layout>
+            <widgetInstances widgetId="kvs.varlabel" name="labQuickDiameter_New" layoutConstraint="null">
+              <resolution width="130" height="21"/>
+              <position x="5" y="4"/>
+              <attributeValues key="LabelType" value="Short Variable Label"/>
+              <attributeValues key="Alignment" value="MIDDLE/LEFT"/>
+              <attributeValues key="Variable" value="system.sv_ThermoData[0].rWireDiameter"/>
+              <attributeValues key="PreferredSize" value="130, 21"/>
+            </widgetInstances>
+            <widgetInstances widgetId="kvs.numfieldstdnew" name="nfQuickDiameter" layoutConstraint="null">
+              <resolution width="60" height="29"/>
+              <position x="140"/>
+              <attributeValues key="PreComma" value="3"/>
+              <attributeValues key="PostComma" value="1"/>
+              <attributeValues key="PlausibilityRangesString" value="0.1; 100.0"/>
+              <attributeValues key="InputLevel" value="12"/>
+              <attributeValues key="PreferredSize" value="60, 29"/>
+              <attributeValues key="Description" value="Wire diameter"/>
+            </widgetInstances>
+            <widgetInstances widgetId="kvs.varlabel" name="labQuickDiameterUnit_New" layoutConstraint="null">
+              <resolution width="30" height="21"/>
+              <position x="205" y="4"/>
+              <attributeValues key="Variable" value="system.sv_ThermoData[0].rWireDiameter"/>
+              <attributeValues key="Alignment" value="MIDDLE/LEFT"/>
+              <attributeValues key="PreferredSize" value="30, 21"/>
+            </widgetInstances>
+          </widgetInstances>
+          <widgetInstances xsi:type="base:ContainerWidgetInstance" widgetId="kvs.panel" name="panelQuickCrossSection" layoutConstraint="null">
+            <resolution width="250" height="29"/>
+            <position x="8" y="120"/>
+            <layout layoutID="kvs.layout.FlowLayout" name="FlowLayout">
+              <attributeValues key="Alignment" value="LEFT"/>
+              <attributeValues key="Vgap" value="0"/>
+            </layout>
+            <widgetInstances widgetId="kvs.varlabel" name="labQuickCrossSection_New" layoutConstraint="null">
+              <resolution width="130" height="21"/>
+              <position x="5" y="4"/>
+              <attributeValues key="LabelType" value="Short Variable Label"/>
+              <attributeValues key="Alignment" value="MIDDLE/LEFT"/>
+              <attributeValues key="Variable" value="system.sv_ThermoData[0].rWireCrossSection"/>
+              <attributeValues key="PreferredSize" value="130, 21"/>
+            </widgetInstances>
+            <widgetInstances widgetId="kvs.numfieldstdnew" name="nfQuickCrossSection" layoutConstraint="null">
+              <resolution width="60" height="29"/>
+              <position x="140"/>
+              <attributeValues key="PreComma" value="2"/>
+              <attributeValues key="PostComma" value="1"/>
+              <attributeValues key="PlausibilityRangesString" value="0.1; 30.0"/>
+              <attributeValues key="InputLevel" value="12"/>
+              <attributeValues key="PreferredSize" value="60, 29"/>
+              <attributeValues key="Description" value="Cross section"/>
+            </widgetInstances>
+            <widgetInstances widgetId="kvs.varlabel" name="labQuickCrossSectionUnit_New" layoutConstraint="null">
+              <resolution width="30" height="21"/>
+              <position x="205" y="4"/>
+              <attributeValues key="Variable" value="system.sv_ThermoData[0].rWireCrossSection"/>
+              <attributeValues key="Alignment" value="MIDDLE/LEFT"/>
+              <attributeValues key="PreferredSize" value="30, 21"/>
+            </widgetInstances>
+          </widgetInstances>
+          <widgetInstances xsi:type="base:ContainerWidgetInstance" widgetId="kvs.panel" name="container33" layoutConstraint="null">
+            <resolution width="250" height="42"/>
+            <position x="8" y="149"/>
+            <layout layoutID="kvs.layout.FlowLayout" name="FlowLayout"/>
+            <widgetInstances widgetId="kvs.label" name="label1" layoutConstraint="null">
+              <resolution width="85" height="10"/>
+              <position x="50" y="16"/>
+              <attributeValues key="Alignment" value="MIDDLE/LEFT"/>
+              <attributeValues key="PreferredSize" value="85, 10"/>
+            </widgetInstances>
+            <widgetInstances xsi:type="base:ContainerWidgetInstance" widgetId="kvs.panel" name="container2" layoutConstraint="null">
+              <resolution width="60" height="32"/>
+              <position x="140" y="5"/>
+              <attributeValues key="PreferredSize" value="60, 32"/>
+              <layout layoutID="kvs.layout.PercentLayout" name="PercentLayout"/>
+              <widgetInstances widgetId="kvs.actionbuttonnew" name="btnOkQuickSet" layoutConstraint="0,0,100,100">
+                <resolution width="60" height="32"/>
+                <position/>
+                <attributeValues key="PreferredSize" value="80, 40"/>
+                <attributeValues key="IconName" value="system/hmi/images/ok32.gif"/>
+              </widgetInstances>
+            </widgetInstances>
+          </widgetInstances>
+        </widgetInstances>
+        <widgetInstances xsi:type="base:ContainerWidgetInstance" widgetId="kvs.panel" name="panelThermoLengthCompensation" layoutConstraint="LEFT">
+          <resolution width="436" height="312"/>
+          <position x="3"/>
+          <border name="TitledBorder" id="kv.border.TitledBorder">
+            <attributeValues key="TitleText" value="Thermo length compensation"/>
+          </border>
+          <layout layoutID="kvs.layout.VerticalFlowLayout" name="VerticalFlowLayout">
+            <attributeValues key="Vgap" value="0"/>
+          </layout>
+          <widgetInstances xsi:type="base:ContainerWidgetInstance" widgetId="kvs.panel" name="panelTitle" layoutConstraint="null">
+            <resolution width="420" height="21"/>
+            <position x="8" y="33"/>
+            <layout layoutID="kvs.layout.FlowLayout" name="FlowLayout">
+              <attributeValues key="Alignment" value="LEFT"/>
+              <attributeValues key="Vgap" value="0"/>
+              <attributeValues key="Hgap" value="5"/>
+            </layout>
+            <widgetInstances widgetId="kvs.label" name="labTI" layoutConstraint="null">
+              <resolution width="30" height="21"/>
+              <position x="5"/>
+              <attributeValues key="Text" value="TI"/>
+              <attributeValues key="PreferredSize" value="30, 21"/>
+            </widgetInstances>
+            <widgetInstances widgetId="kvs.varlabel" name="labUse_New" layoutConstraint="null">
+              <resolution width="35" height="21"/>
+              <position x="40"/>
+              <attributeValues key="Variable" value="system.sv_ThermoData[0].bIsUsed"/>
+              <attributeValues key="LabelType" value="Short Variable Label"/>
+              <attributeValues key="PreferredSize" value="35, 21"/>
+            </widgetInstances>
+            <widgetInstances widgetId="kvs.varlabel" name="labLength_New" layoutConstraint="null">
+              <resolution width="100" height="21"/>
+              <position x="80"/>
+              <attributeValues key="Variable" value="system.sv_ThermoData[0].rCableLength"/>
+              <attributeValues key="LabelType" value="Short Variable Label"/>
+              <attributeValues key="PreferredSize" value="100, 21"/>
+            </widgetInstances>
+            <widgetInstances widgetId="kvs.varlabel" name="labDiameter_New" layoutConstraint="null">
+              <resolution width="110" height="21"/>
+              <position x="185"/>
+              <attributeValues key="LabelType" value="Short Variable Label"/>
+              <attributeValues key="Variable" value="system.sv_ThermoData[0].rWireDiameter"/>
+              <attributeValues key="PreferredSize" value="110, 21"/>
+            </widgetInstances>
+            <widgetInstances widgetId="kvs.varlabel" name="labCrossSection_New" layoutConstraint="null">
+              <resolution width="110" height="21"/>
+              <position x="300"/>
+              <attributeValues key="LabelType" value="Short Variable Label"/>
+              <attributeValues key="Variable" value="system.sv_ThermoData[0].rWireCrossSection"/>
+              <attributeValues key="PreferredSize" value="110, 21"/>
+            </widgetInstances>
+          </widgetInstances>
+          <widgetInstances xsi:type="base:ContainerWidgetInstance" widgetId="kvs.panel" name="panelUnit" layoutConstraint="null">
+            <resolution width="420" height="21"/>
+            <position x="8" y="54"/>
+            <layout layoutID="kvs.layout.FlowLayout" name="FlowLayout">
+              <attributeValues key="Alignment" value="LEFT"/>
+              <attributeValues key="Vgap" value="0"/>
+            </layout>
+            <widgetInstances xsi:type="base:ContainerWidgetInstance" widgetId="kvs.panel" name="panelUnitLeft" layoutConstraint="null">
+              <resolution width="70" height="10"/>
+              <position x="5" y="5"/>
+              <attributeValues key="PreferredSize" value="70, 10"/>
+              <layout layoutID="kvs.layout.PercentLayout" name="PercentLayout"/>
+            </widgetInstances>
+            <widgetInstances widgetId="kvs.varlabel" name="labUnitLength_New" layoutConstraint="null">
+              <resolution width="100" height="21"/>
+              <position x="80"/>
+              <attributeValues key="Variable" value="system.sv_ThermoData[0].rCableLength"/>
+              <attributeValues key="PreferredSize" value="100, 21"/>
+            </widgetInstances>
+            <widgetInstances widgetId="kvs.varlabel" name="labUnitWireDiameter_New" layoutConstraint="null">
+              <resolution width="110" height="21"/>
+              <position x="185"/>
+              <attributeValues key="Variable" value="system.sv_ThermoData[0].rWireDiameter"/>
+              <attributeValues key="PreferredSize" value="110, 21"/>
+            </widgetInstances>
+            <widgetInstances widgetId="kvs.varlabel" name="labUnitCrossSection_New" layoutConstraint="null">
+              <resolution width="110" height="21"/>
+              <position x="300"/>
+              <attributeValues key="Variable" value="system.sv_ThermoData[0].rWireCrossSection"/>
+              <attributeValues key="PreferredSize" value="110, 21"/>
+            </widgetInstances>
+          </widgetInstances>
+          <widgetInstances xsi:type="base:ContainerWidgetInstance" widgetId="kvs.panel" name="panelTI0" layoutConstraint="null">
+            <resolution width="420" height="29"/>
+            <position x="8" y="75"/>
+            <layout layoutID="kvs.layout.FlowLayout" name="FlowLayout">
+              <attributeValues key="Alignment" value="LEFT"/>
+              <attributeValues key="Vgap" value="0"/>
+            </layout>
+            <widgetInstances widgetId="kvs.label" name="labTI0" layoutConstraint="null">
+              <resolution width="33" height="21"/>
+              <position x="5" y="4"/>
+              <attributeValues key="Text" value="TI0:"/>
+              <attributeValues key="Alignment" value="MIDDLE/LEFT"/>
+              <attributeValues key="PreferredSize" value="33, 21"/>
+            </widgetInstances>
+            <widgetInstances widgetId="kvs.checkbox" name="cbUseTI0" layoutConstraint="null">
+              <resolution width="47" height="29"/>
+              <position x="43"/>
+              <attributeValues key="Variable" value="system.sv_ThermoData[0].bIsUsed"/>
+              <attributeValues key="Alignment" value="MIDDLE/LEFT"/>
+              <attributeValues key="PreferredSize" value="47, 29"/>
+            </widgetInstances>
+            <widgetInstances xsi:type="base:ContainerWidgetInstance" widgetId="kvs.panel" name="panelTI0Length" layoutConstraint="null">
+              <resolution width="70" height="29"/>
+              <position x="95"/>
+              <attributeValues key="PreferredSize" value="70, 29"/>
+              <layout layoutID="kvs.layout.BorderLayout" name="BorderLayout"/>
+              <widgetInstances widgetId="kvs.numfieldnew" name="nfCableLenthTI0" layoutConstraint="CENTER">
+                <resolution width="70" height="29"/>
+                <position/>
+                <attributeValues key="Variable" value="system.sv_ThermoData[0].rCableLength"/>
+              </widgetInstances>
+            </widgetInstances>
+            <widgetInstances xsi:type="base:ContainerWidgetInstance" widgetId="kvs.panel" name="panelTI0Empty1" layoutConstraint="null">
+              <resolution width="30" height="10"/>
+              <position x="170" y="9"/>
+              <attributeValues key="PreferredSize" value="30, 10"/>
+              <layout layoutID="kvs.layout.FlowLayout" name="FlowLayout"/>
+            </widgetInstances>
+            <widgetInstances xsi:type="base:ContainerWidgetInstance" widgetId="kvs.panel" name="panelTI0WireDiameter" layoutConstraint="null">
+              <resolution width="70" height="29"/>
+              <position x="205"/>
+              <attributeValues key="PreferredSize" value="70, 29"/>
+              <layout layoutID="kvs.layout.BorderLayout" name="BorderLayout"/>
+              <widgetInstances widgetId="kvs.numfieldnew" name="nfWireDiameterTI0" layoutConstraint="CENTER">
+                <resolution width="70" height="29"/>
+                <position/>
+                <attributeValues key="Variable" value="system.sv_ThermoData[0].rWireDiameter"/>
+              </widgetInstances>
+            </widgetInstances>
+            <widgetInstances xsi:type="base:ContainerWidgetInstance" widgetId="kvs.panel" name="panelTI0Empty2" layoutConstraint="null">
+              <resolution width="35" height="10"/>
+              <position x="280" y="9"/>
+              <attributeValues key="PreferredSize" value="35, 10"/>
+              <layout layoutID="kvs.layout.FlowLayout" name="FlowLayout"/>
+            </widgetInstances>
+            <widgetInstances xsi:type="base:ContainerWidgetInstance" widgetId="kvs.panel" name="panelTI0CrossSection" layoutConstraint="null">
+              <resolution width="70" height="29"/>
+              <position x="320"/>
+              <attributeValues key="PreferredSize" value="70, 29"/>
+              <layout layoutID="kvs.layout.BorderLayout" name="BorderLayout"/>
+              <widgetInstances widgetId="kvs.numfieldnew" name="nfCrossSectionTI0" layoutConstraint="CENTER">
+                <resolution width="70" height="29"/>
+                <position/>
+                <attributeValues key="Variable" value="system.sv_ThermoData[0].rWireCrossSection"/>
+              </widgetInstances>
+            </widgetInstances>
+          </widgetInstances>
+          <widgetInstances xsi:type="base:ContainerWidgetInstance" widgetId="kvs.panel" name="panelTI1" layoutConstraint="null">
+            <resolution width="420" height="29"/>
+            <position x="8" y="104"/>
+            <layout layoutID="kvs.layout.FlowLayout" name="FlowLayout">
+              <attributeValues key="Alignment" value="LEFT"/>
+              <attributeValues key="Vgap" value="0"/>
+            </layout>
+            <widgetInstances widgetId="kvs.label" name="labTI1" layoutConstraint="null">
+              <resolution width="33" height="21"/>
+              <position x="5" y="4"/>
+              <attributeValues key="Text" value="TI1:"/>
+              <attributeValues key="PreferredSize" value="33, 21"/>
+              <attributeValues key="Alignment" value="MIDDLE/LEFT"/>
+            </widgetInstances>
+            <widgetInstances widgetId="kvs.checkbox" name="cbUseTI1" layoutConstraint="null">
+              <resolution width="47" height="29"/>
+              <position x="43"/>
+              <attributeValues key="Variable" value="system.sv_ThermoData[1].bIsUsed"/>
+              <attributeValues key="Alignment" value="MIDDLE/LEFT"/>
+              <attributeValues key="PreferredSize" value="47, 29"/>
+            </widgetInstances>
+            <widgetInstances xsi:type="base:ContainerWidgetInstance" widgetId="kvs.panel" name="panelTI1Length" layoutConstraint="null">
+              <resolution width="70" height="29"/>
+              <position x="95"/>
+              <attributeValues key="PreferredSize" value="70, 29"/>
+              <layout layoutID="kvs.layout.BorderLayout" name="BorderLayout"/>
+              <widgetInstances widgetId="kvs.numfieldnew" name="nfCableLenthTI1" layoutConstraint="CENTER">
+                <resolution width="70" height="29"/>
+                <position/>
+                <attributeValues key="Variable" value="system.sv_ThermoData[1].rCableLength"/>
+              </widgetInstances>
+            </widgetInstances>
+            <widgetInstances xsi:type="base:ContainerWidgetInstance" widgetId="kvs.panel" name="panelTI1Empty1" layoutConstraint="null">
+              <resolution width="30" height="10"/>
+              <position x="170" y="9"/>
+              <attributeValues key="PreferredSize" value="30, 10"/>
+              <layout layoutID="kvs.layout.FlowLayout" name="FlowLayout"/>
+            </widgetInstances>
+            <widgetInstances xsi:type="base:ContainerWidgetInstance" widgetId="kvs.panel" name="panelTI1WireDiameter" layoutConstraint="null">
+              <resolution width="70" height="29"/>
+              <position x="205"/>
+              <attributeValues key="PreferredSize" value="70, 29"/>
+              <layout layoutID="kvs.layout.BorderLayout" name="BorderLayout"/>
+              <widgetInstances widgetId="kvs.numfieldnew" name="nfWireDiameterTI1" layoutConstraint="CENTER">
+                <resolution width="70" height="29"/>
+                <position/>
+                <attributeValues key="Variable" value="system.sv_ThermoData[1].rWireDiameter"/>
+              </widgetInstances>
+            </widgetInstances>
+            <widgetInstances xsi:type="base:ContainerWidgetInstance" widgetId="kvs.panel" name="panelTI1Empty2" layoutConstraint="null">
+              <resolution width="35" height="10"/>
+              <position x="280" y="9"/>
+              <attributeValues key="PreferredSize" value="35, 10"/>
+              <layout layoutID="kvs.layout.FlowLayout" name="FlowLayout"/>
+            </widgetInstances>
+            <widgetInstances xsi:type="base:ContainerWidgetInstance" widgetId="kvs.panel" name="panelTI1CrossSection" layoutConstraint="null">
+              <resolution width="70" height="29"/>
+              <position x="320"/>
+              <attributeValues key="PreferredSize" value="70, 29"/>
+              <layout layoutID="kvs.layout.BorderLayout" name="BorderLayout"/>
+              <widgetInstances widgetId="kvs.numfieldnew" name="nfCrossSectionTI1" layoutConstraint="CENTER">
+                <resolution width="70" height="29"/>
+                <position/>
+                <attributeValues key="Variable" value="system.sv_ThermoData[1].rWireCrossSection"/>
+              </widgetInstances>
+            </widgetInstances>
+          </widgetInstances>
+          <widgetInstances xsi:type="base:ContainerWidgetInstance" widgetId="kvs.panel" name="panelTI2" layoutConstraint="null">
+            <resolution width="420" height="29"/>
+            <position x="8" y="133"/>
+            <layout layoutID="kvs.layout.FlowLayout" name="FlowLayout">
+              <attributeValues key="Alignment" value="LEFT"/>
+              <attributeValues key="Vgap" value="0"/>
+            </layout>
+            <widgetInstances widgetId="kvs.label" name="labTI2" layoutConstraint="null">
+              <resolution width="33" height="21"/>
+              <position x="5" y="4"/>
+              <attributeValues key="Text" value="TI2:"/>
+              <attributeValues key="PreferredSize" value="33, 21"/>
+              <attributeValues key="Alignment" value="MIDDLE/LEFT"/>
+            </widgetInstances>
+            <widgetInstances widgetId="kvs.checkbox" name="cbUseTI2" layoutConstraint="null">
+              <resolution width="47" height="29"/>
+              <position x="43"/>
+              <attributeValues key="Variable" value="system.sv_ThermoData[2].bIsUsed"/>
+              <attributeValues key="Alignment" value="MIDDLE/LEFT"/>
+              <attributeValues key="PreferredSize" value="47, 29"/>
+            </widgetInstances>
+            <widgetInstances xsi:type="base:ContainerWidgetInstance" widgetId="kvs.panel" name="panelTI2Length" layoutConstraint="null">
+              <resolution width="70" height="29"/>
+              <position x="95"/>
+              <attributeValues key="PreferredSize" value="70, 29"/>
+              <layout layoutID="kvs.layout.BorderLayout" name="BorderLayout"/>
+              <widgetInstances widgetId="kvs.numfieldnew" name="nfCableLenthTI2" layoutConstraint="CENTER">
+                <resolution width="70" height="29"/>
+                <position/>
+                <attributeValues key="Variable" value="system.sv_ThermoData[2].rCableLength"/>
+              </widgetInstances>
+            </widgetInstances>
+            <widgetInstances xsi:type="base:ContainerWidgetInstance" widgetId="kvs.panel" name="panelTI2Empty1" layoutConstraint="null">
+              <resolution width="30" height="10"/>
+              <position x="170" y="9"/>
+              <attributeValues key="PreferredSize" value="30, 10"/>
+              <layout layoutID="kvs.layout.FlowLayout" name="FlowLayout"/>
+            </widgetInstances>
+            <widgetInstances xsi:type="base:ContainerWidgetInstance" widgetId="kvs.panel" name="panelTI2WireDiameter" layoutConstraint="null">
+              <resolution width="70" height="29"/>
+              <position x="205"/>
+              <attributeValues key="PreferredSize" value="70, 29"/>
+              <layout layoutID="kvs.layout.BorderLayout" name="BorderLayout"/>
+              <widgetInstances widgetId="kvs.numfieldnew" name="nfWireDiameterTI2" layoutConstraint="CENTER">
+                <resolution width="70" height="29"/>
+                <position/>
+                <attributeValues key="Variable" value="system.sv_ThermoData[2].rWireDiameter"/>
+              </widgetInstances>
+            </widgetInstances>
+            <widgetInstances xsi:type="base:ContainerWidgetInstance" widgetId="kvs.panel" name="panelTI2Empty2" layoutConstraint="null">
+              <resolution width="35" height="10"/>
+              <position x="280" y="9"/>
+              <attributeValues key="PreferredSize" value="35, 10"/>
+              <layout layoutID="kvs.layout.FlowLayout" name="FlowLayout"/>
+            </widgetInstances>
+            <widgetInstances xsi:type="base:ContainerWidgetInstance" widgetId="kvs.panel" name="panelTI2CrossSection" layoutConstraint="null">
+              <resolution width="70" height="29"/>
+              <position x="320"/>
+              <attributeValues key="PreferredSize" value="70, 29"/>
+              <layout layoutID="kvs.layout.BorderLayout" name="BorderLayout"/>
+              <widgetInstances widgetId="kvs.numfieldnew" name="nfCrossSectionTI2" layoutConstraint="CENTER">
+                <resolution width="70" height="29"/>
+                <position/>
+                <attributeValues key="Variable" value="system.sv_ThermoData[2].rWireCrossSection"/>
+              </widgetInstances>
+            </widgetInstances>
+          </widgetInstances>
+          <widgetInstances xsi:type="base:ContainerWidgetInstance" widgetId="kvs.panel" name="panelTI3" layoutConstraint="null">
+            <resolution width="420" height="29"/>
+            <position x="8" y="162"/>
+            <layout layoutID="kvs.layout.FlowLayout" name="FlowLayout">
+              <attributeValues key="Alignment" value="LEFT"/>
+              <attributeValues key="Vgap" value="0"/>
+            </layout>
+            <widgetInstances widgetId="kvs.label" name="labTI3" layoutConstraint="null">
+              <resolution width="33" height="21"/>
+              <position x="5" y="4"/>
+              <attributeValues key="Text" value="TI3:"/>
+              <attributeValues key="PreferredSize" value="33, 21"/>
+              <attributeValues key="Alignment" value="MIDDLE/LEFT"/>
+            </widgetInstances>
+            <widgetInstances widgetId="kvs.checkbox" name="cbUseTI3" layoutConstraint="null">
+              <resolution width="47" height="29"/>
+              <position x="43"/>
+              <attributeValues key="Variable" value="system.sv_ThermoData[3].bIsUsed"/>
+              <attributeValues key="Alignment" value="MIDDLE/LEFT"/>
+              <attributeValues key="PreferredSize" value="47, 29"/>
+            </widgetInstances>
+            <widgetInstances xsi:type="base:ContainerWidgetInstance" widgetId="kvs.panel" name="panelTI3Length" layoutConstraint="null">
+              <resolution width="70" height="29"/>
+              <position x="95"/>
+              <attributeValues key="PreferredSize" value="70, 29"/>
+              <layout layoutID="kvs.layout.BorderLayout" name="BorderLayout"/>
+              <widgetInstances widgetId="kvs.numfieldnew" name="nfCableLenthTI3" layoutConstraint="CENTER">
+                <resolution width="70" height="29"/>
+                <position/>
+                <attributeValues key="Variable" value="system.sv_ThermoData[3].rCableLength"/>
+              </widgetInstances>
+            </widgetInstances>
+            <widgetInstances xsi:type="base:ContainerWidgetInstance" widgetId="kvs.panel" name="panelTI3Empty1" layoutConstraint="null">
+              <resolution width="30" height="10"/>
+              <position x="170" y="9"/>
+              <attributeValues key="PreferredSize" value="30, 10"/>
+              <layout layoutID="kvs.layout.FlowLayout" name="FlowLayout"/>
+            </widgetInstances>
+            <widgetInstances xsi:type="base:ContainerWidgetInstance" widgetId="kvs.panel" name="panelTI3WireDiameter" layoutConstraint="null">
+              <resolution width="70" height="29"/>
+              <position x="205"/>
+              <attributeValues key="PreferredSize" value="70, 29"/>
+              <layout layoutID="kvs.layout.BorderLayout" name="BorderLayout"/>
+              <widgetInstances widgetId="kvs.numfieldnew" name="nfWireDiameterTI3" layoutConstraint="CENTER">
+                <resolution width="70" height="29"/>
+                <position/>
+                <attributeValues key="Variable" value="system.sv_ThermoData[3].rWireDiameter"/>
+              </widgetInstances>
+            </widgetInstances>
+            <widgetInstances xsi:type="base:ContainerWidgetInstance" widgetId="kvs.panel" name="panelTI3Empty2" layoutConstraint="null">
+              <resolution width="35" height="10"/>
+              <position x="280" y="9"/>
+              <attributeValues key="PreferredSize" value="35, 10"/>
+              <layout layoutID="kvs.layout.FlowLayout" name="FlowLayout"/>
+            </widgetInstances>
+            <widgetInstances xsi:type="base:ContainerWidgetInstance" widgetId="kvs.panel" name="panelTI3CrossSection" layoutConstraint="null">
+              <resolution width="70" height="29"/>
+              <position x="320"/>
+              <attributeValues key="PreferredSize" value="70, 29"/>
+              <layout layoutID="kvs.layout.BorderLayout" name="BorderLayout"/>
+              <widgetInstances widgetId="kvs.numfieldnew" name="nfCrossSectionTI3" layoutConstraint="CENTER">
+                <resolution width="70" height="29"/>
+                <position/>
+                <attributeValues key="Variable" value="system.sv_ThermoData[3].rWireCrossSection"/>
+              </widgetInstances>
+            </widgetInstances>
+          </widgetInstances>
+          <widgetInstances xsi:type="base:ContainerWidgetInstance" widgetId="kvs.panel" name="panelTI4" layoutConstraint="null">
+            <resolution width="420" height="29"/>
+            <position x="8" y="191"/>
+            <layout layoutID="kvs.layout.FlowLayout" name="FlowLayout">
+              <attributeValues key="Alignment" value="LEFT"/>
+              <attributeValues key="Vgap" value="0"/>
+            </layout>
+            <widgetInstances widgetId="kvs.label" name="labTI4" layoutConstraint="null">
+              <resolution width="33" height="21"/>
+              <position x="5" y="4"/>
+              <attributeValues key="Text" value="TI4:"/>
+              <attributeValues key="PreferredSize" value="33, 21"/>
+              <attributeValues key="Alignment" value="MIDDLE/LEFT"/>
+            </widgetInstances>
+            <widgetInstances widgetId="kvs.checkbox" name="cbUseTI4" layoutConstraint="null">
+              <resolution width="47" height="29"/>
+              <position x="43"/>
+              <attributeValues key="Variable" value="system.sv_ThermoData[4].bIsUsed"/>
+              <attributeValues key="Alignment" value="MIDDLE/LEFT"/>
+              <attributeValues key="PreferredSize" value="47, 29"/>
+            </widgetInstances>
+            <widgetInstances xsi:type="base:ContainerWidgetInstance" widgetId="kvs.panel" name="panelTI4Length" layoutConstraint="null">
+              <resolution width="70" height="29"/>
+              <position x="95"/>
+              <attributeValues key="PreferredSize" value="70, 29"/>
+              <layout layoutID="kvs.layout.BorderLayout" name="BorderLayout"/>
+              <widgetInstances widgetId="kvs.numfieldnew" name="nfCableLenthTI4" layoutConstraint="CENTER">
+                <resolution width="70" height="29"/>
+                <position/>
+                <attributeValues key="Variable" value="system.sv_ThermoData[4].rCableLength"/>
+              </widgetInstances>
+            </widgetInstances>
+            <widgetInstances xsi:type="base:ContainerWidgetInstance" widgetId="kvs.panel" name="panelTI4Empty1" layoutConstraint="null">
+              <resolution width="30" height="10"/>
+              <position x="170" y="9"/>
+              <attributeValues key="PreferredSize" value="30, 10"/>
+              <layout layoutID="kvs.layout.FlowLayout" name="FlowLayout"/>
+            </widgetInstances>
+            <widgetInstances xsi:type="base:ContainerWidgetInstance" widgetId="kvs.panel" name="panelTI4WireDiameter" layoutConstraint="null">
+              <resolution width="70" height="29"/>
+              <position x="205"/>
+              <attributeValues key="PreferredSize" value="70, 29"/>
+              <layout layoutID="kvs.layout.BorderLayout" name="BorderLayout"/>
+              <widgetInstances widgetId="kvs.numfieldnew" name="nfWireDiameterTI4" layoutConstraint="CENTER">
+                <resolution width="70" height="29"/>
+                <position/>
+                <attributeValues key="Variable" value="system.sv_ThermoData[4].rWireDiameter"/>
+              </widgetInstances>
+            </widgetInstances>
+            <widgetInstances xsi:type="base:ContainerWidgetInstance" widgetId="kvs.panel" name="panelTI4Empty2" layoutConstraint="null">
+              <resolution width="35" height="10"/>
+              <position x="280" y="9"/>
+              <attributeValues key="PreferredSize" value="35, 10"/>
+              <layout layoutID="kvs.layout.FlowLayout" name="FlowLayout"/>
+            </widgetInstances>
+            <widgetInstances xsi:type="base:ContainerWidgetInstance" widgetId="kvs.panel" name="panelTI4CrossSection" layoutConstraint="null">
+              <resolution width="70" height="29"/>
+              <position x="320"/>
+              <attributeValues key="PreferredSize" value="70, 29"/>
+              <layout layoutID="kvs.layout.BorderLayout" name="BorderLayout"/>
+              <widgetInstances widgetId="kvs.numfieldnew" name="nfCrossSectionTI4" layoutConstraint="CENTER">
+                <resolution width="70" height="29"/>
+                <position/>
+                <attributeValues key="Variable" value="system.sv_ThermoData[4].rWireCrossSection"/>
+              </widgetInstances>
+            </widgetInstances>
+          </widgetInstances>
+          <widgetInstances xsi:type="base:ContainerWidgetInstance" widgetId="kvs.panel" name="panelTI5" layoutConstraint="null">
+            <resolution width="420" height="29"/>
+            <position x="8" y="220"/>
+            <layout layoutID="kvs.layout.FlowLayout" name="FlowLayout">
+              <attributeValues key="Alignment" value="LEFT"/>
+              <attributeValues key="Vgap" value="0"/>
+            </layout>
+            <widgetInstances widgetId="kvs.label" name="labTI5" layoutConstraint="null">
+              <resolution width="33" height="21"/>
+              <position x="5" y="4"/>
+              <attributeValues key="Text" value="TI5:"/>
+              <attributeValues key="PreferredSize" value="33, 21"/>
+              <attributeValues key="Alignment" value="MIDDLE/LEFT"/>
+            </widgetInstances>
+            <widgetInstances widgetId="kvs.checkbox" name="cbUseTI5" layoutConstraint="null">
+              <resolution width="47" height="29"/>
+              <position x="43"/>
+              <attributeValues key="Variable" value="system.sv_ThermoData[5].bIsUsed"/>
+              <attributeValues key="Alignment" value="MIDDLE/LEFT"/>
+              <attributeValues key="PreferredSize" value="47, 29"/>
+            </widgetInstances>
+            <widgetInstances xsi:type="base:ContainerWidgetInstance" widgetId="kvs.panel" name="panelTI5Length" layoutConstraint="null">
+              <resolution width="70" height="29"/>
+              <position x="95"/>
+              <attributeValues key="PreferredSize" value="70, 29"/>
+              <layout layoutID="kvs.layout.BorderLayout" name="BorderLayout"/>
+              <widgetInstances widgetId="kvs.numfieldnew" name="nfCableLenthTI5" layoutConstraint="CENTER">
+                <resolution width="70" height="29"/>
+                <position/>
+                <attributeValues key="Variable" value="system.sv_ThermoData[5].rCableLength"/>
+              </widgetInstances>
+            </widgetInstances>
+            <widgetInstances xsi:type="base:ContainerWidgetInstance" widgetId="kvs.panel" name="panelTI5Empty1" layoutConstraint="null">
+              <resolution width="30" height="10"/>
+              <position x="170" y="9"/>
+              <attributeValues key="PreferredSize" value="30, 10"/>
+              <layout layoutID="kvs.layout.FlowLayout" name="FlowLayout"/>
+            </widgetInstances>
+            <widgetInstances xsi:type="base:ContainerWidgetInstance" widgetId="kvs.panel" name="panelTI5WireDiameter" layoutConstraint="null">
+              <resolution width="70" height="29"/>
+              <position x="205"/>
+              <attributeValues key="PreferredSize" value="70, 29"/>
+              <layout layoutID="kvs.layout.BorderLayout" name="BorderLayout"/>
+              <widgetInstances widgetId="kvs.numfieldnew" name="nfWireDiameterTI5" layoutConstraint="CENTER">
+                <resolution width="70" height="29"/>
+                <position/>
+                <attributeValues key="Variable" value="system.sv_ThermoData[5].rWireDiameter"/>
+              </widgetInstances>
+            </widgetInstances>
+            <widgetInstances xsi:type="base:ContainerWidgetInstance" widgetId="kvs.panel" name="panelTI5Empty2" layoutConstraint="null">
+              <resolution width="35" height="10"/>
+              <position x="280" y="9"/>
+              <attributeValues key="PreferredSize" value="35, 10"/>
+              <layout layoutID="kvs.layout.FlowLayout" name="FlowLayout"/>
+            </widgetInstances>
+            <widgetInstances xsi:type="base:ContainerWidgetInstance" widgetId="kvs.panel" name="panelTI5CrossSection" layoutConstraint="null">
+              <resolution width="70" height="29"/>
+              <position x="320"/>
+              <attributeValues key="PreferredSize" value="70, 29"/>
+              <layout layoutID="kvs.layout.BorderLayout" name="BorderLayout"/>
+              <widgetInstances widgetId="kvs.numfieldnew" name="nfCrossSectionTI5" layoutConstraint="CENTER">
+                <resolution width="70" height="29"/>
+                <position/>
+                <attributeValues key="Variable" value="system.sv_ThermoData[5].rWireCrossSection"/>
+              </widgetInstances>
+            </widgetInstances>
+          </widgetInstances>
+          <widgetInstances xsi:type="base:ContainerWidgetInstance" widgetId="kvs.panel" name="panelTI6" layoutConstraint="null">
+            <resolution width="420" height="29"/>
+            <position x="8" y="249"/>
+            <layout layoutID="kvs.layout.FlowLayout" name="FlowLayout">
+              <attributeValues key="Alignment" value="LEFT"/>
+              <attributeValues key="Vgap" value="0"/>
+            </layout>
+            <widgetInstances widgetId="kvs.label" name="labTI6" layoutConstraint="null">
+              <resolution width="33" height="21"/>
+              <position x="5" y="4"/>
+              <attributeValues key="Text" value="TI6:"/>
+              <attributeValues key="PreferredSize" value="33, 21"/>
+              <attributeValues key="Alignment" value="MIDDLE/LEFT"/>
+            </widgetInstances>
+            <widgetInstances widgetId="kvs.checkbox" name="cbUseTI6" layoutConstraint="null">
+              <resolution width="47" height="29"/>
+              <position x="43"/>
+              <attributeValues key="Variable" value="system.sv_ThermoData[6].bIsUsed"/>
+              <attributeValues key="Alignment" value="MIDDLE/LEFT"/>
+              <attributeValues key="PreferredSize" value="47, 29"/>
+            </widgetInstances>
+            <widgetInstances xsi:type="base:ContainerWidgetInstance" widgetId="kvs.panel" name="panelTI6Length" layoutConstraint="null">
+              <resolution width="70" height="29"/>
+              <position x="95"/>
+              <attributeValues key="PreferredSize" value="70, 29"/>
+              <layout layoutID="kvs.layout.BorderLayout" name="BorderLayout"/>
+              <widgetInstances widgetId="kvs.numfieldnew" name="nfCableLenthTI6" layoutConstraint="CENTER">
+                <resolution width="70" height="29"/>
+                <position/>
+                <attributeValues key="Variable" value="system.sv_ThermoData[6].rCableLength"/>
+              </widgetInstances>
+            </widgetInstances>
+            <widgetInstances xsi:type="base:ContainerWidgetInstance" widgetId="kvs.panel" name="panelTI6Empty1" layoutConstraint="null">
+              <resolution width="30" height="10"/>
+              <position x="170" y="9"/>
+              <attributeValues key="PreferredSize" value="30, 10"/>
+              <layout layoutID="kvs.layout.PercentLayout" name="PercentLayout"/>
+            </widgetInstances>
+            <widgetInstances xsi:type="base:ContainerWidgetInstance" widgetId="kvs.panel" name="panelTI6WireDiameter" layoutConstraint="null">
+              <resolution width="70" height="29"/>
+              <position x="205"/>
+              <attributeValues key="PreferredSize" value="70, 29"/>
+              <layout layoutID="kvs.layout.BorderLayout" name="BorderLayout"/>
+              <widgetInstances widgetId="kvs.numfieldnew" name="nfWireDiameterTI6" layoutConstraint="CENTER">
+                <resolution width="70" height="29"/>
+                <position/>
+                <attributeValues key="Variable" value="system.sv_ThermoData[6].rWireDiameter"/>
+              </widgetInstances>
+            </widgetInstances>
+            <widgetInstances xsi:type="base:ContainerWidgetInstance" widgetId="kvs.panel" name="panelTI6Empty2" layoutConstraint="null">
+              <resolution width="35" height="10"/>
+              <position x="280" y="9"/>
+              <attributeValues key="PreferredSize" value="35, 10"/>
+              <layout layoutID="kvs.layout.PercentLayout" name="PercentLayout"/>
+            </widgetInstances>
+            <widgetInstances xsi:type="base:ContainerWidgetInstance" widgetId="kvs.panel" name="panelTI6CrossSection" layoutConstraint="null">
+              <resolution width="70" height="29"/>
+              <position x="320"/>
+              <attributeValues key="PreferredSize" value="70, 29"/>
+              <layout layoutID="kvs.layout.BorderLayout" name="BorderLayout"/>
+              <widgetInstances widgetId="kvs.numfieldnew" name="nfCrossSectionTI6" layoutConstraint="CENTER">
+                <resolution width="70" height="29"/>
+                <position/>
+                <attributeValues key="Variable" value="system.sv_ThermoData[6].rWireCrossSection"/>
+              </widgetInstances>
+            </widgetInstances>
+          </widgetInstances>
+          <widgetInstances xsi:type="base:ContainerWidgetInstance" widgetId="kvs.panel" name="panelTI7Empty2" layoutConstraint="null">
+            <resolution width="420" height="29"/>
+            <position x="8" y="278"/>
+            <layout layoutID="kvs.layout.FlowLayout" name="FlowLayout">
+              <attributeValues key="Alignment" value="LEFT"/>
+              <attributeValues key="Vgap" value="0"/>
+            </layout>
+            <widgetInstances widgetId="kvs.label" name="labTI7" layoutConstraint="null">
+              <resolution width="33" height="21"/>
+              <position x="5" y="4"/>
+              <attributeValues key="Text" value="TI7:"/>
+              <attributeValues key="PreferredSize" value="33, 21"/>
+              <attributeValues key="Alignment" value="MIDDLE/LEFT"/>
+            </widgetInstances>
+            <widgetInstances widgetId="kvs.checkbox" name="cbUseTI7" layoutConstraint="null">
+              <resolution width="47" height="29"/>
+              <position x="43"/>
+              <attributeValues key="Variable" value="system.sv_ThermoData[7].bIsUsed"/>
+              <attributeValues key="Alignment" value="MIDDLE/LEFT"/>
+              <attributeValues key="PreferredSize" value="47, 29"/>
+            </widgetInstances>
+            <widgetInstances xsi:type="base:ContainerWidgetInstance" widgetId="kvs.panel" name="panelTI7Length" layoutConstraint="null">
+              <resolution width="70" height="29"/>
+              <position x="95"/>
+              <attributeValues key="PreferredSize" value="70, 29"/>
+              <layout layoutID="kvs.layout.BorderLayout" name="BorderLayout"/>
+              <widgetInstances widgetId="kvs.numfieldnew" name="nfCableLenthTI7" layoutConstraint="CENTER">
+                <resolution width="70" height="29"/>
+                <position/>
+                <attributeValues key="Variable" value="system.sv_ThermoData[7].rCableLength"/>
+              </widgetInstances>
+            </widgetInstances>
+            <widgetInstances xsi:type="base:ContainerWidgetInstance" widgetId="kvs.panel" name="panelTI7Empty1" layoutConstraint="null">
+              <resolution width="30" height="10"/>
+              <position x="170" y="9"/>
+              <attributeValues key="PreferredSize" value="30, 10"/>
+              <layout layoutID="kvs.layout.FlowLayout" name="FlowLayout"/>
+            </widgetInstances>
+            <widgetInstances xsi:type="base:ContainerWidgetInstance" widgetId="kvs.panel" name="panelTI7WireDiameter" layoutConstraint="null">
+              <resolution width="70" height="29"/>
+              <position x="205"/>
+              <attributeValues key="PreferredSize" value="70, 29"/>
+              <layout layoutID="kvs.layout.BorderLayout" name="BorderLayout"/>
+              <widgetInstances widgetId="kvs.numfieldnew" name="nfWireDiameterTI7" layoutConstraint="CENTER">
+                <resolution width="70" height="29"/>
+                <position/>
+                <attributeValues key="Variable" value="system.sv_ThermoData[7].rWireDiameter"/>
+              </widgetInstances>
+            </widgetInstances>
+            <widgetInstances xsi:type="base:ContainerWidgetInstance" widgetId="kvs.panel" name="panelNfDiameterTI7" layoutConstraint="null">
+              <resolution width="35" height="10"/>
+              <position x="280" y="9"/>
+              <attributeValues key="PreferredSize" value="35, 10"/>
+              <layout layoutID="kvs.layout.FlowLayout" name="FlowLayout"/>
+            </widgetInstances>
+            <widgetInstances xsi:type="base:ContainerWidgetInstance" widgetId="kvs.panel" name="panelTI7CrossSection" layoutConstraint="null">
+              <resolution width="70" height="29"/>
+              <position x="320"/>
+              <attributeValues key="PreferredSize" value="70, 29"/>
+              <layout layoutID="kvs.layout.BorderLayout" name="BorderLayout"/>
+              <widgetInstances widgetId="kvs.numfieldnew" name="nfCrossSectionTI7" layoutConstraint="CENTER">
+                <resolution width="70" height="29"/>
+                <position/>
+                <attributeValues key="Variable" value="system.sv_ThermoData[7].rWireCrossSection"/>
+              </widgetInstances>
+            </widgetInstances>
+          </widgetInstances>
+        </widgetInstances>
+      </widgetInstances>
+      <widgetInstances xsi:type="base:ContainerWidgetInstance" widgetId="kvs.panel" name="containerWarning" layoutConstraint="NORTH">
+        <resolution width="714" height="40"/>
+        <position/>
+        <attributeValues key="Background" value="Plast_red:204,51,51"/>
+        <attributeValues key="PreferredSize" value="710, 40"/>
+        <border name="EmptyBorder" id="kv.border.EmptyBorder">
+          <attributeValues key="InnerInsets" value="0, 15, 0, 0"/>
+        </border>
+        <layout layoutID="kvs.layout.BorderLayout" name="BorderLayout">
+          <attributeValues key="Hgap" value="10"/>
+        </layout>
+        <widgetInstances widgetId="kvs.label" name="label12" layoutConstraint="CENTER">
+          <resolution width="657" height="40"/>
+          <position x="57"/>
+          <attributeValues key="Text" value="New settings will take effect after reboot!"/>
+          <attributeValues key="Alignment" value="MIDDLE/LEFT"/>
+          <attributeValues key="Foreground" value="white:255,255,255"/>
+        </widgetInstances>
+        <widgetInstances widgetId="kvs.bitmap" name="bmpWarning" layoutConstraint="WEST">
+          <resolution width="32" height="40"/>
+          <position x="15"/>
+          <attributeValues key="Image" value="system/hmi/images/warn32.gif"/>
+        </widgetInstances>
+      </widgetInstances>
+    </pages>
+    <layout layoutID="kvs.layout.xylayout" name="null"/>
+    <contentPanePosition y="30"/>
+    <contentPaneResolution width="684" height="446"/>
+  </widgetInstances>
+</base:Mask>

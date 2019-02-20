@@ -1,0 +1,2122 @@
+IMPORT_OVER_LISTFILE
+ GET_MY_FU_NAME
+, KSWO_AddVariable
+, GET_SYNC_REFTO
+, GET_TASK_INTERVAL
+, STATE_ALARM
+, KSYS_Status_OK
+, ALARM_STATE_INACTIVE_ACK
+, cCompOperationMode
+, cModeAutomatic
+, nLockAbort
+, nHalfAutomatic
+, nUnlock
+, nApplication
+, tevPanelButtonRegister
+, tsDeviceId
+, tyZoneArray
+, tnOperationMode
+, tyHeatingPower
+, tyPowerHeatingZones
+, ABGroupControl
+, ABZone
+, TON
+, ABCalcHeatUpPower
+, tevPanelButtonRegisterData
+, KSWO_Status
+, KSYS_Status
+, ALARM_STATE_DATA
+, FBLockUnlock
+, FBLockUnlockGroup
+, tsAlarm
+, FBDebugTrace2
+
+END_IMPORT
+
+ALGORITHM_BLOCK ABTemperatureControl #DUMMY_EDIT_BLOCK
+
+SYSTEM_VAR
+ sv_bInitDone : BOOL;
+ sv_LedHeating : BOOL;
+ sv_LedHeating_ledAttr : BYTE (* Panel LED Attr *);
+ sv_bHMILedHeating : BOOL;
+ sv_bHMILedHeating_ledAttr : BYTE (* Panel LED Attr *);
+ sv_iNumberOfZones : DINT;
+ sv_iZonesAvailable : DINT;
+ sv_bButtonHeatingOn : BOOL;
+ di_ButtonHeatingOn : BOOL;
+ sv_bGroupReady : BOOL (* Optimization is running *);
+ sv_bHeatingOn : BOOL;
+ sv_LockGroup : DINT;
+ sv_DeviceId : tsDeviceId;
+ do_HeaterOn : BOOL;
+ sv_rStandbyTempVis : REAL;
+ sv_ZoneArray : tyZoneArray;
+ sv_bKeepWarmActive : BOOL;
+ sv_OperationMode : tnOperationMode;
+ sv_iZonesAboveMaxTemp : DINT (* number of heating zones which exceeded the maximum temperature *);
+ sv_rActHeatingPower : REAL;
+ sv_NozzleHeatingPower : tyHeatingPower;
+ sv_ActPowerHeatUp : tyPowerHeatingZones;
+ sv_dHeatUpDuration : TIME;
+ sv_iActPowerHeatUpIndex : UDINT;
+ sv_bInitStart : BOOL;
+END_VAR
+
+SYSTEM_OBJECT
+ evPanelButtonRegister : tevPanelButtonRegister;
+ TaskMid : TASK;
+ TaskHeating : TASK;
+ PU_Task_13 : TASK;
+ erHeatingNotOn : ALARM;
+ erKeepWarmActive : ALARM;
+ PU_Task_7 : TASK;
+ erHeatingNotReady : ALARM;
+ erMaxTempExeeded : ALARM;
+END_OBJECT
+
+VAR
+ abGroupControl : ABGroupControl;
+ abZone1 : ABZone;
+ abZone2 : ABZone;
+ abZone3 : ABZone;
+ abZone4 : ABZone;
+ abZone5 : ABZone;
+ abZone6 : ABZone;
+ abZone7 : ABZone;
+ abZone8 : ABZone;
+ abZone9 : ABZone;
+ abZone10 : ABZone;
+ abZone11 : ABZone;
+ abZone12 : ABZone;
+ mbLedLinked : BOOL;
+ mbDoHeaterOnLinked : BOOL;
+ mbDelayLock : BOOL;
+ mdCycleTime : TIME;
+ tonHeatUpTime : TON;
+ mdStartTime : TIME;
+ abCalcHeatUpPower : ABCalcHeatUpPower;
+ mbRecordHeatingPower : BOOL;
+ mbInjectActiveLinked : BOOL;
+ mpInjectActive : REFTO BOOL;
+ mHeatingPower : tyHeatingPower (* Copy of sv_NozzleHeatingPower divided by 100.0 *);
+ miNumberOfZones : DINT;
+ rMaxTempRecord : REAL := 50.0;
+ evPanelButtonRegisterData : tevPanelButtonRegisterData;
+ mbDIButtonHeatingOnLinked : BOOL;
+END_VAR
+
+VAR CONSTANT
+ cButtonHeatingOn : DINT := 1;
+END_VAR
+
+POSTUPDATE_ALGORITHM pRegisterButtons ON PU_Task_13 WITH sv_bInitStart
+
+#BEGIN_EDIT_BLOCK
+(**************************************** WARNING ********************************************
+ *** The KEBA Kemro K2 System including software is not intended for safety control tasks! ***
+ ***                       For further information see Comment tab!                        ***
+ *********************************************************************************************)
+
+evPanelButtonRegisterData.Button.nPanelButtonType := nPanelButtonAction; 
+evPanelButtonRegisterData.Button.iCompId := sv_DeviceId.CompId;
+evPanelButtonRegisterData.Button.iIndexId := sv_DeviceId.IndexId;
+evPanelButtonRegisterData.Button.iButtonId := cButtonHeatingOn;
+evPanelButtonRegisterData.Button.pbActionVar1 := @sv_bButtonHeatingOn;
+evPanelButtonRegisterData.Button.Optional.pbLedVar := @sv_bHMILedHeating;
+evPanelButtonRegisterData.Button.Optional.piLedVarAttr := @sv_bHMILedHeating_ledAttr;
+SET_EVENT(evPanelButtonRegister, evPanelButtonRegisterData);
+
+mbDIButtonHeatingOnLinked := IS_LINKED(di_ButtonHeatingOn);
+
+
+;#END_EDIT_BLOCK END_ALGORITHM
+
+PROCESS_ALGORITHM paInit ON TaskMid AUTOSTART
+
+
+VAR
+ swoState : KSWO_Status;
+ fuName : STRING(255);
+ variableName : STRING(255);
+ Status : KSYS_Status;
+END_VAR
+#BEGIN_EDIT_BLOCK
+(**************************************** WARNING ********************************************
+ *** The KEBA Kemro K2 System including software is not intended for safety control tasks! ***
+ ***                       For further information see Comment tab!                        ***
+ *********************************************************************************************)
+
+sv_bHMILedHeating_ledAttr := 16#1;
+sv_bHMILedHeating := FALSE;
+
+IF IS_LINKED(sv_LedHeating_ledAttr) AND IS_LINKED(sv_LedHeating) THEN
+    sv_LedHeating_ledAttr := sv_bHMILedHeating_ledAttr;
+    sv_LedHeating := sv_bHMILedHeating;
+    mbLedLinked := TRUE;
+END_IF;
+
+IF IS_LINKED(do_HeaterOn) THEN
+    mbDoHeaterOnLinked := TRUE;
+END_IF;
+fuName := GET_MY_FU_NAME();
+variableName := CONCAT(fuName,'.HeatingOn');
+swoState := KSWO_AddVariable( Task := TaskHeating,
+                             Name := variableName,
+                             Variable := sv_bHeatingOn);
+
+mpInjectActive := GET_SYNC_REFTO('Injection1.sv_bInjectActive', T#0s, Status);            
+IF Status = KSYS_Status_OK THEN
+   mbInjectActiveLinked := TRUE;
+ELSE
+   mbInjectActiveLinked := FALSE;
+END_IF;
+
+
+START_PROCESS_ALGORITHM(paRun);
+STOP_PROCESS_ALGORITHM();
+
+
+;#END_EDIT_BLOCK END_ALGORITHM
+
+(*
+
+
+*)
+
+PROCESS_ALGORITHM paRun ON TaskHeating
+
+
+VAR_TEMP
+ i : DINT;
+ rActHeatingPower : REAL;
+ rOutputValue : REAL (* Heating output of a zone 0-100% *);
+END_VAR
+
+(* IecGraph-Code *)
+
+(* init step *)
+INITIAL_STEP ZONE_INIT:
+AInitZones (P);
+END_STEP
+
+
+(* steps *)
+STEP GROUP_INIT:
+AInitGroup (P);
+ANoZones (P);
+END_STEP
+
+STEP HEAT:
+ARun (N);
+END_STEP
+
+
+(* transitions *)
+TRANSITION Trans1 (* Trans1 *) FROM ZONE_INIT TO GROUP_INIT :=  #BEGIN_EDIT_BLOCK
+TRUE
+;#END_EDIT_BLOCK
+END_TRANSITION
+
+TRANSITION Trans2 (* Trans2 *) FROM GROUP_INIT TO HEAT :=  #BEGIN_EDIT_BLOCK
+sv_iZonesAvailable >= sv_iNumberOfZones AND
+sv_bInitDone
+;#END_EDIT_BLOCK
+END_TRANSITION
+
+(* end IecGraph-Code *)
+(* sfc-code *)
+
+(* stand alone actions *)
+ACTION ARun: #BEGIN_EDIT_BLOCK
+(**************************************** WARNING ********************************************
+ *** The KEBA Kemro K2 System including software is not intended for safety control tasks! ***
+ ***                       For further information see Comment tab!                        ***
+ *********************************************************************************************)
+
+abGroupControl.aRun(sv_bHeatingOn);
+
+abZone1.aRun(abGroupControl.aRun.bGroupOn);
+abZone2.aRun(abGroupControl.aRun.bGroupOn);
+abZone3.aRun(abGroupControl.aRun.bGroupOn);
+abZone4.aRun(abGroupControl.aRun.bGroupOn);
+abZone5.aRun(abGroupControl.aRun.bGroupOn);
+abZone6.aRun(abGroupControl.aRun.bGroupOn);
+abZone7.aRun(abGroupControl.aRun.bGroupOn);
+abZone8.aRun(abGroupControl.aRun.bGroupOn);
+abZone9.aRun(abGroupControl.aRun.bGroupOn);
+abZone10.aRun(abGroupControl.aRun.bGroupOn);
+abZone11.aRun(abGroupControl.aRun.bGroupOn);
+abZone12.aRun(abGroupControl.aRun.bGroupOn);
+
+//Calculate heating power depending on output of all heating zones
+rActHeatingPower := 0.0;
+FOR i := 1 TO miNumberOfZones DO
+   rOutputValue := sv_ZoneArray[i].Data^.rOutputValue;
+   //Do not count zones which are cooling
+   IF rOutputValue > 0.0 THEN
+      //mHeatingPower is sv_NozzleHeatingPower divided by 100.0
+      //(to avoid an additional division here)
+      rActHeatingPower := rActHeatingPower + rOutputValue * mHeatingPower[i];
+   END_IF;
+END_FOR;
+sv_rActHeatingPower := rActHeatingPower;
+
+sv_bGroupReady := abGroupControl.aRun.bGroupTempOK;
+
+;#END_EDIT_BLOCK END_ACTION (*ARun*)
+ACTION ANoZones: #BEGIN_EDIT_BLOCK
+IF sv_iNumberOfZones > sv_iZonesAvailable THEN
+    sv_iNumberOfZones := sv_iZonesAvailable;
+END_IF;
+miNumberOfZones := sv_iNumberOfZones;
+
+mdCycleTime := GET_TASK_INTERVAL();
+abCalcHeatUpPower.aInit(dCycleTime := mdCycleTime,
+                        iNoZones   := sv_iNumberOfZones,
+                        pHeatUpPower := @sv_ActPowerHeatUp,
+                        prActHeatingPower := @sv_rActHeatingPower);
+abCalcHeatUpPower.aRun(bStart:=FALSE);
+
+;#END_EDIT_BLOCK END_ACTION (*ANoZones*)
+ACTION AInitZones: #BEGIN_EDIT_BLOCK
+(**************************************** WARNING ********************************************
+ *** The KEBA Kemro K2 System including software is not intended for safety control tasks! ***
+ ***                       For further information see Comment tab!                        ***
+ *********************************************************************************************)
+
+abZone1.aInit(iZoneNumber := 1);
+abZone2.aInit(iZoneNumber := 2);
+abZone3.aInit(iZoneNumber := 3);
+abZone4.aInit(iZoneNumber := 4);
+abZone5.aInit(iZoneNumber := 5);
+abZone6.aInit(iZoneNumber := 6);
+abZone7.aInit(iZoneNumber := 7);
+abZone8.aInit(iZoneNumber := 8);
+abZone9.aInit(iZoneNumber := 9);
+abZone10.aInit(iZoneNumber := 10);
+abZone11.aInit(iZoneNumber := 11);
+abZone12.aInit(iZoneNumber := 12);
+
+;#END_EDIT_BLOCK END_ACTION (*AInitZones*)
+ACTION AInitGroup: #BEGIN_EDIT_BLOCK
+(**************************************** WARNING ********************************************
+ *** The KEBA Kemro K2 System including software is not intended for safety control tasks! ***
+ ***                       For further information see Comment tab!                        ***
+ *********************************************************************************************)
+
+abGroupControl.aInit();
+
+;#END_EDIT_BLOCK END_ACTION (*AInitGroup*)
+(* end sfc-code *)
+
+
+END_ALGORITHM
+
+POSTUPDATE_ALGORITHM pHeatingButton ON PU_Task_13 WITH di_ButtonHeatingOn,sv_bButtonHeatingOn
+
+
+VAR
+ State : ALARM_STATE_DATA;
+ bButtonHeatingOn : BOOL;
+END_VAR
+#BEGIN_EDIT_BLOCK
+(**************************************** WARNING ********************************************
+ *** The KEBA Kemro K2 System including software is not intended for safety control tasks! ***
+ ***                       For further information see Comment tab!                        ***
+ *********************************************************************************************)
+ 
+//check if alarm "Zone x exceeded max. Temperature" is active
+STATE_ALARM(Name := erMaxTempExeeded,
+            State := State,
+            SubID1 := sv_DeviceId.CompId,
+            SubID2 := sv_DeviceId.IndexId,
+            SubID3 := 16#7FFFFFFF);
+            
+IF (sv_iZonesAboveMaxTemp > 0) OR (State.ALARM_STATE <> ALARM_STATE_INACTIVE_ACK) THEN
+   //at least one temperature zone exceeded the maximum temperature
+   //or alarm not confirmed
+   //-> don´t allow to switch on the heating
+   RETURN;
+END_IF;
+
+bButtonHeatingOn := sv_bButtonHeatingOn;
+
+IF mbDIButtonHeatingOnLinked THEN
+    bButtonHeatingOn := bButtonHeatingOn OR di_ButtonHeatingOn;
+END_IF;
+
+
+IF sv_bInitDone AND bButtonHeatingOn THEN
+   
+    sv_bHeatingOn := NOT sv_bHeatingOn;
+END_IF;
+
+
+
+
+;#END_EDIT_BLOCK END_ALGORITHM
+
+POSTUPDATE_ALGORITHM pCheckGroupState ON PU_Task_13 WITH sv_bGroupReady,sv_bHeatingOn,sv_bInitDone
+
+
+VAR
+ bInitDone : BOOL;
+ fbLockUnlockOpMode : FBLockUnlock := (DeviceId:=(CompId:=cCompOperationMode,IndexId:=1),MoveDir:=cModeAutomatic,MoveId:=cModeAutomatic);
+ fbLockUnlockGroup : FBLockUnlockGroup;
+ Alarm : tsAlarm;
+END_VAR
+#BEGIN_EDIT_BLOCK
+(**************************************** WARNING ********************************************
+ *** The KEBA Kemro K2 System including software is not intended for safety control tasks! ***
+ ***                       For further information see Comment tab!                        ***
+ *********************************************************************************************)
+
+IF NOT sv_bInitDone THEN
+   RETURN;     // do not allow lock/unlock bevor init done 
+END_IF; 
+
+IF NOT bInitDone THEN
+   fbLockUnlockGroup.Group := sv_LockGroup;
+   Alarm.AlarmId := erHeatingNotReady;
+   Alarm.SubId[1] := sv_DeviceId.CompId;
+   Alarm.SubId[2] := sv_DeviceId.IndexId;
+   fbLockUnlockGroup.Alarm := Alarm;
+   fbLockUnlockOpMode.Alarm := Alarm;
+   bInitDone := TRUE;
+END_IF;
+
+IF NOT sv_bGroupReady AND sv_bHeatingOn THEN
+   //group not ready: don´t allow switching to half or full automatic
+   fbLockUnlockOpMode(Mode := nLockAbort);
+   
+   //lock all movements which are in the group sv_LockGroup
+   IF sv_OperationMode >= nHalfAutomatic THEN
+      //cycle should finish after a zone is out of tolerance
+      //-> lock must be delayed
+      mbDelayLock := TRUE; 
+   ELSE
+      fbLockUnlockGroup(Mode := nLockAbort);
+   END_IF;
+
+ELSE
+   fbLockUnlockOpMode(Mode := nUnlock);
+   fbLockUnlockGroup(Mode := nUnlock);
+END_IF;
+
+IF sv_bGroupReady AND sv_bHeatingOn AND mbRecordHeatingPower THEN
+   tonHeatUpTime(IN:=TRUE);
+   sv_dHeatUpDuration := tonHeatUpTime.ET - mdStartTime;
+   IF sv_dHeatUpDuration < T#0s THEN
+      sv_dHeatUpDuration := T#0s;
+   END_IF;
+END_IF;
+
+
+;#END_EDIT_BLOCK END_ALGORITHM
+
+POSTUPDATE_ALGORITHM pOperationMode ON PU_Task_7 WITH sv_OperationMode
+
+
+VAR
+ bInitDone : BOOL;
+ fbLockUnlockGroup : FBLockUnlockGroup;
+END_VAR
+#BEGIN_EDIT_BLOCK
+(**************************************** WARNING ********************************************
+ *** The KEBA Kemro K2 System including software is not intended for safety control tasks! ***
+ ***                       For further information see Comment tab!                        ***
+ *********************************************************************************************)
+
+IF NOT bInitDone THEN
+   fbLockUnlockGroup.Group := sv_LockGroup;
+   fbLockUnlockGroup.Alarm.AlarmId := erHeatingNotReady;
+   fbLockUnlockGroup.Alarm.SubId[1] := sv_DeviceId.CompId;
+   fbLockUnlockGroup.Alarm.SubId[2] := sv_DeviceId.IndexId;
+   bInitDone := TRUE;
+END_IF;
+
+IF sv_OperationMode < nHalfAutomatic AND mbDelayLock THEN
+   //don´t lock if group became ready in the meantime
+   IF NOT sv_bGroupReady THEN
+      fbLockUnlockGroup(Mode := nLockAbort);   
+   END_IF;
+   
+   mbDelayLock := FALSE;
+END_IF;
+
+
+;#END_EDIT_BLOCK END_ALGORITHM
+
+POSTUPDATE_ALGORITHM pHeatingOn ON PU_Task_13 WITH sv_bHeatingOn,sv_bInitDone
+
+
+VAR
+ bInitDone : BOOL;
+ Alarm : tsAlarm;
+ fbLockUnlock : FBLockUnlock;
+ fbLockUnlockGroup : FBLockUnlockGroup;
+ fbDebugTrace2 : FBDebugTrace2;
+END_VAR
+#BEGIN_EDIT_BLOCK
+(**************************************** WARNING ********************************************
+ *** The KEBA Kemro K2 System including software is not intended for safety control tasks! ***
+ ***                       For further information see Comment tab!                        ***
+ *********************************************************************************************)
+IF NOT bInitDone THEN
+    fbLockUnlock.DeviceId.CompId := cCompOperationMode;
+    fbLockUnlock.DeviceId.IndexId := 1;
+    Alarm.AlarmId := erHeatingNotOn;
+    Alarm.SubId[1] := sv_DeviceId.CompId;
+    Alarm.SubId[2] := sv_DeviceId.IndexId;
+    tonHeatUpTime(IN:=FALSE);
+    bInitDone := TRUE;
+END_IF;
+                 
+sv_bHMILedHeating := sv_bHeatingOn;
+
+IF mbLedLinked THEN
+   sv_LedHeating := sv_bHMILedHeating;
+END_IF;
+
+IF mbDoHeaterOnLinked THEN
+   do_HeaterOn := sv_bHeatingOn;
+END_IF;
+
+IF sv_bHeatingOn THEN
+   fbDebugTrace2(nApplication, CONCAT('HeatingNozzle', DINT_TO_STRING(sv_DeviceId.IndexId), ' turned on'));
+   fbLockUnlock.Mode := nUnlock;
+   fbLockUnlockGroup.Mode := nUnlock;
+   // check heatup active
+   abGroupControl.aGetActMaxTempGroup();
+   IF abGroupControl.aGetActMaxTempGroup.rActTemp <= rMaxTempRecord THEN
+      tonHeatUpTime(IN:=TRUE,PT:=T#1d);
+      mdStartTime := tonHeatUpTime.ET;
+      mbRecordHeatingPower := TRUE;
+      START_PROCESS_ALGORITHM(paCalcHeatUpEnergy);
+   ELSE
+      mbRecordHeatingPower := FALSE;      
+   END_IF;
+ELSE
+   fbDebugTrace2(nApplication, CONCAT('HeatingNozzle', DINT_TO_STRING(sv_DeviceId.IndexId), ' turned off'));
+   //Heating not on: don´t allow switching to half or full automatic
+   //lock all movements which are in the group sv_LockGroup
+   fbLockUnlock.Mode := nLockAbort;
+   fbLockUnlockGroup.Mode := nLockAbort;
+   tonHeatUpTime(IN:=FALSE,PT:=T#1d);
+   abCalcHeatUpPower.aRun(bStart:=FALSE,
+                          bReady:=FALSE,
+                          bStop:=FALSE);
+END_IF;
+
+fbLockUnlock(MoveDir := cModeAutomatic,
+                MoveId := cModeAutomatic,
+                Alarm := Alarm);
+fbLockUnlockGroup(Group := sv_LockGroup,
+                Alarm := Alarm);
+
+
+
+;#END_EDIT_BLOCK END_ALGORITHM
+
+POSTUPDATE_ALGORITHM pUpdateStandbyTemp ON TaskHeating WITH sv_bInitDone,sv_rStandbyTempVis,sv_iNumberOfZones
+
+
+VAR_TEMP
+ iActZone : DINT;
+END_VAR
+#BEGIN_EDIT_BLOCK
+(**************************************** WARNING ********************************************
+ *** The KEBA Kemro K2 System including software is not intended for safety control tasks! ***
+ ***                       For further information see Comment tab!                        ***
+ *********************************************************************************************)
+miNumberOfZones := sv_iNumberOfZones;
+FOR iActZone := 1 TO miNumberOfZones DO
+    sv_ZoneArray[iActZone].DataRetain^.rStandbyTempVis := sv_rStandbyTempVis;
+END_FOR;
+
+
+;#END_EDIT_BLOCK END_ALGORITHM
+
+POSTUPDATE_ALGORITHM pKeepWarmActivated ON TaskHeating WITH sv_bKeepWarmActive
+
+
+VAR
+ fbLockUnlockGroup : FBLockUnlockGroup;
+END_VAR
+#BEGIN_EDIT_BLOCK
+(**************************************** WARNING ********************************************
+ *** The KEBA Kemro K2 System including software is not intended for safety control tasks! ***
+ ***                       For further information see Comment tab!                        ***
+ *********************************************************************************************)
+
+IF sv_bKeepWarmActive THEN    
+   //keep warm active -> lock movements of defined lockgroup
+   fbLockUnlockGroup.Mode := nLockAbort;
+ELSE
+   fbLockUnlockGroup.Mode := nUnlock;    
+END_IF;
+
+fbLockUnlockGroup.Alarm.AlarmId := erKeepWarmActive;
+fbLockUnlockGroup.Alarm.SubId[1] := sv_DeviceId.CompId;
+fbLockUnlockGroup.Alarm.SubId[2] := sv_DeviceId.IndexId;
+fbLockUnlockGroup(Group := sv_LockGroup);
+
+
+;#END_EDIT_BLOCK END_ALGORITHM
+
+POSTUPDATE_ALGORITHM pZonesAboveMaxTemp ON PU_Task_13 WITH sv_iZonesAboveMaxTemp
+
+#BEGIN_EDIT_BLOCK
+(**************************************** WARNING ********************************************
+ *** The KEBA Kemro K2 System including software is not intended for safety control tasks! ***
+ ***                       For further information see Comment tab!                        ***
+ *********************************************************************************************)
+
+IF sv_iZonesAboveMaxTemp > 0 THEN
+   //at least one temperature zone exceeded the maximum temperature
+   //-> stop heating
+   sv_bHeatingOn := FALSE;
+END_IF;
+
+
+;#END_EDIT_BLOCK END_ALGORITHM
+
+PROCESS_ALGORITHM paCalcHeatUpEnergy ON TaskHeating
+
+
+VAR
+ bInjectActive : BOOL;
+END_VAR
+#BEGIN_EDIT_BLOCK
+IF mbInjectActiveLinked THEN
+   bInjectActive := mpInjectActive^;
+ELSE
+   bInjectActive := FALSE;
+END_IF;
+abCalcHeatUpPower.aRun(bStart:=sv_bHeatingOn AND mbRecordHeatingPower,
+                       bReady := sv_bGroupReady AND mbRecordHeatingPower,
+                       bStop := bInjectActive OR (NOT sv_bHeatingOn));
+IF abCalcHeatUpPower.aRun.bDone THEN
+   sv_iActPowerHeatUpIndex := abCalcHeatUpPower.aRun.uiPowerIndex;
+END_IF;
+IF abCalcHeatUpPower.aRun.bStopped THEN
+   STOP_PROCESS_ALGORITHM();
+END_IF;
+
+
+
+
+;#END_EDIT_BLOCK END_ALGORITHM
+
+POSTUPDATE_ALGORITHM pReParamPower ON PU_Task_13 WITH sv_NozzleHeatingPower,sv_bInitDone
+
+
+VAR_TEMP
+ i : DINT;
+END_VAR
+#BEGIN_EDIT_BLOCK
+(**************************************** WARNING ********************************************
+ *** The KEBA Kemro K2 System including software is not intended for safety control tasks! ***
+ ***                       For further information see Comment tab!                        ***
+ *********************************************************************************************)
+
+FOR i := 1 TO miNumberOfZones DO
+   mHeatingPower[i] := sv_NozzleHeatingPower[i] / 100.0;    
+END_FOR;       
+
+
+
+;#END_EDIT_BLOCK END_ALGORITHM
+
+
+
+END_ALGORITHM_BLOCK
+
+
+
+#END_OF_IEC_PART
+
+@Puma @IecEditor 6 128 @Pou 25 
+@@@BEG_Comment@@@
+
+@@@END_Comment@@@
+
+@BEG_Contents 
+
+@BEG_Func 
+@RT(17)FuncTreeContainer 
+5 
+@Var @RT(14)GET_MY_FU_NAME @RT(0) @T @T @DERIVED 0 @F @RT(22)KEBA_STANDARD_FUNCTION @F 
+@T 
+@BEG_Attrib 
+0 @RT(0) @RT(0) 
+@END_Attrib 
+1 1 @F @F @F @F 
+
+@Var @RT(16)KSWO_AddVariable @RT(0) @T @T @DERIVED 0 @F @RT(22)KEBA_STANDARD_FUNCTION @F 
+@T 
+@BEG_Attrib 
+0 @RT(0) @RT(0) 
+@END_Attrib 
+1 1 @F @F @F @F 
+
+@Var @RT(14)GET_SYNC_REFTO @RT(0) @T @T @DERIVED 0 @F @RT(22)KEBA_STANDARD_FUNCTION @F 
+@T 
+@BEG_Attrib 
+0 @RT(0) @RT(0) 
+@END_Attrib 
+1 1 @F @F @F @F 
+
+@Var @RT(17)GET_TASK_INTERVAL @RT(0) @T @T @DERIVED 0 @F @RT(22)KEBA_STANDARD_FUNCTION @F 
+@T 
+@BEG_Attrib 
+0 @RT(0) @RT(0) 
+@END_Attrib 
+1 1 @F @F @F @F 
+
+@Var @RT(11)STATE_ALARM @RT(0) @T @T @DERIVED 0 @F @RT(23)KEBA_STANDARD_PROCEDURE @F 
+@T 
+@BEG_Attrib 
+0 @RT(0) @RT(0) 
+@END_Attrib 
+1 1 @F @F @F @F 
+
+@END_Func 
+
+@BEG_Const 
+@RT(18)ConstTreeContainer 
+8 
+@Var @RT(14)KSYS_Status_OK @RT(0) @T @T @DERIVED 0 @F @RT(11)KSYS_Status @F 
+@T 
+@BEG_Attrib 
+0 @RT(1)1 @RT(0) 
+@END_Attrib 
+1 1 @F @F @F @F 
+
+@Var @RT(24)ALARM_STATE_INACTIVE_ACK @RT(0) @T @T @DERIVED 0 @F @RT(16)ALARM_STATE_ENUM @F 
+@T 
+@BEG_Attrib 
+0 @RT(1)0 @RT(0) 
+@END_Attrib 
+1 1 @F @F @F @F 
+
+@Var @RT(18)cCompOperationMode @RT(0) @T @F @DT @RT(4)DINT @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+0 @RT(3)111 @RT(24)Component Operation Mode 
+@END_Attrib 
+1 1 @F @F @F @F 
+
+@Var @RT(14)cModeAutomatic @RT(0) @T @F @DT @RT(4)DINT @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+0 @RT(2)23 @RT(50)for locking/unlocking half and full automatic mode 
+@END_Attrib 
+1 1 @F @F @F @F 
+
+@Var @RT(10)nLockAbort @RT(0) @T @T @DERIVED 0 @F @RT(12)tnLockUnlock @F 
+@T 
+@BEG_Attrib 
+0 @RT(1)0 @RT(0) 
+@END_Attrib 
+1 1 @F @F @F @F 
+
+@Var @RT(14)nHalfAutomatic @RT(0) @T @T @DERIVED 0 @F @RT(15)tnOperationMode @F 
+@T 
+@BEG_Attrib 
+0 @RT(1)2 @RT(34)confirmation every cycle necessary 
+@END_Attrib 
+1 1 @F @F @F @F 
+
+@Var @RT(7)nUnlock @RT(0) @T @T @DERIVED 0 @F @RT(12)tnLockUnlock @F 
+@T 
+@BEG_Attrib 
+0 @RT(1)2 @RT(0) 
+@END_Attrib 
+1 1 @F @F @F @F 
+
+@Var @RT(12)nApplication @RT(0) @T @T @DERIVED 0 @F @RT(12)tnTraceLevel @F 
+@T 
+@BEG_Attrib 
+0 @RT(1)0 @RT(0) 
+@END_Attrib 
+1 1 @F @F @F @F 
+
+@END_Const 
+
+@BEG_Export 
+
+@BEG_Kind 
+@ALGORITHM_BLOCK @RT(20)ABTemperatureControl @STRUCTURED_TEXT 
+@RT(0) @RT(0) @RT(0) 
+@END_Kind 
+
+@BEG_Dcl 
+@RT(16)DclTreeContainer 
+63 
+@Var @RT(12)sv_bInitDone @RT(0) @T @F @DT @RT(4)BOOL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 8 @F @F @F @F 
+
+@Var @RT(21)evPanelButtonRegister @RT(0) @T @T @DERIVED 0 @T @T @DT @RT(22)tevPanelButtonRegister @RT(0) @T @T @UNKNOWN 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 7 @F @F @F @F 
+
+@Var @RT(13)sv_LedHeating @RT(0) @T @F @DT @RT(4)BOOL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 8 @F @F @F @F 
+
+@Var @RT(21)sv_LedHeating_ledAttr @RT(0) @T @F @DT @RT(4)BYTE @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(14)Panel LED Attr @RT(0) 
+@END_Attrib 
+1 8 @F @F @F @F 
+
+@Var @RT(17)sv_bHMILedHeating @RT(0) @T @F @DT @RT(4)BOOL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 8 @F @F @F @F 
+
+@Var @RT(25)sv_bHMILedHeating_ledAttr @RT(0) @T @F @DT @RT(4)BYTE @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(14)Panel LED Attr @RT(0) 
+@END_Attrib 
+1 8 @F @F @F @F 
+
+@Var @RT(17)sv_iNumberOfZones @RT(0) @T @F @DT @RT(4)DINT @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 8 @F @F @F @F 
+
+@Var @RT(18)sv_iZonesAvailable @RT(0) @T @F @DT @RT(4)DINT @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 8 @F @F @F @F 
+
+@Var @RT(19)sv_bButtonHeatingOn @RT(0) @T @F @DT @RT(4)BOOL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 8 @F @F @F @F 
+
+@Var @RT(18)di_ButtonHeatingOn @RT(0) @T @F @DT @RT(4)BOOL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 8 @F @F @F @F 
+
+@Var @RT(14)sv_bGroupReady @RT(0) @T @F @DT @RT(4)BOOL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(23)Optimization is running @RT(0) 
+@END_Attrib 
+1 8 @F @F @F @F 
+
+@Var @RT(13)sv_bHeatingOn @RT(0) @T @F @DT @RT(4)BOOL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 8 @F @F @F @F 
+
+@Var @RT(12)sv_LockGroup @RT(0) @T @F @DT @RT(4)DINT @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 8 @F @F @F @F 
+
+@Var @RT(11)sv_DeviceId @RT(0) @T @T @DERIVED 0 @T @T @DT @RT(10)tsDeviceId @RT(0) @T @T @UNKNOWN 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 8 @F @F @F @F 
+
+@Var @RT(11)do_HeaterOn @RT(0) @T @F @DT @RT(4)BOOL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 8 @F @F @F @F 
+
+@Var @RT(18)sv_rStandbyTempVis @RT(0) @T @F @DT @RT(4)REAL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 8 @F @F @F @F 
+
+@Var @RT(12)sv_ZoneArray @RT(0) @T @T @DERIVED 0 @T @T @DT @RT(11)tyZoneArray @RT(0) @T @T @UNKNOWN 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 8 @F @F @F @F 
+
+@Var @RT(18)sv_bKeepWarmActive @RT(0) @T @F @DT @RT(4)BOOL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 8 @F @F @F @F 
+
+@Var @RT(16)sv_OperationMode @RT(0) @T @T @DERIVED 0 @T @T @DT @RT(15)tnOperationMode @RT(0) @T @T @UNKNOWN 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 8 @F @F @F @F 
+
+@Var @RT(21)sv_iZonesAboveMaxTemp @RT(0) @T @F @DT @RT(4)DINT @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(62)number of heating zones which exceeded the maximum temperature @RT(0) 
+@END_Attrib 
+1 8 @F @F @F @F 
+
+@Var @RT(19)sv_rActHeatingPower @RT(0) @T @F @DT @RT(4)REAL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 8 @F @F @F @F 
+
+@Var @RT(21)sv_NozzleHeatingPower @RT(0) @T @T @DERIVED 0 @T @T @DT @RT(14)tyHeatingPower @RT(0) @T @T @UNKNOWN 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 8 @F @F @F @F 
+
+@Var @RT(17)sv_ActPowerHeatUp @RT(0) @T @T @DERIVED 0 @T @T @DT @RT(19)tyPowerHeatingZones @RT(0) @T @T @UNKNOWN 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 8 @F @F @F @F 
+
+@Var @RT(18)sv_dHeatUpDuration @RT(0) @T @F @DT @RT(4)TIME @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 8 @F @F @F @F 
+
+@Var @RT(23)sv_iActPowerHeatUpIndex @RT(0) @T @F @DT @RT(5)UDINT @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 8 @F @F @F @F 
+
+@Var @RT(13)sv_bInitStart @RT(0) @T @T @RENAMED 0 @T @T @DT @RT(4)BOOL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 8 @F @F @F @F 
+
+@Var @RT(7)TaskMid @RT(0) @T @F @DT @RT(4)TASK @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 7 @F @F @F @F 
+
+@Var @RT(11)TaskHeating @RT(0) @T @F @DT @RT(4)TASK @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 7 @F @F @F @F 
+
+@Var @RT(10)PU_Task_13 @RT(0) @T @F @DT @RT(4)TASK @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 7 @F @F @F @F 
+
+@Var @RT(14)erHeatingNotOn @RT(0) @T @F @DT @RT(5)ALARM @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 7 @F @F @F @F 
+
+@Var @RT(16)erKeepWarmActive @RT(0) @T @F @DT @RT(5)ALARM @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 7 @F @F @F @F 
+
+@Var @RT(9)PU_Task_7 @RT(0) @T @F @DT @RT(4)TASK @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 7 @F @F @F @F 
+
+@Var @RT(17)erHeatingNotReady @RT(0) @T @F @DT @RT(5)ALARM @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 7 @F @F @F @F 
+
+@Var @RT(16)erMaxTempExeeded @RT(0) @T @F @DT @RT(5)ALARM @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 7 @F @F @F @F 
+
+@Var @RT(14)abGroupControl @RT(0) @T @T @DERIVED 0 @T @T @DT @RT(14)ABGroupControl @RT(0) @T @T @UNKNOWN 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(7)abZone1 @RT(0) @T @T @DERIVED 0 @T @T @DT @RT(6)ABZone @RT(0) @T @T @UNKNOWN 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(7)abZone2 @RT(0) @T @T @DERIVED 0 @T @T @DT @RT(6)ABZone @RT(0) @T @T @UNKNOWN 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(7)abZone3 @RT(0) @T @T @DERIVED 0 @T @T @DT @RT(6)ABZone @RT(0) @T @T @UNKNOWN 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(7)abZone4 @RT(0) @T @T @DERIVED 0 @T @T @DT @RT(6)ABZone @RT(0) @T @T @UNKNOWN 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(7)abZone5 @RT(0) @T @T @DERIVED 0 @T @T @DT @RT(6)ABZone @RT(0) @T @T @UNKNOWN 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(7)abZone6 @RT(0) @T @T @DERIVED 0 @T @T @DT @RT(6)ABZone @RT(0) @T @T @UNKNOWN 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(7)abZone7 @RT(0) @T @T @DERIVED 0 @T @T @DT @RT(6)ABZone @RT(0) @T @T @UNKNOWN 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(7)abZone8 @RT(0) @T @T @DERIVED 0 @T @T @DT @RT(6)ABZone @RT(0) @T @T @UNKNOWN 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(7)abZone9 @RT(0) @T @T @DERIVED 0 @T @T @DT @RT(6)ABZone @RT(0) @T @T @UNKNOWN 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(8)abZone10 @RT(0) @T @T @DERIVED 0 @T @T @DT @RT(6)ABZone @RT(0) @T @T @UNKNOWN 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(8)abZone11 @RT(0) @T @T @DERIVED 0 @T @T @DT @RT(6)ABZone @RT(0) @T @T @UNKNOWN 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(8)abZone12 @RT(0) @T @T @DERIVED 0 @T @T @DT @RT(6)ABZone @RT(0) @T @T @UNKNOWN 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(11)mbLedLinked @RT(0) @T @F @DT @RT(4)BOOL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(18)mbDoHeaterOnLinked @RT(0) @T @F @DT @RT(4)BOOL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(11)mbDelayLock @RT(0) @T @F @DT @RT(4)BOOL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(11)mdCycleTime @RT(0) @T @F @DT @RT(4)TIME @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(13)tonHeatUpTime @RT(0) @T @T @DERIVED 0 @T @T @DT @RT(3)TON @RT(0) @T @T @UNKNOWN 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(11)mdStartTime @RT(0) @T @F @DT @RT(4)TIME @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(17)abCalcHeatUpPower @RT(0) @T @T @DERIVED 0 @T @T @DT @RT(17)ABCalcHeatUpPower @RT(0) @T @T @UNKNOWN 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(20)mbRecordHeatingPower @RT(0) @T @F @DT @RT(4)BOOL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(20)mbInjectActiveLinked @RT(0) @T @F @DT @RT(4)BOOL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(14)mpInjectActive @RT(0) @T @T @REFTO 0 @T @DT @RT(4)BOOL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(13)mHeatingPower @RT(0) @T @T @DERIVED 0 @T @T @DT @RT(14)tyHeatingPower @RT(0) @T @T @UNKNOWN 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(46)Copy of sv_NozzleHeatingPower divided by 100.0 @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(15)miNumberOfZones @RT(0) @T @F @DT @RT(4)DINT @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(14)rMaxTempRecord @RT(0) @T @F @DT @RT(4)REAL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(4)50.0 @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(25)evPanelButtonRegisterData @RT(0) @T @T @DERIVED 0 @T @T @DT @RT(26)tevPanelButtonRegisterData @RT(0) @T @T @UNKNOWN 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(25)mbDIButtonHeatingOnLinked @RT(0) @T @F @DT @RT(4)BOOL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(16)cButtonHeatingOn @RT(0) @T @F @DT @RT(4)DINT @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(1)1 @RT(0) @RT(0) 
+@END_Attrib 
+1 15 @F @F @F @F 
+
+@END_Dcl 
+
+@END_Export 
+
+@BEG_Body 
+
+12 
+
+@BEG_Export 
+
+@BEG_Algo 
+@POSTUPDATE_ALGORITHM @RT(16)pRegisterButtons @STRUCTURED_TEXT 
+@RT(0) @RT(13)sv_bInitStart @RT(10)PU_Task_13 @F @F 
+@END_Algo 
+
+@BEG_Dcl 
+@RT(16)DclTreeContainer 
+0 
+@END_Dcl 
+
+@END_Export 
+
+@BEG_Export 
+
+@BEG_Algo 
+@PROCESS_ALGORITHM @RT(6)paInit @STRUCTURED_TEXT 
+@RT(0) @RT(0) @RT(7)TaskMid @T @F 
+@END_Algo 
+
+@BEG_Dcl 
+@RT(16)DclTreeContainer 
+4 
+@Var @RT(8)swoState @RT(0) @T @T @DERIVED 0 @T @T @DT @RT(11)KSWO_Status @RT(0) @T @T @UNKNOWN 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(6)fuName @RT(0) @T @F @DT @RT(11)STRING(255) @RT(0) @T @T @STRING 0 @F @RT(3)255 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(12)variableName @RT(0) @T @F @DT @RT(11)STRING(255) @RT(0) @T @T @STRING 0 @F @RT(3)255 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(6)Status @RT(0) @T @T @DERIVED 0 @T @T @DT @RT(11)KSYS_Status @RT(0) @T @T @UNKNOWN 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@END_Dcl 
+
+@END_Export 
+
+@BEG_Export 
+
+@BEG_Algo 
+@PROCESS_ALGORITHM @RT(5)paRun @SEQUENTIAL_FLOW_CHART 
+@RT(0) @RT(0) @RT(11)TaskHeating @F @F 
+@END_Algo 
+
+@BEG_Dcl 
+@RT(16)DclTreeContainer 
+3 
+@Var @RT(1)i @RT(0) @T @F @DT @RT(4)DINT @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 4 @F @F @F @F 
+
+@Var @RT(16)rActHeatingPower @RT(0) @T @F @DT @RT(4)REAL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 4 @F @F @F @F 
+
+@Var @RT(12)rOutputValue @RT(0) @T @F @DT @RT(4)REAL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(31)Heating output of a zone 0-100% @RT(0) 
+@END_Attrib 
+1 4 @F @F @F @F 
+
+@END_Dcl 
+
+@END_Export 
+
+@BEG_Export 
+
+@BEG_Algo 
+@POSTUPDATE_ALGORITHM @RT(14)pHeatingButton @STRUCTURED_TEXT 
+@RT(0) @RT(38)di_ButtonHeatingOn,sv_bButtonHeatingOn @RT(10)PU_Task_13 @F @F 
+@END_Algo 
+
+@BEG_Dcl 
+@RT(16)DclTreeContainer 
+2 
+@Var @RT(5)State @RT(0) @T @T @DERIVED 0 @T @T @DT @RT(16)ALARM_STATE_DATA @RT(0) @T @T @UNKNOWN 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(16)bButtonHeatingOn @RT(0) @T @F @DT @RT(4)BOOL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@END_Dcl 
+
+@END_Export 
+
+@BEG_Export 
+
+@BEG_Algo 
+@POSTUPDATE_ALGORITHM @RT(16)pCheckGroupState @STRUCTURED_TEXT 
+@RT(0) @RT(41)sv_bGroupReady,sv_bHeatingOn,sv_bInitDone @RT(10)PU_Task_13 @F @F 
+@END_Algo 
+
+@BEG_Dcl 
+@RT(16)DclTreeContainer 
+4 
+@Var @RT(9)bInitDone @RT(0) @T @F @DT @RT(4)BOOL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(18)fbLockUnlockOpMode @RT(0) @T @T @DERIVED 0 @T @T @DT @RT(12)FBLockUnlock @RT(0) @T @T @UNKNOWN 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(98)(DeviceId:=(CompId:=cCompOperationMode,IndexId:=1),MoveDir:=cModeAutomatic,MoveId:=cModeAutomatic) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(17)fbLockUnlockGroup @RT(0) @T @T @DERIVED 0 @T @T @DT @RT(17)FBLockUnlockGroup @RT(0) @T @T @UNKNOWN 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(5)Alarm @RT(0) @T @T @DERIVED 0 @T @T @DT @RT(7)tsAlarm @RT(0) @T @T @UNKNOWN 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@END_Dcl 
+
+@END_Export 
+
+@BEG_Export 
+
+@BEG_Algo 
+@POSTUPDATE_ALGORITHM @RT(14)pOperationMode @STRUCTURED_TEXT 
+@RT(0) @RT(16)sv_OperationMode @RT(9)PU_Task_7 @F @F 
+@END_Algo 
+
+@BEG_Dcl 
+@RT(16)DclTreeContainer 
+2 
+@Var @RT(9)bInitDone @RT(0) @T @F @DT @RT(4)BOOL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(17)fbLockUnlockGroup @RT(0) @T @T @DERIVED 0 @T @T @DT @RT(17)FBLockUnlockGroup @RT(0) @T @T @UNKNOWN 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@END_Dcl 
+
+@END_Export 
+
+@BEG_Export 
+
+@BEG_Algo 
+@POSTUPDATE_ALGORITHM @RT(10)pHeatingOn @STRUCTURED_TEXT 
+@RT(0) @RT(26)sv_bHeatingOn,sv_bInitDone @RT(10)PU_Task_13 @F @F 
+@END_Algo 
+
+@BEG_Dcl 
+@RT(16)DclTreeContainer 
+5 
+@Var @RT(9)bInitDone @RT(0) @T @F @DT @RT(4)BOOL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(5)Alarm @RT(0) @T @T @DERIVED 0 @T @T @DT @RT(7)tsAlarm @RT(0) @T @T @UNKNOWN 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(12)fbLockUnlock @RT(0) @T @T @DERIVED 0 @T @T @DT @RT(12)FBLockUnlock @RT(0) @T @T @UNKNOWN 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(17)fbLockUnlockGroup @RT(0) @T @T @DERIVED 0 @T @T @DT @RT(17)FBLockUnlockGroup @RT(0) @T @T @UNKNOWN 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(13)fbDebugTrace2 @RT(0) @T @T @DERIVED 0 @T @T @DT @RT(13)FBDebugTrace2 @RT(0) @T @T @UNKNOWN 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@END_Dcl 
+
+@END_Export 
+
+@BEG_Export 
+
+@BEG_Algo 
+@POSTUPDATE_ALGORITHM @RT(18)pUpdateStandbyTemp @STRUCTURED_TEXT 
+@RT(0) @RT(49)sv_bInitDone,sv_rStandbyTempVis,sv_iNumberOfZones @RT(11)TaskHeating @F @F 
+@END_Algo 
+
+@BEG_Dcl 
+@RT(16)DclTreeContainer 
+1 
+@Var @RT(8)iActZone @RT(0) @T @F @DT @RT(4)DINT @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 4 @F @F @F @F 
+
+@END_Dcl 
+
+@END_Export 
+
+@BEG_Export 
+
+@BEG_Algo 
+@POSTUPDATE_ALGORITHM @RT(18)pKeepWarmActivated @STRUCTURED_TEXT 
+@RT(0) @RT(18)sv_bKeepWarmActive @RT(11)TaskHeating @F @F 
+@END_Algo 
+
+@BEG_Dcl 
+@RT(16)DclTreeContainer 
+1 
+@Var @RT(17)fbLockUnlockGroup @RT(0) @T @T @DERIVED 0 @T @T @DT @RT(17)FBLockUnlockGroup @RT(0) @T @T @UNKNOWN 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@END_Dcl 
+
+@END_Export 
+
+@BEG_Export 
+
+@BEG_Algo 
+@POSTUPDATE_ALGORITHM @RT(18)pZonesAboveMaxTemp @STRUCTURED_TEXT 
+@RT(0) @RT(21)sv_iZonesAboveMaxTemp @RT(10)PU_Task_13 @F @F 
+@END_Algo 
+
+@BEG_Dcl 
+@RT(16)DclTreeContainer 
+0 
+@END_Dcl 
+
+@END_Export 
+
+@BEG_Export 
+
+@BEG_Algo 
+@PROCESS_ALGORITHM @RT(18)paCalcHeatUpEnergy @STRUCTURED_TEXT 
+@RT(0) @RT(0) @RT(11)TaskHeating @F @F 
+@END_Algo 
+
+@BEG_Dcl 
+@RT(16)DclTreeContainer 
+1 
+@Var @RT(13)bInjectActive @RT(0) @T @F @DT @RT(4)BOOL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@END_Dcl 
+
+@END_Export 
+
+@BEG_Export 
+
+@BEG_Algo 
+@POSTUPDATE_ALGORITHM @RT(13)pReParamPower @STRUCTURED_TEXT 
+@RT(0) @RT(34)sv_NozzleHeatingPower,sv_bInitDone @RT(10)PU_Task_13 @F @F 
+@END_Algo 
+
+@BEG_Dcl 
+@RT(16)DclTreeContainer 
+1 
+@Var @RT(1)i @RT(0) @T @F @DT @RT(4)DINT @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 4 @F @F @F @F 
+
+@END_Dcl 
+
+@END_Export 
+
+@BEG_Body 
+@TL(16)
+(**************************************** WARNING ********************************************
+ *** The KEBA Kemro K2 System including software is not intended for safety control tasks! ***
+ ***                       For further information see Comment tab!                        ***
+ *********************************************************************************************)
+
+evPanelButtonRegisterData.Button.nPanelButtonType := nPanelButtonAction; 
+evPanelButtonRegisterData.Button.iCompId := sv_DeviceId.CompId;
+evPanelButtonRegisterData.Button.iIndexId := sv_DeviceId.IndexId;
+evPanelButtonRegisterData.Button.iButtonId := cButtonHeatingOn;
+evPanelButtonRegisterData.Button.pbActionVar1 := @sv_bButtonHeatingOn;
+evPanelButtonRegisterData.Button.Optional.pbLedVar := @sv_bHMILedHeating;
+evPanelButtonRegisterData.Button.Optional.piLedVarAttr := @sv_bHMILedHeating_ledAttr;
+SET_EVENT(evPanelButtonRegister, evPanelButtonRegisterData);
+
+mbDIButtonHeatingOnLinked := IS_LINKED(di_ButtonHeatingOn);
+
+@END_Body 
+
+@@@BEG_Comment@@@ 
+@TL(0)
+
+@@@END_Comment@@@ 
+
+@BEG_Body 
+@TL(34)
+(**************************************** WARNING ********************************************
+ *** The KEBA Kemro K2 System including software is not intended for safety control tasks! ***
+ ***                       For further information see Comment tab!                        ***
+ *********************************************************************************************)
+
+sv_bHMILedHeating_ledAttr := 16#1;
+sv_bHMILedHeating := FALSE;
+
+IF IS_LINKED(sv_LedHeating_ledAttr) AND IS_LINKED(sv_LedHeating) THEN
+    sv_LedHeating_ledAttr := sv_bHMILedHeating_ledAttr;
+    sv_LedHeating := sv_bHMILedHeating;
+    mbLedLinked := TRUE;
+END_IF;
+
+IF IS_LINKED(do_HeaterOn) THEN
+    mbDoHeaterOnLinked := TRUE;
+END_IF;
+fuName := GET_MY_FU_NAME();
+variableName := CONCAT(fuName,'.HeatingOn');
+swoState := KSWO_AddVariable( Task := TaskHeating,
+                             Name := variableName,
+                             Variable := sv_bHeatingOn);
+
+mpInjectActive := GET_SYNC_REFTO('Injection1.sv_bInjectActive', T#0s, Status);            
+IF Status = KSYS_Status_OK THEN
+   mbInjectActiveLinked := TRUE;
+ELSE
+   mbInjectActiveLinked := FALSE;
+END_IF;
+
+
+START_PROCESS_ALGORITHM(paRun);
+STOP_PROCESS_ALGORITHM();
+
+@END_Body 
+
+@@@BEG_Comment@@@ 
+@TL(0)
+
+@@@END_Comment@@@ 
+
+@BEG_SfcBody 
+5 4 3 
+
+@BEG_SfcData 2 
+@StepSeq @RT(4)sseq @F 5 
+@Step @RT(9)ZONE_INIT @F @T @F @F @RT(0) @F 
+@AcbCont @RT(7)unnamed @F 1 
+@Acb @RT(10)AInitZones @F @F @RT(1)P @RT(0) @F @F @F @F 
+
+@Trans @RT(6)Trans1 @F @T @F @F @T @T @TL(2)
+TRUE
+
+@RT(6)Trans1 @F 
+@Step @RT(10)GROUP_INIT @F @F @F @F @RT(0) @F 
+@AcbCont @RT(7)unnamed @F 2 
+@Acb @RT(10)AInitGroup @F @F @RT(1)P @RT(0) @F @F @F @F 
+@Acb @RT(8)ANoZones @F @F @RT(1)P @RT(0) @F @F @F @F 
+
+@Trans @RT(6)Trans2 @F @T @F @F @T @T @TL(3)
+sv_iZonesAvailable >= sv_iNumberOfZones AND
+sv_bInitDone
+
+@RT(6)Trans2 @F 
+@Step @RT(4)HEAT @F @F @F @F @RT(0) @F 
+@AcbCont @RT(7)unnamed @F 1 
+@Acb @RT(4)ARun @F @F @RT(1)N @RT(0) @F @F @F @F 
+
+@END_SfcData 
+@SaActions 4 
+@SaText @RT(4)ARun 1 @TL(35)
+(**************************************** WARNING ********************************************
+ *** The KEBA Kemro K2 System including software is not intended for safety control tasks! ***
+ ***                       For further information see Comment tab!                        ***
+ *********************************************************************************************)
+
+abGroupControl.aRun(sv_bHeatingOn);
+
+abZone1.aRun(abGroupControl.aRun.bGroupOn);
+abZone2.aRun(abGroupControl.aRun.bGroupOn);
+abZone3.aRun(abGroupControl.aRun.bGroupOn);
+abZone4.aRun(abGroupControl.aRun.bGroupOn);
+abZone5.aRun(abGroupControl.aRun.bGroupOn);
+abZone6.aRun(abGroupControl.aRun.bGroupOn);
+abZone7.aRun(abGroupControl.aRun.bGroupOn);
+abZone8.aRun(abGroupControl.aRun.bGroupOn);
+abZone9.aRun(abGroupControl.aRun.bGroupOn);
+abZone10.aRun(abGroupControl.aRun.bGroupOn);
+abZone11.aRun(abGroupControl.aRun.bGroupOn);
+abZone12.aRun(abGroupControl.aRun.bGroupOn);
+
+//Calculate heating power depending on output of all heating zones
+rActHeatingPower := 0.0;
+FOR i := 1 TO miNumberOfZones DO
+   rOutputValue := sv_ZoneArray[i].Data^.rOutputValue;
+   //Do not count zones which are cooling
+   IF rOutputValue > 0.0 THEN
+      //mHeatingPower is sv_NozzleHeatingPower divided by 100.0
+      //(to avoid an additional division here)
+      rActHeatingPower := rActHeatingPower + rOutputValue * mHeatingPower[i];
+   END_IF;
+END_FOR;
+sv_rActHeatingPower := rActHeatingPower;
+
+sv_bGroupReady := abGroupControl.aRun.bGroupTempOK;
+
+
+@SaText @RT(8)ANoZones 1 @TL(12)
+IF sv_iNumberOfZones > sv_iZonesAvailable THEN
+    sv_iNumberOfZones := sv_iZonesAvailable;
+END_IF;
+miNumberOfZones := sv_iNumberOfZones;
+
+mdCycleTime := GET_TASK_INTERVAL();
+abCalcHeatUpPower.aInit(dCycleTime := mdCycleTime,
+                        iNoZones   := sv_iNumberOfZones,
+                        pHeatUpPower := @sv_ActPowerHeatUp,
+                        prActHeatingPower := @sv_rActHeatingPower);
+abCalcHeatUpPower.aRun(bStart:=FALSE);
+
+
+@SaText @RT(10)AInitZones 1 @TL(18)
+(**************************************** WARNING ********************************************
+ *** The KEBA Kemro K2 System including software is not intended for safety control tasks! ***
+ ***                       For further information see Comment tab!                        ***
+ *********************************************************************************************)
+
+abZone1.aInit(iZoneNumber := 1);
+abZone2.aInit(iZoneNumber := 2);
+abZone3.aInit(iZoneNumber := 3);
+abZone4.aInit(iZoneNumber := 4);
+abZone5.aInit(iZoneNumber := 5);
+abZone6.aInit(iZoneNumber := 6);
+abZone7.aInit(iZoneNumber := 7);
+abZone8.aInit(iZoneNumber := 8);
+abZone9.aInit(iZoneNumber := 9);
+abZone10.aInit(iZoneNumber := 10);
+abZone11.aInit(iZoneNumber := 11);
+abZone12.aInit(iZoneNumber := 12);
+
+
+@SaText @RT(10)AInitGroup 1 @TL(7)
+(**************************************** WARNING ********************************************
+ *** The KEBA Kemro K2 System including software is not intended for safety control tasks! ***
+ ***                       For further information see Comment tab!                        ***
+ *********************************************************************************************)
+
+abGroupControl.aInit();
+
+
+@SaTrans 0 
+@SaExits 0 
+@END_SfcBody 
+
+@@@BEG_Comment@@@ 
+@TL(2)
+
+
+@@@END_Comment@@@ 
+
+@BEG_Body 
+@TL(33)
+(**************************************** WARNING ********************************************
+ *** The KEBA Kemro K2 System including software is not intended for safety control tasks! ***
+ ***                       For further information see Comment tab!                        ***
+ *********************************************************************************************)
+ 
+//check if alarm "Zone x exceeded max. Temperature" is active
+STATE_ALARM(Name := erMaxTempExeeded,
+            State := State,
+            SubID1 := sv_DeviceId.CompId,
+            SubID2 := sv_DeviceId.IndexId,
+            SubID3 := 16#7FFFFFFF);
+            
+IF (sv_iZonesAboveMaxTemp > 0) OR (State.ALARM_STATE <> ALARM_STATE_INACTIVE_ACK) THEN
+   //at least one temperature zone exceeded the maximum temperature
+   //or alarm not confirmed
+   //-> don´t allow to switch on the heating
+   RETURN;
+END_IF;
+
+bButtonHeatingOn := sv_bButtonHeatingOn;
+
+IF mbDIButtonHeatingOnLinked THEN
+    bButtonHeatingOn := bButtonHeatingOn OR di_ButtonHeatingOn;
+END_IF;
+
+
+IF sv_bInitDone AND bButtonHeatingOn THEN
+   
+    sv_bHeatingOn := NOT sv_bHeatingOn;
+END_IF;
+
+
+
+@END_Body 
+
+@@@BEG_Comment@@@ 
+@TL(0)
+
+@@@END_Comment@@@ 
+
+@BEG_Body 
+@TL(45)
+(**************************************** WARNING ********************************************
+ *** The KEBA Kemro K2 System including software is not intended for safety control tasks! ***
+ ***                       For further information see Comment tab!                        ***
+ *********************************************************************************************)
+
+IF NOT sv_bInitDone THEN
+   RETURN;     // do not allow lock/unlock bevor init done 
+END_IF; 
+
+IF NOT bInitDone THEN
+   fbLockUnlockGroup.Group := sv_LockGroup;
+   Alarm.AlarmId := erHeatingNotReady;
+   Alarm.SubId[1] := sv_DeviceId.CompId;
+   Alarm.SubId[2] := sv_DeviceId.IndexId;
+   fbLockUnlockGroup.Alarm := Alarm;
+   fbLockUnlockOpMode.Alarm := Alarm;
+   bInitDone := TRUE;
+END_IF;
+
+IF NOT sv_bGroupReady AND sv_bHeatingOn THEN
+   //group not ready: don´t allow switching to half or full automatic
+   fbLockUnlockOpMode(Mode := nLockAbort);
+   
+   //lock all movements which are in the group sv_LockGroup
+   IF sv_OperationMode >= nHalfAutomatic THEN
+      //cycle should finish after a zone is out of tolerance
+      //-> lock must be delayed
+      mbDelayLock := TRUE; 
+   ELSE
+      fbLockUnlockGroup(Mode := nLockAbort);
+   END_IF;
+
+ELSE
+   fbLockUnlockOpMode(Mode := nUnlock);
+   fbLockUnlockGroup(Mode := nUnlock);
+END_IF;
+
+IF sv_bGroupReady AND sv_bHeatingOn AND mbRecordHeatingPower THEN
+   tonHeatUpTime(IN:=TRUE);
+   sv_dHeatUpDuration := tonHeatUpTime.ET - mdStartTime;
+   IF sv_dHeatUpDuration < T#0s THEN
+      sv_dHeatUpDuration := T#0s;
+   END_IF;
+END_IF;
+
+@END_Body 
+
+@@@BEG_Comment@@@ 
+@TL(0)
+
+@@@END_Comment@@@ 
+
+@BEG_Body 
+@TL(22)
+(**************************************** WARNING ********************************************
+ *** The KEBA Kemro K2 System including software is not intended for safety control tasks! ***
+ ***                       For further information see Comment tab!                        ***
+ *********************************************************************************************)
+
+IF NOT bInitDone THEN
+   fbLockUnlockGroup.Group := sv_LockGroup;
+   fbLockUnlockGroup.Alarm.AlarmId := erHeatingNotReady;
+   fbLockUnlockGroup.Alarm.SubId[1] := sv_DeviceId.CompId;
+   fbLockUnlockGroup.Alarm.SubId[2] := sv_DeviceId.IndexId;
+   bInitDone := TRUE;
+END_IF;
+
+IF sv_OperationMode < nHalfAutomatic AND mbDelayLock THEN
+   //don´t lock if group became ready in the meantime
+   IF NOT sv_bGroupReady THEN
+      fbLockUnlockGroup(Mode := nLockAbort);   
+   END_IF;
+   
+   mbDelayLock := FALSE;
+END_IF;
+
+@END_Body 
+
+@@@BEG_Comment@@@ 
+@TL(0)
+
+@@@END_Comment@@@ 
+
+@BEG_Body 
+@TL(57)
+(**************************************** WARNING ********************************************
+ *** The KEBA Kemro K2 System including software is not intended for safety control tasks! ***
+ ***                       For further information see Comment tab!                        ***
+ *********************************************************************************************)
+IF NOT bInitDone THEN
+    fbLockUnlock.DeviceId.CompId := cCompOperationMode;
+    fbLockUnlock.DeviceId.IndexId := 1;
+    Alarm.AlarmId := erHeatingNotOn;
+    Alarm.SubId[1] := sv_DeviceId.CompId;
+    Alarm.SubId[2] := sv_DeviceId.IndexId;
+    tonHeatUpTime(IN:=FALSE);
+    bInitDone := TRUE;
+END_IF;
+                 
+sv_bHMILedHeating := sv_bHeatingOn;
+
+IF mbLedLinked THEN
+   sv_LedHeating := sv_bHMILedHeating;
+END_IF;
+
+IF mbDoHeaterOnLinked THEN
+   do_HeaterOn := sv_bHeatingOn;
+END_IF;
+
+IF sv_bHeatingOn THEN
+   fbDebugTrace2(nApplication, CONCAT('HeatingNozzle', DINT_TO_STRING(sv_DeviceId.IndexId), ' turned on'));
+   fbLockUnlock.Mode := nUnlock;
+   fbLockUnlockGroup.Mode := nUnlock;
+   // check heatup active
+   abGroupControl.aGetActMaxTempGroup();
+   IF abGroupControl.aGetActMaxTempGroup.rActTemp <= rMaxTempRecord THEN
+      tonHeatUpTime(IN:=TRUE,PT:=T#1d);
+      mdStartTime := tonHeatUpTime.ET;
+      mbRecordHeatingPower := TRUE;
+      START_PROCESS_ALGORITHM(paCalcHeatUpEnergy);
+   ELSE
+      mbRecordHeatingPower := FALSE;      
+   END_IF;
+ELSE
+   fbDebugTrace2(nApplication, CONCAT('HeatingNozzle', DINT_TO_STRING(sv_DeviceId.IndexId), ' turned off'));
+   //Heating not on: don´t allow switching to half or full automatic
+   //lock all movements which are in the group sv_LockGroup
+   fbLockUnlock.Mode := nLockAbort;
+   fbLockUnlockGroup.Mode := nLockAbort;
+   tonHeatUpTime(IN:=FALSE,PT:=T#1d);
+   abCalcHeatUpPower.aRun(bStart:=FALSE,
+                          bReady:=FALSE,
+                          bStop:=FALSE);
+END_IF;
+
+fbLockUnlock(MoveDir := cModeAutomatic,
+                MoveId := cModeAutomatic,
+                Alarm := Alarm);
+fbLockUnlockGroup(Group := sv_LockGroup,
+                Alarm := Alarm);
+
+
+@END_Body 
+
+@@@BEG_Comment@@@ 
+@TL(0)
+
+@@@END_Comment@@@ 
+
+@BEG_Body 
+@TL(9)
+(**************************************** WARNING ********************************************
+ *** The KEBA Kemro K2 System including software is not intended for safety control tasks! ***
+ ***                       For further information see Comment tab!                        ***
+ *********************************************************************************************)
+miNumberOfZones := sv_iNumberOfZones;
+FOR iActZone := 1 TO miNumberOfZones DO
+    sv_ZoneArray[iActZone].DataRetain^.rStandbyTempVis := sv_rStandbyTempVis;
+END_FOR;
+
+@END_Body 
+
+@@@BEG_Comment@@@ 
+@TL(0)
+
+@@@END_Comment@@@ 
+
+@BEG_Body 
+@TL(17)
+(**************************************** WARNING ********************************************
+ *** The KEBA Kemro K2 System including software is not intended for safety control tasks! ***
+ ***                       For further information see Comment tab!                        ***
+ *********************************************************************************************)
+
+IF sv_bKeepWarmActive THEN    
+   //keep warm active -> lock movements of defined lockgroup
+   fbLockUnlockGroup.Mode := nLockAbort;
+ELSE
+   fbLockUnlockGroup.Mode := nUnlock;    
+END_IF;
+
+fbLockUnlockGroup.Alarm.AlarmId := erKeepWarmActive;
+fbLockUnlockGroup.Alarm.SubId[1] := sv_DeviceId.CompId;
+fbLockUnlockGroup.Alarm.SubId[2] := sv_DeviceId.IndexId;
+fbLockUnlockGroup(Group := sv_LockGroup);
+
+@END_Body 
+
+@@@BEG_Comment@@@ 
+@TL(0)
+
+@@@END_Comment@@@ 
+
+@BEG_Body 
+@TL(11)
+(**************************************** WARNING ********************************************
+ *** The KEBA Kemro K2 System including software is not intended for safety control tasks! ***
+ ***                       For further information see Comment tab!                        ***
+ *********************************************************************************************)
+
+IF sv_iZonesAboveMaxTemp > 0 THEN
+   //at least one temperature zone exceeded the maximum temperature
+   //-> stop heating
+   sv_bHeatingOn := FALSE;
+END_IF;
+
+@END_Body 
+
+@@@BEG_Comment@@@ 
+@TL(0)
+
+@@@END_Comment@@@ 
+
+@BEG_Body 
+@TL(17)
+IF mbInjectActiveLinked THEN
+   bInjectActive := mpInjectActive^;
+ELSE
+   bInjectActive := FALSE;
+END_IF;
+abCalcHeatUpPower.aRun(bStart:=sv_bHeatingOn AND mbRecordHeatingPower,
+                       bReady := sv_bGroupReady AND mbRecordHeatingPower,
+                       bStop := bInjectActive OR (NOT sv_bHeatingOn));
+IF abCalcHeatUpPower.aRun.bDone THEN
+   sv_iActPowerHeatUpIndex := abCalcHeatUpPower.aRun.uiPowerIndex;
+END_IF;
+IF abCalcHeatUpPower.aRun.bStopped THEN
+   STOP_PROCESS_ALGORITHM();
+END_IF;
+
+
+
+@END_Body 
+
+@@@BEG_Comment@@@ 
+@TL(0)
+
+@@@END_Comment@@@ 
+
+@BEG_Body 
+@TL(10)
+(**************************************** WARNING ********************************************
+ *** The KEBA Kemro K2 System including software is not intended for safety control tasks! ***
+ ***                       For further information see Comment tab!                        ***
+ *********************************************************************************************)
+
+FOR i := 1 TO miNumberOfZones DO
+   mHeatingPower[i] := sv_NozzleHeatingPower[i] / 100.0;    
+END_FOR;       
+
+
+@END_Body 
+
+@@@BEG_Comment@@@ 
+@TL(0)
+
+@@@END_Comment@@@ 
+@END_Body 
+
+@END_Contents 

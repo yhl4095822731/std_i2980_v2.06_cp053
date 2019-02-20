@@ -1,0 +1,689 @@
+(*
+@h    ! WARNING !
+@h    The Kemro K2 system (including software) only meets category B according to EN 954-1,
+@h    thus it is not intended for usage in safety-relevant control applications in the field 
+@h    of personal safety (e.g. emergency stop).
+@h    To implement potentially necessary safety-relevant control tasks, always use additional 
+@h    external safety devices that are intended for the particular purpose, and meet the necessary 
+@h    functional safety.
+@h    For further information see EN 954-1 (EN ISO 13849-1) and/or the K2-x00 user manual, chapter 
+@h    "CE conformity, directives and standards".
+
+function block for sending data according to ServiceNet protocol to ServiceNet Server.
+sends connection data and connection status on raising edge on execute
+sends connection status information if status changed, but at least once each 30 seconds (keep alive).
+
+ATTENTION: when changing content of send buffer: 
+-> ensure that maximum length does not exceed 255 characters per buffer element when concating strings, 
+   otherwise characters are truncated which will lead to an invalid object beeing sent.
+-> ensure to CONCAT sClear String (255 x blank) at the end of each buffer-array element 
+   (to delete string data stored previously on that buffer element in case the new string is shorter)
+-> a string data element started in a buffer element (character ") must be closed in the same buffer element
+   because at the end of each 255 character buffer element a zero byte (string terminator) is inserted automatically.
+   a zero byte is not allowed in string elements!
+   therefore the maximum length of a string that can be sent is 255 - 2 = 253 characters.
+*)
+
+IMPORT_OVER_LISTFILE
+ GET_RUNTIME
+, ABVersionManager
+, tyRequestFrom
+, tsMachineInfo
+, tnConnectionStatus
+, tySBuf
+, KNETWORK_TcpSend
+, TON
+
+END_IMPORT
+
+FUNCTION_BLOCK FBSendData #DUMMY_EDIT_BLOCK
+
+VAR_INPUT
+ Execute : BOOL (* sends all data on raising edge, when TRUE: connection status is sent on valuechange and after 30 seconds elapsed without valuechange *);
+ TcpHdl : REFERENCE (* handle of an established TCP connection to use for sending data *);
+ VersionServiceNetClient : DINT (* ServiceNet protocol version used by client *);
+END_VAR
+
+VAR_IN_OUT
+ abVersionInfo : ABVersionManager (* block for reading versioninfos and systemname *);
+END_VAR
+
+VAR_OUTPUT
+ Error : BOOL (* indicates a send error *);
+END_VAR
+
+SYSTEM_VAR
+ sv_RequestFrom : tyRequestFrom;
+ sv_sTextMessage : STRING(255);
+ sv_iRequestFromIdx : DINT;
+ sv_iCpuId : LINT;
+ sv_MachineInformation : tsMachineInfo;
+ sv_ConnectionStatus : tnConnectionStatus;
+ sv_iRemoteVisType : DINT;
+END_VAR
+
+VAR
+ Buf : tySBuf (* send buffer *);
+ fbTCPSend : KNETWORK_TcpSend (* block for sending data  *);
+ bSendConnectionData : BOOL (* indicates all data should be sent *);
+ bSendStatusOnly : BOOL (* indicates only status should be sent *);
+ bExecuteOld : BOOL (* flag stores Execute state in previous cycle for detecting edges *);
+ ts : TIME (* debug: timestamp start *);
+ td : TIME (* debug: duration *);
+ fbTonKeepAlive : TON (* keep alive timer *);
+ iConnectionState : DINT (* integer value of sv_ConnectionState *);
+ connectionStatusOld : tnConnectionStatus (* connection state in previous cycle - to detect state changed *);
+ iSendBytes : UDINT (* number of bytes to send *);
+ sByteLen : STRING(16) (* length information about data object to be sent to ServiceNet server *);
+ sTmpString : STRING(63) (* helper string  *);
+ sKVSVersion : STRING(63);
+END_VAR
+
+VAR CONSTANT
+ sClear : STRING(255) := '                                                                                                                                                                                                                                                               ' (* string with 255 blanks (0x20) *);
+END_VAR
+#BEGIN_EDIT_BLOCK
+(**************************************** WARNING ********************************************
+ *** The KEBA Kemro K2 System including software is not intended for safety control tasks! ***
+ ***                       For further information see Comment tab!                        ***
+ *********************************************************************************************)
+
+// keep alive message timer, start on raising edge of Execute input
+fbTonKeepAlive(Execute, T#30s); 
+
+// data to send if keep alive timer elapsed or connection status changed
+bSendStatusOnly := fbTonKeepAlive.Q OR (sv_ConnectionStatus <> connectionStatusOld); 
+
+// initialize TCP send block on raising edge 
+IF (Execute AND (NOT bExecuteOld)) THEN
+    fbTCPSend(Execute := FALSE, TcpHdl := TcpHdl); 
+END_IF;
+
+
+IF (Execute) THEN
+   // send all connection data on raising edget of Execute flag
+   bSendConnectionData := (NOT bExecuteOld);    
+
+   // send data?
+   IF (bSendStatusOnly OR bSendConnectionData) THEN 
+       // reset keep alive timer
+       fbTonKeepAlive(IN := FALSE); 
+       
+       // timestamp for performance measurement
+       ts := GET_RUNTIME();
+    
+       connectionStatusOld := sv_ConnectionStatus;
+  
+       // connection status to integer
+       CASE (connectionStatusOld) OF
+            nDisconnected:
+                iConnectionState := 0; 
+           
+            nConnecting:
+                iConnectionState := 1;        
+           
+            nRequestPending:
+                iConnectionState := 2; 
+           
+            nServiceAccepted:
+                iConnectionState := 3; 
+           
+            nServiceAccessRequest:
+                iConnectionState := 4; 
+     
+           nServiceActive:
+                iConnectionState := 5; 
+       ELSE
+            Error := TRUE; 
+       END_CASE; 
+    
+       // length of data object to send
+       IF (bSendConnectionData) THEN
+            // length with all connection data
+            iSendBytes := 256 * 8; // integer with number of bytes to send for tcp send block
+            sByteLen := "SJSN0100000007F8"; // 8 byte protocol info, ASCII coded 4 byte hexadecimal with number of bytes
+       ELSE       
+            // length of connection status object
+            iSendBytes := 256; 
+            sByteLen := "00000100";
+       END_IF;
+    
+       // fill sendbuffer: 
+       // 8 byte length information followed by JSON object containing payload 
+       // according to ServiceNet Server protocol
+       Buf[0] := CONCAT(sByteLen, '{"ConnectionState":', DINT_TO_STRING(iConnectionState));                                   
+
+       IF (bSendConnectionData) THEN
+           // send all connection data       
+           Buf[0] := CONCAT(Buf[0], 
+                            ',"ConnectionData":{"UserData":{"CustomerName":"', 
+                            sv_MachineInformation.sCustomerName, 
+                            '"',           
+                            sClear
+                           );               
+
+           Buf[1] := CONCAT(',"MachineName":"', sv_MachineInformation.sMachineName, 
+                            '","CountryCode":"', sv_MachineInformation.sCountryCode, 
+                            '"',
+                            sClear
+                           );
+       
+           Buf[2] := CONCAT(',"LicenseKey":"', sv_MachineInformation.sLicenseKey, 
+                            '","Request.Name":"', sv_RequestFrom[sv_iRequestFromIdx].sName, 
+                            '","Request.SkypeName":"', sv_RequestFrom[sv_iRequestFromIdx].sSkypeName,                         
+                            '"', 
+                            sClear
+                           );
+       
+           Buf[3] := CONCAT(',"Request.EMail":"', sv_RequestFrom[sv_iRequestFromIdx].sEmail,
+                            '@', sv_RequestFrom[sv_iRequestFromIdx].sEmail2,
+                            '","Request.Phone":"', sv_RequestFrom[sv_iRequestFromIdx].sPhoneNumber, 
+                            '","TxtMsg":',
+                            sClear
+                           );
+
+           // limit textmessage to 253 
+           IF (LEN(sv_sTextMessage) > 253) THEN
+              sv_sTextMessage := LEFT(sv_sTextMessage, 253);            
+           END_IF;
+           Buf[4] := CONCAT('"', sv_sTextMessage, '"', sClear);         
+
+           sTmpString := abVersionInfo.fGetSystemName(); 
+           Buf[5] := CONCAT('},"AddInfo":{"RemoteVisType":', 
+                            DINT_TO_STRING(sv_iRemoteVisType), 
+                            ', "VersionServiceNetClient":', 
+                            DINT_TO_STRING(VersionServiceNetClient), 
+                            '},"ControllerInfo":{"SystemName":"', 
+                            sTmpString, 
+                            '","CPUSerial":"', 
+                            LINT_TO_STRING(sv_iCpuId), '"',
+                            sClear);
+        
+           sTmpString := abVersionInfo.fGetIECVersion(); 
+           Buf[6] := CONCAT(',"KePlast.IEC":"', sTmpString, '"');
+       
+           sTmpString := abVersionInfo.fGetKVBVersion();         
+           Buf[6] := CONCAT(Buf[6], ',"KePlast.HMI.KVB":"', sTmpString, '"');
+
+           IF (sKVSVersion = '') THEN
+               sKVSVersion := abVersionInfo.fReadKVSVersion();         
+           END_IF;
+           Buf[6] := CONCAT(Buf[6], ',"KePlast.HMI.KVS":"', sKVSVersion, '"', sClear); 
+           
+           
+           sTmpString := abVersionInfo.fGetFirmwareVersion();         
+           Buf[7] := CONCAT(',"Firmware":"', sTmpString, '"}}}', sClear); 
+       ELSE   
+           // send connection state only
+           Buf[0] := CONCAT(Buf[0], '}', sClear); 
+       END_IF;
+   
+       // send data
+       fbTCPSend(TRUE, TcpHdl, iSendBytes, Buf); 
+       
+       // calculate runtime 
+       td := GET_RUNTIME() - ts;
+   
+       // set error flag if any error on send
+       Error := Error OR fbTCPSend.Error;
+       
+       bSendStatusOnly := FALSE; 
+   END_IF;
+END_IF;
+
+// clear outputs and local status vars if Execute false
+IF (NOT Execute) THEN 
+    Error := FALSE;
+    bSendStatusOnly := FALSE;    
+END_IF;
+
+bExecuteOld := Execute; 
+
+
+
+
+;#END_EDIT_BLOCK END_FUNCTION_BLOCK
+
+
+
+#END_OF_IEC_PART
+
+@Puma @IecEditor 6 121 @Pou 25 
+@@@BEG_Comment@@@
+@h    ! WARNING !
+@h    The Kemro K2 system (including software) only meets category B according to EN 954-1,
+@h    thus it is not intended for usage in safety-relevant control applications in the field 
+@h    of personal safety (e.g. emergency stop).
+@h    To implement potentially necessary safety-relevant control tasks, always use additional 
+@h    external safety devices that are intended for the particular purpose, and meet the necessary 
+@h    functional safety.
+@h    For further information see EN 954-1 (EN ISO 13849-1) and/or the K2-x00 user manual, chapter 
+@h    "CE conformity, directives and standards".
+
+function block for sending data according to ServiceNet protocol to ServiceNet Server.
+sends connection data and connection status on raising edge on execute
+sends connection status information if status changed, but at least once each 30 seconds (keep alive).
+
+ATTENTION: when changing content of send buffer: 
+-> ensure that maximum length does not exceed 255 characters per buffer element when concating strings, 
+   otherwise characters are truncated which will lead to an invalid object beeing sent.
+-> ensure to CONCAT sClear String (255 x blank) at the end of each buffer-array element 
+   (to delete string data stored previously on that buffer element in case the new string is shorter)
+-> a string data element started in a buffer element (character ") must be closed in the same buffer element
+   because at the end of each 255 character buffer element a zero byte (string terminator) is inserted automatically.
+   a zero byte is not allowed in string elements!
+   therefore the maximum length of a string that can be sent is 255 - 2 = 253 characters.
+@@@END_Comment@@@
+
+@BEG_Contents 
+
+@BEG_Func 
+@RT(17)FuncTreeContainer 
+1 
+@Var @RT(11)GET_RUNTIME @RT(0) @T @T @DERIVED 0 @F @RT(22)KEBA_STANDARD_FUNCTION @F 
+@T 
+@BEG_Attrib 
+0 @RT(0) @RT(0) 
+@END_Attrib 
+1 1 @F @F @F @F 
+
+@END_Func 
+
+@BEG_Const 
+@RT(18)ConstTreeContainer 
+0 
+@END_Const 
+
+@BEG_Export 
+
+@BEG_Kind 
+@FUNCTION_BLOCK @RT(10)FBSendData @STRUCTURED_TEXT 
+@RT(0) @RT(0) @RT(0) 
+@END_Kind 
+
+@BEG_Dcl 
+@RT(16)DclTreeContainer 
+27 
+@Var @RT(7)Execute @RT(0) @T @F @DT @RT(4)BOOL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(132)sends all data on raising edge, when TRUE: connection status is sent on valuechange and after 30 seconds elapsed without valuechange @RT(0) 
+@END_Attrib 
+1 1 @F @F @F @F 
+
+@Var @RT(6)TcpHdl @RT(0) @T @F @DT @RT(9)REFERENCE @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(63)handle of an established TCP connection to use for sending data @RT(0) 
+@END_Attrib 
+1 1 @F @F @F @F 
+
+@Var @RT(23)VersionServiceNetClient @RT(0) @T @F @DT @RT(4)DINT @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(42)ServiceNet protocol version used by client @RT(0) 
+@END_Attrib 
+1 1 @F @F @F @F 
+
+@Var @RT(13)abVersionInfo @RT(0) @T @T @DERIVED 0 @T @T @DT @RT(16)ABVersionManager @RT(0) @T @T @UNKNOWN 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(45)block for reading versioninfos and systemname @RT(0) 
+@END_Attrib 
+1 2 @F @F @F @F 
+
+@Var @RT(5)Error @RT(0) @T @F @DT @RT(4)BOOL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(22)indicates a send error @RT(0) 
+@END_Attrib 
+1 3 @F @F @F @F 
+
+@Var @RT(14)sv_RequestFrom @RT(0) @T @T @DERIVED 0 @T @T @DT @RT(13)tyRequestFrom @RT(0) @T @T @UNKNOWN 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 8 @F @F @F @F 
+
+@Var @RT(15)sv_sTextMessage @RT(0) @T @F @DT @RT(11)STRING(255) @RT(0) @T @T @STRING 0 @F @RT(3)255 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 8 @F @F @F @F 
+
+@Var @RT(18)sv_iRequestFromIdx @RT(0) @T @F @DT @RT(4)DINT @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 8 @F @F @F @F 
+
+@Var @RT(9)sv_iCpuId @RT(0) @T @F @DT @RT(4)LINT @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 8 @F @F @F @F 
+
+@Var @RT(21)sv_MachineInformation @RT(0) @T @T @DERIVED 0 @T @T @DT @RT(13)tsMachineInfo @RT(0) @T @T @UNKNOWN 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 8 @F @F @F @F 
+
+@Var @RT(19)sv_ConnectionStatus @RT(0) @T @T @DERIVED 0 @T @T @DT @RT(18)tnConnectionStatus @RT(0) @T @T @UNKNOWN 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 8 @F @F @F @F 
+
+@Var @RT(17)sv_iRemoteVisType @RT(0) @T @F @DT @RT(4)DINT @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 8 @F @F @F @F 
+
+@Var @RT(3)Buf @RT(0) @T @T @DERIVED 0 @T @T @DT @RT(6)tySBuf @RT(0) @T @T @UNKNOWN 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(11)send buffer @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(9)fbTCPSend @RT(0) @T @T @DERIVED 0 @T @T @DT @RT(16)KNETWORK_TcpSend @RT(0) @T @T @UNKNOWN 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(23)block for sending data  @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(19)bSendConnectionData @RT(0) @T @F @DT @RT(4)BOOL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(33)indicates all data should be sent @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(15)bSendStatusOnly @RT(0) @T @F @DT @RT(4)BOOL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(36)indicates only status should be sent @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(11)bExecuteOld @RT(0) @T @F @DT @RT(4)BOOL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(63)flag stores Execute state in previous cycle for detecting edges @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(6)sClear @RT(0) @T @F @DT @RT(11)STRING(255) @RT(0) @T @T @STRING 0 @F @RT(3)255 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(257)'                                                                                                                                                                                                                                                               ' @RT(29)string with 255 blanks (0x20) @RT(0) 
+@END_Attrib 
+1 15 @F @F @F @F 
+
+@Var @RT(2)ts @RT(0) @T @F @DT @RT(4)TIME @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(22)debug: timestamp start @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(2)td @RT(0) @T @F @DT @RT(4)TIME @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(15)debug: duration @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(14)fbTonKeepAlive @RT(0) @T @T @DERIVED 0 @T @T @DT @RT(3)TON @RT(0) @T @T @UNKNOWN 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(16)keep alive timer @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(16)iConnectionState @RT(0) @T @F @DT @RT(4)DINT @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(35)integer value of sv_ConnectionState @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(19)connectionStatusOld @RT(0) @T @T @DERIVED 0 @T @T @DT @RT(18)tnConnectionStatus @RT(0) @T @T @UNKNOWN 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(60)connection state in previous cycle - to detect state changed @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(10)iSendBytes @RT(0) @T @F @DT @RT(5)UDINT @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(23)number of bytes to send @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(8)sByteLen @RT(0) @T @F @DT @RT(10)STRING(16) @RT(0) @T @T @STRING 0 @F @RT(2)16 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(68)length information about data object to be sent to ServiceNet server @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(10)sTmpString @RT(0) @T @F @DT @RT(10)STRING(63) @RT(0) @T @T @STRING 0 @F @RT(2)63 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(14)helper string  @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(11)sKVSVersion @RT(0) @T @F @DT @RT(10)STRING(63) @RT(0) @T @T @STRING 0 @F @RT(2)63 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@END_Dcl 
+
+@END_Export 
+
+@BEG_Body 
+@TL(158)
+(**************************************** WARNING ********************************************
+ *** The KEBA Kemro K2 System including software is not intended for safety control tasks! ***
+ ***                       For further information see Comment tab!                        ***
+ *********************************************************************************************)
+
+// keep alive message timer, start on raising edge of Execute input
+fbTonKeepAlive(Execute, T#30s); 
+
+// data to send if keep alive timer elapsed or connection status changed
+bSendStatusOnly := fbTonKeepAlive.Q OR (sv_ConnectionStatus <> connectionStatusOld); 
+
+// initialize TCP send block on raising edge 
+IF (Execute AND (NOT bExecuteOld)) THEN
+    fbTCPSend(Execute := FALSE, TcpHdl := TcpHdl); 
+END_IF;
+
+
+IF (Execute) THEN
+   // send all connection data on raising edget of Execute flag
+   bSendConnectionData := (NOT bExecuteOld);    
+
+   // send data?
+   IF (bSendStatusOnly OR bSendConnectionData) THEN 
+       // reset keep alive timer
+       fbTonKeepAlive(IN := FALSE); 
+       
+       // timestamp for performance measurement
+       ts := GET_RUNTIME();
+    
+       connectionStatusOld := sv_ConnectionStatus;
+  
+       // connection status to integer
+       CASE (connectionStatusOld) OF
+            nDisconnected:
+                iConnectionState := 0; 
+           
+            nConnecting:
+                iConnectionState := 1;        
+           
+            nRequestPending:
+                iConnectionState := 2; 
+           
+            nServiceAccepted:
+                iConnectionState := 3; 
+           
+            nServiceAccessRequest:
+                iConnectionState := 4; 
+     
+           nServiceActive:
+                iConnectionState := 5; 
+       ELSE
+            Error := TRUE; 
+       END_CASE; 
+    
+       // length of data object to send
+       IF (bSendConnectionData) THEN
+            // length with all connection data
+            iSendBytes := 256 * 8; // integer with number of bytes to send for tcp send block
+            sByteLen := "SJSN0100000007F8"; // 8 byte protocol info, ASCII coded 4 byte hexadecimal with number of bytes
+       ELSE       
+            // length of connection status object
+            iSendBytes := 256; 
+            sByteLen := "00000100";
+       END_IF;
+    
+       // fill sendbuffer: 
+       // 8 byte length information followed by JSON object containing payload 
+       // according to ServiceNet Server protocol
+       Buf[0] := CONCAT(sByteLen, '{"ConnectionState":', DINT_TO_STRING(iConnectionState));                                   
+
+       IF (bSendConnectionData) THEN
+           // send all connection data       
+           Buf[0] := CONCAT(Buf[0], 
+                            ',"ConnectionData":{"UserData":{"CustomerName":"', 
+                            sv_MachineInformation.sCustomerName, 
+                            '"',           
+                            sClear
+                           );               
+
+           Buf[1] := CONCAT(',"MachineName":"', sv_MachineInformation.sMachineName, 
+                            '","CountryCode":"', sv_MachineInformation.sCountryCode, 
+                            '"',
+                            sClear
+                           );
+       
+           Buf[2] := CONCAT(',"LicenseKey":"', sv_MachineInformation.sLicenseKey, 
+                            '","Request.Name":"', sv_RequestFrom[sv_iRequestFromIdx].sName, 
+                            '","Request.SkypeName":"', sv_RequestFrom[sv_iRequestFromIdx].sSkypeName,                         
+                            '"', 
+                            sClear
+                           );
+       
+           Buf[3] := CONCAT(',"Request.EMail":"', sv_RequestFrom[sv_iRequestFromIdx].sEmail,
+                            '@', sv_RequestFrom[sv_iRequestFromIdx].sEmail2,
+                            '","Request.Phone":"', sv_RequestFrom[sv_iRequestFromIdx].sPhoneNumber, 
+                            '","TxtMsg":',
+                            sClear
+                           );
+
+           // limit textmessage to 253 
+           IF (LEN(sv_sTextMessage) > 253) THEN
+              sv_sTextMessage := LEFT(sv_sTextMessage, 253);            
+           END_IF;
+           Buf[4] := CONCAT('"', sv_sTextMessage, '"', sClear);         
+
+           sTmpString := abVersionInfo.fGetSystemName(); 
+           Buf[5] := CONCAT('},"AddInfo":{"RemoteVisType":', 
+                            DINT_TO_STRING(sv_iRemoteVisType), 
+                            ', "VersionServiceNetClient":', 
+                            DINT_TO_STRING(VersionServiceNetClient), 
+                            '},"ControllerInfo":{"SystemName":"', 
+                            sTmpString, 
+                            '","CPUSerial":"', 
+                            LINT_TO_STRING(sv_iCpuId), '"',
+                            sClear);
+        
+           sTmpString := abVersionInfo.fGetIECVersion(); 
+           Buf[6] := CONCAT(',"KePlast.IEC":"', sTmpString, '"');
+       
+           sTmpString := abVersionInfo.fGetKVBVersion();         
+           Buf[6] := CONCAT(Buf[6], ',"KePlast.HMI.KVB":"', sTmpString, '"');
+
+           IF (sKVSVersion = '') THEN
+               sKVSVersion := abVersionInfo.fReadKVSVersion();         
+           END_IF;
+           Buf[6] := CONCAT(Buf[6], ',"KePlast.HMI.KVS":"', sKVSVersion, '"', sClear); 
+           
+           
+           sTmpString := abVersionInfo.fGetFirmwareVersion();         
+           Buf[7] := CONCAT(',"Firmware":"', sTmpString, '"}}}', sClear); 
+       ELSE   
+           // send connection state only
+           Buf[0] := CONCAT(Buf[0], '}', sClear); 
+       END_IF;
+   
+       // send data
+       fbTCPSend(TRUE, TcpHdl, iSendBytes, Buf); 
+       
+       // calculate runtime 
+       td := GET_RUNTIME() - ts;
+   
+       // set error flag if any error on send
+       Error := Error OR fbTCPSend.Error;
+       
+       bSendStatusOnly := FALSE; 
+   END_IF;
+END_IF;
+
+// clear outputs and local status vars if Execute false
+IF (NOT Execute) THEN 
+    Error := FALSE;
+    bSendStatusOnly := FALSE;    
+END_IF;
+
+bExecuteOld := Execute; 
+
+
+
+@END_Body 
+
+@END_Contents 

@@ -1,0 +1,195 @@
+(*
+calculate size of cylinder in mm^2
+if bSmallSize is TRUE the size only includes the outer ring
+*)
+
+IMPORT_OVER_LISTFILE
+ tsCylinderData
+
+END_IMPORT
+
+FUNCTION FCalculateCylinderSize : REAL #DUMMY_EDIT_BLOCK
+
+VAR_INPUT
+ CylinderData : tsCylinderData (* cylinder to calculate size from *);
+ bSmallSize : BOOL (* subtract piston rod from size *);
+ bCalcHighPressSize : BOOL;
+END_VAR
+
+VAR CONSTANT
+ PI : REAL := 3.14159265;
+END_VAR
+#BEGIN_EDIT_BLOCK
+(**************************************** WARNING ********************************************
+ *** The KEBA Kemro K2 System including software is not intended for safety control tasks! ***
+ ***                       For further information see Comment tab!                        ***
+ *********************************************************************************************)
+         
+IF CylinderData.rPlungerDiameter <> 0.0 THEN  //plunger available
+    IF CylinderData.bMoveWithPlunger THEN //plunger inside highpressure-cylinder -> only used for mold close
+        IF bCalcHighPressSize THEN
+            FCalculateCylinderSize := DINT_TO_REAL(CylinderData.iNumCylinders) *
+                                        ((EXPT(CylinderData.rCylinderDiameter, 2.0) * PI / 4.0)-
+                                        (EXPT(CylinderData.rPlungerDiameter, 2.0) * PI / 4.0));                         
+        ELSE    
+            IF bSmallSize THEN
+                FCalculateCylinderSize := DINT_TO_REAL(CylinderData.iNumCylinders) *
+                                            ((EXPT(CylinderData.rCylinderDiameter, 2.0) * PI / 4.0)-
+                                            (EXPT(CylinderData.rPistonRodDiameter, 2.0) * PI / 4.0));
+            ELSE           
+                FCalculateCylinderSize := DINT_TO_REAL(CylinderData.iNumCylinders) *
+                                            (EXPT(CylinderData.rPlungerDiameter, 2.0) * PI / 4.0);  
+            END_IF;
+        END_IF;
+    ELSE //plunger used for high pressure build up, differential cylinders used for mold movement
+        IF bCalcHighPressSize THEN
+            FCalculateCylinderSize := DINT_TO_REAL(CylinderData.iNumCylinders) *
+                                        (EXPT(CylinderData.rPlungerDiameter, 2.0) * PI / 4.0);               
+        ELSE    
+            IF bSmallSize THEN
+                FCalculateCylinderSize := DINT_TO_REAL(CylinderData.iNumCylinders) *
+                                            ((EXPT(CylinderData.rCylinderDiameter, 2.0) * PI / 4.0)-
+                                            (EXPT(CylinderData.rPistonRodDiameter, 2.0) * PI / 4.0));
+            ELSE
+                FCalculateCylinderSize := DINT_TO_REAL(CylinderData.iNumCylinders) *
+                                            (EXPT(CylinderData.rCylinderDiameter, 2.0) * PI / 4.0);    
+            END_IF;
+        END_IF;        
+    END_IF;
+ELSE //no plunger
+    IF bSmallSize THEN
+        FCalculateCylinderSize := DINT_TO_REAL(CylinderData.iNumCylinders) *
+                                    ((EXPT(CylinderData.rCylinderDiameter, 2.0) * PI / 4.0)-
+                                    (EXPT(CylinderData.rPistonRodDiameter, 2.0) * PI / 4.0));
+    ELSE
+        //no special sizes, really use big size
+        FCalculateCylinderSize := DINT_TO_REAL(CylinderData.iNumCylinders) *
+                                    (EXPT(CylinderData.rCylinderDiameter, 2.0) * PI / 4.0);
+    END_IF;
+END_IF;
+
+
+
+;#END_EDIT_BLOCK END_FUNCTION
+
+
+
+#END_OF_IEC_PART
+
+@Puma @IecEditor 6 114 @Pou 25 
+@@@BEG_Comment@@@
+calculate size of cylinder in mm^2
+if bSmallSize is TRUE the size only includes the outer ring
+@@@END_Comment@@@
+
+@BEG_Contents 
+
+@BEG_Func 
+@RT(17)FuncTreeContainer 
+0 
+@END_Func 
+
+@BEG_Const 
+@RT(18)ConstTreeContainer 
+0 
+@END_Const 
+
+@BEG_Export 
+
+@BEG_Kind 
+@FUNCTION @RT(22)FCalculateCylinderSize @STRUCTURED_TEXT 
+@RT(4)REAL @RT(0) @RT(0) 
+@END_Kind 
+
+@BEG_Dcl 
+@RT(16)DclTreeContainer 
+4 
+@Var @RT(12)CylinderData @RT(0) @T @T @DERIVED 0 @F @RT(14)tsCylinderData @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(31)cylinder to calculate size from @RT(0) 
+@END_Attrib 
+1 1 @F @F @F @F 
+
+@Var @RT(10)bSmallSize @RT(0) @T @F @DT @RT(4)BOOL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(29)subtract piston rod from size @RT(0) 
+@END_Attrib 
+1 1 @F @F @F @F 
+
+@Var @RT(18)bCalcHighPressSize @RT(0) @T @F @DT @RT(4)BOOL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 1 @F @F @F @F 
+
+@Var @RT(2)PI @RT(0) @T @F @DT @RT(4)REAL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(10)3.14159265 @RT(0) @RT(0) 
+@END_Attrib 
+1 15 @F @F @F @F 
+
+@END_Dcl 
+
+@END_Export 
+
+@BEG_Body 
+@TL(49)
+(**************************************** WARNING ********************************************
+ *** The KEBA Kemro K2 System including software is not intended for safety control tasks! ***
+ ***                       For further information see Comment tab!                        ***
+ *********************************************************************************************)
+         
+IF CylinderData.rPlungerDiameter <> 0.0 THEN  //plunger available
+    IF CylinderData.bMoveWithPlunger THEN //plunger inside highpressure-cylinder -> only used for mold close
+        IF bCalcHighPressSize THEN
+            FCalculateCylinderSize := DINT_TO_REAL(CylinderData.iNumCylinders) *
+                                        ((EXPT(CylinderData.rCylinderDiameter, 2.0) * PI / 4.0)-
+                                        (EXPT(CylinderData.rPlungerDiameter, 2.0) * PI / 4.0));                         
+        ELSE    
+            IF bSmallSize THEN
+                FCalculateCylinderSize := DINT_TO_REAL(CylinderData.iNumCylinders) *
+                                            ((EXPT(CylinderData.rCylinderDiameter, 2.0) * PI / 4.0)-
+                                            (EXPT(CylinderData.rPistonRodDiameter, 2.0) * PI / 4.0));
+            ELSE           
+                FCalculateCylinderSize := DINT_TO_REAL(CylinderData.iNumCylinders) *
+                                            (EXPT(CylinderData.rPlungerDiameter, 2.0) * PI / 4.0);  
+            END_IF;
+        END_IF;
+    ELSE //plunger used for high pressure build up, differential cylinders used for mold movement
+        IF bCalcHighPressSize THEN
+            FCalculateCylinderSize := DINT_TO_REAL(CylinderData.iNumCylinders) *
+                                        (EXPT(CylinderData.rPlungerDiameter, 2.0) * PI / 4.0);               
+        ELSE    
+            IF bSmallSize THEN
+                FCalculateCylinderSize := DINT_TO_REAL(CylinderData.iNumCylinders) *
+                                            ((EXPT(CylinderData.rCylinderDiameter, 2.0) * PI / 4.0)-
+                                            (EXPT(CylinderData.rPistonRodDiameter, 2.0) * PI / 4.0));
+            ELSE
+                FCalculateCylinderSize := DINT_TO_REAL(CylinderData.iNumCylinders) *
+                                            (EXPT(CylinderData.rCylinderDiameter, 2.0) * PI / 4.0);    
+            END_IF;
+        END_IF;        
+    END_IF;
+ELSE //no plunger
+    IF bSmallSize THEN
+        FCalculateCylinderSize := DINT_TO_REAL(CylinderData.iNumCylinders) *
+                                    ((EXPT(CylinderData.rCylinderDiameter, 2.0) * PI / 4.0)-
+                                    (EXPT(CylinderData.rPistonRodDiameter, 2.0) * PI / 4.0));
+    ELSE
+        //no special sizes, really use big size
+        FCalculateCylinderSize := DINT_TO_REAL(CylinderData.iNumCylinders) *
+                                    (EXPT(CylinderData.rCylinderDiameter, 2.0) * PI / 4.0);
+    END_IF;
+END_IF;
+
+
+@END_Body 
+
+@END_Contents 

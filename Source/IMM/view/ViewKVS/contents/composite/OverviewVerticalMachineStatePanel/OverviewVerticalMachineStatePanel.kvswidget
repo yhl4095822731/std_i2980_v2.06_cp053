@@ -1,0 +1,543 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<base:CompositeWidget xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xmlns:base="http://www.keba.at/viewedit.model.base" name="OverviewVerticalMachineStatePanel" category="Composite" id="b8a0b0c6-d1a5-4515-83f6-343200e332ce">
+  <attributes xsi:type="base:DelegatingAttribute" name="PreferredSize" type="resolution" section="layout" layoutContainerNeeded="true">
+    <references attributeName="PreferredSize" widgetInstance="//@container"/>
+  </attributes>
+  <container widgetId="kvs.panel" name="OverviewVerticalMachineStatePanel_container" compositeWidgetID="b8a0b0c6-d1a5-4515-83f6-343200e332ce" isCompositeRoot="true">
+    <resolution width="678" height="315"/>
+    <position/>
+    <attributeValues key="PreferredSize" value="678, 315"/>
+    <border name="EmptyBorder" id="kv.border.EmptyBorder">
+      <attributeValues key="InnerInsets" value="5, 5, 0, 5"/>
+    </border>
+    <widgetInstances xsi:type="base:ContainerWidgetInstance" widgetId="kvs.panel" name="panelNorth" compositeWidgetID="b8a0b0c6-d1a5-4515-83f6-343200e332ce" layoutConstraint="NORTH">
+      <resolution width="668" height="301"/>
+      <position x="5" y="5"/>
+      <widgetInstances xsi:type="base:ContainerWidgetInstance" widgetId="kvs.panel" name="panelNorthLeft" compositeWidgetID="b8a0b0c6-d1a5-4515-83f6-343200e332ce" layoutConstraint="WEST">
+        <resolution width="146" height="301"/>
+        <position/>
+        <attributeValues key="PreferredSize" value="146, 10"/>
+        <border name="EmptyBorder" id="kv.border.EmptyBorder"/>
+        <widgetInstances xsi:type="base:ContainerWidgetInstance" widgetId="kvs.panel" name="panelPressVelPump1" compositeWidgetID="b8a0b0c6-d1a5-4515-83f6-343200e332ce" layoutConstraint="CENTER">
+          <resolution width="136" height="150"/>
+          <position x="10"/>
+          <widgetInstances widgetId="keplast.kvs.verticalanalogdisplay" name="analogBarPressure" layoutConstraint="null">
+            <resolution width="68" height="150"/>
+            <position/>
+            <attributeValues key="PreferredSize" value="68, 150"/>
+            <attributeValues key="Variable" value="Pump1.sv_rPressure"/>
+            <attributeValues key="VariableMaximum" value="system.sv_rMaximumPressure"/>
+            <dynamicAttributes key="Create">
+              <value function="doesDeviceExist : UserFunctions" equal="true" unequal="false">
+                <parameter key="1" value="devicename; PlastFunctionUtils.createDeviceName(&quot;Pump1&quot;)"/>
+              </value>
+            </dynamicAttributes>
+          </widgetInstances>
+          <widgetInstances widgetId="keplast.kvs.verticalanalogdisplay" name="analogBarVelocity" layoutConstraint="null">
+            <resolution width="68" height="150"/>
+            <position x="68"/>
+            <attributeValues key="PreferredSize" value="68, 150"/>
+            <attributeValues key="Variable" value="Pump1.sv_rVelocity"/>
+            <attributeValues key="VariableMaximum" value="system.sv_rMaximumVelocity"/>
+            <dynamicAttributes key="Create">
+              <value function="doesDeviceExist : UserFunctions" equal="true" unequal="false">
+                <parameter key="1" value="devicename; PlastFunctionUtils.createDeviceName(&quot;Pump1&quot;)"/>
+              </value>
+            </dynamicAttributes>
+          </widgetInstances>
+          <layout layoutID="kvs.layout.GridLayout" name="GridLayout">
+            <attributeValues key="Rows" value="1"/>
+            <attributeValues key="Columns" value="2"/>
+          </layout>
+        </widgetInstances>
+        <widgetInstances xsi:type="base:ContainerWidgetInstance" widgetId="kvs.panel" name="panelNrPump1" compositeWidgetID="b8a0b0c6-d1a5-4515-83f6-343200e332ce" layoutConstraint="WEST">
+          <resolution width="10" height="150"/>
+          <position/>
+          <border name="EmptyBorder" id="kv.border.EmptyBorder">
+            <attributeValues key="InnerInsets" value="0, 0, 4, 0"/>
+          </border>
+          <dynamicAttributes key="Create">
+            <value function="doesDeviceExist : UserFunctions" equal="true" unequal="false">
+              <parameter key="1" value="devicename;PlastFunctionUtils.createDeviceName(&quot;Pump2&quot;)"/>
+            </value>
+          </dynamicAttributes>
+          <widgetInstances widgetId="kvs.label" name="labelNrPump1" layoutConstraint="SOUTH">
+            <resolution width="10" height="21"/>
+            <position y="125"/>
+            <attributeValues key="Text" value="1"/>
+          </widgetInstances>
+          <layout layoutID="kvs.layout.BorderLayout" name="BorderLayout"/>
+        </widgetInstances>
+        <widgetInstances xsi:type="base:ContainerWidgetInstance" widgetId="kvs.panel" name="panelPressVelMultiPump" compositeWidgetID="b8a0b0c6-d1a5-4515-83f6-343200e332ce" layoutConstraint="SOUTH">
+          <resolution width="146" height="151"/>
+          <position y="150"/>
+          <attributeValues key="PreferredSize" value="10, 151"/>
+          <border name="EmptyBorder" id="kv.border.EmptyBorder">
+            <attributeValues key="InnerInsets" value="1, 0, 0, 0"/>
+          </border>
+          <dynamicAttributes key="Create">
+            <value function="doesDeviceExist : UserFunctions" equal="true" unequal="false">
+              <parameter key="1" value="devicename;PlastFunctionUtils.createDeviceName(&quot;Pump2&quot;)"/>
+            </value>
+          </dynamicAttributes>
+          <widgetInstances xsi:type="base:ContainerWidgetInstance" widgetId="kvs.panel" name="panelPressVelPump2" layoutConstraint="null">
+            <resolution width="146" height="29"/>
+            <position y="1"/>
+            <widgetInstances xsi:type="base:ContainerWidgetInstance" widgetId="kvs.panel" name="panelNrPump2" compositeWidgetID="b94583ee-823e-4139-ad0e-167911327b1e" layoutConstraint="WEST">
+              <resolution width="10" height="29"/>
+              <position/>
+              <border name="EmptyBorder" id="kv.border.EmptyBorder">
+                <attributeValues key="InnerInsets" value="0, 0, 5, 0"/>
+              </border>
+              <widgetInstances widgetId="kvs.label" name="labelNrPump2" layoutConstraint="SOUTH">
+                <resolution width="10" height="21"/>
+                <position y="3"/>
+                <attributeValues key="Text" value="2"/>
+              </widgetInstances>
+              <layout layoutID="kvs.layout.BorderLayout" name="BorderLayout"/>
+            </widgetInstances>
+            <widgetInstances xsi:type="base:ContainerWidgetInstance" widgetId="kvs.panel" name="panelPressVelPump2Right" layoutConstraint="EAST">
+              <resolution width="130" height="29"/>
+              <position x="16"/>
+              <border name="EmptyBorder" id="kv.border.EmptyBorder">
+                <attributeValues key="InnerInsets" value="0, 0, 0, 2"/>
+              </border>
+              <widgetInstances widgetId="kvs.numfieldnew" name="numFieldVelPump2" layoutConstraint="null">
+                <resolution width="60" height="29"/>
+                <position/>
+                <attributeValues key="Editable" value="false"/>
+                <attributeValues key="PreferredSize" value="60, 29"/>
+                <attributeValues key="Variable" value="Pump2.sv_rPressure"/>
+              </widgetInstances>
+              <widgetInstances widgetId="kvs.numfieldnew" name="numFieldPressPump2" compositeWidgetID="b94583ee-823e-4139-ad0e-167911327b1e" layoutConstraint="null">
+                <resolution width="60" height="29"/>
+                <position x="68"/>
+                <attributeValues key="Editable" value="false"/>
+                <attributeValues key="PreferredSize" value="60, 29"/>
+                <attributeValues key="Variable" value="Pump2.sv_rVelocity"/>
+              </widgetInstances>
+              <layout layoutID="kvs.layout.GridLayout" name="GridLayout">
+                <attributeValues key="Hgap" value="8"/>
+              </layout>
+            </widgetInstances>
+            <layout layoutID="kvs.layout.BorderLayout" name="BorderLayout"/>
+          </widgetInstances>
+          <widgetInstances xsi:type="base:ContainerWidgetInstance" widgetId="kvs.panel" name="panelPressVelPump3" compositeWidgetID="b94583ee-823e-4139-ad0e-167911327b1e" layoutConstraint="null">
+            <resolution width="146" height="29"/>
+            <position y="30"/>
+            <dynamicAttributes key="Create">
+              <value function="doesDeviceExist : UserFunctions" equal="true" unequal="false">
+                <parameter key="1" value="devicename;PlastFunctionUtils.createDeviceName(&quot;Pump3&quot;)"/>
+              </value>
+            </dynamicAttributes>
+            <widgetInstances xsi:type="base:ContainerWidgetInstance" widgetId="kvs.panel" name="panelNrPump3" compositeWidgetID="b94583ee-823e-4139-ad0e-167911327b1e" layoutConstraint="WEST">
+              <resolution width="10" height="29"/>
+              <position/>
+              <border name="EmptyBorder" id="kv.border.EmptyBorder">
+                <attributeValues key="InnerInsets" value="0, 0, 5, 0"/>
+              </border>
+              <widgetInstances widgetId="kvs.label" name="labelNrPump3" layoutConstraint="SOUTH">
+                <resolution width="10" height="21"/>
+                <position y="3"/>
+                <attributeValues key="Text" value="3"/>
+              </widgetInstances>
+              <layout layoutID="kvs.layout.BorderLayout" name="BorderLayout"/>
+            </widgetInstances>
+            <widgetInstances xsi:type="base:ContainerWidgetInstance" widgetId="kvs.panel" name="panelPressVelPump3Right" layoutConstraint="EAST">
+              <resolution width="130" height="29"/>
+              <position x="16"/>
+              <border name="EmptyBorder" id="kv.border.EmptyBorder">
+                <attributeValues key="InnerInsets" value="0, 0, 0, 2"/>
+              </border>
+              <widgetInstances widgetId="kvs.numfieldnew" name="numFieldVelPump3" layoutConstraint="null">
+                <resolution width="60" height="29"/>
+                <position/>
+                <attributeValues key="Editable" value="false"/>
+                <attributeValues key="PreferredSize" value="60, 29"/>
+                <attributeValues key="Variable" value="Pump3.sv_rPressure"/>
+              </widgetInstances>
+              <widgetInstances widgetId="kvs.numfieldnew" name="numFieldPressPump3" compositeWidgetID="b94583ee-823e-4139-ad0e-167911327b1e" layoutConstraint="null">
+                <resolution width="60" height="29"/>
+                <position x="68"/>
+                <attributeValues key="Editable" value="false"/>
+                <attributeValues key="PreferredSize" value="60, 29"/>
+                <attributeValues key="Variable" value="Pump3.sv_rVelocity"/>
+              </widgetInstances>
+              <layout layoutID="kvs.layout.GridLayout" name="GridLayout">
+                <attributeValues key="Hgap" value="8"/>
+              </layout>
+            </widgetInstances>
+            <layout layoutID="kvs.layout.BorderLayout" name="BorderLayout"/>
+          </widgetInstances>
+          <layout layoutID="kvs.layout.VerticalFlowLayout" name="VerticalFlowLayout">
+            <attributeValues key="Hgap" value="0"/>
+            <attributeValues key="Vgap" value="0"/>
+          </layout>
+        </widgetInstances>
+        <layout layoutID="kvs.layout.BorderLayout" name="BorderLayout"/>
+      </widgetInstances>
+      <widgetInstances xsi:type="base:ContainerWidgetInstance" widgetId="kvs.panel" name="panelNorthCenter" compositeWidgetID="b8a0b0c6-d1a5-4515-83f6-343200e332ce" layoutConstraint="CENTER">
+        <resolution width="454" height="301"/>
+        <position x="146"/>
+        <widgetInstances xsi:type="base:ContainerWidgetInstance" widgetId="kvs.panel" name="panelHeating" layoutConstraint="NORTH">
+          <resolution width="454" height="66"/>
+          <position/>
+          <attributeValues key="PreferredSize" value="508, 66"/>
+          <layout layoutID="kvs.layout.BorderLayout" name="BorderLayout"/>
+        </widgetInstances>
+        <widgetInstances xsi:type="base:ContainerWidgetInstance" widgetId="kvs.panel" name="panelDeviceBarsLeft" layoutConstraint="WEST">
+          <resolution width="120" height="235"/>
+          <position y="66"/>
+          <widgetInstances xsi:type="base:CompositeWidgetInstance" widgetId="ccbef757-8f38-4569-a277-8bb0f0a2937c" name="verticalDeviceBarEjector" layoutConstraint="null">
+            <resolution width="60" height="235"/>
+            <position/>
+            <attributeValues key="Icon" value="images/iconEjectorV.gif"/>
+            <attributeValues key="Variable" value="Ejector1.sv_rEjectorPositionRel"/>
+            <attributeValues key="MarkTop" value="Ejector1.sv_bEjectorFwd"/>
+            <attributeValues key="VariableMaximum" value="Ejector1.sv_rEjectorStroke"/>
+            <attributeValues key="MarkBottom" value="Ejector1.sv_bEjectorBwd"/>
+            <attributeValues key="Inverted" value="false"/>
+            <attributeValues key="ZeroPositionIsUp" value="false"/>
+            <attributeValues key="PreferredSize" value="60,233"/>
+          </widgetInstances>
+          <widgetInstances xsi:type="base:CompositeWidgetInstance" widgetId="ccbef757-8f38-4569-a277-8bb0f0a2937c" name="verticalDeviceBarMold" layoutConstraint="null">
+            <resolution width="60" height="235"/>
+            <position x="60"/>
+            <attributeValues key="MarkTop" value="Mold1.sv_bMoldOpen"/>
+            <attributeValues key="Icon" value="images/iconMoldV.gif"/>
+            <attributeValues key="MarkBottom" value="Mold1.sv_bMoldClosed"/>
+            <attributeValues key="Variable" value="Mold1.sv_rMoldPosition"/>
+            <attributeValues key="VariableMaximum" value="Mold1.sv_rMoldStroke"/>
+            <attributeValues key="Inverted" value="true"/>
+            <attributeValues key="ZeroPositionIsUp" value="false"/>
+            <attributeValues key="PreferredSize" value="60,233"/>
+          </widgetInstances>
+          <layout layoutID="kvs.layout.GridLayout" name="GridLayout">
+            <attributeValues key="Columns" value="2"/>
+            <attributeValues key="Rows" value="1"/>
+          </layout>
+        </widgetInstances>
+        <widgetInstances xsi:type="base:ContainerWidgetInstance" widgetId="kvs.panel" name="panelMachine" layoutConstraint="CENTER">
+          <resolution width="214" height="235"/>
+          <position x="120" y="66"/>
+          <widgetInstances widgetId="kvs.bitmap" name="bmpMachine" layoutConstraint="CENTER">
+            <resolution width="149" height="235"/>
+            <position/>
+            <attributeValues key="Image" value="images/machineOverviewVertical.gif"/>
+          </widgetInstances>
+          <widgetInstances xsi:type="base:ContainerWidgetInstance" widgetId="kvs.panel" name="panelMachineRight" layoutConstraint="EAST">
+            <resolution width="65" height="235"/>
+            <position x="149"/>
+            <attributeValues key="PreferredSize" value="65, 10"/>
+            <widgetInstances xsi:type="base:ContainerWidgetInstance" widgetId="kvs.panel" name="panelIn" layoutConstraint="null">
+              <resolution width="32" height="235"/>
+              <position/>
+              <widgetInstances xsi:type="base:ContainerWidgetInstance" widgetId="kvs.panel" name="panelReachedCW" layoutConstraint="null">
+                <resolution width="26" height="68"/>
+                <position x="3" y="5"/>
+                <attributeValues key="PreferredSize" value="26, 68"/>
+                <widgetInstances xsi:type="base:ContainerWidgetInstance" widgetId="kvs.panel" name="container2" layoutConstraint="null">
+                  <resolution width="26" height="26"/>
+                  <position y="5"/>
+                  <attributeValues key="PreferredSize" value="26, 26"/>
+                  <widgetInstances widgetId="kvs.bitmap" name="bmpSlideOut" layoutConstraint="3,10,97,90">
+                    <resolution width="25" height="23"/>
+                    <position y="2"/>
+                    <attributeValues key="Image" value="images/iconSlideOut.gif"/>
+                    <attributeValues key="Alignment" value="MIDDLE/CENTER"/>
+                    <dynamicAttributes key="Create">
+                      <value function="doesDeviceExist : UserFunctions" equal="true" unequal="false">
+                        <parameter key="1" value="devicename;PlastFunctionUtils.createDeviceName(&quot;SlideTable1&quot;)"/>
+                      </value>
+                    </dynamicAttributes>
+                  </widgetInstances>
+                  <widgetInstances widgetId="kvs.bitmap" name="bmpRotateCW" layoutConstraint="3,10,97,90">
+                    <resolution width="25" height="23"/>
+                    <position y="2"/>
+                    <attributeValues key="Image" value="images/iconRotateCW.gif"/>
+                    <attributeValues key="Alignment" value="MIDDLE/CENTER"/>
+                    <attributeValues key="Visible" value="true"/>
+                    <dynamicAttributes key="Create">
+                      <value function="doesDeviceExist : UserFunctions" equal="true" unequal="false">
+                        <parameter key="1" value="devicename;PlastFunctionUtils.createDeviceName(&quot;RotaryTable1&quot;)"/>
+                      </value>
+                    </dynamicAttributes>
+                  </widgetInstances>
+                  <layout layoutID="kvs.layout.PercentLayout" name="PercentLayout"/>
+                </widgetInstances>
+                <widgetInstances xsi:type="base:ContainerWidgetInstance" widgetId="kvs.panel" name="container1" layoutConstraint="null">
+                  <resolution width="26" height="26"/>
+                  <position y="36"/>
+                  <attributeValues key="PreferredSize" value="26, 26"/>
+                  <widgetInstances widgetId="kvs.symboldisplay" name="imgPosReachedOutSlide" layoutConstraint="0,0,100,100">
+                    <resolution width="26" height="26"/>
+                    <position/>
+                    <attributeValues key="Variable" value="SlideTable1.sv_bTableBwd"/>
+                    <attributeValues key="Alignment" value="MIDDLE/CENTER"/>
+                    <attributeValues key="PreferredSize" value="26, 26"/>
+                    <dynamicAttributes key="Create">
+                      <value function="doesDeviceExist : UserFunctions" equal="true" unequal="false">
+                        <parameter key="1" value="devicename;PlastFunctionUtils.createDeviceName(&quot;SlideTable1&quot;)"/>
+                      </value>
+                    </dynamicAttributes>
+                  </widgetInstances>
+                  <widgetInstances widgetId="kvs.symboldisplay" name="imgPosReachedOutRot" layoutConstraint="0, 0, 100, 100">
+                    <resolution width="26" height="26"/>
+                    <position/>
+                    <attributeValues key="Variable" value="RotaryTable1.sv_bPosReachedRotateCW"/>
+                    <attributeValues key="Alignment" value="MIDDLE/CENTER"/>
+                    <attributeValues key="PreferredSize" value="26, 26"/>
+                    <dynamicAttributes key="Create">
+                      <value function="doesDeviceExist : UserFunctions" equal="true" unequal="false">
+                        <parameter key="1" value="devicename;PlastFunctionUtils.createDeviceName(&quot;RotaryTable1&quot;)"/>
+                      </value>
+                    </dynamicAttributes>
+                  </widgetInstances>
+                  <layout layoutID="kvs.layout.PercentLayout" name="PercentLayout"/>
+                </widgetInstances>
+                <layout layoutID="kvs.layout.VerticalFlowLayout" name="VerticalFlowLayout">
+                  <attributeValues key="Hgap" value="0"/>
+                  <attributeValues key="Vgap" value="5"/>
+                </layout>
+              </widgetInstances>
+              <widgetInstances widgetId="kvs.bitmap" name="bmpPinIn" layoutConstraint="null">
+                <resolution width="26" height="24"/>
+                <position x="3" y="78"/>
+                <attributeValues key="Image" value="images/iconPinIn.gif"/>
+              </widgetInstances>
+              <widgetInstances xsi:type="base:ContainerWidgetInstance" widgetId="kvs.panel" name="panelPinInReached" layoutConstraint="null">
+                <resolution width="26" height="26"/>
+                <position x="3" y="107"/>
+                <attributeValues key="PreferredSize" value="26, 26"/>
+                <widgetInstances widgetId="kvs.symboldisplay" name="imgPosReachedPinInSlide" layoutConstraint="0,0,100,100">
+                  <resolution width="26" height="26"/>
+                  <position/>
+                  <attributeValues key="Variable" value="SlideTable1.sv_bPosReachedPinIn"/>
+                  <attributeValues key="Alignment" value="MIDDLE/CENTER"/>
+                  <attributeValues key="PreferredSize" value="26, 26"/>
+                  <dynamicAttributes key="Create">
+                    <value function="doesDeviceExist : UserFunctions" equal="true" unequal="false">
+                      <parameter key="1" value="devicename;PlastFunctionUtils.createDeviceName(&quot;SlideTable1&quot;)"/>
+                    </value>
+                  </dynamicAttributes>
+                </widgetInstances>
+                <widgetInstances widgetId="kvs.symboldisplay" name="imgPosReachedPinInRot" layoutConstraint="0,0,100,100">
+                  <resolution width="26" height="26"/>
+                  <position/>
+                  <attributeValues key="Variable" value="RotaryTable1.sv_bPosReachedPinIn"/>
+                  <attributeValues key="Alignment" value="MIDDLE/CENTER"/>
+                  <attributeValues key="PreferredSize" value="26, 26"/>
+                  <dynamicAttributes key="Create">
+                    <value function="doesDeviceExist : UserFunctions" equal="true" unequal="false">
+                      <parameter key="1" value="devicename;PlastFunctionUtils.createDeviceName(&quot;RotaryTable1&quot;)"/>
+                    </value>
+                  </dynamicAttributes>
+                </widgetInstances>
+                <layout layoutID="kvs.layout.PercentLayout" name="PercentLayout"/>
+              </widgetInstances>
+              <layout layoutID="kvs.layout.VerticalFlowLayout" name="VerticalFlowLayout">
+                <attributeValues key="Hgap" value="3"/>
+                <attributeValues key="Vgap" value="5"/>
+              </layout>
+            </widgetInstances>
+            <widgetInstances xsi:type="base:ContainerWidgetInstance" widgetId="kvs.panel" name="panelOut" layoutConstraint="null">
+              <resolution width="32" height="235"/>
+              <position x="32"/>
+              <widgetInstances xsi:type="base:ContainerWidgetInstance" widgetId="kvs.panel" name="panelReachedCCW" layoutConstraint="null">
+                <resolution width="26" height="68"/>
+                <position x="3" y="5"/>
+                <attributeValues key="PreferredSize" value="26, 68"/>
+                <widgetInstances xsi:type="base:ContainerWidgetInstance" widgetId="kvs.panel" name="container4" layoutConstraint="null">
+                  <resolution width="26" height="26"/>
+                  <position y="5"/>
+                  <attributeValues key="PreferredSize" value="26, 26"/>
+                  <widgetInstances widgetId="kvs.bitmap" name="bmpSlideIn1" layoutConstraint="3,10,97,90">
+                    <resolution width="25" height="23"/>
+                    <position y="2"/>
+                    <attributeValues key="Alignment" value="MIDDLE/CENTER"/>
+                    <attributeValues key="Image" value="images/iconSlideIn.gif"/>
+                    <dynamicAttributes key="Create">
+                      <value function="doesDeviceExist_AND_hasOption : UserFunctions" equal="true" unequal="false">
+                        <parameter key="1" value="devicename;PlastFunctionUtils.createDeviceName(&quot;SlideTable1&quot;)"/>
+                        <parameter key="2" value="machineoptionid;system.hmi.MachineEquipment.SUB_OPTION_NOZZLE_TRANSDUCER"/>
+                      </value>
+                    </dynamicAttributes>
+                  </widgetInstances>
+                  <widgetInstances widgetId="kvs.bitmap" name="bmpRotateCCW" layoutConstraint="3,10,97,90">
+                    <resolution width="25" height="23"/>
+                    <position y="2"/>
+                    <attributeValues key="Image" value="images/iconRotateCCW.gif"/>
+                    <dynamicAttributes key="Create">
+                      <value function="doesDeviceExist_AND_hasOption : UserFunctions" equal="true" unequal="false">
+                        <parameter key="1" value="devicename;PlastFunctionUtils.createDeviceName(&quot;RotaryTable1&quot;)"/>
+                        <parameter key="2" value="machineoptionid;system.hmi.MachineEquipment.SUB_OPTION_ROTARY_POSITION"/>
+                      </value>
+                    </dynamicAttributes>
+                  </widgetInstances>
+                  <layout layoutID="kvs.layout.PercentLayout" name="PercentLayout"/>
+                </widgetInstances>
+                <widgetInstances xsi:type="base:ContainerWidgetInstance" widgetId="kvs.panel" name="container3" layoutConstraint="null">
+                  <resolution width="26" height="26"/>
+                  <position y="36"/>
+                  <attributeValues key="PreferredSize" value="26, 26"/>
+                  <widgetInstances widgetId="kvs.symboldisplay" name="imgPosReachedInSlide" layoutConstraint="0,0,100,100">
+                    <resolution width="26" height="26"/>
+                    <position/>
+                    <attributeValues key="Variable" value="SlideTable1.sv_bTableFwd"/>
+                    <attributeValues key="Alignment" value="MIDDLE/CENTER"/>
+                    <attributeValues key="PreferredSize" value="26, 26"/>
+                    <dynamicAttributes key="Create">
+                      <value function="doesDeviceExist : UserFunctions" equal="true" unequal="false">
+                        <parameter key="1" value="devicename;PlastFunctionUtils.createDeviceName(&quot;SlideTable1&quot;)"/>
+                      </value>
+                    </dynamicAttributes>
+                  </widgetInstances>
+                  <widgetInstances widgetId="kvs.symboldisplay" name="imgPosReachedInRot" layoutConstraint="0,0,100,100">
+                    <resolution width="26" height="26"/>
+                    <position/>
+                    <attributeValues key="Variable" value="RotaryTable1.sv_bPosReachedRotateCCW"/>
+                    <attributeValues key="Alignment" value="MIDDLE/CENTER"/>
+                    <attributeValues key="PreferredSize" value="26, 26"/>
+                    <dynamicAttributes key="Create">
+                      <value function="hasOption : UserFunctions" equal="true" unequal="false">
+                        <parameter key="1" value="devicename;PlastFunctionUtils.createDeviceName(&quot;RotaryTable1&quot;)"/>
+                        <parameter key="2" value="machineoptionid;system.hmi.MachineEquipment.SUB_OPTION_ROTARY_POSITION"/>
+                      </value>
+                    </dynamicAttributes>
+                  </widgetInstances>
+                  <layout layoutID="kvs.layout.PercentLayout" name="PercentLayout"/>
+                </widgetInstances>
+                <layout layoutID="kvs.layout.VerticalFlowLayout" name="VerticalFlowLayout">
+                  <attributeValues key="Hgap" value="0"/>
+                </layout>
+              </widgetInstances>
+              <widgetInstances widgetId="kvs.bitmap" name="bmpPinOut" layoutConstraint="null">
+                <resolution width="26" height="24"/>
+                <position x="3" y="78"/>
+                <attributeValues key="Image" value="images/iconPinOut.gif"/>
+              </widgetInstances>
+              <widgetInstances xsi:type="base:ContainerWidgetInstance" widgetId="kvs.panel" name="panelPinOutReached" layoutConstraint="null">
+                <resolution width="26" height="26"/>
+                <position x="3" y="107"/>
+                <attributeValues key="PreferredSize" value="26, 26"/>
+                <widgetInstances widgetId="kvs.symboldisplay" name="imgPosReachedPinOutSlide" layoutConstraint="0,0,100,100">
+                  <resolution width="26" height="26"/>
+                  <position/>
+                  <attributeValues key="Variable" value="SlideTable1.sv_bPosReachedPinOut"/>
+                  <attributeValues key="Alignment" value="MIDDLE/CENTER"/>
+                  <attributeValues key="PreferredSize" value="26, 26"/>
+                  <dynamicAttributes key="Create">
+                    <value function="doesDeviceExist : UserFunctions" equal="true" unequal="false">
+                      <parameter key="1" value="devicename;PlastFunctionUtils.createDeviceName(&quot;SlideTable1&quot;)"/>
+                    </value>
+                  </dynamicAttributes>
+                </widgetInstances>
+                <widgetInstances widgetId="kvs.symboldisplay" name="imgPosReachedPinOutRot" layoutConstraint="0,0,100,100">
+                  <resolution width="26" height="26"/>
+                  <position/>
+                  <attributeValues key="Variable" value="RotaryTable1.sv_bPosReachedPinOut"/>
+                  <attributeValues key="Alignment" value="MIDDLE/CENTER"/>
+                  <attributeValues key="PreferredSize" value="26, 26"/>
+                  <dynamicAttributes key="Create">
+                    <value function="doesDeviceExist : UserFunctions" equal="true" unequal="false">
+                      <parameter key="1" value="devicename;PlastFunctionUtils.createDeviceName(&quot;RotaryTable1&quot;)"/>
+                    </value>
+                  </dynamicAttributes>
+                </widgetInstances>
+                <layout layoutID="kvs.layout.PercentLayout" name="PercentLayout"/>
+              </widgetInstances>
+              <layout layoutID="kvs.layout.VerticalFlowLayout" name="VerticalFlowLayout">
+                <attributeValues key="Hgap" value="3"/>
+              </layout>
+            </widgetInstances>
+            <layout layoutID="kvs.layout.GridLayout" name="GridLayout">
+              <attributeValues key="Columns" value="2"/>
+            </layout>
+          </widgetInstances>
+          <layout layoutID="kvs.layout.BorderLayout" name="BorderLayout"/>
+        </widgetInstances>
+        <widgetInstances xsi:type="base:ContainerWidgetInstance" widgetId="kvs.panel" name="panelDeviceBarsRight" layoutConstraint="EAST">
+          <resolution width="120" height="235"/>
+          <position x="334" y="66"/>
+          <attributeValues key="PreferredSize" value="120, 10"/>
+          <widgetInstances xsi:type="base:CompositeWidgetInstance" widgetId="ccbef757-8f38-4569-a277-8bb0f0a2937c" name="verticalDeviceBarInjection" layoutConstraint="null">
+            <resolution width="60" height="235"/>
+            <position/>
+            <attributeValues key="Icon" value="images/iconScrewV.gif"/>
+            <attributeValues key="Variable" value="Injection1.sv_rScrewPosition"/>
+            <attributeValues key="VariableMaximum" value="Injection1.sv_rScrewVolume"/>
+            <attributeValues key="MarkTop" value="Injection1.sv_bPlastEndReached"/>
+            <attributeValues key="MarkBottom" value="Injection1.sv_bInjectEnd"/>
+            <attributeValues key="Inverted" value="true"/>
+            <attributeValues key="ZeroPositionIsUp" value="false"/>
+            <attributeValues key="PreferredSize" value="60,233"/>
+          </widgetInstances>
+          <widgetInstances xsi:type="base:CompositeWidgetInstance" widgetId="ccbef757-8f38-4569-a277-8bb0f0a2937c" name="verticalDeviceBarNozzle" layoutConstraint="null">
+            <resolution width="60" height="235"/>
+            <position x="60"/>
+            <attributeValues key="Icon" value="images/iconNozzleV.gif"/>
+            <attributeValues key="VariableMaximum" value="Nozzle1.sv_rNozzleStroke"/>
+            <attributeValues key="Variable" value="Nozzle1.sv_rNozzlePosition"/>
+            <attributeValues key="MarkTop" value="Nozzle1.sv_bNozzleBwd"/>
+            <attributeValues key="MarkBottom" value="Nozzle1.sv_bNozzleFwd"/>
+            <attributeValues key="Inverted" value="true"/>
+            <attributeValues key="ZeroPositionIsUp" value="false"/>
+            <attributeValues key="PreferredSize" value="60,233"/>
+            <dynamicAttributes key="ShowAnalogBar">
+              <value function="hasOption : UserFunctions" equal="true" unequal="false">
+                <parameter key="1" value="devicename;PlastFunctionUtils.createDeviceName(&quot;Nozzle1&quot;)"/>
+                <parameter key="2" value="machineoptionid;system.hmi.MachineEquipment.SUB_OPTION_NOZZLE_TRANSDUCER"/>
+              </value>
+            </dynamicAttributes>
+          </widgetInstances>
+          <layout layoutID="kvs.layout.GridLayout" name="GridLayout">
+            <attributeValues key="Columns" value="2"/>
+          </layout>
+        </widgetInstances>
+        <layout layoutID="kvs.layout.BorderLayout" name="BorderLayout"/>
+      </widgetInstances>
+      <widgetInstances xsi:type="base:ContainerWidgetInstance" widgetId="kvs.panel" name="panelNorthRight" compositeWidgetID="b8a0b0c6-d1a5-4515-83f6-343200e332ce" layoutConstraint="EAST">
+        <resolution width="68" height="301"/>
+        <position x="600"/>
+        <border name="EmptyBorder" id="kv.border.EmptyBorder">
+          <attributeValues key="InnerInsets" value="0, 0, 1, 0"/>
+        </border>
+        <widgetInstances widgetId="keplast.kvs.verticalanalogdisplay" name="analogBarScrewRpm" layoutConstraint="null">
+          <resolution width="68" height="150"/>
+          <position/>
+          <attributeValues key="PreferredSize" value="68, 150"/>
+          <attributeValues key="Variable" value="Injection1.sv_rActScrewCircSpeed"/>
+          <attributeValues key="VariableMaximum" value="Injection1.sv_rMaxRpm"/>
+          <attributeValues key="Text" value="Screw"/>
+        </widgetInstances>
+        <widgetInstances widgetId="keplast.kvs.verticalanalogdisplay" name="analogBarBackpress" layoutConstraint="null">
+          <resolution width="68" height="150"/>
+          <position y="150"/>
+          <attributeValues key="PreferredSize" value="68, 150"/>
+          <attributeValues key="Variable" value="Injection1.sv_rBackPressure"/>
+          <attributeValues key="VariableMaximum" value="system.sv_rMaxBackPressure"/>
+          <attributeValues key="Text" value="BackPr."/>
+        </widgetInstances>
+        <layout layoutID="kvs.layout.GridLayout" name="GridLayout">
+          <attributeValues key="Rows" value="2"/>
+          <attributeValues key="Columns" value="1"/>
+        </layout>
+      </widgetInstances>
+      <layout layoutID="kvs.layout.BorderLayout" name="BorderLayout"/>
+    </widgetInstances>
+    <widgetInstances xsi:type="base:ContainerWidgetInstance" widgetId="kvs.panel" name="panelCenter" compositeWidgetID="b8a0b0c6-d1a5-4515-83f6-343200e332ce" layoutConstraint="CENTER">
+      <resolution width="668" height="9"/>
+      <position x="5" y="306"/>
+      <border name="EmptyBorder" id="kv.border.EmptyBorder">
+        <attributeValues key="InnerInsets" value="3, 10, 0, 10"/>
+      </border>
+      <widgetInstances widgetId="keplast.kvs.separator" name="separator1" compositeWidgetID="b8a0b0c6-d1a5-4515-83f6-343200e332ce" layoutConstraint="NORTH">
+        <resolution width="648" height="2"/>
+        <position x="10" y="3"/>
+        <attributeValues key="Orientation" value="Horizontal"/>
+      </widgetInstances>
+      <layout layoutID="kvs.layout.BorderLayout" name="BorderLayout"/>
+    </widgetInstances>
+    <layout layoutID="kvs.layout.BorderLayout" name="BorderLayout"/>
+  </container>
+</base:CompositeWidget>

@@ -1,0 +1,961 @@
+(*
+This algorithm block contains algorithms for version reading:
+IEC and HMI version from version info text file
+Firmware version from catalog
+and stores them to sv_HMIVersion, sv_IECVersion and sv_FirmwareVersion
+*)
+
+IMPORT_OVER_LISTFILE
+ KCAT_GetHandle
+, KFILE_Open
+, KFILE_Close
+, tsTraceLevel
+, KCAT_HandleData
+, KCAT_Status
+, KCAT_GenericDataFlags
+, KCAT_RetCode
+
+END_IMPORT
+
+ALGORITHM_BLOCK ABVersionManager #DUMMY_EDIT_BLOCK
+
+SYSTEM_VAR
+ sv_TraceLevel : tsTraceLevel;
+END_VAR
+
+VAR
+ msOsVersion : STRING(255);
+ msDeviceSwVersion : STRING(255);
+ msFirmwareVersion : STRING(255);
+ msSystemName : STRING(255);
+ msIECVersion : STRING(255);
+ msCustVersion : STRING(255);
+ msKVBVersion : STRING(255);
+ msLIBIECBase : STRING(255);
+ msLIBIECLib : STRING(255);
+ msLIBException : STRING(255);
+ msLIBODC : STRING(255);
+END_VAR
+
+FUNCTION fHasVersionInfoExtended : BOOL
+ #DUMMY_EDIT_BLOCK
+#BEGIN_EDIT_BLOCK
+
+fHasVersionInfoExtended := (msDeviceSwVersion <> 'no version info' AND msOsVersion <> 'no version info');
+
+
+;#END_EDIT_BLOCK END_FUNCTION
+
+(*
+This algo will copy the firmware version from the catalog entry to the sv_FirmwareVersion
+*)
+
+ALGORITHM aReadVersionInfo
+
+
+VAR_INPUT
+ sNodeName : STRING(255);
+END_VAR
+
+VAR_IN_OUT
+ sVersionInfo : STRING(255);
+END_VAR
+
+VAR
+ DataHandle : KCAT_HandleData;
+ KCATStatus : KCAT_Status;
+ dummy : DINT;
+END_VAR
+#BEGIN_EDIT_BLOCK
+DataHandle := KCAT_GetHandle(sNodeName);
+KCATStatus := DataHandle.Status;
+
+IF (KCATStatus = KCAT_Status_OK) THEN
+   KCATStatus := KCAT_GetValue(DataHandle.Handle, sVersionInfo);
+END_IF;
+
+IF ((KCATStatus <> KCAT_Status_OK) OR (sVersionInfo = '')) THEN
+   sVersionInfo := "no version info"; 
+   dummy := Print('Entry %s could not be found in catalog', sNodeName);
+END_IF;
+
+
+;#END_EDIT_BLOCK END_ALGORITHM
+
+(*
+This algo will copy the firmware version from the catalog entry to the sv_FirmwareVersion
+*)
+
+ALGORITHM aReadAllVersionInfos
+
+
+VAR
+ dummy : DINT;
+END_VAR
+#BEGIN_EDIT_BLOCK
+aReadVersionInfo('System.firmwareVersion', msFirmwareVersion);
+aReadVersionInfo('Application.KePlast.systemName', msSystemName);
+aReadVersionInfo('Application.KePlast.IEC.componentVersionString', msIECVersion);
+aReadVersionInfo('Application.KePlast.HMI.KVB.componentVersionString', msKVBVersion);
+
+//aReadVersionInfo('Application.ApplMoldMachineKVBBase.componentVersionString', msLIBKVBBase);
+aReadVersionInfo('Application.ApplIECUserExceptionHandling.componentVersionString', msLIBException);
+aReadVersionInfo('Application.ApplMoldMachineIECLib.componentVersionString', msLIBIECLib);
+aReadVersionInfo('Application.ApplMoldMachineIECBase.componentVersionString', msLIBIECBase);
+aReadVersionInfo('Application.ApplMoldMachineODC.componentVersionString', msLIBODC);
+aReadVersionInfo('BootVis.displayText', msCustVersion);
+aReadVersionInfo('System.OS.driversVersion', msDeviceSwVersion);
+aReadVersionInfo('System.OS.osVersion', msOsVersion);
+
+IF (sv_TraceLevel.bApplication) THEN
+   dummy := Print('ABVersionManager.aReadAllVersionInfos:'); 
+   dummy := Print('  Version System:   "%s"', msSystemName);         
+   dummy := Print('  Version Firmware: "%s"', msFirmwareVersion);     
+   dummy := Print('  Version IEC:      "%s"', msIECVersion);     
+   dummy := Print('  Version KVB:      "%s"', msKVBVersion);         
+   dummy := Print('  Version IECLib:   "%s"', msLIBIECLib);             
+   dummy := Print('  Version IECBase:  "%s"', msLIBIECBase);     
+   dummy := Print('  Version Customer: "%s"', msCustVersion);
+   IF (fHasVersionInfoExtended()) THEN
+      dummy := Print('  Version DeviceSw: "%s"', msDeviceSwVersion);         
+      dummy := Print('  Version OS:       "%s"', msOsVersion);      
+   END_IF;
+   dummy := Print('--------------------------------------');     
+END_IF;
+
+
+;#END_EDIT_BLOCK END_ALGORITHM
+
+FUNCTION fGetSystemName : STRING(255)
+ #DUMMY_EDIT_BLOCK
+#BEGIN_EDIT_BLOCK
+fGetSystemName := msSystemName;
+
+
+;#END_EDIT_BLOCK END_FUNCTION
+
+FUNCTION fGetIECVersion : STRING(255)
+ #DUMMY_EDIT_BLOCK
+#BEGIN_EDIT_BLOCK
+fGetIECVersion := msIECVersion;
+
+
+;#END_EDIT_BLOCK END_FUNCTION
+
+FUNCTION fGetCustVersion : STRING(255)
+ #DUMMY_EDIT_BLOCK
+#BEGIN_EDIT_BLOCK
+fGetCustVersion := msCustVersion;
+
+
+;#END_EDIT_BLOCK END_FUNCTION
+
+FUNCTION fGetLIBVersionIECBase : STRING(255)
+ #DUMMY_EDIT_BLOCK
+#BEGIN_EDIT_BLOCK
+fGetLIBVersionIECBase := msLIBIECBase;
+
+
+;#END_EDIT_BLOCK END_FUNCTION
+
+FUNCTION fGetLIBVersionIECLib : STRING(255)
+ #DUMMY_EDIT_BLOCK
+#BEGIN_EDIT_BLOCK
+fGetLIBVersionIECLib := msLIBIECLib;
+
+
+;#END_EDIT_BLOCK END_FUNCTION
+
+FUNCTION fGetLIBVersionIECException : STRING(255)
+ #DUMMY_EDIT_BLOCK
+#BEGIN_EDIT_BLOCK
+fGetLIBVersionIECException := msLIBException;
+
+
+;#END_EDIT_BLOCK END_FUNCTION
+
+FUNCTION fGetKVBVersion : STRING(255)
+ #DUMMY_EDIT_BLOCK
+#BEGIN_EDIT_BLOCK
+fGetKVBVersion := msKVBVersion;
+
+
+;#END_EDIT_BLOCK END_FUNCTION
+
+(*
+read KVS version on each function call because it never will be available at startup of IEC
+*)
+
+FUNCTION fReadKVSVersion : STRING(255)
+ #DUMMY_EDIT_BLOCK
+
+VAR
+ sKVSVersion : STRING(255);
+END_VAR
+#BEGIN_EDIT_BLOCK
+aReadVersionInfo('Application.KePlast.HMI.KVS.componentVersionString', sKVSVersion);
+fReadKVSVersion := sKVSVersion;
+
+
+;#END_EDIT_BLOCK END_FUNCTION
+
+FUNCTION fGetFirmwareVersion : STRING(255)
+ #DUMMY_EDIT_BLOCK
+#BEGIN_EDIT_BLOCK
+fGetFirmwareVersion := msFirmwareVersion;
+
+
+;#END_EDIT_BLOCK END_FUNCTION
+
+FUNCTION fGetLIBVersionODC : STRING(255)
+ #DUMMY_EDIT_BLOCK
+#BEGIN_EDIT_BLOCK
+fGetLIBVersionODC := msLIBODC;
+
+
+;#END_EDIT_BLOCK END_FUNCTION
+
+FUNCTION fGetCPUSerial : LINT
+ #DUMMY_EDIT_BLOCK
+
+VAR
+ sSerialNumber : STRING(255);
+ flags : KCAT_GenericDataFlags;
+ catRetCode : KCAT_RetCode;
+ catHdl : KCAT_HandleData;
+END_VAR
+#BEGIN_EDIT_BLOCK
+// get cpu serial number
+catHdl := KCAT_GetHandle('IO.ONBOARD');
+IF (catHdl.Status = KCAT_Status_OK) THEN
+   catRetCode := KCAT_GetGenericData(catHdl.Handle, KCAT_GDSelector_SerialNumber, flags, sSerialNumber);
+   IF (catRetCode = 0) THEN
+      fGetCPUSerial := STRING_TO_LINT(sSerialNumber);   
+   END_IF;
+END_IF;
+
+
+
+;#END_EDIT_BLOCK END_FUNCTION
+
+FUNCTION fGetDeviceSoftwareVersion : STRING(255)
+ #DUMMY_EDIT_BLOCK
+#BEGIN_EDIT_BLOCK
+fGetDeviceSoftwareVersion := msDeviceSwVersion;
+
+
+
+;#END_EDIT_BLOCK END_FUNCTION
+
+FUNCTION fGetOSVersion : STRING(255)
+ #DUMMY_EDIT_BLOCK
+#BEGIN_EDIT_BLOCK
+fGetOSVersion := msOsVersion;
+
+
+
+;#END_EDIT_BLOCK END_FUNCTION
+
+
+
+END_ALGORITHM_BLOCK
+
+
+
+#END_OF_IEC_PART
+
+@Puma @IecEditor 6 97 @Pou 25 
+@@@BEG_Comment@@@
+This algorithm block contains algorithms for version reading:
+IEC and HMI version from version info text file
+Firmware version from catalog
+and stores them to sv_HMIVersion, sv_IECVersion and sv_FirmwareVersion
+@@@END_Comment@@@
+
+@BEG_Contents 
+
+@BEG_Func 
+@RT(17)FuncTreeContainer 
+3 
+@Var @RT(14)KCAT_GetHandle @RT(0) @T @T @DERIVED 0 @F @RT(22)KEBA_STANDARD_FUNCTION @F 
+@T 
+@BEG_Attrib 
+0 @RT(0) @RT(0) 
+@END_Attrib 
+1 1 @F @F @F @F 
+
+@Var @RT(10)KFILE_Open @RT(0) @T @T @DERIVED 0 @F @RT(22)KEBA_STANDARD_FUNCTION @F 
+@T 
+@BEG_Attrib 
+0 @RT(0) @RT(0) 
+@END_Attrib 
+1 1 @F @F @F @F 
+
+@Var @RT(11)KFILE_Close @RT(0) @T @T @DERIVED 0 @F @RT(22)KEBA_STANDARD_FUNCTION @F 
+@T 
+@BEG_Attrib 
+0 @RT(0) @RT(0) 
+@END_Attrib 
+1 1 @F @F @F @F 
+
+@END_Func 
+
+@BEG_Const 
+@RT(18)ConstTreeContainer 
+0 
+@END_Const 
+
+@BEG_Export 
+
+@BEG_Kind 
+@ALGORITHM_BLOCK @RT(16)ABVersionManager @STRUCTURED_TEXT 
+@RT(0) @RT(0) @RT(0) 
+@END_Kind 
+
+@BEG_Dcl 
+@RT(16)DclTreeContainer 
+12 
+@Var @RT(13)sv_TraceLevel @RT(0) @T @T @DERIVED 0 @T @T @DT @RT(12)tsTraceLevel @RT(0) @T @T @UNKNOWN 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 8 @F @F @F @F 
+
+@Var @RT(11)msOsVersion @RT(0) @T @F @DT @RT(11)STRING(255) @RT(0) @T @T @STRING 0 @F @RT(3)255 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(17)msDeviceSwVersion @RT(0) @T @F @DT @RT(11)STRING(255) @RT(0) @T @T @STRING 0 @F @RT(3)255 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(17)msFirmwareVersion @RT(0) @T @F @DT @RT(11)STRING(255) @RT(0) @T @T @STRING 0 @F @RT(3)255 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(12)msSystemName @RT(0) @T @F @DT @RT(11)STRING(255) @RT(0) @T @T @STRING 0 @F @RT(3)255 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(12)msIECVersion @RT(0) @T @F @DT @RT(11)STRING(255) @RT(0) @T @T @STRING 0 @F @RT(3)255 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(13)msCustVersion @RT(0) @T @F @DT @RT(11)STRING(255) @RT(0) @T @T @STRING 0 @F @RT(3)255 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(12)msKVBVersion @RT(0) @T @F @DT @RT(11)STRING(255) @RT(0) @T @T @STRING 0 @F @RT(3)255 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(12)msLIBIECBase @RT(0) @T @F @DT @RT(11)STRING(255) @RT(0) @T @T @STRING 0 @F @RT(3)255 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(11)msLIBIECLib @RT(0) @T @F @DT @RT(11)STRING(255) @RT(0) @T @T @STRING 0 @F @RT(3)255 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(14)msLIBException @RT(0) @T @F @DT @RT(11)STRING(255) @RT(0) @T @T @STRING 0 @F @RT(3)255 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(8)msLIBODC @RT(0) @T @F @DT @RT(11)STRING(255) @RT(0) @T @T @STRING 0 @F @RT(3)255 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@END_Dcl 
+
+@END_Export 
+
+@BEG_Body 
+
+16 
+
+@BEG_Export 
+
+@BEG_Algo 
+@FUNCTION @RT(23)fHasVersionInfoExtended @STRUCTURED_TEXT 
+@RT(4)BOOL @RT(0) @RT(0) @F @F 
+@END_Algo 
+
+@BEG_Dcl 
+@RT(16)DclTreeContainer 
+0 
+@END_Dcl 
+
+@END_Export 
+
+@BEG_Export 
+
+@BEG_Algo 
+@ALGORITHM @RT(16)aReadVersionInfo @STRUCTURED_TEXT 
+@RT(0) @RT(0) @RT(0) @F @F 
+@END_Algo 
+
+@BEG_Dcl 
+@RT(16)DclTreeContainer 
+5 
+@Var @RT(10)DataHandle @RT(0) @T @T @DERIVED 0 @T @T @DT @RT(15)KCAT_HandleData @RT(0) @T @T @UNKNOWN 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(10)KCATStatus @RT(0) @T @T @DERIVED 0 @T @T @DT @RT(11)KCAT_Status @RT(0) @T @T @UNKNOWN 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(5)dummy @RT(0) @T @F @DT @RT(4)DINT @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(9)sNodeName @RT(0) @T @F @DT @RT(11)STRING(255) @RT(0) @T @T @STRING 0 @F @RT(3)255 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 1 @F @F @F @F 
+
+@Var @RT(12)sVersionInfo @RT(0) @T @F @DT @RT(11)STRING(255) @RT(0) @T @T @STRING 0 @F @RT(3)255 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 2 @F @F @F @F 
+
+@END_Dcl 
+
+@END_Export 
+
+@BEG_Export 
+
+@BEG_Algo 
+@ALGORITHM @RT(20)aReadAllVersionInfos @STRUCTURED_TEXT 
+@RT(0) @RT(0) @RT(0) @F @F 
+@END_Algo 
+
+@BEG_Dcl 
+@RT(16)DclTreeContainer 
+1 
+@Var @RT(5)dummy @RT(0) @T @F @DT @RT(4)DINT @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@END_Dcl 
+
+@END_Export 
+
+@BEG_Export 
+
+@BEG_Algo 
+@FUNCTION @RT(14)fGetSystemName @STRUCTURED_TEXT 
+@RT(11)STRING(255) @RT(0) @RT(0) @F @F 
+@END_Algo 
+
+@BEG_Dcl 
+@RT(16)DclTreeContainer 
+0 
+@END_Dcl 
+
+@END_Export 
+
+@BEG_Export 
+
+@BEG_Algo 
+@FUNCTION @RT(14)fGetIECVersion @STRUCTURED_TEXT 
+@RT(11)STRING(255) @RT(0) @RT(0) @F @F 
+@END_Algo 
+
+@BEG_Dcl 
+@RT(16)DclTreeContainer 
+0 
+@END_Dcl 
+
+@END_Export 
+
+@BEG_Export 
+
+@BEG_Algo 
+@FUNCTION @RT(15)fGetCustVersion @STRUCTURED_TEXT 
+@RT(11)STRING(255) @RT(0) @RT(0) @F @F 
+@END_Algo 
+
+@BEG_Dcl 
+@RT(16)DclTreeContainer 
+0 
+@END_Dcl 
+
+@END_Export 
+
+@BEG_Export 
+
+@BEG_Algo 
+@FUNCTION @RT(21)fGetLIBVersionIECBase @STRUCTURED_TEXT 
+@RT(11)STRING(255) @RT(0) @RT(0) @F @F 
+@END_Algo 
+
+@BEG_Dcl 
+@RT(16)DclTreeContainer 
+0 
+@END_Dcl 
+
+@END_Export 
+
+@BEG_Export 
+
+@BEG_Algo 
+@FUNCTION @RT(20)fGetLIBVersionIECLib @STRUCTURED_TEXT 
+@RT(11)STRING(255) @RT(0) @RT(0) @F @F 
+@END_Algo 
+
+@BEG_Dcl 
+@RT(16)DclTreeContainer 
+0 
+@END_Dcl 
+
+@END_Export 
+
+@BEG_Export 
+
+@BEG_Algo 
+@FUNCTION @RT(26)fGetLIBVersionIECException @STRUCTURED_TEXT 
+@RT(11)STRING(255) @RT(0) @RT(0) @F @F 
+@END_Algo 
+
+@BEG_Dcl 
+@RT(16)DclTreeContainer 
+0 
+@END_Dcl 
+
+@END_Export 
+
+@BEG_Export 
+
+@BEG_Algo 
+@FUNCTION @RT(14)fGetKVBVersion @STRUCTURED_TEXT 
+@RT(11)STRING(255) @RT(0) @RT(0) @F @F 
+@END_Algo 
+
+@BEG_Dcl 
+@RT(16)DclTreeContainer 
+0 
+@END_Dcl 
+
+@END_Export 
+
+@BEG_Export 
+
+@BEG_Algo 
+@FUNCTION @RT(15)fReadKVSVersion @STRUCTURED_TEXT 
+@RT(11)STRING(255) @RT(0) @RT(0) @F @F 
+@END_Algo 
+
+@BEG_Dcl 
+@RT(16)DclTreeContainer 
+1 
+@Var @RT(11)sKVSVersion @RT(0) @T @F @DT @RT(11)STRING(255) @RT(0) @T @T @STRING 0 @F @RT(3)255 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@END_Dcl 
+
+@END_Export 
+
+@BEG_Export 
+
+@BEG_Algo 
+@FUNCTION @RT(19)fGetFirmwareVersion @STRUCTURED_TEXT 
+@RT(11)STRING(255) @RT(0) @RT(0) @F @F 
+@END_Algo 
+
+@BEG_Dcl 
+@RT(16)DclTreeContainer 
+0 
+@END_Dcl 
+
+@END_Export 
+
+@BEG_Export 
+
+@BEG_Algo 
+@FUNCTION @RT(17)fGetLIBVersionODC @STRUCTURED_TEXT 
+@RT(11)STRING(255) @RT(0) @RT(0) @F @F 
+@END_Algo 
+
+@BEG_Dcl 
+@RT(16)DclTreeContainer 
+0 
+@END_Dcl 
+
+@END_Export 
+
+@BEG_Export 
+
+@BEG_Algo 
+@FUNCTION @RT(13)fGetCPUSerial @STRUCTURED_TEXT 
+@RT(4)LINT @RT(0) @RT(0) @F @F 
+@END_Algo 
+
+@BEG_Dcl 
+@RT(16)DclTreeContainer 
+4 
+@Var @RT(13)sSerialNumber @RT(0) @T @F @DT @RT(11)STRING(255) @RT(0) @T @T @STRING 0 @F @RT(3)255 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(5)flags @RT(0) @T @T @DERIVED 0 @T @T @DT @RT(21)KCAT_GenericDataFlags @RT(0) @T @T @UNKNOWN 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(10)catRetCode @RT(0) @T @T @DERIVED 0 @T @T @DT @RT(12)KCAT_RetCode @RT(0) @T @T @UNKNOWN 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(6)catHdl @RT(0) @T @T @DERIVED 0 @T @T @DT @RT(15)KCAT_HandleData @RT(0) @T @T @UNKNOWN 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@END_Dcl 
+
+@END_Export 
+
+@BEG_Export 
+
+@BEG_Algo 
+@FUNCTION @RT(25)fGetDeviceSoftwareVersion @STRUCTURED_TEXT 
+@RT(11)STRING(255) @RT(0) @RT(0) @F @F 
+@END_Algo 
+
+@BEG_Dcl 
+@RT(16)DclTreeContainer 
+0 
+@END_Dcl 
+
+@END_Export 
+
+@BEG_Export 
+
+@BEG_Algo 
+@FUNCTION @RT(13)fGetOSVersion @STRUCTURED_TEXT 
+@RT(11)STRING(255) @RT(0) @RT(0) @F @F 
+@END_Algo 
+
+@BEG_Dcl 
+@RT(16)DclTreeContainer 
+0 
+@END_Dcl 
+
+@END_Export 
+
+@BEG_Body 
+@TL(3)
+
+fHasVersionInfoExtended := (msDeviceSwVersion <> 'no version info' AND msOsVersion <> 'no version info');
+
+@END_Body 
+
+@@@BEG_Comment@@@ 
+@TL(0)
+
+@@@END_Comment@@@ 
+
+@BEG_Body 
+@TL(12)
+DataHandle := KCAT_GetHandle(sNodeName);
+KCATStatus := DataHandle.Status;
+
+IF (KCATStatus = KCAT_Status_OK) THEN
+   KCATStatus := KCAT_GetValue(DataHandle.Handle, sVersionInfo);
+END_IF;
+
+IF ((KCATStatus <> KCAT_Status_OK) OR (sVersionInfo = '')) THEN
+   sVersionInfo := "no version info"; 
+   dummy := Print('Entry %s could not be found in catalog', sNodeName);
+END_IF;
+
+@END_Body 
+
+@@@BEG_Comment@@@ 
+@TL(1)
+This algo will copy the firmware version from the catalog entry to the sv_FirmwareVersion
+@@@END_Comment@@@ 
+
+@BEG_Body 
+@TL(30)
+aReadVersionInfo('System.firmwareVersion', msFirmwareVersion);
+aReadVersionInfo('Application.KePlast.systemName', msSystemName);
+aReadVersionInfo('Application.KePlast.IEC.componentVersionString', msIECVersion);
+aReadVersionInfo('Application.KePlast.HMI.KVB.componentVersionString', msKVBVersion);
+
+//aReadVersionInfo('Application.ApplMoldMachineKVBBase.componentVersionString', msLIBKVBBase);
+aReadVersionInfo('Application.ApplIECUserExceptionHandling.componentVersionString', msLIBException);
+aReadVersionInfo('Application.ApplMoldMachineIECLib.componentVersionString', msLIBIECLib);
+aReadVersionInfo('Application.ApplMoldMachineIECBase.componentVersionString', msLIBIECBase);
+aReadVersionInfo('Application.ApplMoldMachineODC.componentVersionString', msLIBODC);
+aReadVersionInfo('BootVis.displayText', msCustVersion);
+aReadVersionInfo('System.OS.driversVersion', msDeviceSwVersion);
+aReadVersionInfo('System.OS.osVersion', msOsVersion);
+
+IF (sv_TraceLevel.bApplication) THEN
+   dummy := Print('ABVersionManager.aReadAllVersionInfos:'); 
+   dummy := Print('  Version System:   "%s"', msSystemName);         
+   dummy := Print('  Version Firmware: "%s"', msFirmwareVersion);     
+   dummy := Print('  Version IEC:      "%s"', msIECVersion);     
+   dummy := Print('  Version KVB:      "%s"', msKVBVersion);         
+   dummy := Print('  Version IECLib:   "%s"', msLIBIECLib);             
+   dummy := Print('  Version IECBase:  "%s"', msLIBIECBase);     
+   dummy := Print('  Version Customer: "%s"', msCustVersion);
+   IF (fHasVersionInfoExtended()) THEN
+      dummy := Print('  Version DeviceSw: "%s"', msDeviceSwVersion);         
+      dummy := Print('  Version OS:       "%s"', msOsVersion);      
+   END_IF;
+   dummy := Print('--------------------------------------');     
+END_IF;
+
+@END_Body 
+
+@@@BEG_Comment@@@ 
+@TL(1)
+This algo will copy the firmware version from the catalog entry to the sv_FirmwareVersion
+@@@END_Comment@@@ 
+
+@BEG_Body 
+@TL(2)
+fGetSystemName := msSystemName;
+
+@END_Body 
+
+@@@BEG_Comment@@@ 
+@TL(0)
+
+@@@END_Comment@@@ 
+
+@BEG_Body 
+@TL(2)
+fGetIECVersion := msIECVersion;
+
+@END_Body 
+
+@@@BEG_Comment@@@ 
+@TL(0)
+
+@@@END_Comment@@@ 
+
+@BEG_Body 
+@TL(2)
+fGetCustVersion := msCustVersion;
+
+@END_Body 
+
+@@@BEG_Comment@@@ 
+@TL(0)
+
+@@@END_Comment@@@ 
+
+@BEG_Body 
+@TL(2)
+fGetLIBVersionIECBase := msLIBIECBase;
+
+@END_Body 
+
+@@@BEG_Comment@@@ 
+@TL(0)
+
+@@@END_Comment@@@ 
+
+@BEG_Body 
+@TL(2)
+fGetLIBVersionIECLib := msLIBIECLib;
+
+@END_Body 
+
+@@@BEG_Comment@@@ 
+@TL(0)
+
+@@@END_Comment@@@ 
+
+@BEG_Body 
+@TL(2)
+fGetLIBVersionIECException := msLIBException;
+
+@END_Body 
+
+@@@BEG_Comment@@@ 
+@TL(0)
+
+@@@END_Comment@@@ 
+
+@BEG_Body 
+@TL(2)
+fGetKVBVersion := msKVBVersion;
+
+@END_Body 
+
+@@@BEG_Comment@@@ 
+@TL(0)
+
+@@@END_Comment@@@ 
+
+@BEG_Body 
+@TL(3)
+aReadVersionInfo('Application.KePlast.HMI.KVS.componentVersionString', sKVSVersion);
+fReadKVSVersion := sKVSVersion;
+
+@END_Body 
+
+@@@BEG_Comment@@@ 
+@TL(1)
+read KVS version on each function call because it never will be available at startup of IEC
+@@@END_Comment@@@ 
+
+@BEG_Body 
+@TL(2)
+fGetFirmwareVersion := msFirmwareVersion;
+
+@END_Body 
+
+@@@BEG_Comment@@@ 
+@TL(0)
+
+@@@END_Comment@@@ 
+
+@BEG_Body 
+@TL(2)
+fGetLIBVersionODC := msLIBODC;
+
+@END_Body 
+
+@@@BEG_Comment@@@ 
+@TL(0)
+
+@@@END_Comment@@@ 
+
+@BEG_Body 
+@TL(10)
+// get cpu serial number
+catHdl := KCAT_GetHandle('IO.ONBOARD');
+IF (catHdl.Status = KCAT_Status_OK) THEN
+   catRetCode := KCAT_GetGenericData(catHdl.Handle, KCAT_GDSelector_SerialNumber, flags, sSerialNumber);
+   IF (catRetCode = 0) THEN
+      fGetCPUSerial := STRING_TO_LINT(sSerialNumber);   
+   END_IF;
+END_IF;
+
+
+@END_Body 
+
+@@@BEG_Comment@@@ 
+@TL(0)
+
+@@@END_Comment@@@ 
+
+@BEG_Body 
+@TL(3)
+fGetDeviceSoftwareVersion := msDeviceSwVersion;
+
+
+@END_Body 
+
+@@@BEG_Comment@@@ 
+@TL(0)
+
+@@@END_Comment@@@ 
+
+@BEG_Body 
+@TL(3)
+fGetOSVersion := msOsVersion;
+
+
+@END_Body 
+
+@@@BEG_Comment@@@ 
+@TL(0)
+
+@@@END_Comment@@@ 
+@END_Body 
+
+@END_Contents 

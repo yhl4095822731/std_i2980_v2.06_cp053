@@ -1,0 +1,71 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<base:CompositeWidget xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xmlns:base="http://www.keba.at/viewedit.model.base" name="MoldClampForceMonitoring" category="Composite" id="54352daa-873c-48cd-8a74-26735e221e4a">
+  <attributes xsi:type="base:DelegatingAttribute" name="PreferredSize" type="resolution" section="layout" layoutContainerNeeded="true">
+    <references attributeName="PreferredSize" widgetInstance="//@container"/>
+  </attributes>
+  <container widgetId="kvs.panel" name="MoldClampForceMonitoring_container" compositeWidgetID="54352daa-873c-48cd-8a74-26735e221e4a" isCompositeRoot="true">
+    <resolution width="714" height="126"/>
+    <position/>
+    <attributeValues key="PreferredSize" value="714, 126"/>
+    <widgetInstances xsi:type="base:ContainerWidgetInstance" widgetId="keplast.kvs.borderpanelsmall" name="clampForceMonitoringPanel" layoutConstraint="CENTER">
+      <resolution width="714" height="126"/>
+      <position/>
+      <attributeValues key="Background" value="BG_Panel:220,220,220"/>
+      <attributeValues key="Title" value="Clamp force monitoring"/>
+      <widgetInstances xsi:type="base:ContainerWidgetInstance" widgetId="kvs.panel" name="containerLeft" layoutConstraint="LEFT">
+        <resolution width="347" height="87"/>
+        <position x="6" y="33"/>
+        <widgetInstances widgetId="keplast.kvs.checkboxtext" name="checkBoxMonitoring" layoutConstraint="null">
+          <resolution width="347" height="29"/>
+          <position/>
+          <attributeValues key="Variable" value="Mold1.sv_bMonitorClampPress"/>
+        </widgetInstances>
+        <widgetInstances widgetId="keplast.kvs.numfieldtext" name="numfieldTolerance" layoutConstraint="null">
+          <resolution width="347" height="29"/>
+          <position y="29"/>
+          <attributeValues key="Variable" value="Mold1.sv_rClampForceTol"/>
+          <dynamicAttributes key="Enabled">
+            <value function="b1_EQ_true : ViewEditFunctions" equal="true" unequal="false">
+              <parameter key="1" value="kvariable; Mold1.sv_bMonitorClampPress"/>
+            </value>
+          </dynamicAttributes>
+        </widgetInstances>
+        <widgetInstances widgetId="keplast.kvs.numfieldtext" name="numfieldActClampForce" layoutConstraint="null">
+          <resolution width="347" height="29"/>
+          <position y="58"/>
+          <attributeValues key="Editable" value="false"/>
+          <attributeValues key="Variable" value="Mold1.sv_rClampForceAct"/>
+        </widgetInstances>
+        <layout layoutID="kvs.layout.GridLayout" name="GridLayout">
+          <attributeValues key="Rows" value="3"/>
+          <attributeValues key="Columns" value="1"/>
+        </layout>
+      </widgetInstances>
+      <widgetInstances widgetId="keplast.kvs.separator" name="separator" layoutConstraint="SEPARATOR">
+        <resolution width="2" height="89"/>
+        <position x="356" y="33"/>
+      </widgetInstances>
+      <widgetInstances xsi:type="base:ContainerWidgetInstance" widgetId="kvs.panel" name="containerRight" layoutConstraint="RIGHT">
+        <resolution width="347" height="29"/>
+        <position x="361" y="33"/>
+        <widgetInstances widgetId="keplast.kvs.checkboxtext" name="checkBoxText1" layoutConstraint="null">
+          <resolution width="347" height="29"/>
+          <position/>
+          <attributeValues key="Variable" value="MoldHeight1.sv_bAdjustInProduction"/>
+          <dynamicAttributes key="Create">
+            <value function="hasOption : UserFunctions" equal="false" unequal="true">
+              <parameter key="1" value="devicename;PlastFunctionUtils.createDeviceName(&quot;Mold1&quot;)"/>
+              <parameter key="2" value="machineoptionid;system.hmi.MachineEquipment.SUB_OPTION_MOLD_DIRECTLOCK"/>
+            </value>
+          </dynamicAttributes>
+        </widgetInstances>
+        <layout layoutID="kvs.layout.VerticalFlowLayout" name="VerticalFlowLayout">
+          <attributeValues key="Hgap" value="0"/>
+          <attributeValues key="Vgap" value="0"/>
+        </layout>
+      </widgetInstances>
+      <layout layoutID="keplast.kvs.layout.horizontalsplitlayout" name="HorizontalSplitLayout"/>
+    </widgetInstances>
+    <layout layoutID="kvs.layout.BorderLayout" name="BorderLayout"/>
+  </container>
+</base:CompositeWidget>

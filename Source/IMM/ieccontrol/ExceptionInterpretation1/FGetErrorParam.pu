@@ -1,0 +1,94 @@
+IMPORT_OVER_LISTFILE
+ KERROR_Handler
+, KERROR_ParamType
+
+END_IMPORT
+
+FUNCTION FGetErrorParam : STRING(255)
+
+VAR_INPUT
+ Error : KERROR_Handler;
+ ParamType : KERROR_ParamType;
+END_VAR
+
+CASE ParamType OF
+    // casting parameter value to String 
+    KERROR_ParamType_STRING: FGetErrorParam := Error.GetParamSTRING();
+    KERROR_ParamType_DINT:   FGetErrorParam := DINT_TO_STRING(Error.GetParamDINT());
+    KERROR_ParamType_REAL:   FGetErrorParam := REAL_TO_STRING(Error.GetParamREAL());
+    KERROR_ParamType_None:   FGetErrorParam := '';
+ELSE
+    FGetErrorParam := '';
+END_CASE;                   
+
+
+
+;END_FUNCTION
+
+
+
+#END_OF_IEC_PART
+
+@Puma @IecEditor 4 24 @Pou 25 
+@@@BEG_Comment@@@
+
+@@@END_Comment@@@
+
+@BEG_Contents 
+
+@BEG_Func 
+@RT(17)FuncTreeContainer 
+0 
+@END_Func 
+
+@BEG_Const 
+@RT(18)ConstTreeContainer 
+0 
+@END_Const 
+
+@BEG_Export 
+
+@BEG_Kind 
+@FUNCTION @RT(14)FGetErrorParam @STRUCTURED_TEXT 
+@RT(11)STRING(255) @RT(0) @RT(0) 
+@END_Kind 
+
+@BEG_Dcl 
+@RT(16)DclTreeContainer 
+2 
+@Var @RT(5)Error @RT(0) @T @T @DERIVED 0 @T @T @DT @RT(14)KERROR_Handler @RT(0) @T @T @UNKNOWN 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 1 @F @F @F @F 
+
+@Var @RT(9)ParamType @RT(0) @T @T @DERIVED 0 @T @T @DT @RT(16)KERROR_ParamType @RT(0) @T @T @UNKNOWN 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 1 @F @F @F @F 
+
+@END_Dcl 
+
+@END_Export 
+
+@BEG_Body 
+@TL(11)
+CASE ParamType OF
+    // casting parameter value to String 
+    KERROR_ParamType_STRING: FGetErrorParam := Error.GetParamSTRING();
+    KERROR_ParamType_DINT:   FGetErrorParam := DINT_TO_STRING(Error.GetParamDINT());
+    KERROR_ParamType_REAL:   FGetErrorParam := REAL_TO_STRING(Error.GetParamREAL());
+    KERROR_ParamType_None:   FGetErrorParam := '';
+ELSE
+    FGetErrorParam := '';
+END_CASE;                   
+
+
+@END_Body 
+
+@END_Contents 

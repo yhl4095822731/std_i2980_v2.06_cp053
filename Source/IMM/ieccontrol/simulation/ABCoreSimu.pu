@@ -1,0 +1,2567 @@
+IMPORT_OVER_LISTFILE
+ GET_SYNC_REFTO
+, KSYS_Status_OK
+, TON
+, ABForceDigital
+, KSYS_Status
+
+END_IMPORT
+
+ALGORITHM_BLOCK ABCoreSimu #DUMMY_EDIT_BLOCK
+
+SYSTEM_VAR
+ sv_bSimulate : BOOL;
+ sv_bInitStart : BOOL;
+END_VAR
+
+SYSTEM_OBJECT
+ TaskSim : TASK;
+ PU_Task_13 : TASK;
+END_OBJECT
+
+VAR
+ mpbDOCore1In : REFTO BOOL;
+ mpbDOCore1Out : REFTO BOOL;
+ mpbDOCore2In : REFTO BOOL;
+ mpbDOCore2Out : REFTO BOOL;
+ mpbDOCore3In : REFTO BOOL;
+ mpbDOCore3Out : REFTO BOOL;
+ mpbDOCore4In : REFTO BOOL;
+ mpbDOCore4Out : REFTO BOOL;
+ mpbDOCore5In : REFTO BOOL;
+ mpbDOCore5Out : REFTO BOOL;
+ mpbDOCore6In : REFTO BOOL;
+ mpbDOCore6Out : REFTO BOOL;
+ mpbDOCore7In : REFTO BOOL;
+ mpbDOCore7Out : REFTO BOOL;
+ mpbDOCore8In : REFTO BOOL;
+ mpbDOCore8Out : REFTO BOOL;
+ mpbDICore1In : REFTO BOOL;
+ mpbDICore2In : REFTO BOOL;
+ mpbDICore1Impulse : REFTO BOOL;
+ mpbDICore2Impulse : REFTO BOOL;
+ mpbDICore3Impulse : REFTO BOOL;
+ mpbDICore4Impulse : REFTO BOOL;
+ mpbDICore5Impulse : REFTO BOOL;
+ mpbDICore6Impulse : REFTO BOOL;
+ mpbDICore7Impulse : REFTO BOOL;
+ mpbDICore8Impulse : REFTO BOOL;
+ mpbDICore1Out : REFTO BOOL;
+ mpbDICore2Out : REFTO BOOL;
+ mpbDICore3In : REFTO BOOL;
+ mpbDICore3Out : REFTO BOOL;
+ mpbDICore4In : REFTO BOOL;
+ mpbDICore4Out : REFTO BOOL;
+ mpbDICore5In : REFTO BOOL;
+ mpbDICore5Out : REFTO BOOL;
+ mpbDICore6In : REFTO BOOL;
+ mpbDICore6Out : REFTO BOOL;
+ mpbDICore7In : REFTO BOOL;
+ mpbDICore7Out : REFTO BOOL;
+ mpbDICore8In : REFTO BOOL;
+ mpbDICore8Out : REFTO BOOL;
+ mbDOCore1InLinked : BOOL;
+ mbDOCore1OutLinked : BOOL;
+ mbDOCore2InLinked : BOOL;
+ mbDOCore2OutLinked : BOOL;
+ mbDOCore3InLinked : BOOL;
+ mbDOCore3OutLinked : BOOL;
+ mbDOCore4InLinked : BOOL;
+ mbDOCore4OutLinked : BOOL;
+ mbDOCore5InLinked : BOOL;
+ mbDOCore5OutLinked : BOOL;
+ mbDOCore6InLinked : BOOL;
+ mbDOCore6OutLinked : BOOL;
+ mbDOCore7InLinked : BOOL;
+ mbDOCore7OutLinked : BOOL;
+ mbDOCore8InLinked : BOOL;
+ mbDOCore8OutLinked : BOOL;
+ mbDICore1InLinked : BOOL;
+ mbDICore2InLinked : BOOL;
+ mbDICore1ImpulseLinked : BOOL;
+ mbDICore2ImpulseLinked : BOOL;
+ mbDICore3ImpulseLinked : BOOL;
+ mbDICore4ImpulseLinked : BOOL;
+ mbDICore5ImpulseLinked : BOOL;
+ mbDICore6ImpulseLinked : BOOL;
+ mbDICore7ImpulseLinked : BOOL;
+ mbDICore8ImpulseLinked : BOOL;
+ mbDICore1OutLinked : BOOL;
+ mbDICore2OutLinked : BOOL;
+ mbDICore3InLinked : BOOL;
+ mbDICore3OutLinked : BOOL;
+ mbDICore4InLinked : BOOL;
+ mbDICore4OutLinked : BOOL;
+ mbDICore5InLinked : BOOL;
+ mbDICore5OutLinked : BOOL;
+ mbDICore6InLinked : BOOL;
+ mbDICore6OutLinked : BOOL;
+ mbDICore7InLinked : BOOL;
+ mbDICore7OutLinked : BOOL;
+ mbDICore8InLinked : BOOL;
+ mbDICore8OutLinked : BOOL;
+ tTime : TIME := t#1s;
+ SimuTonOut : TON;
+ SimuTonIn : TON;
+ bTriggerOut : BOOL;
+ bTriggerIn : BOOL;
+ ImpulseTon : TON;
+ bSetValueImpulse : BOOL := FALSE;
+END_VAR
+
+POSTUPDATE_ALGORITHM pStart ON PU_Task_13 WITH sv_bSimulate,sv_bInitStart
+
+#BEGIN_EDIT_BLOCK
+(**************************************** WARNING ********************************************
+ *** The KEBA Kemro K2 System including software is not intended for safety control tasks! ***
+ ***                       For further information see Comment tab!                        ***
+ *********************************************************************************************)
+
+IF sv_bSimulate THEN
+   START_PROCESS_ALGORITHM(paSimulate);
+END_IF;
+
+
+;#END_EDIT_BLOCK END_ALGORITHM
+
+PROCESS_ALGORITHM paSimulate ON TaskSim
+
+
+VAR
+ abForceDICore1In : ABForceDigital;
+ abForceDICore1Out : ABForceDigital;
+ abForceCore1Impulse : ABForceDigital;
+ abForceDICore2In : ABForceDigital;
+ abForceDICore2Out : ABForceDigital;
+ abForceCore2Impulse : ABForceDigital;
+ abForceDICore3In : ABForceDigital;
+ abForceDICore3Out : ABForceDigital;
+ abForceCore3Impulse : ABForceDigital;
+ abForceDICore4In : ABForceDigital;
+ abForceDICore4Out : ABForceDigital;
+ abForceCore4Impulse : ABForceDigital;
+ abForceDICore5In : ABForceDigital;
+ abForceDICore5Out : ABForceDigital;
+ abForceCore5Impulse : ABForceDigital;
+ abForceDICore6In : ABForceDigital;
+ abForceDICore6Out : ABForceDigital;
+ abForceCore6Impulse : ABForceDigital;
+ abForceDICore7In : ABForceDigital;
+ abForceDICore7Out : ABForceDigital;
+ abForceCore7Impulse : ABForceDigital;
+ abForceDICore8In : ABForceDigital;
+ abForceDICore8Out : ABForceDigital;
+ abForceCore8Impulse : ABForceDigital;
+END_VAR
+
+(* IecGraph-Code *)
+
+(* init step *)
+INITIAL_STEP INIT:
+aInit (P);
+END_STEP
+
+
+(* steps *)
+STEP SIM:
+aSimulate (N);
+END_STEP
+
+STEP STOP:
+aStopSimu (P);
+END_STEP
+
+
+(* transitions *)
+TRANSITION SimRequired (* SimRequired *) FROM INIT TO SIM :=  #BEGIN_EDIT_BLOCK
+sv_bSimulate
+;#END_EDIT_BLOCK
+END_TRANSITION
+
+TRANSITION StpSimRequired (* StpSimRequired *) FROM SIM TO STOP :=  #BEGIN_EDIT_BLOCK
+NOT sv_bSimulate
+;#END_EDIT_BLOCK
+END_TRANSITION
+
+TRANSITION Return (* Return *) FROM STOP TO SIM :=  #BEGIN_EDIT_BLOCK
+TRUE
+;#END_EDIT_BLOCK
+END_TRANSITION
+
+(* end IecGraph-Code *)
+(* sfc-code *)
+
+(* stand alone actions *)
+ACTION aInit: #BEGIN_EDIT_BLOCK
+(**************************************** WARNING ********************************************
+ *** The KEBA Kemro K2 System including software is not intended for safety control tasks! ***
+ ***                       For further information see Comment tab!                        ***
+ *********************************************************************************************)
+
+bSetValueImpulse := FALSE;
+
+IF mbDICore1OutLinked THEN
+   abForceDICore1Out.aInit('Core1.di_CoreOut');
+   abForceDICore1Out.aSetForceValue(TRUE);
+END_IF;
+IF mbDICore1InLinked THEN
+   abForceDICore1In.aInit('Core1.di_CoreIn');
+   abForceDICore1In.aSetForceValue(FALSE);
+END_IF;
+IF mbDICore1ImpulseLinked THEN
+   abForceCore1Impulse.aInit('Core1.di_ImpulseInput');
+END_IF;
+
+IF mbDICore2OutLinked THEN
+   abForceDICore2Out.aInit('Core2.di_CoreOut');
+   abForceDICore2Out.aSetForceValue(TRUE);
+END_IF;
+IF mbDICore2InLinked THEN
+   abForceDICore2In.aInit('Core2.di_CoreIn');
+   abForceDICore2In.aSetForceValue(FALSE);
+END_IF;
+IF mbDICore2ImpulseLinked THEN
+   abForceCore2Impulse.aInit('Core2.di_ImpulseInput');
+END_IF;
+
+IF mbDICore3OutLinked THEN
+   abForceDICore3Out.aInit('Core3.di_CoreOut');
+   abForceDICore3Out.aSetForceValue(TRUE);
+END_IF;
+IF mbDICore3InLinked THEN
+   abForceDICore3In.aInit('Core3.di_CoreIn');
+   abForceDICore3In.aSetForceValue(FALSE);
+END_IF;
+IF mbDICore3ImpulseLinked THEN
+   abForceCore3Impulse.aInit('Core3.di_ImpulseInput');
+END_IF;
+
+IF mbDICore4OutLinked THEN
+   abForceDICore4Out.aInit('Core4.di_CoreOut');
+   abForceDICore4Out.aSetForceValue(TRUE);
+END_IF;
+IF mbDICore4InLinked THEN
+   abForceDICore4In.aInit('Core4.di_CoreIn');
+   abForceDICore4In.aSetForceValue(FALSE);
+END_IF;
+IF mbDICore4ImpulseLinked THEN
+   abForceCore4Impulse.aInit('Core4.di_ImpulseInput');
+END_IF;
+
+IF mbDICore5OutLinked THEN
+   abForceDICore5Out.aInit('Core5.di_CoreOut');
+   abForceDICore5Out.aSetForceValue(TRUE);
+END_IF;
+IF mbDICore5InLinked THEN
+   abForceDICore5In.aInit('Core5.di_CoreIn');
+   abForceDICore5In.aSetForceValue(FALSE);
+END_IF;
+IF mbDICore5ImpulseLinked THEN
+   abForceCore5Impulse.aInit('Core5.di_ImpulseInput');
+END_IF;
+
+IF mbDICore6OutLinked THEN
+   abForceDICore6Out.aInit('Core6.di_CoreOut');
+   abForceDICore6Out.aSetForceValue(TRUE);
+END_IF;
+IF mbDICore6InLinked THEN
+   abForceDICore6In.aInit('Core6.di_CoreIn');
+   abForceDICore6In.aSetForceValue(FALSE);
+END_IF;
+IF mbDICore6ImpulseLinked THEN
+   abForceCore6Impulse.aInit('Core6.di_ImpulseInput');
+END_IF;
+
+IF mbDICore7OutLinked THEN
+   abForceDICore7Out.aInit('Core7.di_CoreOut');
+   abForceDICore7Out.aSetForceValue(TRUE);
+END_IF;
+IF mbDICore7InLinked THEN
+   abForceDICore7In.aInit('Core7.di_CoreIn');
+   abForceDICore7In.aSetForceValue(FALSE);
+END_IF;
+IF mbDICore7ImpulseLinked THEN
+   abForceCore7Impulse.aInit('Core7.di_ImpulseInput');
+END_IF;
+
+IF mbDICore8OutLinked THEN
+   abForceDICore8Out.aInit('Core8.di_CoreOut');
+   abForceDICore8Out.aSetForceValue(TRUE);
+END_IF;
+IF mbDICore8InLinked THEN
+   abForceDICore8In.aInit('Core8.di_CoreIn');
+   abForceDICore8In.aSetForceValue(FALSE);
+END_IF;
+IF mbDICore8ImpulseLinked THEN
+   abForceCore8Impulse.aInit('Core8.di_ImpulseInput');
+END_IF;
+
+
+;#END_EDIT_BLOCK END_ACTION (*aInit*)
+ACTION aSimulate: #BEGIN_EDIT_BLOCK
+(**************************************** WARNING ********************************************
+ *** The KEBA Kemro K2 System including software is not intended for safety control tasks! ***
+ ***                       For further information see Comment tab!                        ***
+ *********************************************************************************************)
+
+bTriggerOut := (mbDOCore1OutLinked AND mpbDOCore1Out^) OR (mbDOCore2OutLinked AND mpbDOCore2Out^) OR 
+               (mbDOCore3OutLinked AND mpbDOCore3Out^) OR (mbDOCore4OutLinked AND mpbDOCore4Out^) OR 
+               (mbDOCore5OutLinked AND mpbDOCore5Out^) OR (mbDOCore6OutLinked AND mpbDOCore6Out^) OR 
+               (mbDOCore7OutLinked AND mpbDOCore7Out^) OR (mbDOCore8OutLinked AND mpbDOCore8Out^);
+               
+bTriggerIn := (mbDOCore1InLinked AND mpbDOCore1In^) OR (mbDOCore2InLinked AND mpbDOCore2In^) OR 
+              (mbDOCore3InLinked AND mpbDOCore3In^) OR (mbDOCore4InLinked AND mpbDOCore4In^) OR 
+              (mbDOCore5InLinked AND mpbDOCore5In^) OR (mbDOCore6InLinked AND mpbDOCore6In^) OR 
+              (mbDOCore7InLinked AND mpbDOCore7In^) OR (mbDOCore8InLinked AND mpbDOCore8In^);
+               
+SimuTonOut(IN := bTriggerOut, PT := tTime);
+SimuTonIn(IN := bTriggerIn, PT := tTime);
+
+IF bTriggerIn OR bTriggerOut THEN
+   ImpulseTon(IN := TRUE, PT := tTime);
+   IF ImpulseTon.Q THEN
+      ImpulseTon(IN := FALSE, PT := tTime);
+      bSetValueImpulse := NOT bSetValueImpulse;    
+   END_IF;
+END_IF;
+
+// CORE1
+//===============================================================================================
+IF mbDICore1OutLinked AND mbDOCore1OutLinked AND mpbDOCore1Out^ THEN
+   abForceDICore1In.aSetForceValue(FALSE);
+   IF SimuTonOut.Q THEN
+      abForceDICore1Out.aSetForceValue(TRUE);
+   END_IF;
+END_IF;
+
+IF mbDICore1InLinked AND mbDOCore1InLinked AND mpbDOCore1In^ THEN
+   abForceDICore1Out.aSetForceValue(FALSE);
+   IF SimuTonIn.Q THEN
+      abForceDICore1In.aSetForceValue(TRUE);
+   END_IF;
+END_IF;
+// avoid undefined state
+IF (mbDICore1InLinked AND mbDOCore1OutLinked AND mbDICore1OutLinked AND mbDOCore1InLinked AND 
+      (mpbDOCore1In^ = mpbDOCore1Out^) AND (mpbDICore1In^= mpbDICore1Out^)) THEN
+   abForceDICore1Out.aSetForceValue(TRUE);
+   abForceDICore1In.aSetForceValue(FALSE);
+END_IF;
+   
+IF mbDICore1ImpulseLinked THEN
+   abForceCore1Impulse.aSetForceValue(bSetValueImpulse);
+END_IF;
+//===============================================================================================
+
+
+// CORE2
+//===============================================================================================
+IF mbDICore2OutLinked AND mbDOCore2OutLinked AND mpbDOCore2Out^ THEN
+   abForceDICore2In.aSetForceValue(FALSE);
+   IF SimuTonOut.Q THEN
+      abForceDICore2Out.aSetForceValue(TRUE);
+   END_IF;
+END_IF;
+
+IF mbDICore2InLinked AND mbDOCore2InLinked AND mpbDOCore2In^ THEN
+   abForceDICore2Out.aSetForceValue(FALSE);
+   IF SimuTonIn.Q THEN
+      abForceDICore2In.aSetForceValue(TRUE);
+   END_IF;
+END_IF;
+// avoid undefined state
+IF (mbDICore2InLinked AND mbDOCore2OutLinked AND mbDICore2OutLinked AND mbDOCore2InLinked AND 
+      (mpbDOCore2In^ = mpbDOCore2Out^) AND (mpbDICore2In^= mpbDICore2Out^)) THEN
+   abForceDICore2Out.aSetForceValue(TRUE);
+   abForceDICore2In.aSetForceValue(FALSE);
+END_IF;
+   
+IF mbDICore2ImpulseLinked THEN
+   abForceCore2Impulse.aSetForceValue(bSetValueImpulse);
+END_IF;
+//===============================================================================================
+
+
+// CORE3
+//===============================================================================================
+IF mbDICore3OutLinked AND mbDOCore3OutLinked AND mpbDOCore3Out^ THEN
+   abForceDICore3In.aSetForceValue(FALSE);
+   IF SimuTonOut.Q THEN
+      abForceDICore3Out.aSetForceValue(TRUE);
+   END_IF;
+END_IF;
+
+IF mbDICore3InLinked AND mbDOCore3InLinked AND mpbDOCore3In^ THEN
+   abForceDICore3Out.aSetForceValue(FALSE);
+   IF SimuTonIn.Q THEN
+      abForceDICore3In.aSetForceValue(TRUE);
+   END_IF;
+END_IF;
+// avoid undefined state
+IF (mbDICore3InLinked AND mbDOCore3OutLinked AND mbDICore3OutLinked AND mbDOCore3InLinked AND 
+      (mpbDOCore3In^ = mpbDOCore3Out^) AND (mpbDICore3In^= mpbDICore3Out^)) THEN
+   abForceDICore3Out.aSetForceValue(TRUE);
+   abForceDICore3In.aSetForceValue(FALSE);
+END_IF;
+   
+IF mbDICore3ImpulseLinked THEN
+   abForceCore3Impulse.aSetForceValue(bSetValueImpulse);
+END_IF;
+//===============================================================================================
+
+
+// CORE4
+//===============================================================================================
+IF mbDICore4OutLinked AND mbDOCore4OutLinked AND mpbDOCore4Out^ THEN
+   abForceDICore4In.aSetForceValue(FALSE);
+   IF SimuTonOut.Q THEN
+      abForceDICore4Out.aSetForceValue(TRUE);
+   END_IF;
+END_IF;
+
+IF mbDICore4InLinked AND mbDOCore4InLinked AND mpbDOCore4In^ THEN
+   abForceDICore4Out.aSetForceValue(FALSE);
+   IF SimuTonIn.Q THEN
+      abForceDICore4In.aSetForceValue(TRUE);
+   END_IF;
+END_IF;
+// avoid undefined state
+IF (mbDICore4InLinked AND mbDOCore4OutLinked AND mbDICore4OutLinked AND mbDOCore4InLinked AND 
+      (mpbDOCore4In^ = mpbDOCore4Out^) AND (mpbDICore4In^= mpbDICore4Out^)) THEN
+   abForceDICore4Out.aSetForceValue(TRUE);
+   abForceDICore4In.aSetForceValue(FALSE);
+END_IF;
+   
+IF mbDICore4ImpulseLinked THEN
+   abForceCore4Impulse.aSetForceValue(bSetValueImpulse);
+END_IF;
+//===============================================================================================
+
+
+// CORE5
+//===============================================================================================
+IF mbDICore5OutLinked AND mbDOCore5OutLinked AND mpbDOCore5Out^ THEN
+   abForceDICore5In.aSetForceValue(FALSE);
+   IF SimuTonOut.Q THEN
+      abForceDICore5Out.aSetForceValue(TRUE);
+   END_IF;
+END_IF;
+
+IF mbDICore5InLinked AND mbDOCore5InLinked AND mpbDOCore5In^ THEN
+   abForceDICore5Out.aSetForceValue(FALSE);
+   IF SimuTonIn.Q THEN
+      abForceDICore5In.aSetForceValue(TRUE);
+   END_IF;
+END_IF;
+// avoid undefined state
+IF (mbDICore5InLinked AND mbDOCore5OutLinked AND mbDICore5OutLinked AND mbDOCore5InLinked AND 
+      (mpbDOCore5In^ = mpbDOCore5Out^) AND (mpbDICore5In^= mpbDICore5Out^)) THEN
+   abForceDICore5Out.aSetForceValue(TRUE);
+   abForceDICore5In.aSetForceValue(FALSE);
+END_IF;
+   
+IF mbDICore5ImpulseLinked THEN
+   abForceCore5Impulse.aSetForceValue(bSetValueImpulse);
+END_IF;
+//===============================================================================================
+
+
+// CORE6
+//===============================================================================================
+IF mbDICore6OutLinked AND mbDOCore6OutLinked AND mpbDOCore6Out^ THEN
+   abForceDICore6In.aSetForceValue(FALSE);
+   IF SimuTonOut.Q THEN
+      abForceDICore6Out.aSetForceValue(TRUE);
+   END_IF;
+END_IF;
+
+IF mbDICore6InLinked AND mbDOCore6InLinked AND mpbDOCore6In^ THEN
+   abForceDICore6Out.aSetForceValue(FALSE);
+   IF SimuTonIn.Q THEN
+      abForceDICore6In.aSetForceValue(TRUE);
+   END_IF;
+END_IF;
+// avoid undefined state
+IF (mbDICore6InLinked AND mbDOCore6OutLinked AND mbDICore6OutLinked AND mbDOCore6InLinked AND 
+      (mpbDOCore6In^ = mpbDOCore6Out^) AND (mpbDICore6In^= mpbDICore6Out^)) THEN
+   abForceDICore6Out.aSetForceValue(TRUE);
+   abForceDICore6In.aSetForceValue(FALSE);
+END_IF;
+   
+IF mbDICore6ImpulseLinked THEN
+   abForceCore6Impulse.aSetForceValue(bSetValueImpulse);
+END_IF;
+//===============================================================================================
+
+
+// CORE7
+//===============================================================================================
+IF mbDICore7OutLinked AND mbDOCore7OutLinked AND mpbDOCore7Out^ THEN
+   abForceDICore7In.aSetForceValue(FALSE);
+   IF SimuTonOut.Q THEN
+      abForceDICore7Out.aSetForceValue(TRUE);
+   END_IF;
+END_IF;
+
+IF mbDICore7InLinked AND mbDOCore7InLinked AND mpbDOCore7In^ THEN
+   abForceDICore7Out.aSetForceValue(FALSE);
+   IF SimuTonIn.Q THEN
+      abForceDICore7In.aSetForceValue(TRUE);
+   END_IF;
+END_IF;
+// avoid undefined state
+IF (mbDICore7InLinked AND mbDOCore7OutLinked AND mbDICore7OutLinked AND mbDOCore7InLinked AND 
+      (mpbDOCore7In^ = mpbDOCore7Out^) AND (mpbDICore7In^= mpbDICore7Out^)) THEN
+   abForceDICore7Out.aSetForceValue(TRUE);
+   abForceDICore7In.aSetForceValue(FALSE);
+END_IF;
+   
+IF mbDICore7ImpulseLinked THEN
+   abForceCore7Impulse.aSetForceValue(bSetValueImpulse);
+END_IF;
+//===============================================================================================
+
+
+// CORE8
+//===============================================================================================
+IF mbDICore8OutLinked AND mbDOCore8OutLinked AND mpbDOCore8Out^ THEN
+   abForceDICore8In.aSetForceValue(FALSE);
+   IF SimuTonOut.Q THEN
+      abForceDICore8Out.aSetForceValue(TRUE);
+   END_IF;
+END_IF;
+
+IF mbDICore8InLinked AND mbDOCore8InLinked AND mpbDOCore8In^ THEN
+   abForceDICore8Out.aSetForceValue(FALSE);
+   IF SimuTonIn.Q THEN
+      abForceDICore8In.aSetForceValue(TRUE);
+   END_IF;
+END_IF;
+// avoid undefined state
+IF (mbDICore8InLinked AND mbDOCore8OutLinked AND mbDICore8OutLinked AND mbDOCore8InLinked AND 
+      (mpbDOCore8In^ = mpbDOCore8Out^) AND (mpbDICore8In^= mpbDICore8Out^)) THEN
+   abForceDICore8Out.aSetForceValue(TRUE);
+   abForceDICore8In.aSetForceValue(FALSE);
+END_IF;
+   
+IF mbDICore8ImpulseLinked THEN
+   abForceCore8Impulse.aSetForceValue(bSetValueImpulse);
+END_IF;
+//===============================================================================================
+
+;#END_EDIT_BLOCK END_ACTION (*aSimulate*)
+ACTION aStopSimu: #BEGIN_EDIT_BLOCK
+(**************************************** WARNING ********************************************
+ *** The KEBA Kemro K2 System including software is not intended for safety control tasks! ***
+ ***                       For further information see Comment tab!                        ***
+ *********************************************************************************************)
+
+IF mbDICore1InLinked THEN
+   abForceDICore1In.aUnforce();
+END_IF;
+IF mbDICore1OutLinked THEN
+   abForceDICore1Out.aUnforce();
+END_IF;
+IF mbDICore1ImpulseLinked THEN
+   abForceCore1Impulse.aUnforce();
+END_IF;
+
+IF mbDICore2InLinked THEN
+   abForceDICore2In.aUnforce();
+END_IF;
+IF mbDICore2OutLinked THEN
+   abForceDICore2Out.aUnforce();
+END_IF;
+IF mbDICore2ImpulseLinked THEN
+   abForceCore2Impulse.aUnforce();
+END_IF;
+
+IF mbDICore3InLinked THEN
+   abForceDICore3In.aUnforce();
+END_IF;
+IF mbDICore3OutLinked THEN
+   abForceDICore3Out.aUnforce();
+END_IF;
+IF mbDICore3ImpulseLinked THEN
+   abForceCore3Impulse.aUnforce();
+END_IF;
+
+IF mbDICore4InLinked THEN
+   abForceDICore4In.aUnforce();
+END_IF;
+IF mbDICore4OutLinked THEN
+   abForceDICore4Out.aUnforce();
+END_IF;
+IF mbDICore4ImpulseLinked THEN
+   abForceCore4Impulse.aUnforce();
+END_IF;
+
+IF mbDICore5InLinked THEN
+   abForceDICore5In.aUnforce();
+END_IF;
+IF mbDICore5OutLinked THEN
+   abForceDICore5Out.aUnforce();
+END_IF;
+IF mbDICore5ImpulseLinked THEN
+   abForceCore5Impulse.aUnforce();
+END_IF;
+
+IF mbDICore6InLinked THEN
+   abForceDICore6In.aUnforce();
+END_IF;
+IF mbDICore6OutLinked THEN
+   abForceDICore6Out.aUnforce();
+END_IF;
+IF mbDICore6ImpulseLinked THEN
+   abForceCore6Impulse.aUnforce();
+END_IF;
+
+IF mbDICore7InLinked THEN
+   abForceDICore7In.aUnforce();
+END_IF;
+IF mbDICore7OutLinked THEN
+   abForceDICore7Out.aUnforce();
+END_IF;
+IF mbDICore7ImpulseLinked THEN
+   abForceCore7Impulse.aUnforce();
+END_IF;
+
+IF mbDICore8InLinked THEN
+   abForceDICore8In.aUnforce();
+END_IF;
+IF mbDICore8OutLinked THEN
+   abForceDICore8Out.aUnforce();
+END_IF;
+IF mbDICore8ImpulseLinked THEN
+   abForceCore8Impulse.aUnforce();
+END_IF;
+
+
+STOP_PROCESS_ALGORITHM();
+
+;#END_EDIT_BLOCK END_ACTION (*aStopSimu*)
+(* end sfc-code *)
+
+
+END_ALGORITHM
+
+PROCESS_ALGORITHM paInit ON TaskSim AUTOSTART
+
+
+VAR
+ Status : KSYS_Status;
+END_VAR
+#BEGIN_EDIT_BLOCK
+(**************************************** WARNING ********************************************
+ *** The KEBA Kemro K2 System including software is not intended for safety control tasks! ***
+ ***                       For further information see Comment tab!                        ***
+ *********************************************************************************************)
+
+mpbDICore1In:= GET_SYNC_REFTO('Core1.di_CoreIn', T#0s,  Status);
+IF  Status = KSYS_Status_OK THEN
+   mbDICore1InLinked := TRUE;
+END_IF;
+mpbDICore1Out:= GET_SYNC_REFTO('Core1.di_CoreOut', T#0s, Status);
+IF  Status = KSYS_Status_OK THEN
+   mbDICore1OutLinked := TRUE;
+END_IF;
+mpbDICore1Impulse := GET_SYNC_REFTO('Core1.di_ImpulseInput', T#0s, Status);
+IF  Status = KSYS_Status_OK THEN
+   mbDICore1ImpulseLinked := TRUE;
+END_IF;
+
+mpbDICore2In:= GET_SYNC_REFTO('Core2.di_CoreIn', T#0s, Status);
+IF  Status = KSYS_Status_OK THEN
+   mbDICore2InLinked := TRUE;
+END_IF;
+mpbDICore2Out:= GET_SYNC_REFTO('Core2.di_CoreOut', T#0s, Status);
+IF  Status = KSYS_Status_OK THEN
+   mbDICore2OutLinked := TRUE; 
+END_IF;
+mpbDICore2Impulse := GET_SYNC_REFTO('Core2.di_ImpulseInput', T#0s, Status);
+IF  Status = KSYS_Status_OK THEN
+   mbDICore2ImpulseLinked := TRUE;
+END_IF;
+
+
+mpbDICore3In:= GET_SYNC_REFTO('Core3.di_CoreIn', T#0s, Status);
+IF  Status = KSYS_Status_OK THEN
+   mbDICore3InLinked := TRUE;
+END_IF;
+mpbDICore3Out:= GET_SYNC_REFTO('Core3.di_CoreOut', T#0s, Status);
+IF  Status = KSYS_Status_OK THEN
+   mbDICore3OutLinked := TRUE; 
+END_IF;
+mpbDICore3Impulse := GET_SYNC_REFTO('Core3.di_ImpulseInput', T#0s, Status);
+IF  Status = KSYS_Status_OK THEN
+   mbDICore3ImpulseLinked := TRUE;
+END_IF;
+
+
+mpbDICore4In:= GET_SYNC_REFTO('Core4.di_CoreIn', T#0s, Status);
+IF  Status = KSYS_Status_OK THEN
+   mbDICore4InLinked := TRUE; 
+END_IF;
+mpbDICore4Out:= GET_SYNC_REFTO('Core4.di_CoreOut', T#0s, Status);
+IF  Status = KSYS_Status_OK THEN
+   mbDICore4OutLinked := TRUE;
+END_IF;
+mpbDICore4Impulse := GET_SYNC_REFTO('Core4.di_ImpulseInput', T#0s, Status);
+IF  Status = KSYS_Status_OK THEN
+   mbDICore4ImpulseLinked := TRUE;
+END_IF;
+
+
+mpbDICore5In:= GET_SYNC_REFTO('Core5.di_CoreIn', T#0s, Status);
+IF  Status = KSYS_Status_OK THEN
+   mbDICore5InLinked := TRUE; 
+END_IF;
+mpbDICore5Out:= GET_SYNC_REFTO('Core5.di_CoreOut', T#0s, Status);
+IF  Status = KSYS_Status_OK THEN
+   mbDICore5OutLinked := TRUE;
+END_IF;
+mpbDICore5Impulse := GET_SYNC_REFTO('Core5.di_ImpulseInput', T#0s, Status);
+IF  Status = KSYS_Status_OK THEN
+   mbDICore5ImpulseLinked := TRUE;
+END_IF;
+
+
+mpbDICore6In:= GET_SYNC_REFTO('Core6.di_CoreIn', T#0s, Status);
+IF  Status = KSYS_Status_OK THEN
+   mbDICore6InLinked := TRUE; 
+END_IF;
+mpbDICore6Out:= GET_SYNC_REFTO('Core6.di_CoreOut', T#0s, Status);
+IF  Status = KSYS_Status_OK THEN
+   mbDICore6OutLinked := TRUE;
+END_IF;
+mpbDICore6Impulse := GET_SYNC_REFTO('Core6.di_ImpulseInput', T#0s, Status);
+IF  Status = KSYS_Status_OK THEN
+   mbDICore6ImpulseLinked := TRUE;
+END_IF;
+
+
+mpbDICore7In:= GET_SYNC_REFTO('Core7.di_CoreIn', T#0s, Status);
+IF  Status = KSYS_Status_OK THEN
+   mbDICore7InLinked := TRUE; 
+END_IF;
+mpbDICore7Out:= GET_SYNC_REFTO('Core7.di_CoreOut', T#0s, Status);
+IF  Status = KSYS_Status_OK THEN
+   mbDICore7OutLinked := TRUE;
+END_IF;
+mpbDICore7Impulse := GET_SYNC_REFTO('Core7.di_ImpulseInput', T#0s, Status);
+IF  Status = KSYS_Status_OK THEN
+   mbDICore7ImpulseLinked := TRUE;
+END_IF;
+
+
+mpbDICore8In:= GET_SYNC_REFTO('Core8.di_CoreIn', T#0s, Status);
+IF  Status = KSYS_Status_OK THEN
+   mbDICore8InLinked := TRUE; 
+END_IF;
+mpbDICore8Out:= GET_SYNC_REFTO('Core8.di_CoreOut', T#0s, Status);
+IF  Status = KSYS_Status_OK THEN
+   mbDICore8OutLinked := TRUE;
+END_IF;
+mpbDICore8Impulse := GET_SYNC_REFTO('Core8.di_ImpulseInput', T#0s, Status);
+IF  Status = KSYS_Status_OK THEN
+   mbDICore8ImpulseLinked := TRUE;
+END_IF;
+
+////////////////////////////////////////////////////////////////////////////////////////
+                                                                                         //DO
+mpbDOCore1In:= GET_SYNC_REFTO('Core1.do_CoreIn', T#0s, Status);
+IF  Status = KSYS_Status_OK THEN
+   mbDOCore1InLinked := TRUE;  
+END_IF;
+mpbDOCore1Out:= GET_SYNC_REFTO('Core1.do_CoreOut', T#0s, Status);
+IF  Status = KSYS_Status_OK THEN
+   mbDOCore1OutLinked := TRUE;  
+END_IF;
+
+mpbDOCore2In:= GET_SYNC_REFTO('Core2.do_CoreIn', T#0s, Status);
+IF  Status = KSYS_Status_OK THEN
+   mbDOCore2InLinked := TRUE;  
+END_IF;
+mpbDOCore2Out:= GET_SYNC_REFTO('Core2.do_CoreOut', T#0s, Status);
+IF  Status = KSYS_Status_OK THEN
+   mbDOCore2OutLinked := TRUE;  
+END_IF;
+
+mpbDOCore3In:= GET_SYNC_REFTO('Core3.do_CoreIn', T#0s, Status);
+IF  Status = KSYS_Status_OK THEN
+   mbDOCore3InLinked := TRUE;  
+END_IF;
+mpbDOCore3Out:= GET_SYNC_REFTO('Core3.do_CoreOut', T#0s, Status);
+IF  Status = KSYS_Status_OK THEN
+   mbDOCore3OutLinked := TRUE;  
+END_IF;
+
+mpbDOCore4In:= GET_SYNC_REFTO('Core4.do_CoreIn', T#0s, Status);
+IF  Status = KSYS_Status_OK THEN
+   mbDOCore4InLinked := TRUE;  
+END_IF;
+mpbDOCore4Out:= GET_SYNC_REFTO('Core4.do_CoreOut', T#0s, Status);
+IF  Status = KSYS_Status_OK THEN
+   mbDOCore4OutLinked := TRUE;  
+END_IF;
+
+mpbDOCore5In:= GET_SYNC_REFTO('Core5.do_CoreIn', T#0s, Status);
+IF  Status = KSYS_Status_OK THEN
+   mbDOCore5InLinked := TRUE;  
+END_IF;
+mpbDOCore5Out:= GET_SYNC_REFTO('Core5.do_CoreOut', T#0s, Status);
+IF  Status = KSYS_Status_OK THEN
+   mbDOCore5OutLinked := TRUE;  
+END_IF;
+
+mpbDOCore6In:= GET_SYNC_REFTO('Core6.do_CoreIn', T#0s, Status);
+IF  Status = KSYS_Status_OK THEN
+   mbDOCore6InLinked := TRUE;  
+END_IF;
+mpbDOCore6Out:= GET_SYNC_REFTO('Core6.do_CoreOut', T#0s, Status);
+IF  Status = KSYS_Status_OK THEN
+   mbDOCore6OutLinked := TRUE;  
+END_IF;
+
+mpbDOCore7In:= GET_SYNC_REFTO('Core7.do_CoreIn', T#0s, Status);
+IF  Status = KSYS_Status_OK THEN
+   mbDOCore7InLinked := TRUE;  
+END_IF;
+mpbDOCore7Out:= GET_SYNC_REFTO('Core7.do_CoreOut', T#0s, Status);
+IF  Status = KSYS_Status_OK THEN
+   mbDOCore7OutLinked := TRUE;  
+END_IF;
+
+mpbDOCore8In:= GET_SYNC_REFTO('Core8.do_CoreIn', T#0s, Status);
+IF  Status = KSYS_Status_OK THEN
+   mbDOCore8InLinked := TRUE;  
+END_IF;
+mpbDOCore8Out:= GET_SYNC_REFTO('Core8.do_CoreOut', T#0s, Status);
+IF  Status = KSYS_Status_OK THEN
+   mbDOCore8OutLinked := TRUE;  
+END_IF;
+
+////////////////////////////////////////////////////////////////////////////////////////
+STOP_PROCESS_ALGORITHM();
+
+
+
+
+;#END_EDIT_BLOCK END_ALGORITHM
+
+
+
+END_ALGORITHM_BLOCK
+
+
+
+#END_OF_IEC_PART
+
+@Puma @IecEditor 6 113 @Pou 25 
+@@@BEG_Comment@@@
+
+@@@END_Comment@@@
+
+@BEG_Contents 
+
+@BEG_Func 
+@RT(17)FuncTreeContainer 
+1 
+@Var @RT(14)GET_SYNC_REFTO @RT(0) @T @T @DERIVED 0 @F @RT(22)KEBA_STANDARD_FUNCTION @F 
+@T 
+@BEG_Attrib 
+0 @RT(0) @RT(0) 
+@END_Attrib 
+1 1 @F @F @F @F 
+
+@END_Func 
+
+@BEG_Const 
+@RT(18)ConstTreeContainer 
+1 
+@Var @RT(14)KSYS_Status_OK @RT(0) @T @T @DERIVED 0 @F @RT(11)KSYS_Status @F 
+@T 
+@BEG_Attrib 
+0 @RT(1)1 @RT(0) 
+@END_Attrib 
+1 1 @F @F @F @F 
+
+@END_Const 
+
+@BEG_Export 
+
+@BEG_Kind 
+@ALGORITHM_BLOCK @RT(10)ABCoreSimu @STRUCTURED_TEXT 
+@RT(0) @RT(0) @RT(0) 
+@END_Kind 
+
+@BEG_Dcl 
+@RT(16)DclTreeContainer 
+91 
+@Var @RT(12)sv_bSimulate @RT(0) @T @F @DT @RT(4)BOOL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 8 @F @F @F @F 
+
+@Var @RT(13)sv_bInitStart @RT(0) @T @F @DT @RT(4)BOOL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 8 @F @F @F @F 
+
+@Var @RT(7)TaskSim @RT(0) @T @F @DT @RT(4)TASK @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 7 @F @F @F @F 
+
+@Var @RT(10)PU_Task_13 @RT(0) @T @F @DT @RT(4)TASK @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 7 @F @F @F @F 
+
+@Var @RT(12)mpbDOCore1In @RT(0) @T @T @REFTO 0 @T @DT @RT(4)BOOL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(13)mpbDOCore1Out @RT(0) @T @T @REFTO 0 @T @DT @RT(4)BOOL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(12)mpbDOCore2In @RT(0) @T @T @REFTO 0 @T @DT @RT(4)BOOL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(13)mpbDOCore2Out @RT(0) @T @T @REFTO 0 @T @DT @RT(4)BOOL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(12)mpbDOCore3In @RT(0) @T @T @REFTO 0 @T @DT @RT(4)BOOL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(13)mpbDOCore3Out @RT(0) @T @T @REFTO 0 @T @DT @RT(4)BOOL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(12)mpbDOCore4In @RT(0) @T @T @REFTO 0 @T @DT @RT(4)BOOL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(13)mpbDOCore4Out @RT(0) @T @T @REFTO 0 @T @DT @RT(4)BOOL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(12)mpbDOCore5In @RT(0) @T @T @REFTO 0 @T @DT @RT(4)BOOL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(13)mpbDOCore5Out @RT(0) @T @T @REFTO 0 @T @DT @RT(4)BOOL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(12)mpbDOCore6In @RT(0) @T @T @REFTO 0 @T @DT @RT(4)BOOL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(13)mpbDOCore6Out @RT(0) @T @T @REFTO 0 @T @DT @RT(4)BOOL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(12)mpbDOCore7In @RT(0) @T @T @REFTO 0 @T @DT @RT(4)BOOL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(13)mpbDOCore7Out @RT(0) @T @T @REFTO 0 @T @DT @RT(4)BOOL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(12)mpbDOCore8In @RT(0) @T @T @REFTO 0 @T @DT @RT(4)BOOL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(13)mpbDOCore8Out @RT(0) @T @T @REFTO 0 @T @DT @RT(4)BOOL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(12)mpbDICore1In @RT(0) @T @T @REFTO 0 @T @DT @RT(4)BOOL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(12)mpbDICore2In @RT(0) @T @T @REFTO 0 @T @DT @RT(4)BOOL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(17)mpbDICore1Impulse @RT(0) @T @T @REFTO 0 @T @DT @RT(4)BOOL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(17)mpbDICore2Impulse @RT(0) @T @T @REFTO 0 @T @DT @RT(4)BOOL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(17)mpbDICore3Impulse @RT(0) @T @T @REFTO 0 @T @DT @RT(4)BOOL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(17)mpbDICore4Impulse @RT(0) @T @T @REFTO 0 @T @DT @RT(4)BOOL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(17)mpbDICore5Impulse @RT(0) @T @T @REFTO 0 @T @DT @RT(4)BOOL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(17)mpbDICore6Impulse @RT(0) @T @T @REFTO 0 @T @DT @RT(4)BOOL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(17)mpbDICore7Impulse @RT(0) @T @T @REFTO 0 @T @DT @RT(4)BOOL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(17)mpbDICore8Impulse @RT(0) @T @T @REFTO 0 @T @DT @RT(4)BOOL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(13)mpbDICore1Out @RT(0) @T @T @REFTO 0 @T @DT @RT(4)BOOL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(13)mpbDICore2Out @RT(0) @T @T @REFTO 0 @T @DT @RT(4)BOOL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(12)mpbDICore3In @RT(0) @T @T @REFTO 0 @T @DT @RT(4)BOOL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(13)mpbDICore3Out @RT(0) @T @T @REFTO 0 @T @DT @RT(4)BOOL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(12)mpbDICore4In @RT(0) @T @T @REFTO 0 @T @DT @RT(4)BOOL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(13)mpbDICore4Out @RT(0) @T @T @REFTO 0 @T @DT @RT(4)BOOL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(12)mpbDICore5In @RT(0) @T @T @REFTO 0 @T @DT @RT(4)BOOL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(13)mpbDICore5Out @RT(0) @T @T @REFTO 0 @T @DT @RT(4)BOOL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(12)mpbDICore6In @RT(0) @T @T @REFTO 0 @T @DT @RT(4)BOOL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(13)mpbDICore6Out @RT(0) @T @T @REFTO 0 @T @DT @RT(4)BOOL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(12)mpbDICore7In @RT(0) @T @T @REFTO 0 @T @DT @RT(4)BOOL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(13)mpbDICore7Out @RT(0) @T @T @REFTO 0 @T @DT @RT(4)BOOL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(12)mpbDICore8In @RT(0) @T @T @REFTO 0 @T @DT @RT(4)BOOL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(13)mpbDICore8Out @RT(0) @T @T @REFTO 0 @T @DT @RT(4)BOOL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(17)mbDOCore1InLinked @RT(0) @T @F @DT @RT(4)BOOL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(18)mbDOCore1OutLinked @RT(0) @T @F @DT @RT(4)BOOL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(17)mbDOCore2InLinked @RT(0) @T @F @DT @RT(4)BOOL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(18)mbDOCore2OutLinked @RT(0) @T @F @DT @RT(4)BOOL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(17)mbDOCore3InLinked @RT(0) @T @F @DT @RT(4)BOOL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(18)mbDOCore3OutLinked @RT(0) @T @F @DT @RT(4)BOOL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(17)mbDOCore4InLinked @RT(0) @T @F @DT @RT(4)BOOL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(18)mbDOCore4OutLinked @RT(0) @T @F @DT @RT(4)BOOL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(17)mbDOCore5InLinked @RT(0) @T @F @DT @RT(4)BOOL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(18)mbDOCore5OutLinked @RT(0) @T @F @DT @RT(4)BOOL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(17)mbDOCore6InLinked @RT(0) @T @F @DT @RT(4)BOOL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(18)mbDOCore6OutLinked @RT(0) @T @F @DT @RT(4)BOOL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(17)mbDOCore7InLinked @RT(0) @T @F @DT @RT(4)BOOL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(18)mbDOCore7OutLinked @RT(0) @T @F @DT @RT(4)BOOL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(17)mbDOCore8InLinked @RT(0) @T @F @DT @RT(4)BOOL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(18)mbDOCore8OutLinked @RT(0) @T @F @DT @RT(4)BOOL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(17)mbDICore1InLinked @RT(0) @T @F @DT @RT(4)BOOL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(17)mbDICore2InLinked @RT(0) @T @F @DT @RT(4)BOOL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(22)mbDICore1ImpulseLinked @RT(0) @T @F @DT @RT(4)BOOL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(22)mbDICore2ImpulseLinked @RT(0) @T @F @DT @RT(4)BOOL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(22)mbDICore3ImpulseLinked @RT(0) @T @F @DT @RT(4)BOOL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(22)mbDICore4ImpulseLinked @RT(0) @T @F @DT @RT(4)BOOL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(22)mbDICore5ImpulseLinked @RT(0) @T @F @DT @RT(4)BOOL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(22)mbDICore6ImpulseLinked @RT(0) @T @F @DT @RT(4)BOOL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(22)mbDICore7ImpulseLinked @RT(0) @T @F @DT @RT(4)BOOL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(22)mbDICore8ImpulseLinked @RT(0) @T @F @DT @RT(4)BOOL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(18)mbDICore1OutLinked @RT(0) @T @F @DT @RT(4)BOOL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(18)mbDICore2OutLinked @RT(0) @T @F @DT @RT(4)BOOL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(17)mbDICore3InLinked @RT(0) @T @F @DT @RT(4)BOOL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(18)mbDICore3OutLinked @RT(0) @T @F @DT @RT(4)BOOL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(17)mbDICore4InLinked @RT(0) @T @F @DT @RT(4)BOOL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(18)mbDICore4OutLinked @RT(0) @T @F @DT @RT(4)BOOL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(17)mbDICore5InLinked @RT(0) @T @F @DT @RT(4)BOOL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(18)mbDICore5OutLinked @RT(0) @T @F @DT @RT(4)BOOL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(17)mbDICore6InLinked @RT(0) @T @F @DT @RT(4)BOOL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(18)mbDICore6OutLinked @RT(0) @T @F @DT @RT(4)BOOL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(17)mbDICore7InLinked @RT(0) @T @F @DT @RT(4)BOOL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(18)mbDICore7OutLinked @RT(0) @T @F @DT @RT(4)BOOL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(17)mbDICore8InLinked @RT(0) @T @F @DT @RT(4)BOOL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(18)mbDICore8OutLinked @RT(0) @T @F @DT @RT(4)BOOL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(5)tTime @RT(0) @T @F @DT @RT(4)TIME @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(4)t#1s @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(10)SimuTonOut @RT(0) @T @T @DERIVED 0 @T @T @DT @RT(3)TON @RT(0) @T @T @UNKNOWN 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(9)SimuTonIn @RT(0) @T @T @DERIVED 0 @T @T @DT @RT(3)TON @RT(0) @T @T @UNKNOWN 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(11)bTriggerOut @RT(0) @T @F @DT @RT(4)BOOL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(10)bTriggerIn @RT(0) @T @F @DT @RT(4)BOOL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(10)ImpulseTon @RT(0) @T @T @DERIVED 0 @T @T @DT @RT(3)TON @RT(0) @T @T @UNKNOWN 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(16)bSetValueImpulse @RT(0) @T @F @DT @RT(4)BOOL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(5)FALSE @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@END_Dcl 
+
+@END_Export 
+
+@BEG_Body 
+
+3 
+
+@BEG_Export 
+
+@BEG_Algo 
+@POSTUPDATE_ALGORITHM @RT(6)pStart @STRUCTURED_TEXT 
+@RT(0) @RT(26)sv_bSimulate,sv_bInitStart @RT(10)PU_Task_13 @F @F 
+@END_Algo 
+
+@BEG_Dcl 
+@RT(16)DclTreeContainer 
+0 
+@END_Dcl 
+
+@END_Export 
+
+@BEG_Export 
+
+@BEG_Algo 
+@PROCESS_ALGORITHM @RT(10)paSimulate @SEQUENTIAL_FLOW_CHART 
+@RT(0) @RT(0) @RT(7)TaskSim @F @F 
+@END_Algo 
+
+@BEG_Dcl 
+@RT(16)DclTreeContainer 
+24 
+@Var @RT(16)abForceDICore1In @RT(0) @T @T @DERIVED 0 @F @RT(14)ABForceDigital @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(17)abForceDICore1Out @RT(0) @T @T @DERIVED 0 @F @RT(14)ABForceDigital @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(19)abForceCore1Impulse @RT(0) @T @T @DERIVED 0 @F @RT(14)ABForceDigital @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(16)abForceDICore2In @RT(0) @T @T @DERIVED 0 @F @RT(14)ABForceDigital @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(17)abForceDICore2Out @RT(0) @T @T @DERIVED 0 @F @RT(14)ABForceDigital @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(19)abForceCore2Impulse @RT(0) @T @T @DERIVED 0 @F @RT(14)ABForceDigital @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(16)abForceDICore3In @RT(0) @T @T @DERIVED 0 @F @RT(14)ABForceDigital @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(17)abForceDICore3Out @RT(0) @T @T @DERIVED 0 @F @RT(14)ABForceDigital @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(19)abForceCore3Impulse @RT(0) @T @T @DERIVED 0 @F @RT(14)ABForceDigital @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(16)abForceDICore4In @RT(0) @T @T @DERIVED 0 @F @RT(14)ABForceDigital @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(17)abForceDICore4Out @RT(0) @T @T @DERIVED 0 @F @RT(14)ABForceDigital @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(19)abForceCore4Impulse @RT(0) @T @T @DERIVED 0 @F @RT(14)ABForceDigital @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(16)abForceDICore5In @RT(0) @T @T @DERIVED 0 @F @RT(14)ABForceDigital @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(17)abForceDICore5Out @RT(0) @T @T @DERIVED 0 @F @RT(14)ABForceDigital @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(19)abForceCore5Impulse @RT(0) @T @T @DERIVED 0 @F @RT(14)ABForceDigital @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(16)abForceDICore6In @RT(0) @T @T @DERIVED 0 @F @RT(14)ABForceDigital @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(17)abForceDICore6Out @RT(0) @T @T @DERIVED 0 @F @RT(14)ABForceDigital @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(19)abForceCore6Impulse @RT(0) @T @T @DERIVED 0 @F @RT(14)ABForceDigital @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(16)abForceDICore7In @RT(0) @T @T @DERIVED 0 @F @RT(14)ABForceDigital @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(17)abForceDICore7Out @RT(0) @T @T @DERIVED 0 @F @RT(14)ABForceDigital @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(19)abForceCore7Impulse @RT(0) @T @T @DERIVED 0 @F @RT(14)ABForceDigital @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(16)abForceDICore8In @RT(0) @T @T @DERIVED 0 @F @RT(14)ABForceDigital @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(17)abForceDICore8Out @RT(0) @T @T @DERIVED 0 @F @RT(14)ABForceDigital @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(19)abForceCore8Impulse @RT(0) @T @T @DERIVED 0 @F @RT(14)ABForceDigital @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@END_Dcl 
+
+@END_Export 
+
+@BEG_Export 
+
+@BEG_Algo 
+@PROCESS_ALGORITHM @RT(6)paInit @STRUCTURED_TEXT 
+@RT(0) @RT(0) @RT(7)TaskSim @T @F 
+@END_Algo 
+
+@BEG_Dcl 
+@RT(16)DclTreeContainer 
+1 
+@Var @RT(6)Status @RT(0) @T @T @DERIVED 0 @T @T @DT @RT(11)KSYS_Status @RT(0) @T @T @UNKNOWN 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@END_Dcl 
+
+@END_Export 
+
+@BEG_Body 
+@TL(9)
+(**************************************** WARNING ********************************************
+ *** The KEBA Kemro K2 System including software is not intended for safety control tasks! ***
+ ***                       For further information see Comment tab!                        ***
+ *********************************************************************************************)
+
+IF sv_bSimulate THEN
+   START_PROCESS_ALGORITHM(paSimulate);
+END_IF;
+
+@END_Body 
+
+@@@BEG_Comment@@@ 
+@TL(0)
+
+@@@END_Comment@@@ 
+
+@BEG_SfcBody 
+4 4 4 
+
+@BEG_SfcData 2 
+@StepSeq @RT(4)sseq @F 3 
+@Step @RT(4)INIT @F @T @F @F @RT(0) @F 
+@AcbCont @RT(7)unnamed @F 1 
+@Acb @RT(5)aInit @F @F @RT(1)P @RT(0) @F @F @F @F 
+
+@Trans @RT(11)SimRequired @F @T @F @F @T @T @TL(2)
+sv_bSimulate
+
+@RT(11)SimRequired @F 
+@Loop @RT(4)loop @F 2 
+@StepSeq @RT(4)sseq @F 3 
+@Step @RT(3)SIM @F @F @F @F @RT(0) @F 
+@AcbCont @RT(7)unnamed @F 1 
+@Acb @RT(9)aSimulate @F @F @RT(1)N @RT(0) @F @F @F @F 
+
+@Trans @RT(14)StpSimRequired @F @T @F @F @T @T @TL(2)
+NOT sv_bSimulate
+
+@RT(14)StpSimRequired @F 
+@Step @RT(4)STOP @F @F @F @F @RT(0) @F 
+@AcbCont @RT(7)unnamed @F 1 
+@Acb @RT(9)aStopSimu @F @F @RT(1)P @RT(0) @F @F @F @F 
+
+
+@Trans @RT(6)Return @F @T @T @T @T @T @TL(2)
+TRUE
+
+@RT(6)Return @F 
+
+@END_SfcData 
+@SaActions 3 
+@SaText @RT(5)aInit 1 @TL(104)
+(**************************************** WARNING ********************************************
+ *** The KEBA Kemro K2 System including software is not intended for safety control tasks! ***
+ ***                       For further information see Comment tab!                        ***
+ *********************************************************************************************)
+
+bSetValueImpulse := FALSE;
+
+IF mbDICore1OutLinked THEN
+   abForceDICore1Out.aInit('Core1.di_CoreOut');
+   abForceDICore1Out.aSetForceValue(TRUE);
+END_IF;
+IF mbDICore1InLinked THEN
+   abForceDICore1In.aInit('Core1.di_CoreIn');
+   abForceDICore1In.aSetForceValue(FALSE);
+END_IF;
+IF mbDICore1ImpulseLinked THEN
+   abForceCore1Impulse.aInit('Core1.di_ImpulseInput');
+END_IF;
+
+IF mbDICore2OutLinked THEN
+   abForceDICore2Out.aInit('Core2.di_CoreOut');
+   abForceDICore2Out.aSetForceValue(TRUE);
+END_IF;
+IF mbDICore2InLinked THEN
+   abForceDICore2In.aInit('Core2.di_CoreIn');
+   abForceDICore2In.aSetForceValue(FALSE);
+END_IF;
+IF mbDICore2ImpulseLinked THEN
+   abForceCore2Impulse.aInit('Core2.di_ImpulseInput');
+END_IF;
+
+IF mbDICore3OutLinked THEN
+   abForceDICore3Out.aInit('Core3.di_CoreOut');
+   abForceDICore3Out.aSetForceValue(TRUE);
+END_IF;
+IF mbDICore3InLinked THEN
+   abForceDICore3In.aInit('Core3.di_CoreIn');
+   abForceDICore3In.aSetForceValue(FALSE);
+END_IF;
+IF mbDICore3ImpulseLinked THEN
+   abForceCore3Impulse.aInit('Core3.di_ImpulseInput');
+END_IF;
+
+IF mbDICore4OutLinked THEN
+   abForceDICore4Out.aInit('Core4.di_CoreOut');
+   abForceDICore4Out.aSetForceValue(TRUE);
+END_IF;
+IF mbDICore4InLinked THEN
+   abForceDICore4In.aInit('Core4.di_CoreIn');
+   abForceDICore4In.aSetForceValue(FALSE);
+END_IF;
+IF mbDICore4ImpulseLinked THEN
+   abForceCore4Impulse.aInit('Core4.di_ImpulseInput');
+END_IF;
+
+IF mbDICore5OutLinked THEN
+   abForceDICore5Out.aInit('Core5.di_CoreOut');
+   abForceDICore5Out.aSetForceValue(TRUE);
+END_IF;
+IF mbDICore5InLinked THEN
+   abForceDICore5In.aInit('Core5.di_CoreIn');
+   abForceDICore5In.aSetForceValue(FALSE);
+END_IF;
+IF mbDICore5ImpulseLinked THEN
+   abForceCore5Impulse.aInit('Core5.di_ImpulseInput');
+END_IF;
+
+IF mbDICore6OutLinked THEN
+   abForceDICore6Out.aInit('Core6.di_CoreOut');
+   abForceDICore6Out.aSetForceValue(TRUE);
+END_IF;
+IF mbDICore6InLinked THEN
+   abForceDICore6In.aInit('Core6.di_CoreIn');
+   abForceDICore6In.aSetForceValue(FALSE);
+END_IF;
+IF mbDICore6ImpulseLinked THEN
+   abForceCore6Impulse.aInit('Core6.di_ImpulseInput');
+END_IF;
+
+IF mbDICore7OutLinked THEN
+   abForceDICore7Out.aInit('Core7.di_CoreOut');
+   abForceDICore7Out.aSetForceValue(TRUE);
+END_IF;
+IF mbDICore7InLinked THEN
+   abForceDICore7In.aInit('Core7.di_CoreIn');
+   abForceDICore7In.aSetForceValue(FALSE);
+END_IF;
+IF mbDICore7ImpulseLinked THEN
+   abForceCore7Impulse.aInit('Core7.di_ImpulseInput');
+END_IF;
+
+IF mbDICore8OutLinked THEN
+   abForceDICore8Out.aInit('Core8.di_CoreOut');
+   abForceDICore8Out.aSetForceValue(TRUE);
+END_IF;
+IF mbDICore8InLinked THEN
+   abForceDICore8In.aInit('Core8.di_CoreIn');
+   abForceDICore8In.aSetForceValue(FALSE);
+END_IF;
+IF mbDICore8ImpulseLinked THEN
+   abForceCore8Impulse.aInit('Core8.di_ImpulseInput');
+END_IF;
+
+
+
+@SaText @RT(9)aSimulate 1 @TL(249)
+(**************************************** WARNING ********************************************
+ *** The KEBA Kemro K2 System including software is not intended for safety control tasks! ***
+ ***                       For further information see Comment tab!                        ***
+ *********************************************************************************************)
+
+bTriggerOut := (mbDOCore1OutLinked AND mpbDOCore1Out^) OR (mbDOCore2OutLinked AND mpbDOCore2Out^) OR 
+               (mbDOCore3OutLinked AND mpbDOCore3Out^) OR (mbDOCore4OutLinked AND mpbDOCore4Out^) OR 
+               (mbDOCore5OutLinked AND mpbDOCore5Out^) OR (mbDOCore6OutLinked AND mpbDOCore6Out^) OR 
+               (mbDOCore7OutLinked AND mpbDOCore7Out^) OR (mbDOCore8OutLinked AND mpbDOCore8Out^);
+               
+bTriggerIn := (mbDOCore1InLinked AND mpbDOCore1In^) OR (mbDOCore2InLinked AND mpbDOCore2In^) OR 
+              (mbDOCore3InLinked AND mpbDOCore3In^) OR (mbDOCore4InLinked AND mpbDOCore4In^) OR 
+              (mbDOCore5InLinked AND mpbDOCore5In^) OR (mbDOCore6InLinked AND mpbDOCore6In^) OR 
+              (mbDOCore7InLinked AND mpbDOCore7In^) OR (mbDOCore8InLinked AND mpbDOCore8In^);
+               
+SimuTonOut(IN := bTriggerOut, PT := tTime);
+SimuTonIn(IN := bTriggerIn, PT := tTime);
+
+IF bTriggerIn OR bTriggerOut THEN
+   ImpulseTon(IN := TRUE, PT := tTime);
+   IF ImpulseTon.Q THEN
+      ImpulseTon(IN := FALSE, PT := tTime);
+      bSetValueImpulse := NOT bSetValueImpulse;    
+   END_IF;
+END_IF;
+
+// CORE1
+//===============================================================================================
+IF mbDICore1OutLinked AND mbDOCore1OutLinked AND mpbDOCore1Out^ THEN
+   abForceDICore1In.aSetForceValue(FALSE);
+   IF SimuTonOut.Q THEN
+      abForceDICore1Out.aSetForceValue(TRUE);
+   END_IF;
+END_IF;
+
+IF mbDICore1InLinked AND mbDOCore1InLinked AND mpbDOCore1In^ THEN
+   abForceDICore1Out.aSetForceValue(FALSE);
+   IF SimuTonIn.Q THEN
+      abForceDICore1In.aSetForceValue(TRUE);
+   END_IF;
+END_IF;
+// avoid undefined state
+IF (mbDICore1InLinked AND mbDOCore1OutLinked AND mbDICore1OutLinked AND mbDOCore1InLinked AND 
+      (mpbDOCore1In^ = mpbDOCore1Out^) AND (mpbDICore1In^= mpbDICore1Out^)) THEN
+   abForceDICore1Out.aSetForceValue(TRUE);
+   abForceDICore1In.aSetForceValue(FALSE);
+END_IF;
+   
+IF mbDICore1ImpulseLinked THEN
+   abForceCore1Impulse.aSetForceValue(bSetValueImpulse);
+END_IF;
+//===============================================================================================
+
+
+// CORE2
+//===============================================================================================
+IF mbDICore2OutLinked AND mbDOCore2OutLinked AND mpbDOCore2Out^ THEN
+   abForceDICore2In.aSetForceValue(FALSE);
+   IF SimuTonOut.Q THEN
+      abForceDICore2Out.aSetForceValue(TRUE);
+   END_IF;
+END_IF;
+
+IF mbDICore2InLinked AND mbDOCore2InLinked AND mpbDOCore2In^ THEN
+   abForceDICore2Out.aSetForceValue(FALSE);
+   IF SimuTonIn.Q THEN
+      abForceDICore2In.aSetForceValue(TRUE);
+   END_IF;
+END_IF;
+// avoid undefined state
+IF (mbDICore2InLinked AND mbDOCore2OutLinked AND mbDICore2OutLinked AND mbDOCore2InLinked AND 
+      (mpbDOCore2In^ = mpbDOCore2Out^) AND (mpbDICore2In^= mpbDICore2Out^)) THEN
+   abForceDICore2Out.aSetForceValue(TRUE);
+   abForceDICore2In.aSetForceValue(FALSE);
+END_IF;
+   
+IF mbDICore2ImpulseLinked THEN
+   abForceCore2Impulse.aSetForceValue(bSetValueImpulse);
+END_IF;
+//===============================================================================================
+
+
+// CORE3
+//===============================================================================================
+IF mbDICore3OutLinked AND mbDOCore3OutLinked AND mpbDOCore3Out^ THEN
+   abForceDICore3In.aSetForceValue(FALSE);
+   IF SimuTonOut.Q THEN
+      abForceDICore3Out.aSetForceValue(TRUE);
+   END_IF;
+END_IF;
+
+IF mbDICore3InLinked AND mbDOCore3InLinked AND mpbDOCore3In^ THEN
+   abForceDICore3Out.aSetForceValue(FALSE);
+   IF SimuTonIn.Q THEN
+      abForceDICore3In.aSetForceValue(TRUE);
+   END_IF;
+END_IF;
+// avoid undefined state
+IF (mbDICore3InLinked AND mbDOCore3OutLinked AND mbDICore3OutLinked AND mbDOCore3InLinked AND 
+      (mpbDOCore3In^ = mpbDOCore3Out^) AND (mpbDICore3In^= mpbDICore3Out^)) THEN
+   abForceDICore3Out.aSetForceValue(TRUE);
+   abForceDICore3In.aSetForceValue(FALSE);
+END_IF;
+   
+IF mbDICore3ImpulseLinked THEN
+   abForceCore3Impulse.aSetForceValue(bSetValueImpulse);
+END_IF;
+//===============================================================================================
+
+
+// CORE4
+//===============================================================================================
+IF mbDICore4OutLinked AND mbDOCore4OutLinked AND mpbDOCore4Out^ THEN
+   abForceDICore4In.aSetForceValue(FALSE);
+   IF SimuTonOut.Q THEN
+      abForceDICore4Out.aSetForceValue(TRUE);
+   END_IF;
+END_IF;
+
+IF mbDICore4InLinked AND mbDOCore4InLinked AND mpbDOCore4In^ THEN
+   abForceDICore4Out.aSetForceValue(FALSE);
+   IF SimuTonIn.Q THEN
+      abForceDICore4In.aSetForceValue(TRUE);
+   END_IF;
+END_IF;
+// avoid undefined state
+IF (mbDICore4InLinked AND mbDOCore4OutLinked AND mbDICore4OutLinked AND mbDOCore4InLinked AND 
+      (mpbDOCore4In^ = mpbDOCore4Out^) AND (mpbDICore4In^= mpbDICore4Out^)) THEN
+   abForceDICore4Out.aSetForceValue(TRUE);
+   abForceDICore4In.aSetForceValue(FALSE);
+END_IF;
+   
+IF mbDICore4ImpulseLinked THEN
+   abForceCore4Impulse.aSetForceValue(bSetValueImpulse);
+END_IF;
+//===============================================================================================
+
+
+// CORE5
+//===============================================================================================
+IF mbDICore5OutLinked AND mbDOCore5OutLinked AND mpbDOCore5Out^ THEN
+   abForceDICore5In.aSetForceValue(FALSE);
+   IF SimuTonOut.Q THEN
+      abForceDICore5Out.aSetForceValue(TRUE);
+   END_IF;
+END_IF;
+
+IF mbDICore5InLinked AND mbDOCore5InLinked AND mpbDOCore5In^ THEN
+   abForceDICore5Out.aSetForceValue(FALSE);
+   IF SimuTonIn.Q THEN
+      abForceDICore5In.aSetForceValue(TRUE);
+   END_IF;
+END_IF;
+// avoid undefined state
+IF (mbDICore5InLinked AND mbDOCore5OutLinked AND mbDICore5OutLinked AND mbDOCore5InLinked AND 
+      (mpbDOCore5In^ = mpbDOCore5Out^) AND (mpbDICore5In^= mpbDICore5Out^)) THEN
+   abForceDICore5Out.aSetForceValue(TRUE);
+   abForceDICore5In.aSetForceValue(FALSE);
+END_IF;
+   
+IF mbDICore5ImpulseLinked THEN
+   abForceCore5Impulse.aSetForceValue(bSetValueImpulse);
+END_IF;
+//===============================================================================================
+
+
+// CORE6
+//===============================================================================================
+IF mbDICore6OutLinked AND mbDOCore6OutLinked AND mpbDOCore6Out^ THEN
+   abForceDICore6In.aSetForceValue(FALSE);
+   IF SimuTonOut.Q THEN
+      abForceDICore6Out.aSetForceValue(TRUE);
+   END_IF;
+END_IF;
+
+IF mbDICore6InLinked AND mbDOCore6InLinked AND mpbDOCore6In^ THEN
+   abForceDICore6Out.aSetForceValue(FALSE);
+   IF SimuTonIn.Q THEN
+      abForceDICore6In.aSetForceValue(TRUE);
+   END_IF;
+END_IF;
+// avoid undefined state
+IF (mbDICore6InLinked AND mbDOCore6OutLinked AND mbDICore6OutLinked AND mbDOCore6InLinked AND 
+      (mpbDOCore6In^ = mpbDOCore6Out^) AND (mpbDICore6In^= mpbDICore6Out^)) THEN
+   abForceDICore6Out.aSetForceValue(TRUE);
+   abForceDICore6In.aSetForceValue(FALSE);
+END_IF;
+   
+IF mbDICore6ImpulseLinked THEN
+   abForceCore6Impulse.aSetForceValue(bSetValueImpulse);
+END_IF;
+//===============================================================================================
+
+
+// CORE7
+//===============================================================================================
+IF mbDICore7OutLinked AND mbDOCore7OutLinked AND mpbDOCore7Out^ THEN
+   abForceDICore7In.aSetForceValue(FALSE);
+   IF SimuTonOut.Q THEN
+      abForceDICore7Out.aSetForceValue(TRUE);
+   END_IF;
+END_IF;
+
+IF mbDICore7InLinked AND mbDOCore7InLinked AND mpbDOCore7In^ THEN
+   abForceDICore7Out.aSetForceValue(FALSE);
+   IF SimuTonIn.Q THEN
+      abForceDICore7In.aSetForceValue(TRUE);
+   END_IF;
+END_IF;
+// avoid undefined state
+IF (mbDICore7InLinked AND mbDOCore7OutLinked AND mbDICore7OutLinked AND mbDOCore7InLinked AND 
+      (mpbDOCore7In^ = mpbDOCore7Out^) AND (mpbDICore7In^= mpbDICore7Out^)) THEN
+   abForceDICore7Out.aSetForceValue(TRUE);
+   abForceDICore7In.aSetForceValue(FALSE);
+END_IF;
+   
+IF mbDICore7ImpulseLinked THEN
+   abForceCore7Impulse.aSetForceValue(bSetValueImpulse);
+END_IF;
+//===============================================================================================
+
+
+// CORE8
+//===============================================================================================
+IF mbDICore8OutLinked AND mbDOCore8OutLinked AND mpbDOCore8Out^ THEN
+   abForceDICore8In.aSetForceValue(FALSE);
+   IF SimuTonOut.Q THEN
+      abForceDICore8Out.aSetForceValue(TRUE);
+   END_IF;
+END_IF;
+
+IF mbDICore8InLinked AND mbDOCore8InLinked AND mpbDOCore8In^ THEN
+   abForceDICore8Out.aSetForceValue(FALSE);
+   IF SimuTonIn.Q THEN
+      abForceDICore8In.aSetForceValue(TRUE);
+   END_IF;
+END_IF;
+// avoid undefined state
+IF (mbDICore8InLinked AND mbDOCore8OutLinked AND mbDICore8OutLinked AND mbDOCore8InLinked AND 
+      (mpbDOCore8In^ = mpbDOCore8Out^) AND (mpbDICore8In^= mpbDICore8Out^)) THEN
+   abForceDICore8Out.aSetForceValue(TRUE);
+   abForceDICore8In.aSetForceValue(FALSE);
+END_IF;
+   
+IF mbDICore8ImpulseLinked THEN
+   abForceCore8Impulse.aSetForceValue(bSetValueImpulse);
+END_IF;
+//===============================================================================================
+
+
+@SaText @RT(9)aStopSimu 1 @TL(88)
+(**************************************** WARNING ********************************************
+ *** The KEBA Kemro K2 System including software is not intended for safety control tasks! ***
+ ***                       For further information see Comment tab!                        ***
+ *********************************************************************************************)
+
+IF mbDICore1InLinked THEN
+   abForceDICore1In.aUnforce();
+END_IF;
+IF mbDICore1OutLinked THEN
+   abForceDICore1Out.aUnforce();
+END_IF;
+IF mbDICore1ImpulseLinked THEN
+   abForceCore1Impulse.aUnforce();
+END_IF;
+
+IF mbDICore2InLinked THEN
+   abForceDICore2In.aUnforce();
+END_IF;
+IF mbDICore2OutLinked THEN
+   abForceDICore2Out.aUnforce();
+END_IF;
+IF mbDICore2ImpulseLinked THEN
+   abForceCore2Impulse.aUnforce();
+END_IF;
+
+IF mbDICore3InLinked THEN
+   abForceDICore3In.aUnforce();
+END_IF;
+IF mbDICore3OutLinked THEN
+   abForceDICore3Out.aUnforce();
+END_IF;
+IF mbDICore3ImpulseLinked THEN
+   abForceCore3Impulse.aUnforce();
+END_IF;
+
+IF mbDICore4InLinked THEN
+   abForceDICore4In.aUnforce();
+END_IF;
+IF mbDICore4OutLinked THEN
+   abForceDICore4Out.aUnforce();
+END_IF;
+IF mbDICore4ImpulseLinked THEN
+   abForceCore4Impulse.aUnforce();
+END_IF;
+
+IF mbDICore5InLinked THEN
+   abForceDICore5In.aUnforce();
+END_IF;
+IF mbDICore5OutLinked THEN
+   abForceDICore5Out.aUnforce();
+END_IF;
+IF mbDICore5ImpulseLinked THEN
+   abForceCore5Impulse.aUnforce();
+END_IF;
+
+IF mbDICore6InLinked THEN
+   abForceDICore6In.aUnforce();
+END_IF;
+IF mbDICore6OutLinked THEN
+   abForceDICore6Out.aUnforce();
+END_IF;
+IF mbDICore6ImpulseLinked THEN
+   abForceCore6Impulse.aUnforce();
+END_IF;
+
+IF mbDICore7InLinked THEN
+   abForceDICore7In.aUnforce();
+END_IF;
+IF mbDICore7OutLinked THEN
+   abForceDICore7Out.aUnforce();
+END_IF;
+IF mbDICore7ImpulseLinked THEN
+   abForceCore7Impulse.aUnforce();
+END_IF;
+
+IF mbDICore8InLinked THEN
+   abForceDICore8In.aUnforce();
+END_IF;
+IF mbDICore8OutLinked THEN
+   abForceDICore8Out.aUnforce();
+END_IF;
+IF mbDICore8ImpulseLinked THEN
+   abForceCore8Impulse.aUnforce();
+END_IF;
+
+
+STOP_PROCESS_ALGORITHM();
+
+
+@SaTrans 0 
+@SaExits 0 
+@END_SfcBody 
+
+@@@BEG_Comment@@@ 
+@TL(0)
+
+@@@END_Comment@@@ 
+
+@BEG_Body 
+@TL(194)
+(**************************************** WARNING ********************************************
+ *** The KEBA Kemro K2 System including software is not intended for safety control tasks! ***
+ ***                       For further information see Comment tab!                        ***
+ *********************************************************************************************)
+
+mpbDICore1In:= GET_SYNC_REFTO('Core1.di_CoreIn', T#0s,  Status);
+IF  Status = KSYS_Status_OK THEN
+   mbDICore1InLinked := TRUE;
+END_IF;
+mpbDICore1Out:= GET_SYNC_REFTO('Core1.di_CoreOut', T#0s, Status);
+IF  Status = KSYS_Status_OK THEN
+   mbDICore1OutLinked := TRUE;
+END_IF;
+mpbDICore1Impulse := GET_SYNC_REFTO('Core1.di_ImpulseInput', T#0s, Status);
+IF  Status = KSYS_Status_OK THEN
+   mbDICore1ImpulseLinked := TRUE;
+END_IF;
+
+mpbDICore2In:= GET_SYNC_REFTO('Core2.di_CoreIn', T#0s, Status);
+IF  Status = KSYS_Status_OK THEN
+   mbDICore2InLinked := TRUE;
+END_IF;
+mpbDICore2Out:= GET_SYNC_REFTO('Core2.di_CoreOut', T#0s, Status);
+IF  Status = KSYS_Status_OK THEN
+   mbDICore2OutLinked := TRUE; 
+END_IF;
+mpbDICore2Impulse := GET_SYNC_REFTO('Core2.di_ImpulseInput', T#0s, Status);
+IF  Status = KSYS_Status_OK THEN
+   mbDICore2ImpulseLinked := TRUE;
+END_IF;
+
+
+mpbDICore3In:= GET_SYNC_REFTO('Core3.di_CoreIn', T#0s, Status);
+IF  Status = KSYS_Status_OK THEN
+   mbDICore3InLinked := TRUE;
+END_IF;
+mpbDICore3Out:= GET_SYNC_REFTO('Core3.di_CoreOut', T#0s, Status);
+IF  Status = KSYS_Status_OK THEN
+   mbDICore3OutLinked := TRUE; 
+END_IF;
+mpbDICore3Impulse := GET_SYNC_REFTO('Core3.di_ImpulseInput', T#0s, Status);
+IF  Status = KSYS_Status_OK THEN
+   mbDICore3ImpulseLinked := TRUE;
+END_IF;
+
+
+mpbDICore4In:= GET_SYNC_REFTO('Core4.di_CoreIn', T#0s, Status);
+IF  Status = KSYS_Status_OK THEN
+   mbDICore4InLinked := TRUE; 
+END_IF;
+mpbDICore4Out:= GET_SYNC_REFTO('Core4.di_CoreOut', T#0s, Status);
+IF  Status = KSYS_Status_OK THEN
+   mbDICore4OutLinked := TRUE;
+END_IF;
+mpbDICore4Impulse := GET_SYNC_REFTO('Core4.di_ImpulseInput', T#0s, Status);
+IF  Status = KSYS_Status_OK THEN
+   mbDICore4ImpulseLinked := TRUE;
+END_IF;
+
+
+mpbDICore5In:= GET_SYNC_REFTO('Core5.di_CoreIn', T#0s, Status);
+IF  Status = KSYS_Status_OK THEN
+   mbDICore5InLinked := TRUE; 
+END_IF;
+mpbDICore5Out:= GET_SYNC_REFTO('Core5.di_CoreOut', T#0s, Status);
+IF  Status = KSYS_Status_OK THEN
+   mbDICore5OutLinked := TRUE;
+END_IF;
+mpbDICore5Impulse := GET_SYNC_REFTO('Core5.di_ImpulseInput', T#0s, Status);
+IF  Status = KSYS_Status_OK THEN
+   mbDICore5ImpulseLinked := TRUE;
+END_IF;
+
+
+mpbDICore6In:= GET_SYNC_REFTO('Core6.di_CoreIn', T#0s, Status);
+IF  Status = KSYS_Status_OK THEN
+   mbDICore6InLinked := TRUE; 
+END_IF;
+mpbDICore6Out:= GET_SYNC_REFTO('Core6.di_CoreOut', T#0s, Status);
+IF  Status = KSYS_Status_OK THEN
+   mbDICore6OutLinked := TRUE;
+END_IF;
+mpbDICore6Impulse := GET_SYNC_REFTO('Core6.di_ImpulseInput', T#0s, Status);
+IF  Status = KSYS_Status_OK THEN
+   mbDICore6ImpulseLinked := TRUE;
+END_IF;
+
+
+mpbDICore7In:= GET_SYNC_REFTO('Core7.di_CoreIn', T#0s, Status);
+IF  Status = KSYS_Status_OK THEN
+   mbDICore7InLinked := TRUE; 
+END_IF;
+mpbDICore7Out:= GET_SYNC_REFTO('Core7.di_CoreOut', T#0s, Status);
+IF  Status = KSYS_Status_OK THEN
+   mbDICore7OutLinked := TRUE;
+END_IF;
+mpbDICore7Impulse := GET_SYNC_REFTO('Core7.di_ImpulseInput', T#0s, Status);
+IF  Status = KSYS_Status_OK THEN
+   mbDICore7ImpulseLinked := TRUE;
+END_IF;
+
+
+mpbDICore8In:= GET_SYNC_REFTO('Core8.di_CoreIn', T#0s, Status);
+IF  Status = KSYS_Status_OK THEN
+   mbDICore8InLinked := TRUE; 
+END_IF;
+mpbDICore8Out:= GET_SYNC_REFTO('Core8.di_CoreOut', T#0s, Status);
+IF  Status = KSYS_Status_OK THEN
+   mbDICore8OutLinked := TRUE;
+END_IF;
+mpbDICore8Impulse := GET_SYNC_REFTO('Core8.di_ImpulseInput', T#0s, Status);
+IF  Status = KSYS_Status_OK THEN
+   mbDICore8ImpulseLinked := TRUE;
+END_IF;
+
+////////////////////////////////////////////////////////////////////////////////////////
+                                                                                         //DO
+mpbDOCore1In:= GET_SYNC_REFTO('Core1.do_CoreIn', T#0s, Status);
+IF  Status = KSYS_Status_OK THEN
+   mbDOCore1InLinked := TRUE;  
+END_IF;
+mpbDOCore1Out:= GET_SYNC_REFTO('Core1.do_CoreOut', T#0s, Status);
+IF  Status = KSYS_Status_OK THEN
+   mbDOCore1OutLinked := TRUE;  
+END_IF;
+
+mpbDOCore2In:= GET_SYNC_REFTO('Core2.do_CoreIn', T#0s, Status);
+IF  Status = KSYS_Status_OK THEN
+   mbDOCore2InLinked := TRUE;  
+END_IF;
+mpbDOCore2Out:= GET_SYNC_REFTO('Core2.do_CoreOut', T#0s, Status);
+IF  Status = KSYS_Status_OK THEN
+   mbDOCore2OutLinked := TRUE;  
+END_IF;
+
+mpbDOCore3In:= GET_SYNC_REFTO('Core3.do_CoreIn', T#0s, Status);
+IF  Status = KSYS_Status_OK THEN
+   mbDOCore3InLinked := TRUE;  
+END_IF;
+mpbDOCore3Out:= GET_SYNC_REFTO('Core3.do_CoreOut', T#0s, Status);
+IF  Status = KSYS_Status_OK THEN
+   mbDOCore3OutLinked := TRUE;  
+END_IF;
+
+mpbDOCore4In:= GET_SYNC_REFTO('Core4.do_CoreIn', T#0s, Status);
+IF  Status = KSYS_Status_OK THEN
+   mbDOCore4InLinked := TRUE;  
+END_IF;
+mpbDOCore4Out:= GET_SYNC_REFTO('Core4.do_CoreOut', T#0s, Status);
+IF  Status = KSYS_Status_OK THEN
+   mbDOCore4OutLinked := TRUE;  
+END_IF;
+
+mpbDOCore5In:= GET_SYNC_REFTO('Core5.do_CoreIn', T#0s, Status);
+IF  Status = KSYS_Status_OK THEN
+   mbDOCore5InLinked := TRUE;  
+END_IF;
+mpbDOCore5Out:= GET_SYNC_REFTO('Core5.do_CoreOut', T#0s, Status);
+IF  Status = KSYS_Status_OK THEN
+   mbDOCore5OutLinked := TRUE;  
+END_IF;
+
+mpbDOCore6In:= GET_SYNC_REFTO('Core6.do_CoreIn', T#0s, Status);
+IF  Status = KSYS_Status_OK THEN
+   mbDOCore6InLinked := TRUE;  
+END_IF;
+mpbDOCore6Out:= GET_SYNC_REFTO('Core6.do_CoreOut', T#0s, Status);
+IF  Status = KSYS_Status_OK THEN
+   mbDOCore6OutLinked := TRUE;  
+END_IF;
+
+mpbDOCore7In:= GET_SYNC_REFTO('Core7.do_CoreIn', T#0s, Status);
+IF  Status = KSYS_Status_OK THEN
+   mbDOCore7InLinked := TRUE;  
+END_IF;
+mpbDOCore7Out:= GET_SYNC_REFTO('Core7.do_CoreOut', T#0s, Status);
+IF  Status = KSYS_Status_OK THEN
+   mbDOCore7OutLinked := TRUE;  
+END_IF;
+
+mpbDOCore8In:= GET_SYNC_REFTO('Core8.do_CoreIn', T#0s, Status);
+IF  Status = KSYS_Status_OK THEN
+   mbDOCore8InLinked := TRUE;  
+END_IF;
+mpbDOCore8Out:= GET_SYNC_REFTO('Core8.do_CoreOut', T#0s, Status);
+IF  Status = KSYS_Status_OK THEN
+   mbDOCore8OutLinked := TRUE;  
+END_IF;
+
+////////////////////////////////////////////////////////////////////////////////////////
+STOP_PROCESS_ALGORITHM();
+
+
+
+@END_Body 
+
+@@@BEG_Comment@@@ 
+@TL(0)
+
+@@@END_Comment@@@ 
+@END_Body 
+
+@END_Contents 

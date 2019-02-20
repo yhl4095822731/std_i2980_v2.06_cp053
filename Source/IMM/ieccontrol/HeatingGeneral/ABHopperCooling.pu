@@ -1,0 +1,822 @@
+(*
+This Algorithm Block is responsible for
+  - hopper temp. supervision
+  - hopper cooling
+
+*)
+
+IMPORT_OVER_LISTFILE
+ KSWO_AddVariable
+, SET_ALARM
+, RESET_ALARM
+, FGetHWPath
+, GET_MY_FU_NAME
+, KHW_TempSensor
+, tsDeviceId
+, KSWO_Status
+, R_TRIG
+
+END_IMPORT
+
+ALGORITHM_BLOCK ABHopperCooling #DUMMY_EDIT_BLOCK
+
+SYSTEM_VAR
+ do_HopperCooler : BOOL;
+ ti_HopperTemp : REAL;
+ ti_HopperTemp_sensor : KHW_TempSensor;
+ ti_HopperTemp_stat : BOOL;
+ sv_rTempStartCooling : REAL (* start cooling at this temperature *);
+ sv_rTempStopCooling : REAL (* stop cooling at this temperature *);
+ sv_rWarnTemp : REAL (* a warning is displayed if hopper temperature increases this value *);
+ sv_rAlarmTemp : REAL (* an alarm is displayed if hopper temperature increases this value *);
+ sv_HopperTempSensorType : KHW_TempSensor (* sensor type *);
+ sv_rHopperTempHysteresis : REAL;
+ sv_DeviceId : tsDeviceId;
+END_VAR
+
+SYSTEM_OBJECT
+ PU_Task_7 : TASK;
+ TaskSlow : TASK;
+ erHopperTempWarning : ALARM;
+ erHopperTempTooHigh : ALARM;
+ erHopperTempSensor : ALARM;
+END_OBJECT
+
+VAR
+ mbSensorError : BOOL;
+ msHWPath : STRING(255);
+ mpbSensorState : REFTO BOOL;
+END_VAR
+
+ALGORITHM aSensorState
+
+#BEGIN_EDIT_BLOCK
+(**************************************** WARNING ********************************************
+ *** The KEBA Kemro K2 System including software is not intended for safety control tasks! ***
+ ***                       For further information see Comment tab!                        ***
+ *********************************************************************************************)
+
+mbSensorError := ti_HopperTemp_stat;
+
+IF mbSensorError THEN
+   
+   //reset digital output for cooling in case of sensor error
+   IF IS_LINKED(do_HopperCooler) THEN
+      do_HopperCooler := FALSE;
+   END_IF;
+   
+   SET_ALARM(Name := erHopperTempSensor,
+             SubID1 := sv_DeviceId.CompId,
+             SubID2 := sv_DeviceId.IndexId,
+             Param1 := msHWPath);
+ELSE
+   RESET_ALARM(Name := erHopperTempSensor,
+               SubID1 := sv_DeviceId.CompId,
+               SubID2 := sv_DeviceId.IndexId);
+END_IF;
+
+
+;#END_EDIT_BLOCK END_ALGORITHM
+
+(*
+Check which Inputs and Outputs are available and start according process algorithms
+*)
+
+PROCESS_ALGORITHM paInit ON TaskSlow AUTOSTART
+
+
+VAR
+ swoState : KSWO_Status;
+END_VAR
+#BEGIN_EDIT_BLOCK
+(**************************************** WARNING ********************************************
+ *** The KEBA Kemro K2 System including software is not intended for safety control tasks! ***
+ ***                       For further information see Comment tab!                        ***
+ *********************************************************************************************)
+
+IF IS_LINKED(ti_HopperTemp) AND IS_LINKED(ti_HopperTemp_stat) THEN
+    
+   ti_HopperTemp_sensor := sv_HopperTempSensorType;
+   
+   msHWPath := FGetHWPath(CONCAT(GET_MY_FU_NAME(),'.ti_HopperTemp'), TRUE);      
+   mpbSensorState := @ti_HopperTemp_stat;
+   
+   aSensorState();
+      
+   swoState := KSWO_AddVariable( Task := TaskSlow,
+                                 Name := 'HopperTemperature',
+                                 Variable := ti_HopperTemp);
+   
+   //start supervision of hopper temperature
+   START_PROCESS_ALGORITHM(paHopperTempSupervision);
+   
+   IF IS_LINKED(do_HopperCooler) THEN
+      //start algorithm for hopper cooling
+      START_PROCESS_ALGORITHM(paHopperCooler);
+   END_IF;
+END_IF;
+
+STOP_PROCESS_ALGORITHM();
+   
+
+
+;#END_EDIT_BLOCK END_ALGORITHM
+
+(*
+In this algorithm the supervision of the material temperature is done.
+If actual material temp is higher than the alarm temperature an alarm is set.
+If actual material temperature is lower than alarm temp -5° the alarm is resetted.
+Setting the material temp high - alarm causes a stop of the motor!
+Switching on the motor is only possible if the material temperature is ok again. 
+*)
+
+PROCESS_ALGORITHM paHopperTempSupervision ON TaskSlow
+
+
+VAR
+ fbRTrigWarningTemp : R_TRIG;
+ fbRTrigAlarmTemp : R_TRIG;
+ fbRTrigWarningTempOk : R_TRIG;
+ fbRTrigAlarmTempOk : R_TRIG;
+END_VAR
+#BEGIN_EDIT_BLOCK
+(**************************************** WARNING ********************************************
+ *** The KEBA Kemro K2 System including software is not intended for safety control tasks! ***
+ ***                       For further information see Comment tab!                        ***
+ *********************************************************************************************)
+
+fbRTrigWarningTemp(CLK := (ti_HopperTemp > sv_rWarnTemp));
+fbRTrigWarningTempOk(CLK := (ti_HopperTemp < (sv_rWarnTemp - sv_rHopperTempHysteresis)));
+
+fbRTrigAlarmTemp(CLK := (ti_HopperTemp > sv_rAlarmTemp));
+fbRTrigAlarmTempOk(CLK := (ti_HopperTemp < (sv_rAlarmTemp - sv_rHopperTempHysteresis)));
+
+IF fbRTrigWarningTemp.Q THEN
+   //set alarm if warning temp is exceeded
+   SET_ALARM (Name := erHopperTempWarning,
+              SubID1 := sv_DeviceId.CompId,
+              SubID2 := sv_DeviceId.IndexId);
+END_IF;
+              
+IF fbRTrigWarningTempOk.Q THEN
+   //reset alarm if temp is ok again
+   RESET_ALARM (Name := erHopperTempWarning,
+                SubID1 := sv_DeviceId.CompId,
+                SubID2 := sv_DeviceId.IndexId);
+END_IF;
+
+IF fbRTrigAlarmTemp.Q THEN
+   //set alarm if alarm temp is exceeded
+   SET_ALARM (Name := erHopperTempTooHigh,
+              SubID1 := sv_DeviceId.CompId,
+              SubID2 := sv_DeviceId.IndexId);
+END_IF;
+              
+IF fbRTrigAlarmTempOk.Q THEN
+   //set alarm if temp is ok again
+   RESET_ALARM (Name := erHopperTempTooHigh,
+                SubID1 := sv_DeviceId.CompId,
+                SubID2 := sv_DeviceId.IndexId);
+END_IF;
+
+
+;#END_EDIT_BLOCK END_ALGORITHM
+
+(*
+If a digital output for hopper cooling is available it will be set if the 
+actual material temperature is higher than start cooling temperature.
+The DO will be resetted after the actual temperature is lower than stop cooling temperature.
+In case of a sensor error the DO will also be resetted.
+*)
+
+PROCESS_ALGORITHM paHopperCooler ON TaskSlow
+
+
+VAR
+ fbRTrigStartCooling : R_TRIG;
+ fbRTrigStopCooling : R_TRIG;
+END_VAR
+#BEGIN_EDIT_BLOCK
+(**************************************** WARNING ********************************************
+ *** The KEBA Kemro K2 System including software is not intended for safety control tasks! ***
+ ***                       For further information see Comment tab!                        ***
+ *********************************************************************************************)
+
+
+fbRTrigStartCooling(CLK := (ti_HopperTemp > sv_rTempStartCooling));
+fbRTrigStopCooling(CLK := (ti_HopperTemp < sv_rTempStopCooling));
+
+IF fbRTrigStartCooling.Q AND NOT mbSensorError THEN
+   //set digital output for cooling
+   do_HopperCooler := TRUE;
+END_IF;
+
+IF fbRTrigStopCooling.Q THEN
+   //reset digital output for cooling
+   do_HopperCooler := FALSE;
+END_IF;
+
+
+
+;#END_EDIT_BLOCK END_ALGORITHM
+
+POSTUPDATE_ALGORITHM pSensorTypeChanged ON PU_Task_7 WITH sv_HopperTempSensorType
+
+#BEGIN_EDIT_BLOCK
+(**************************************** WARNING ********************************************
+ *** The KEBA Kemro K2 System including software is not intended for safety control tasks! ***
+ ***                       For further information see Comment tab!                        ***
+ *********************************************************************************************)
+
+//copy selected sensor type
+ti_HopperTemp_sensor := sv_HopperTempSensorType;
+
+
+
+;#END_EDIT_BLOCK END_ALGORITHM
+
+(*
+react on changes of material temp sensor state
+*)
+
+POSTUPDATE_ALGORITHM pSensorStateChanged ON PU_Task_7 WITH mpbSensorState^
+
+#BEGIN_EDIT_BLOCK
+(**************************************** WARNING ********************************************
+ *** The KEBA Kemro K2 System including software is not intended for safety control tasks! ***
+ ***                       For further information see Comment tab!                        ***
+ *********************************************************************************************)
+
+aSensorState();
+
+
+
+
+;#END_EDIT_BLOCK END_ALGORITHM
+
+
+
+END_ALGORITHM_BLOCK
+
+
+
+#END_OF_IEC_PART
+
+@Puma @IecEditor 6 68 @Pou 25 
+@@@BEG_Comment@@@
+This Algorithm Block is responsible for
+  - hopper temp. supervision
+  - hopper cooling
+
+@@@END_Comment@@@
+
+@BEG_Contents 
+
+@BEG_Func 
+@RT(17)FuncTreeContainer 
+5 
+@Var @RT(16)KSWO_AddVariable @RT(0) @T @T @DERIVED 0 @F @RT(22)KEBA_STANDARD_FUNCTION @F 
+@T 
+@BEG_Attrib 
+0 @RT(0) @RT(0) 
+@END_Attrib 
+1 1 @F @F @F @F 
+
+@Var @RT(9)SET_ALARM @RT(0) @T @T @DERIVED 0 @F @RT(23)KEBA_STANDARD_PROCEDURE @F 
+@T 
+@BEG_Attrib 
+0 @RT(0) @RT(0) 
+@END_Attrib 
+1 1 @F @F @F @F 
+
+@Var @RT(11)RESET_ALARM @RT(0) @T @T @DERIVED 0 @F @RT(23)KEBA_STANDARD_PROCEDURE @F 
+@T 
+@BEG_Attrib 
+0 @RT(0) @RT(0) 
+@END_Attrib 
+1 1 @F @F @F @F 
+
+@Var @RT(10)FGetHWPath @RT(0) @T @T @DERIVED 0 @F @RT(8)FUNCTION @F 
+@T 
+@BEG_Attrib 
+0 @RT(0) @RT(0) 
+@END_Attrib 
+1 1 @F @F @F @F 
+
+@Var @RT(14)GET_MY_FU_NAME @RT(0) @T @T @DERIVED 0 @F @RT(22)KEBA_STANDARD_FUNCTION @F 
+@T 
+@BEG_Attrib 
+0 @RT(0) @RT(0) 
+@END_Attrib 
+1 1 @F @F @F @F 
+
+@END_Func 
+
+@BEG_Const 
+@RT(18)ConstTreeContainer 
+0 
+@END_Const 
+
+@BEG_Export 
+
+@BEG_Kind 
+@ALGORITHM_BLOCK @RT(15)ABHopperCooling @STRUCTURED_TEXT 
+@RT(0) @RT(0) @RT(0) 
+@END_Kind 
+
+@BEG_Dcl 
+@RT(16)DclTreeContainer 
+19 
+@Var @RT(15)do_HopperCooler @RT(0) @T @F @DT @RT(4)BOOL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 8 @F @F @F @F 
+
+@Var @RT(13)ti_HopperTemp @RT(0) @T @F @DT @RT(4)REAL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 8 @F @F @F @F 
+
+@Var @RT(20)ti_HopperTemp_sensor @RT(0) @T @T @DERIVED 0 @T @T @DT @RT(14)KHW_TempSensor @RT(0) @T @T @UNKNOWN 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 8 @F @F @F @F 
+
+@Var @RT(18)ti_HopperTemp_stat @RT(0) @T @F @DT @RT(4)BOOL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 8 @F @F @F @F 
+
+@Var @RT(20)sv_rTempStartCooling @RT(0) @T @F @DT @RT(4)REAL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(33)start cooling at this temperature @RT(0) 
+@END_Attrib 
+1 8 @F @F @F @F 
+
+@Var @RT(19)sv_rTempStopCooling @RT(0) @T @F @DT @RT(4)REAL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(32)stop cooling at this temperature @RT(0) 
+@END_Attrib 
+1 8 @F @F @F @F 
+
+@Var @RT(12)sv_rWarnTemp @RT(0) @T @F @DT @RT(4)REAL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(65)a warning is displayed if hopper temperature increases this value @RT(0) 
+@END_Attrib 
+1 8 @F @F @F @F 
+
+@Var @RT(13)sv_rAlarmTemp @RT(0) @T @F @DT @RT(4)REAL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(64)an alarm is displayed if hopper temperature increases this value @RT(0) 
+@END_Attrib 
+1 8 @F @F @F @F 
+
+@Var @RT(23)sv_HopperTempSensorType @RT(0) @T @T @DERIVED 0 @T @T @DT @RT(14)KHW_TempSensor @RT(0) @T @T @UNKNOWN 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(11)sensor type @RT(0) 
+@END_Attrib 
+1 8 @F @F @F @F 
+
+@Var @RT(9)PU_Task_7 @RT(0) @T @F @DT @RT(4)TASK @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 7 @F @F @F @F 
+
+@Var @RT(8)TaskSlow @RT(0) @T @F @DT @RT(4)TASK @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 7 @F @F @F @F 
+
+@Var @RT(19)erHopperTempWarning @RT(0) @T @F @DT @RT(5)ALARM @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 7 @F @F @F @F 
+
+@Var @RT(19)erHopperTempTooHigh @RT(0) @T @F @DT @RT(5)ALARM @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 7 @F @F @F @F 
+
+@Var @RT(18)erHopperTempSensor @RT(0) @T @F @DT @RT(5)ALARM @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 7 @F @F @F @F 
+
+@Var @RT(13)mbSensorError @RT(0) @T @F @DT @RT(4)BOOL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(24)sv_rHopperTempHysteresis @RT(0) @T @F @DT @RT(4)REAL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 8 @F @F @F @F 
+
+@Var @RT(8)msHWPath @RT(0) @T @F @DT @RT(11)STRING(255) @RT(0) @T @T @STRING 0 @F @RT(3)255 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(14)mpbSensorState @RT(0) @T @T @REFTO 0 @T @DT @RT(4)BOOL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(11)sv_DeviceId @RT(0) @T @T @DERIVED 0 @F @RT(10)tsDeviceId @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 8 @F @F @F @F 
+
+@END_Dcl 
+
+@END_Export 
+
+@BEG_Body 
+
+6 
+
+@BEG_Export 
+
+@BEG_Algo 
+@ALGORITHM @RT(12)aSensorState @STRUCTURED_TEXT 
+@RT(0) @RT(0) @RT(0) @F @F 
+@END_Algo 
+
+@BEG_Dcl 
+@RT(16)DclTreeContainer 
+0 
+@END_Dcl 
+
+@END_Export 
+
+@BEG_Export 
+
+@BEG_Algo 
+@PROCESS_ALGORITHM @RT(6)paInit @STRUCTURED_TEXT 
+@RT(0) @RT(0) @RT(8)TaskSlow @T @F 
+@END_Algo 
+
+@BEG_Dcl 
+@RT(16)DclTreeContainer 
+1 
+@Var @RT(8)swoState @RT(0) @T @T @DERIVED 0 @T @T @DT @RT(11)KSWO_Status @RT(0) @T @T @UNKNOWN 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@END_Dcl 
+
+@END_Export 
+
+@BEG_Export 
+
+@BEG_Algo 
+@PROCESS_ALGORITHM @RT(23)paHopperTempSupervision @STRUCTURED_TEXT 
+@RT(0) @RT(0) @RT(8)TaskSlow @F @F 
+@END_Algo 
+
+@BEG_Dcl 
+@RT(16)DclTreeContainer 
+4 
+@Var @RT(18)fbRTrigWarningTemp @RT(0) @T @T @DERIVED 0 @T @T @DT @RT(6)R_TRIG @RT(0) @T @T @UNKNOWN 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(16)fbRTrigAlarmTemp @RT(0) @T @T @DERIVED 0 @T @T @DT @RT(6)R_TRIG @RT(0) @T @T @UNKNOWN 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(20)fbRTrigWarningTempOk @RT(0) @T @T @DERIVED 0 @T @T @DT @RT(6)R_TRIG @RT(0) @T @T @UNKNOWN 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(18)fbRTrigAlarmTempOk @RT(0) @T @T @DERIVED 0 @T @T @DT @RT(6)R_TRIG @RT(0) @T @T @UNKNOWN 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@END_Dcl 
+
+@END_Export 
+
+@BEG_Export 
+
+@BEG_Algo 
+@PROCESS_ALGORITHM @RT(14)paHopperCooler @STRUCTURED_TEXT 
+@RT(0) @RT(0) @RT(8)TaskSlow @F @F 
+@END_Algo 
+
+@BEG_Dcl 
+@RT(16)DclTreeContainer 
+2 
+@Var @RT(19)fbRTrigStartCooling @RT(0) @T @T @DERIVED 0 @T @T @DT @RT(6)R_TRIG @RT(0) @T @T @UNKNOWN 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(18)fbRTrigStopCooling @RT(0) @T @T @DERIVED 0 @T @T @DT @RT(6)R_TRIG @RT(0) @T @T @UNKNOWN 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@END_Dcl 
+
+@END_Export 
+
+@BEG_Export 
+
+@BEG_Algo 
+@POSTUPDATE_ALGORITHM @RT(18)pSensorTypeChanged @STRUCTURED_TEXT 
+@RT(0) @RT(23)sv_HopperTempSensorType @RT(9)PU_Task_7 @F @F 
+@END_Algo 
+
+@BEG_Dcl 
+@RT(16)DclTreeContainer 
+0 
+@END_Dcl 
+
+@END_Export 
+
+@BEG_Export 
+
+@BEG_Algo 
+@POSTUPDATE_ALGORITHM @RT(19)pSensorStateChanged @STRUCTURED_TEXT 
+@RT(0) @RT(15)mpbSensorState^ @RT(9)PU_Task_7 @F @F 
+@END_Algo 
+
+@BEG_Dcl 
+@RT(16)DclTreeContainer 
+0 
+@END_Dcl 
+
+@END_Export 
+
+@BEG_Body 
+@TL(24)
+(**************************************** WARNING ********************************************
+ *** The KEBA Kemro K2 System including software is not intended for safety control tasks! ***
+ ***                       For further information see Comment tab!                        ***
+ *********************************************************************************************)
+
+mbSensorError := ti_HopperTemp_stat;
+
+IF mbSensorError THEN
+   
+   //reset digital output for cooling in case of sensor error
+   IF IS_LINKED(do_HopperCooler) THEN
+      do_HopperCooler := FALSE;
+   END_IF;
+   
+   SET_ALARM(Name := erHopperTempSensor,
+             SubID1 := sv_DeviceId.CompId,
+             SubID2 := sv_DeviceId.IndexId,
+             Param1 := msHWPath);
+ELSE
+   RESET_ALARM(Name := erHopperTempSensor,
+               SubID1 := sv_DeviceId.CompId,
+               SubID2 := sv_DeviceId.IndexId);
+END_IF;
+
+@END_Body 
+
+@@@BEG_Comment@@@ 
+@TL(0)
+
+@@@END_Comment@@@ 
+
+@BEG_Body 
+@TL(30)
+(**************************************** WARNING ********************************************
+ *** The KEBA Kemro K2 System including software is not intended for safety control tasks! ***
+ ***                       For further information see Comment tab!                        ***
+ *********************************************************************************************)
+
+IF IS_LINKED(ti_HopperTemp) AND IS_LINKED(ti_HopperTemp_stat) THEN
+    
+   ti_HopperTemp_sensor := sv_HopperTempSensorType;
+   
+   msHWPath := FGetHWPath(CONCAT(GET_MY_FU_NAME(),'.ti_HopperTemp'), TRUE);      
+   mpbSensorState := @ti_HopperTemp_stat;
+   
+   aSensorState();
+      
+   swoState := KSWO_AddVariable( Task := TaskSlow,
+                                 Name := 'HopperTemperature',
+                                 Variable := ti_HopperTemp);
+   
+   //start supervision of hopper temperature
+   START_PROCESS_ALGORITHM(paHopperTempSupervision);
+   
+   IF IS_LINKED(do_HopperCooler) THEN
+      //start algorithm for hopper cooling
+      START_PROCESS_ALGORITHM(paHopperCooler);
+   END_IF;
+END_IF;
+
+STOP_PROCESS_ALGORITHM();
+   
+
+@END_Body 
+
+@@@BEG_Comment@@@ 
+@TL(1)
+Check which Inputs and Outputs are available and start according process algorithms
+@@@END_Comment@@@ 
+
+@BEG_Body 
+@TL(39)
+(**************************************** WARNING ********************************************
+ *** The KEBA Kemro K2 System including software is not intended for safety control tasks! ***
+ ***                       For further information see Comment tab!                        ***
+ *********************************************************************************************)
+
+fbRTrigWarningTemp(CLK := (ti_HopperTemp > sv_rWarnTemp));
+fbRTrigWarningTempOk(CLK := (ti_HopperTemp < (sv_rWarnTemp - sv_rHopperTempHysteresis)));
+
+fbRTrigAlarmTemp(CLK := (ti_HopperTemp > sv_rAlarmTemp));
+fbRTrigAlarmTempOk(CLK := (ti_HopperTemp < (sv_rAlarmTemp - sv_rHopperTempHysteresis)));
+
+IF fbRTrigWarningTemp.Q THEN
+   //set alarm if warning temp is exceeded
+   SET_ALARM (Name := erHopperTempWarning,
+              SubID1 := sv_DeviceId.CompId,
+              SubID2 := sv_DeviceId.IndexId);
+END_IF;
+              
+IF fbRTrigWarningTempOk.Q THEN
+   //reset alarm if temp is ok again
+   RESET_ALARM (Name := erHopperTempWarning,
+                SubID1 := sv_DeviceId.CompId,
+                SubID2 := sv_DeviceId.IndexId);
+END_IF;
+
+IF fbRTrigAlarmTemp.Q THEN
+   //set alarm if alarm temp is exceeded
+   SET_ALARM (Name := erHopperTempTooHigh,
+              SubID1 := sv_DeviceId.CompId,
+              SubID2 := sv_DeviceId.IndexId);
+END_IF;
+              
+IF fbRTrigAlarmTempOk.Q THEN
+   //set alarm if temp is ok again
+   RESET_ALARM (Name := erHopperTempTooHigh,
+                SubID1 := sv_DeviceId.CompId,
+                SubID2 := sv_DeviceId.IndexId);
+END_IF;
+
+@END_Body 
+
+@@@BEG_Comment@@@ 
+@TL(5)
+In this algorithm the supervision of the material temperature is done.
+If actual material temp is higher than the alarm temperature an alarm is set.
+If actual material temperature is lower than alarm temp -5° the alarm is resetted.
+Setting the material temp high - alarm causes a stop of the motor!
+Switching on the motor is only possible if the material temperature is ok again. 
+@@@END_Comment@@@ 
+
+@BEG_Body 
+@TL(20)
+(**************************************** WARNING ********************************************
+ *** The KEBA Kemro K2 System including software is not intended for safety control tasks! ***
+ ***                       For further information see Comment tab!                        ***
+ *********************************************************************************************)
+
+
+fbRTrigStartCooling(CLK := (ti_HopperTemp > sv_rTempStartCooling));
+fbRTrigStopCooling(CLK := (ti_HopperTemp < sv_rTempStopCooling));
+
+IF fbRTrigStartCooling.Q AND NOT mbSensorError THEN
+   //set digital output for cooling
+   do_HopperCooler := TRUE;
+END_IF;
+
+IF fbRTrigStopCooling.Q THEN
+   //reset digital output for cooling
+   do_HopperCooler := FALSE;
+END_IF;
+
+
+@END_Body 
+
+@@@BEG_Comment@@@ 
+@TL(4)
+If a digital output for hopper cooling is available it will be set if the 
+actual material temperature is higher than start cooling temperature.
+The DO will be resetted after the actual temperature is lower than stop cooling temperature.
+In case of a sensor error the DO will also be resetted.
+@@@END_Comment@@@ 
+
+@BEG_Body 
+@TL(9)
+(**************************************** WARNING ********************************************
+ *** The KEBA Kemro K2 System including software is not intended for safety control tasks! ***
+ ***                       For further information see Comment tab!                        ***
+ *********************************************************************************************)
+
+//copy selected sensor type
+ti_HopperTemp_sensor := sv_HopperTempSensorType;
+
+
+@END_Body 
+
+@@@BEG_Comment@@@ 
+@TL(0)
+
+@@@END_Comment@@@ 
+
+@BEG_Body 
+@TL(9)
+(**************************************** WARNING ********************************************
+ *** The KEBA Kemro K2 System including software is not intended for safety control tasks! ***
+ ***                       For further information see Comment tab!                        ***
+ *********************************************************************************************)
+
+aSensorState();
+
+
+
+@END_Body 
+
+@@@BEG_Comment@@@ 
+@TL(1)
+react on changes of material temp sensor state
+@@@END_Comment@@@ 
+@END_Body 
+
+@END_Contents 

@@ -1,0 +1,181 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<base:Mask xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xmlns:base="http://www.keba.at/viewedit.model.base" widgetId="kvs.mask" name="HeatingNozzleMask1">
+  <resolution width="714" height="476"/>
+  <position x="1" y="1"/>
+  <attributeValues key="Background" value="BG_Desktop:30,30,30"/>
+  <attributeValues key="Title" value="Heating"/>
+  <attributeValues key="Icon" value="HeatingNozzle1/hmi/images/iconHeating.gif"/>
+  <widgetInstances xsi:type="base:ContainerWidgetInstance" widgetId="keplast.kvs.borderpanelsmall" name="brdpanHeating" layoutConstraint="CENTER">
+    <resolution width="714" height="199"/>
+    <position/>
+    <attributeValues key="Background" value="BG_Panel:220,220,220"/>
+    <attributeValues key="Title" value="Heating zones"/>
+    <layout layoutID="kvs.layout.BorderLayout" name="BorderLayout"/>
+  </widgetInstances>
+  <widgetInstances xsi:type="base:ContainerWidgetInstance" widgetId="keplast.kvs.borderpanelsmall" name="panelAutoHeating" layoutConstraint="SOUTH">
+    <resolution width="714" height="269"/>
+    <position y="207"/>
+    <attributeValues key="Background" value="BG_Panel:220,220,220"/>
+    <attributeValues key="Title" value="Auto heating"/>
+    <widgetInstances xsi:type="base:ContainerWidgetInstance" widgetId="kvs.panel" name="panelParameters" layoutConstraint="RIGHT">
+      <resolution width="418" height="232"/>
+      <position x="290" y="33"/>
+      <widgetInstances widgetId="keplast.kvs.numfieldtext" name="numfieldStandbyTemperature" layoutConstraint="null">
+        <resolution width="418" height="29"/>
+        <position/>
+        <attributeValues key="Variable" value="HeatingNozzle1.sv_rStandbyTempVis"/>
+        <attributeValues key="Text" value="Standby temperature"/>
+        <attributeValues key="_TextWidth" value="317"/>
+      </widgetInstances>
+      <widgetInstances widgetId="keplast.kvs.startbuttonmarktext" name="markActivateStandby" layoutConstraint="null">
+        <resolution width="418" height="29"/>
+        <position y="29"/>
+        <attributeValues key="Variable" value="HeatingNozzle1.sv_bKeepWarmActive"/>
+      </widgetInstances>
+      <widgetInstances widgetId="keplast.kvs.startbuttonmarktext" name="markButtonOptimizeHeat" layoutConstraint="null">
+        <resolution width="418" height="29"/>
+        <position y="58"/>
+        <attributeValues key="Variable" value="HeatingNozzle1.sv_bRunOptimization"/>
+      </widgetInstances>
+      <widgetInstances widgetId="keplast.kvs.startbuttonmarktext" name="markUndoParameter1" layoutConstraint="null">
+        <resolution width="418" height="29"/>
+        <position y="87"/>
+        <attributeValues key="Variable" value="HeatingNozzle1.sv_bUndoChangeHeatingParams"/>
+      </widgetInstances>
+      <widgetInstances widgetId="keplast.kvs.checkboxtext" name="chkboxGroupHeating" layoutConstraint="null">
+        <resolution width="418" height="29"/>
+        <position y="116"/>
+        <attributeValues key="Variable" value="HeatingNozzle1.sv_bGroupHeating"/>
+      </widgetInstances>
+      <widgetInstances widgetId="keplast.kvs.actnumfieldtext" name="numfielOilTemp" layoutConstraint="null">
+        <resolution width="418" height="29"/>
+        <position y="145"/>
+        <attributeValues key="Variable" value="OilMaintenance1.ti_OilTemp"/>
+        <attributeValues key="VariableMaximum" value="OilMaintenance1.sv_rAlarmTemp"/>
+        <dynamicAttributes key="Create">
+          <value function="doesVariableExist : UserFunctions" equal="true" unequal="false">
+            <parameter key="1" value="variableasstring; PlastFunctionUtils.createVariableString(&quot;OilMaintenance1.ti_OilTemp&quot;)"/>
+          </value>
+        </dynamicAttributes>
+      </widgetInstances>
+      <widgetInstances widgetId="keplast.kvs.actsetnumfieldtext" name="numfieldCoolPreventTime" layoutConstraint="null">
+        <resolution width="418" height="29"/>
+        <position y="174"/>
+        <attributeValues key="Variable" value="HeatingNozzle1.sv_rTempOkTimeSet"/>
+        <attributeValues key="VariableActual" value="HeatingNozzle1.sv_rTempOkTimeAct"/>
+      </widgetInstances>
+      <widgetInstances widgetId="keplast.kvs.numfieldtext" name="numFieldTextMaxStandByTime" layoutConstraint="null">
+        <resolution width="418" height="29"/>
+        <position y="203"/>
+        <attributeValues key="Variable" value="HeatingNozzle1.sv_dMaxStandByTime"/>
+      </widgetInstances>
+      <layout layoutID="kvs.layout.GridLayout" name="GridLayout">
+        <attributeValues key="Rows" value="0"/>
+        <attributeValues key="Columns" value="1"/>
+      </layout>
+    </widgetInstances>
+    <widgetInstances xsi:type="base:ContainerWidgetInstance" widgetId="kvs.panel" name="panelAutoHeat" layoutConstraint="LEFT">
+      <resolution width="277" height="232"/>
+      <position x="3" y="33"/>
+      <widgetInstances xsi:type="base:ContainerWidgetInstance" widgetId="kvs.panel" name="panelHeaderTimefield" layoutConstraint="null">
+        <resolution width="277" height="29"/>
+        <position/>
+        <attributeValues key="PreferredSize" value="-1, 29"/>
+        <widgetInstances widgetId="keplast.kvs.klabeltip" name="labelHeaderTime" layoutConstraint="EAST">
+          <resolution width="113" height="29"/>
+          <position x="164"/>
+          <attributeValues key="Text" value="Start"/>
+          <attributeValues key="PreferredSize" value="113, 29"/>
+        </widgetInstances>
+        <layout layoutID="kvs.layout.BorderLayout" name="BorderLayout"/>
+      </widgetInstances>
+      <widgetInstances widgetId="keplast.kvs.checktimefieldtext" name="chkTimeField1" layoutConstraint="null">
+        <resolution width="277" height="29"/>
+        <position y="29"/>
+        <attributeValues key="CheckboxLeft" value="true"/>
+        <attributeValues key="VariableCheckBox" value="HeatingNozzle1.sv_AutoHeatingSettings[1].bActivate"/>
+        <attributeValues key="Text" value="Monday"/>
+        <attributeValues key="EnableFieldByCheckBox" value="true"/>
+        <attributeValues key="Variable" value="HeatingNozzle1.sv_AutoHeatingSettings[1].dTimeToActivate"/>
+        <attributeValues key="_TextWidth" value="132"/>
+      </widgetInstances>
+      <widgetInstances widgetId="keplast.kvs.checktimefieldtext" name="chkTimeField2" layoutConstraint="null">
+        <resolution width="277" height="29"/>
+        <position y="58"/>
+        <attributeValues key="VariableCheckBox" value="HeatingNozzle1.sv_AutoHeatingSettings[2].bActivate"/>
+        <attributeValues key="Text" value="Tuesday"/>
+        <attributeValues key="CheckboxLeft" value="true"/>
+        <attributeValues key="EnableFieldByCheckBox" value="true"/>
+        <attributeValues key="Variable" value="HeatingNozzle1.sv_AutoHeatingSettings[2].dTimeToActivate"/>
+        <attributeValues key="_TextWidth" value="132"/>
+      </widgetInstances>
+      <widgetInstances widgetId="keplast.kvs.checktimefieldtext" name="chkTimeField3" layoutConstraint="null">
+        <resolution width="277" height="29"/>
+        <position y="87"/>
+        <attributeValues key="VariableCheckBox" value="HeatingNozzle1.sv_AutoHeatingSettings[3].bActivate"/>
+        <attributeValues key="Text" value="Wednesday"/>
+        <attributeValues key="CheckboxLeft" value="true"/>
+        <attributeValues key="EnableFieldByCheckBox" value="true"/>
+        <attributeValues key="Variable" value="HeatingNozzle1.sv_AutoHeatingSettings[3].dTimeToActivate"/>
+        <attributeValues key="_TextWidth" value="132"/>
+      </widgetInstances>
+      <widgetInstances widgetId="keplast.kvs.checktimefieldtext" name="chkTimeField4" layoutConstraint="null">
+        <resolution width="277" height="29"/>
+        <position y="116"/>
+        <attributeValues key="VariableCheckBox" value="HeatingNozzle1.sv_AutoHeatingSettings[4].bActivate"/>
+        <attributeValues key="Text" value="Thursday"/>
+        <attributeValues key="CheckboxLeft" value="true"/>
+        <attributeValues key="EnableFieldByCheckBox" value="true"/>
+        <attributeValues key="Variable" value="HeatingNozzle1.sv_AutoHeatingSettings[4].dTimeToActivate"/>
+        <attributeValues key="_TextWidth" value="132"/>
+      </widgetInstances>
+      <widgetInstances widgetId="keplast.kvs.checktimefieldtext" name="chkTimeField5" layoutConstraint="null">
+        <resolution width="277" height="29"/>
+        <position y="145"/>
+        <attributeValues key="VariableCheckBox" value="HeatingNozzle1.sv_AutoHeatingSettings[5].bActivate"/>
+        <attributeValues key="Text" value="Friday"/>
+        <attributeValues key="CheckboxLeft" value="true"/>
+        <attributeValues key="EnableFieldByCheckBox" value="true"/>
+        <attributeValues key="Variable" value="HeatingNozzle1.sv_AutoHeatingSettings[5].dTimeToActivate"/>
+        <attributeValues key="_TextWidth" value="132"/>
+      </widgetInstances>
+      <widgetInstances widgetId="keplast.kvs.checktimefieldtext" name="chkTimeField6" layoutConstraint="null">
+        <resolution width="277" height="29"/>
+        <position y="174"/>
+        <attributeValues key="VariableCheckBox" value="HeatingNozzle1.sv_AutoHeatingSettings[6].bActivate"/>
+        <attributeValues key="Text" value="Saturday"/>
+        <attributeValues key="CheckboxLeft" value="true"/>
+        <attributeValues key="EnableFieldByCheckBox" value="true"/>
+        <attributeValues key="Variable" value="HeatingNozzle1.sv_AutoHeatingSettings[6].dTimeToActivate"/>
+        <attributeValues key="_TextWidth" value="132"/>
+      </widgetInstances>
+      <widgetInstances widgetId="keplast.kvs.checktimefieldtext" name="chkTimeField7" layoutConstraint="null">
+        <resolution width="277" height="29"/>
+        <position y="203"/>
+        <attributeValues key="VariableCheckBox" value="HeatingNozzle1.sv_AutoHeatingSettings[7].bActivate"/>
+        <attributeValues key="Text" value="Sunday"/>
+        <attributeValues key="CheckboxLeft" value="true"/>
+        <attributeValues key="EnableFieldByCheckBox" value="true"/>
+        <attributeValues key="Variable" value="HeatingNozzle1.sv_AutoHeatingSettings[7].dTimeToActivate"/>
+        <attributeValues key="_TextWidth" value="132"/>
+      </widgetInstances>
+      <layout layoutID="kvs.layout.GridLayout" name="GridLayout">
+        <attributeValues key="Rows" value="0"/>
+        <attributeValues key="Columns" value="1"/>
+      </layout>
+    </widgetInstances>
+    <widgetInstances widgetId="keplast.kvs.separator" name="separator1" layoutConstraint="SEPARATOR">
+      <resolution width="2" height="232"/>
+      <position x="285" y="33"/>
+      <attributeValues key="Foreground" value="gray_mid:153,153,153"/>
+    </widgetInstances>
+    <layout layoutID="keplast.kvs.layout.horizontalsplitlayout" name="HorizontalSplitLayout">
+      <attributeValues key="PercentLeft" value="40"/>
+      <attributeValues key="PercentRight" value="60"/>
+      <attributeValues key="InsetsLeft" value="0, 0, 0, 5"/>
+    </layout>
+  </widgetInstances>
+  <layout layoutID="kvs.layout.BorderLayout" name="BorderLayout">
+    <attributeValues key="Vgap" value="8"/>
+  </layout>
+</base:Mask>

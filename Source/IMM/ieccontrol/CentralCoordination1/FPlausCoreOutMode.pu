@@ -1,0 +1,180 @@
+IMPORT_OVER_LISTFILE
+ GET_SYNC_REFTO
+, cOptionHydraulic
+, tyCoreOutModePlaus
+, KSYS_Status
+, tOptionId
+
+END_IMPORT
+
+PLAUSIBILITY_FUNCTION FPlausCoreOutMode : tyCoreOutModePlaus
+
+VAR_INPUT
+ DeviceClass : INT;
+ Userlevel : INT;
+END_VAR
+
+VAR
+ s : KSYS_Status;
+ pOptions : REFTO tOptionId;
+ b2Platen : BOOL;
+END_VAR
+#BEGIN_EDIT_BLOCK
+(**************************************** WARNING ********************************************
+ *** The KEBA Kemro K2 System including software is not intended for safety control tasks! ***
+ ***                       For further information see Comment tab!                        ***
+ *********************************************************************************************)
+ 
+//selectable modes depend on machine type
+//2 platen machines have some additional modes
+pOptions := GET_SYNC_REFTO('Mold1.sv_Options', T#0s, s);
+IF s = KSYS_Status_OK THEN
+   b2Platen := (pOptions^ AND cSubOptionMold2Platen) = cSubOptionMold2Platen;
+END_IF;
+
+FPlausCoreOutMode[1] := nBefMoldOpen;
+FPlausCoreOutMode[2] := nDuringMoldOpen;
+FPlausCoreOutMode[3] := nAfterMoldOpen;
+
+IF b2Platen THEN   
+   FPlausCoreOutMode[4] := nBeforeHiPressRel;
+   FPlausCoreOutMode[5] := nAfterHiPressRel;
+   FPlausCoreOutMode[6] := nBeforeMoldNutsOpen;
+ELSE
+   FPlausCoreOutMode[4] := nAfterMoldOpen;
+   FPlausCoreOutMode[5] := nAfterMoldOpen;
+   FPlausCoreOutMode[6] := nAfterMoldOpen;
+END_IF;
+
+
+
+
+
+
+;#END_EDIT_BLOCK END_FUNCTION
+
+
+
+#END_OF_IEC_PART
+
+@Puma @IecEditor 6 114 @Pou 25 
+@@@BEG_Comment@@@
+
+@@@END_Comment@@@
+
+@BEG_Contents 
+
+@BEG_Func 
+@RT(17)FuncTreeContainer 
+1 
+@Var @RT(14)GET_SYNC_REFTO @RT(0) @T @T @DERIVED 0 @F @RT(22)KEBA_STANDARD_FUNCTION @F 
+@T 
+@BEG_Attrib 
+0 @RT(0) @RT(0) 
+@END_Attrib 
+1 1 @F @F @F @F 
+
+@END_Func 
+
+@BEG_Const 
+@RT(18)ConstTreeContainer 
+1 
+@Var @RT(16)cOptionHydraulic @RT(0) @T @F @DT @RT(5)DWORD @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+0 @RT(5)16#01 @RT(26)Hydraulic device, LSB is 1 
+@END_Attrib 
+1 1 @F @F @F @F 
+
+@END_Const 
+
+@BEG_Export 
+
+@BEG_Kind 
+@PLAUSIBILITY_FUNCTION @RT(17)FPlausCoreOutMode @STRUCTURED_TEXT 
+@RT(18)tyCoreOutModePlaus @RT(0) @RT(0) 
+@END_Kind 
+
+@BEG_Dcl 
+@RT(16)DclTreeContainer 
+5 
+@Var @RT(11)DeviceClass @RT(0) @T @F @DT @RT(3)INT @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+0 1 @F @F @F @F 
+
+@Var @RT(9)Userlevel @RT(0) @T @F @DT @RT(3)INT @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+0 1 @F @F @F @F 
+
+@Var @RT(1)s @RT(0) @T @T @DERIVED 0 @T @T @DT @RT(11)KSYS_Status @RT(0) @T @T @UNKNOWN 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(8)pOptions @RT(0) @T @T @REFTO 0 @F @DERIVED 0 @T @T @DT @RT(9)tOptionId @RT(0) @T @T @UNKNOWN 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(8)b2Platen @RT(0) @T @F @DT @RT(4)BOOL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@END_Dcl 
+
+@END_Export 
+
+@BEG_Body 
+@TL(30)
+(**************************************** WARNING ********************************************
+ *** The KEBA Kemro K2 System including software is not intended for safety control tasks! ***
+ ***                       For further information see Comment tab!                        ***
+ *********************************************************************************************)
+ 
+//selectable modes depend on machine type
+//2 platen machines have some additional modes
+pOptions := GET_SYNC_REFTO('Mold1.sv_Options', T#0s, s);
+IF s = KSYS_Status_OK THEN
+   b2Platen := (pOptions^ AND cSubOptionMold2Platen) = cSubOptionMold2Platen;
+END_IF;
+
+FPlausCoreOutMode[1] := nBefMoldOpen;
+FPlausCoreOutMode[2] := nDuringMoldOpen;
+FPlausCoreOutMode[3] := nAfterMoldOpen;
+
+IF b2Platen THEN   
+   FPlausCoreOutMode[4] := nBeforeHiPressRel;
+   FPlausCoreOutMode[5] := nAfterHiPressRel;
+   FPlausCoreOutMode[6] := nBeforeMoldNutsOpen;
+ELSE
+   FPlausCoreOutMode[4] := nAfterMoldOpen;
+   FPlausCoreOutMode[5] := nAfterMoldOpen;
+   FPlausCoreOutMode[6] := nAfterMoldOpen;
+END_IF;
+
+
+
+
+
+@END_Body 
+
+@END_Contents 

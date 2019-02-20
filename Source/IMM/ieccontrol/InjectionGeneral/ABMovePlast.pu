@@ -1,0 +1,2782 @@
+(*
+@h    ! WARNING !
+@h    The Kemro K2 system (including software) only meets category B according to EN 954-1,
+@h    thus it is not intended for usage in safety-relevant control applications in the field 
+@h    of personal safety (e.g. emergency stop).
+@h    To implement potentially necessary safety-relevant control tasks, always use additional 
+@h    external safety devices that are intended for the particular purpose, and meet the necessary 
+@h    functional safety.
+@h    For further information see EN 954-1 (EN ISO 13849-1) and/or the K2-x00 user manual, chapter 
+@h    "CE conformity, directives and standards".
+
+
+In this AB the plast movements are realized.
+This means plasticizing in all operation modes, Intrusion and
+also the plast movement for auto purging
+
+@FunctionID: S_KPIEC_PRINJ_04 
+
+*)
+
+IMPORT_OVER_LISTFILE
+ GET_MY_FU_NAME
+, WRITE_SVREAL_DIRECT
+, WRITE_SV_DIRECT
+, START_PROCESS_ALGORITHM
+, cLockGroupHeatingNozzle
+, cLockGroupSafetyGateNozzle
+, cLockGroupMotor
+, nActive
+, nDeviceState
+, nInactive
+, cMovePlast
+, cMoveIntrusion
+, cMovePlastPurge
+, nSetup
+, nKAPPL_IMM_ServoValve
+, nKAPPL_PressureControl
+, tnCalibState_Error
+, nHalfAutomatic
+, KCTRL_Ret_OK
+, nPosDependent
+, nNotUse
+, tsCalibMovement
+, tnOperationMode
+, tsMoveData
+, KAPPL_VisProfilePlast
+, tsControlParameters
+, KAPPL_LintabData
+, tsDeviceId
+, tsVelPre
+, tsIntrusionParam
+, tsMinOutput
+, tsPurgeSettings
+, tsOutput
+, tsActPurgeTimes
+, tsSetTimes
+, tsActTimes
+, tsDecompParam
+, KAPPL_IMM_Type
+, KAPPL_ServoValveControllerMode
+, tsTraceLevel
+, tsMoveCtrl
+, ABPlasticize
+, ABConstMovement
+, ABRPMCalib
+, ABLintabApply
+, tevStart
+, ABMovementRegister
+, FBSetMovementState
+, FBDebugTrace2
+, KCTRL_Lintab_Param_Light
+, KCTRL_Lintab_Light
+, TON
+, KSWO_Status
+, tevStartData
+
+END_IMPORT
+
+ALGORITHM_BLOCK ABMovePlast #DUMMY_EDIT_BLOCK
+
+SYSTEM_VAR
+ sv_CalibStateRPM : tsCalibMovement;
+ sv_rPressure : REAL;
+ sv_rVelocity : REAL;
+ sv_rPlastStartPosition : REAL (* position at starting plasticizing *);
+ sv_rPlastEndPosition : REAL (* position at end of plasticizing *);
+ sv_OperationMode : tnOperationMode;
+ sv_MovePlast : tsMoveData;
+ sv_MovePlastPurge : tsMoveData;
+ sv_MoveIntrusion : tsMoveData;
+ sv_PlastProfVis : KAPPL_VisProfilePlast;
+ sv_PlastControlParams : tsControlParameters;
+ sv_BackPressureControlParams : tsControlParameters;
+ sv_rScrewPosition : REAL;
+ sv_rActScrewRpm : REAL;
+ sv_rMaxBackPressure : REAL;
+ sv_rMaxRpm : REAL;
+ sv_ScrewRevVelLintab : KAPPL_LintabData;
+ sv_iActiveStage : DINT;
+ sv_DeviceId : tsDeviceId;
+ sv_ConstPlastSetup : tsVelPre (* const output for plast in setup mode *);
+ sv_IntrusionSettings : tsIntrusionParam;
+ sv_bOutputActive : BOOL (* Output is active *);
+ sv_bPreOutputReady : BOOL (* PreOutput is ready *);
+ sv_rBackPressure : REAL;
+ sv_bTransducerError : BOOL;
+ sv_MinOutputPlast : tsMinOutput;
+ sv_bPlastEndReached : BOOL;
+ sv_PurgeSettings : tsPurgeSettings;
+ sv_ConstChargePressure : tsOutput;
+ sv_bInitStart : BOOL;
+ sv_ActPurgeTimes : tsActPurgeTimes;
+ sv_PlastTimesSet : tsSetTimes;
+ sv_PlastTimesAct : tsActTimes;
+ sv_bDoRPMCalib : BOOL;
+ sv_rVelocityAbs : REAL;
+ sv_rPressureAbs : REAL;
+ sv_bInitDone : BOOL;
+ sv_LintabOutPlastV : KAPPL_LintabData;
+ sv_rMaxRotationPlast : REAL;
+ sv_rScrewDiameter : REAL;
+ sv_LintabOutPlastP : KAPPL_LintabData;
+ sv_rActScrewCircSpeed : REAL;
+ sv_rScrewVolume : REAL;
+ sv_DecompAftPlastSettings : tsDecompParam;
+ sv_rMaxPlastEnd : REAL (* max. for last point of plast profile *);
+ sv_IMM_Type : KAPPL_IMM_Type (* type of mold machine *);
+ sv_ServoValveControllerMode : KAPPL_ServoValveControllerMode;
+ sv_rActPressureHydr : REAL (* actual pressure in hydraulic cyinder(calculated from analog input of pressure sensor) *);
+ sv_TraceLevel : tsTraceLevel;
+ sv_IntrusionTimesAct : tsActTimes;
+ sv_IntrusionTimesSet : tsSetTimes;
+ sv_bServoValveLimitActive : BOOL;
+ sv_dCalculatedDurationPlast : TIME (* Calculated duration for plasticizing *);
+ sv_rMaxCutOffPos : REAL;
+ sv_bPlastActive : BOOL (* plasticize movement is active *);
+ sv_rScrewSetPosition : REAL;
+ sv_rScrewPositionAbs : REAL;
+END_VAR
+
+SYSTEM_OBJECT
+ PU_Task_7 : TASK;
+ erNotPlasticized : ALARM;
+ TaskSlow : TASK;
+ TaskInject : TASK;
+ evStart : tevStart;
+ EV_Task_3 : TASK;
+END_OBJECT
+
+VAR_EXTERNAL
+ g_MoveCtrl : tsMoveCtrl;
+END_VAR
+
+VAR
+ abPlasticize : ABPlasticize;
+ abPlastSetup : ABConstMovement;
+ abRPMCalibSetup : ABRPMCalib;
+ abIntrusion : ABConstMovement;
+ abPlastPurge : ABConstMovement;
+ abLintabApplyVel : ABLintabApply;
+ abLintabApplyPres : ABLintabApply;
+ mevStart : tevStart;
+ mrPlastEndPos : REAL;
+ mbNewStartEvent : BOOL;
+END_VAR
+
+(*
+This algorithm is necessary for registering the available movements
+and the according parameters (Lockgroups, icon path, delay time, ....)
+*)
+
+ALGORITHM aRegister
+
+
+VAR
+ abPlastRegister : ABMovementRegister;
+ abIntrusionRegister : ABMovementRegister;
+ abPlastPurgeRegister : ABMovementRegister;
+END_VAR
+#BEGIN_EDIT_BLOCK
+(**************************************** WARNING ********************************************
+ *** The KEBA Kemro K2 System including software is not intended for safety control tasks! ***
+ ***                       For further information see Comment tab!                        ***
+ *********************************************************************************************)
+
+//register plast movement
+sv_MovePlast.pdStartDelaySet := @sv_PlastTimesSet.dSetDelayTime;
+sv_MovePlast.pdStartDelayAct := @sv_PlastTimesAct.dActDelayTime;
+sv_MovePlast.pdActiveTimeAct := @sv_PlastTimesAct.dActMoveTime;
+sv_MovePlast.pdTimeLimit     := @sv_PlastTimesSet.dMaxMoveTime;
+sv_MovePlast.pbPosReached := @sv_bPlastEndReached;
+sv_MovePlast.LockGroups[1] := cLockGroupHeatingNozzle;
+sv_MovePlast.LockGroups[2] := cLockGroupSafetyGateNozzle;
+sv_MovePlast.LockGroups[3] := cLockGroupMotor;
+sv_MovePlast.Alarm.AlarmId := erNotPlasticized;
+sv_MovePlast.Alarm.SubId[1] := sv_DeviceId.CompId;
+sv_MovePlast.Alarm.SubId[2] := sv_DeviceId.IndexId;
+sv_MovePlast.sIconPath := CONCAT(GET_MY_FU_NAME(), "\hmi\images\movScrewRotate.gif");
+sv_MovePlast.EditorData.sODCIcon := "\hmi\images\editPlast.gif";
+abPlastRegister.aRegister(@sv_MovePlast);
+
+//register intrusion movement
+sv_MoveIntrusion.LockGroups[1] := cLockGroupHeatingNozzle;
+sv_MoveIntrusion.LockGroups[2] := cLockGroupSafetyGateNozzle;
+sv_MoveIntrusion.LockGroups[3] := cLockGroupMotor;
+sv_MoveIntrusion.sIconPath := CONCAT(GET_MY_FU_NAME(), "\hmi\images\movIntrusion.gif");
+sv_MoveIntrusion.EditorData.sODCIcon := "\hmi\images\editIntrusion.gif";
+sv_MoveIntrusion.pdStartDelaySet := @sv_IntrusionTimesSet.dSetDelayTime;
+sv_MoveIntrusion.pdStartDelayAct := @sv_IntrusionTimesAct.dActDelayTime;
+sv_MoveIntrusion.pdActiveTimeAct := @sv_IntrusionTimesAct.dActMoveTime;
+sv_MoveIntrusion.pdTimeLimit     := @sv_IntrusionTimesSet.dMaxMoveTime;
+sv_IntrusionTimesSet.dMaxMoveTime := sv_PlastTimesSet.dMaxMoveTime;
+abIntrusionRegister.aRegister(@sv_MoveIntrusion);
+
+//register plast part of purge movement
+sv_MovePlastPurge.LockGroups[1] := cLockGroupHeatingNozzle;
+sv_MovePlastPurge.LockGroups[2] := cLockGroupSafetyGateNozzle;
+sv_MovePlastPurge.LockGroups[3] := cLockGroupMotor;
+sv_MovePlastPurge.sIconPath := sv_MovePlast.sIconPath;
+abPlastPurgeRegister.aRegister(@sv_MovePlastPurge);
+
+
+;#END_EDIT_BLOCK END_ALGORITHM
+
+(*
+This algorithm is responsible for executing the movement.
+Depending on MoveId and OperationMode the according movement is executed.
+The different actions contain the movement blocks and the according parameters.
+*)
+
+ALGORITHM aRun
+
+
+VAR_INPUT
+ bStop : BOOL (* flag if the movement should be stopped *);
+END_VAR
+
+VAR_OUTPUT
+ bReady : BOOL (* information if movement is ready *);
+END_VAR
+
+VAR_TEMP
+ b : BOOL;
+END_VAR
+
+VAR
+ fbSetMovementState : FBSetMovementState;
+ dummy : DINT;
+ bError : BOOL;
+ iErrorInfo : DINT;
+ fbDebugTrace2 : FBDebugTrace2;
+END_VAR
+
+(* IecGraph-Code *)
+
+(* init step *)
+INITIAL_STEP START:
+AStart (P);
+END_STEP
+
+ACTION AStart: #BEGIN_EDIT_BLOCK
+bReady := FALSE;
+fbSetMovementState(MoveId   := g_MoveCtrl.pData^.MoveId,
+                   MoveDir  := g_MoveCtrl.pData^.MoveDir,
+                   State    := nActive);
+sv_bPlastActive := TRUE;
+fbDebugTrace2(nDeviceState, 'Plast started');
+
+;#END_EDIT_BLOCK END_ACTION (*AStart*)
+
+(* steps *)
+STEP S_CheckMoveId:
+END_STEP
+
+STEP S_Intrusion:
+AResetMoveBlock (P);
+AIntrusion (N);
+AResetBackPressure (P0);
+ASetPosIntrusion (P0);
+END_STEP
+
+ACTION ASetPosIntrusion: #BEGIN_EDIT_BLOCK
+b := WRITE_SVREAL_DIRECT(sv_rScrewSetPosition, sv_rScrewPositionAbs);
+
+;#END_EDIT_BLOCK END_ACTION (*ASetPosIntrusion*)
+STEP S_Purge:
+AResetPlastPurge (P);
+APlastPurge (N);
+ASetPosPurge (P0);
+END_STEP
+
+ACTION ASetPosPurge: #BEGIN_EDIT_BLOCK
+b := WRITE_SVREAL_DIRECT(sv_rScrewSetPosition, sv_rScrewPositionAbs);
+
+;#END_EDIT_BLOCK END_ACTION (*ASetPosPurge*)
+STEP S_CheckOpMode:
+END_STEP
+
+STEP S_Plast:
+AResetPlastBlock (P);
+aPlast (N);
+ASetServoMode (P);
+ASetPosPlast (P0);
+END_STEP
+
+ACTION ASetPosPlast: #BEGIN_EDIT_BLOCK
+b := WRITE_SVREAL_DIRECT(sv_rScrewSetPosition, sv_rScrewPositionAbs);
+
+;#END_EDIT_BLOCK END_ACTION (*ASetPosPlast*)
+STEP S_CorrectDuration:
+ACorrectDuration (P);
+AStartPlastEndPosSampling (P);
+END_STEP
+
+ACTION AStartPlastEndPosSampling: #BEGIN_EDIT_BLOCK
+//activate event algorithm and 
+//start sampling of plast endposition
+mevStart := evStart;
+START_PROCESS_ALGORITHM(paSamplePlastEndPos);
+
+;#END_EDIT_BLOCK END_ACTION (*AStartPlastEndPosSampling*)
+STEP S_Setup_Mode:
+END_STEP
+
+STEP S_PlastSetup:
+AResetConstBlock (P);
+aConstSetup (N);
+END_STEP
+
+STEP S_Plat_RPM_Calib:
+AResetRPMCalib (P);
+aRPMCalibSetup (N);
+ACheckCalibError (P0);
+END_STEP
+
+STEP S_Ready:
+AReady (P);
+END_STEP
+
+ACTION AReady: #BEGIN_EDIT_BLOCK
+bReady := TRUE;
+fbSetMovementState(MoveId   := g_MoveCtrl.pData^.MoveId,
+                   MoveDir  := g_MoveCtrl.pData^.MoveDir,
+                   State    := nInactive);
+sv_bPlastActive := FALSE;
+fbDebugTrace2(nDeviceState, 'Plast ready');
+
+;#END_EDIT_BLOCK END_ACTION (*AReady*)
+
+(* transitions *)
+GO_ON_TRANSITION TStart (* TStart *) FROM START TO S_CheckMoveId :=  #BEGIN_EDIT_BLOCK
+TRUE
+;#END_EDIT_BLOCK
+END_TRANSITION
+
+GO_ON_TRANSITION TPlast (* TPlast *) FROM S_CheckMoveId TO S_CheckOpMode :=  #BEGIN_EDIT_BLOCK
+g_MoveCtrl.pData^.MoveId = cMovePlast
+;#END_EDIT_BLOCK
+END_TRANSITION
+
+GO_ON_TRANSITION TIntrusion (* TIntrusion *) FROM S_CheckMoveId TO S_Intrusion :=  #BEGIN_EDIT_BLOCK
+g_MoveCtrl.pData^.MoveId = cMoveIntrusion
+;#END_EDIT_BLOCK
+END_TRANSITION
+
+GO_ON_TRANSITION TIntrusionReady (* TIntrusionReady *) FROM S_Intrusion TO S_Ready :=  #BEGIN_EDIT_BLOCK
+NOT abIntrusion.aRun.bActive
+;#END_EDIT_BLOCK
+END_TRANSITION
+
+GO_ON_TRANSITION TPurge (* TPurge *) FROM S_CheckMoveId TO S_Purge :=  #BEGIN_EDIT_BLOCK
+g_MoveCtrl.pData^.MoveId = cMovePlastPurge
+;#END_EDIT_BLOCK
+END_TRANSITION
+
+TRANSITION TPlastPurgeReady (* TPlastPurgeReady *) FROM S_Purge TO S_Ready :=  #BEGIN_EDIT_BLOCK
+NOT abPlastPurge.aRun.bActive
+;#END_EDIT_BLOCK
+END_TRANSITION
+
+GO_ON_TRANSITION TNotSetupMode (* TNotSetupMode *) FROM S_CheckOpMode TO S_Plast :=  #BEGIN_EDIT_BLOCK
+(sv_OperationMode > nSetup)
+;#END_EDIT_BLOCK
+END_TRANSITION
+
+GO_ON_TRANSITION TPlastReady (* TPlastReady *) FROM S_Plast TO S_CorrectDuration :=  #BEGIN_EDIT_BLOCK
+NOT abPlasticize.aRun.bActive
+;#END_EDIT_BLOCK
+END_TRANSITION
+
+GO_ON_TRANSITION Trans21 (* Trans21 *) FROM S_CorrectDuration TO S_Ready :=  #BEGIN_EDIT_BLOCK
+TRUE
+;#END_EDIT_BLOCK
+END_TRANSITION
+
+GO_ON_TRANSITION TSetupMode (* TSetupMode *) FROM S_CheckOpMode TO S_Setup_Mode :=  #BEGIN_EDIT_BLOCK
+(sv_OperationMode = nSetup)
+;#END_EDIT_BLOCK
+END_TRANSITION
+
+GO_ON_TRANSITION TNoCalib (* TNoCalib *) FROM S_Setup_Mode TO S_PlastSetup :=  #BEGIN_EDIT_BLOCK
+NOT sv_bDoRPMCalib
+;#END_EDIT_BLOCK
+END_TRANSITION
+
+GO_ON_TRANSITION TPlastSetupReady (* TPlastSetupReady *) FROM S_PlastSetup TO S_Ready :=  #BEGIN_EDIT_BLOCK
+NOT abPlastSetup.aRun.bActive
+;#END_EDIT_BLOCK
+END_TRANSITION
+
+GO_ON_TRANSITION TRPMCalib (* TRPMCalib *) FROM S_Setup_Mode TO S_Plat_RPM_Calib :=  #BEGIN_EDIT_BLOCK
+sv_bDoRPMCalib
+;#END_EDIT_BLOCK
+END_TRANSITION
+
+GO_ON_TRANSITION Trans22 (* Trans22 *) FROM S_Plat_RPM_Calib TO S_Ready :=  #BEGIN_EDIT_BLOCK
+NOT abRPMCalibSetup.aRun.bActive
+;#END_EDIT_BLOCK
+END_TRANSITION
+
+TRANSITION TReady (* TReady *) FROM S_Ready TO START :=  #BEGIN_EDIT_BLOCK
+TRUE
+;#END_EDIT_BLOCK
+END_TRANSITION
+
+(* end IecGraph-Code *)
+(* sfc-code *)
+
+(* stand alone actions *)
+ACTION AResetMoveBlock: #BEGIN_EDIT_BLOCK
+(**************************************** WARNING ********************************************
+ *** The KEBA Kemro K2 System including software is not intended for safety control tasks! ***
+ ***                       For further information see Comment tab!                        ***
+ *********************************************************************************************)
+
+abIntrusion.aRun(bStart := FALSE);
+
+//set move time
+abIntrusion.aSetMoveTime(dSetMoveTime := sv_IntrusionSettings.dIntrusionTime);
+
+;#END_EDIT_BLOCK END_ACTION (*AResetMoveBlock*)
+ACTION AResetPlastBlock: #BEGIN_EDIT_BLOCK
+(**************************************** WARNING ********************************************
+ *** The KEBA Kemro K2 System including software is not intended for safety control tasks! ***
+ ***                       For further information see Comment tab!                        ***
+ *********************************************************************************************)
+
+abPlasticize.aRun(ScrewRevVelLintab := sv_LintabOutPlastV,
+                  bStart := FALSE);
+
+;#END_EDIT_BLOCK END_ACTION (*AResetPlastBlock*)
+ACTION AResetConstBlock: #BEGIN_EDIT_BLOCK
+(**************************************** WARNING ********************************************
+ *** The KEBA Kemro K2 System including software is not intended for safety control tasks! ***
+ ***                       For further information see Comment tab!                        ***
+ *********************************************************************************************)
+
+abPlastSetup.aRun(bStart := FALSE);
+
+;#END_EDIT_BLOCK END_ACTION (*AResetConstBlock*)
+ACTION AResetPlastPurge: #BEGIN_EDIT_BLOCK
+(**************************************** WARNING ********************************************
+ *** The KEBA Kemro K2 System including software is not intended for safety control tasks! ***
+ ***                       For further information see Comment tab!                        ***
+ *********************************************************************************************)
+ 
+abPlastPurge.aRun(bStart := FALSE);
+
+//set move time
+abPlastPurge.aSetMoveTime(dSetMoveTime := sv_PurgeSettings.PlastParams.dSetPlastTime);
+
+;#END_EDIT_BLOCK END_ACTION (*AResetPlastPurge*)
+ACTION AResetRPMCalib: #BEGIN_EDIT_BLOCK
+(**************************************** WARNING ********************************************
+ *** The KEBA Kemro K2 System including software is not intended for safety control tasks! ***
+ ***                       For further information see Comment tab!                        ***
+ *********************************************************************************************)
+
+bError := FALSE;
+abRPMCalibSetup.aRun(bStart := FALSE);
+
+;#END_EDIT_BLOCK END_ACTION (*AResetRPMCalib*)
+ACTION ASetServoMode: #BEGIN_EDIT_BLOCK
+IF sv_IMM_Type = nKAPPL_IMM_ServoValve THEN
+   sv_ServoValveControllerMode := nKAPPL_PressureControl;
+END_IF;
+
+;#END_EDIT_BLOCK END_ACTION (*ASetServoMode*)
+ACTION ACheckCalibError: #BEGIN_EDIT_BLOCK
+(**************************************** WARNING ********************************************
+ *** The KEBA Kemro K2 System including software is not intended for safety control tasks! ***
+ ***                       For further information see Comment tab!                        ***
+ *********************************************************************************************)
+
+IF bError THEN
+   sv_CalibStateRPM.Status := tnCalibState_Error;
+   dummy := Print("Calib Error: %i", iErrorInfo);
+END_IF;
+
+;#END_EDIT_BLOCK END_ACTION (*ACheckCalibError*)
+ACTION ACorrectDuration: #BEGIN_EDIT_BLOCK
+(**************************************** WARNING ********************************************
+ *** The KEBA Kemro K2 System including software is not intended for safety control tasks! ***
+ ***                       For further information see Comment tab!                        ***
+ *********************************************************************************************)
+
+IF sv_OperationMode >= nHalfAutomatic THEN
+   //duration update only in HA and FA
+   sv_dCalculatedDurationPlast := sv_PlastTimesAct.dActMoveTime;
+END_IF;
+
+
+
+;#END_EDIT_BLOCK END_ACTION (*ACorrectDuration*)
+ACTION AResetBackPressure: #BEGIN_EDIT_BLOCK
+(**************************************** WARNING ********************************************
+ *** The KEBA Kemro K2 System including software is not intended for safety control tasks! ***
+ ***                       For further information see Comment tab!                        ***
+ *********************************************************************************************)
+
+sv_rBackPressure := 0.0;
+
+;#END_EDIT_BLOCK END_ACTION (*AResetBackPressure*)
+ACTION aRPMCalibSetup: #BEGIN_EDIT_BLOCK
+(**************************************** WARNING ********************************************
+ *** The KEBA Kemro K2 System including software is not intended for safety control tasks! ***
+ ***                       For further information see Comment tab!                        ***
+ *********************************************************************************************)
+
+//output pressure in bar, velocity in % of pump
+abRPMCalibSetup.aRun(bStart := TRUE,
+                     bStop := bStop OR bError,
+                     rActScrewRpm := sv_rActScrewRpm,
+                     dDelayTime := sv_PlastTimesSet.dSetDelayTimePump,
+                     rMaxAllowedAbsoluteValue := sv_rMaxRpm,
+                     bActive => sv_bOutputActive,
+                     rOutputPre => sv_rPressure,
+                     rOutputVel => sv_rVelocity,
+                     bPreOutputReached => sv_bPreOutputReady,
+                     iErrorInfo => iErrorInfo);
+
+bError := abRPMCalibSetup.aRun.bError OR bError;
+
+;#END_EDIT_BLOCK END_ACTION (*aRPMCalibSetup*)
+ACTION APlastPurge: #BEGIN_EDIT_BLOCK
+(**************************************** WARNING ********************************************
+ *** The KEBA Kemro K2 System including software is not intended for safety control tasks! ***
+ ***                       For further information see Comment tab!                        ***
+ *********************************************************************************************)
+
+abPlastPurge.aRun(bStart := TRUE,
+                  bStop := bStop,
+                  dDelayTimeOn := sv_PlastTimesSet.dSetDelayTimePump,
+                  dDelayTimeOff := sv_PlastTimesSet.dSetDelayTimeValve,
+                  bActive => sv_bOutputActive,
+                  bPreOutputReached => sv_bPreOutputReady);
+
+b := WRITE_SVREAL_DIRECT(sv_rPressureAbs, abPlastPurge.aRun.rOutputPre);
+b := WRITE_SVREAL_DIRECT(sv_rVelocityAbs, abPlastPurge.aRun.rOutputVel);
+b := WRITE_SV_DIRECT(sv_ActPurgeTimes.dActPlastTime, abPlastPurge.aRun.dActTime);
+
+
+abLintabApplyPres.aCalc(rX := sv_rPressureAbs);
+b := WRITE_SVREAL_DIRECT(sv_rPressure, abLintabApplyPres.aCalc.rY);
+
+abLintabApplyVel.aCalc(rX := sv_rVelocityAbs);
+b := WRITE_SVREAL_DIRECT(sv_rVelocity, abLintabApplyVel.aCalc.rY);
+
+;#END_EDIT_BLOCK END_ACTION (*APlastPurge*)
+ACTION AIntrusion: #BEGIN_EDIT_BLOCK
+(**************************************** WARNING ********************************************
+ *** The KEBA Kemro K2 System including software is not intended for safety control tasks! ***
+ ***                       For further information see Comment tab!                        ***
+ *********************************************************************************************)
+
+abIntrusion.aRun(bStart := TRUE,
+                 bStop := bStop,
+                 bUsePosDetect := FALSE,
+                 dMaxTime := sv_IntrusionTimesSet.dMaxMoveTime,
+                 dDelayTimeOn := sv_PlastTimesSet.dSetDelayTimePump,
+                 dDelayTimeOff := sv_PlastTimesSet.dSetDelayTimeValve,
+                 bActive => sv_bOutputActive,
+                 bPreOutputReached => sv_bPreOutputReady);
+
+b := WRITE_SVREAL_DIRECT(sv_rPressureAbs, abIntrusion.aRun.rOutputPre);
+b := WRITE_SVREAL_DIRECT(sv_rVelocityAbs, abIntrusion.aRun.rOutputVel);
+b := WRITE_SV_DIRECT(sv_IntrusionTimesAct.dActMoveTime, abIntrusion.aRun.dActTime);
+b := WRITE_SVREAL_DIRECT(sv_rBackPressure, sv_IntrusionSettings.rBackPressure); 
+
+
+abLintabApplyPres.aCalc(rX := sv_rPressureAbs);
+b := WRITE_SVREAL_DIRECT(sv_rPressure, abLintabApplyPres.aCalc.rY);
+
+abLintabApplyVel.aCalc(rX := sv_rVelocityAbs);
+b := WRITE_SVREAL_DIRECT(sv_rVelocity, abLintabApplyVel.aCalc.rY);
+
+;#END_EDIT_BLOCK END_ACTION (*AIntrusion*)
+ACTION aConstSetup: #BEGIN_EDIT_BLOCK
+(**************************************** WARNING ********************************************
+ *** The KEBA Kemro K2 System including software is not intended for safety control tasks! ***
+ ***                       For further information see Comment tab!                        ***
+ *********************************************************************************************)
+
+abPlastSetup.aRun(bStart := TRUE,
+                  bStop := bStop,
+                  bUsePosDetect := FALSE,
+                  dDelayTimeOn := sv_PlastTimesSet.dSetDelayTimePump,
+                  dDelayTimeOff := sv_PlastTimesSet.dSetDelayTimeValve,
+                  rOutputPre => sv_rPressureAbs,
+                  rOutputVel => sv_rVelocityAbs,
+                  bActive => sv_bOutputActive,
+                  bPreOutputReached => sv_bPreOutputReady);
+
+
+abLintabApplyPres.aCalc(rX := sv_rPressureAbs,
+                        rY => sv_rPressure);
+
+
+abLintabApplyVel.aCalc(rX := sv_rVelocityAbs,
+                       rY => sv_rVelocity);
+
+;#END_EDIT_BLOCK END_ACTION (*aConstSetup*)
+ACTION aPlast: #BEGIN_EDIT_BLOCK
+(**************************************** WARNING ********************************************
+ *** The KEBA Kemro K2 System including software is not intended for safety control tasks! ***
+ ***                       For further information see Comment tab!                        ***
+ *********************************************************************************************)
+
+abPlasticize.aRun(bStop := bStop OR sv_bTransducerError,
+                  bStart := TRUE,
+                  rActScrewPosition := sv_rScrewPosition,
+                  PlastControlParams := sv_PlastControlParams,
+                  BackPressureControlParams := sv_BackPressureControlParams,
+                  ScrewRevVelLintab := sv_LintabOutPlastV,
+                  dMaxMoveTime := sv_PlastTimesSet.dMaxMoveTime,
+                  rActBackPressure := sv_rActPressureHydr,
+                  rMaxBackPressure := sv_rMaxBackPressure,
+                  rActRpm := sv_rActScrewCircSpeed,
+                  rMaxRpm := sv_rMaxRotationPlast,
+                  IMM_Type := sv_IMM_Type,
+                  dDelayTimeOn := sv_PlastTimesSet.dSetDelayTimePump,
+                  dDelayTimeOff := sv_PlastTimesSet.dSetDelayTimeValve,
+                  bBackPressPIDIntStop := sv_bServoValveLimitActive,
+                  bActive => sv_bOutputActive,
+                  iActiveStage => sv_iActiveStage,
+                  bPreOutputReached => sv_bPreOutputReady);
+
+b := WRITE_SVREAL_DIRECT(sv_rPressure, abPlasticize.aRun.rPressureOutput);
+b := WRITE_SVREAL_DIRECT(sv_rBackPressure, abPlasticize.aRun.rBackPressureOutput);
+b := WRITE_SVREAL_DIRECT(sv_rVelocity, abPlasticize.aRun.rVelocityOutput);
+b := WRITE_SV_DIRECT(sv_PlastTimesAct.dActMoveTime, abPlasticize.aRun.dActMoveTime);
+
+// Do not use WRITE_SVREAL_DIRECT() here: these SV's are changed once per cycle and could be the signalled
+sv_rPlastStartPosition := abPlasticize.aRun.rPlastStartPosition;
+
+
+
+;#END_EDIT_BLOCK END_ACTION (*aPlast*)
+(* end sfc-code *)
+
+
+END_ALGORITHM
+
+ALGORITHM aInit
+
+#BEGIN_EDIT_BLOCK
+(**************************************** WARNING ********************************************
+ *** The KEBA Kemro K2 System including software is not intended for safety control tasks! ***
+ ***                       For further information see Comment tab!                        ***
+ *********************************************************************************************)
+
+abPlasticize.aInit(pPlastProfile := @sv_PlastProfVis,
+                   MoveId := cMovePlast);
+
+abPlastSetup.aInit(pConst := @sv_ConstPlastSetup,
+                   MoveId := cMovePlast);
+
+abIntrusion.aInit(pConst := @sv_IntrusionSettings.ConstOutput,
+                  MoveId := cMoveIntrusion);
+
+abPlastPurge.aInit(pConst := @sv_PurgeSettings.PlastParams.ConstOutput,
+                   MoveId := cMovePlastPurge);
+
+abRPMCalibSetup.aInit(pbDebugCalibration := @sv_TraceLevel.bDebugCalibration);
+
+abLintabApplyPres.aInit(pLintab := @sv_LintabOutPlastP);
+
+abLintabApplyVel.aInit(pLintab := @sv_LintabOutPlastV);
+
+
+;#END_EDIT_BLOCK END_ALGORITHM
+
+POSTUPDATE_ALGORITHM pMinOutputChanged ON PU_Task_7 WITH sv_MinOutputPlast,sv_bInitStart
+
+
+VAR
+ rScale : REAL;
+ revLintabParam : KCTRL_Lintab_Param_Light;
+ ab_LintabRevToOutput : KCTRL_Lintab_Light (* Lintab [rpm] -> [%] *);
+ rMinVel : REAL;
+END_VAR
+
+VAR CONSTANT
+ cPI : REAL := 3.14159265;
+END_VAR
+#BEGIN_EDIT_BLOCK
+(**************************************** WARNING ********************************************
+ *** The KEBA Kemro K2 System including software is not intended for safety control tasks! ***
+ ***                       For further information see Comment tab!                        ***
+ *********************************************************************************************)
+
+// parametrize revolution -> liter lintab
+revLintabParam.Mode.bLinearExtrapolation := FALSE;
+revLintabParam.Mode.bSetNegativeValuesToZero := TRUE;
+revLintabParam.LintabPoints := sv_ScrewRevVelLintab.LintabPoints;
+ab_LintabRevToOutput.Par(Param := revLintabParam);
+IF (ab_LintabRevToOutput.Par.parStatus <> KCTRL_Ret_OK) THEN
+    rMinVel := 0.0;
+ELSE
+   ab_LintabRevToOutput.Init();
+   // calculate scalefactor circumferential speed [cm/s] to rpm [1/min]
+   rScale := 10.0 * 60.0 / (cPI * sv_rScrewDiameter);
+   // calculate min output value for profile [rpm] -> [%]
+   ab_LintabRevToOutput.Calculate(rX := sv_MinOutputPlast.rVelocity * rScale);
+   IF ab_LintabRevToOutput.Calculate.calcStatus <> KCTRL_Ret_OK THEN
+      rMinVel := 0.0;
+   ELSE 
+      rMinVel := ab_LintabRevToOutput.Calculate.rY;
+   END_IF;
+END_IF;
+   
+//copy minoutput to plast profile
+sv_PlastProfVis.rMinOutputVel := rMinVel;
+sv_PlastProfVis.rMinOutputPress := sv_MinOutputPlast.rPressure;
+
+//copy minoutput to const plast movement in setup mode
+sv_ConstPlastSetup.Velocity.rMinOutput := sv_MinOutputPlast.rVelocity;
+sv_ConstPlastSetup.Pressure.rMinOutput := sv_MinOutputPlast.rPressure;
+
+//copy minoutput to intrusion params
+sv_IntrusionSettings.ConstOutput.Velocity.rMinOutput := sv_MinOutputPlast.rVelocity;
+sv_IntrusionSettings.ConstOutput.Pressure.rMinOutput := sv_MinOutputPlast.rPressure;
+
+
+;#END_EDIT_BLOCK END_ALGORITHM
+
+(*
+This postupdate algorithm reacts on changes of the setting for
+constant pressure during charging. If the setting changes the new values
+are copied to the plst profile.
+*)
+
+POSTUPDATE_ALGORITHM pChargePressureChanged ON PU_Task_7 WITH sv_ConstChargePressure,sv_bInitStart,sv_PlastProfVis.Profile.iNoOfPoints
+
+
+VAR_TEMP
+ i : UDINT;
+END_VAR
+#BEGIN_EDIT_BLOCK
+(**************************************** WARNING ********************************************
+ *** The KEBA Kemro K2 System including software is not intended for safety control tasks! ***
+ ***                       For further information see Comment tab!                        ***
+ *********************************************************************************************)
+ 
+//copy const value of charge pressure to every point of charge profile
+FOR i:= 1 TO sv_PlastProfVis.Profile.iNoOfPoints  DO
+    sv_PlastProfVis.Profile.Points[i].rPressure := sv_ConstChargePressure.Output.rOutputValue;
+    sv_PlastProfVis.Profile.Points[i].rPressRamp := sv_ConstChargePressure.Output.rRamp;
+END_FOR;
+
+sv_PlastProfVis.rPreOutputPress := sv_ConstChargePressure.PreOutput.rOutputValue;
+sv_PlastProfVis.rPreOutputPressRamp := sv_ConstChargePressure.PreOutput.rRamp;
+
+
+;#END_EDIT_BLOCK END_ALGORITHM
+
+POSTUPDATE_ALGORITHM pMaxPlastEnd ON PU_Task_7 WITH sv_bInitDone,sv_rScrewVolume,sv_DecompAftPlastSettings,sv_PlastProfVis
+
+#BEGIN_EDIT_BLOCK
+(**************************************** WARNING ********************************************
+ *** The KEBA Kemro K2 System including software is not intended for safety control tasks! ***
+ ***                       For further information see Comment tab!                        ***
+ *********************************************************************************************)
+
+IF sv_DecompAftPlastSettings.Mode = nPosDependent THEN
+   sv_rMaxPlastEnd := sv_rScrewVolume - sv_DecompAftPlastSettings.rDecompPos;
+ELSE
+   sv_rMaxPlastEnd := sv_rScrewVolume;
+END_IF;
+
+
+sv_rMaxCutOffPos := sv_DecompAftPlastSettings.rDecompPos + sv_PlastProfVis.Profile.Points[(sv_PlastProfVis.Profile.iNoOfPoints+1)].rStartPos;
+
+
+
+;#END_EDIT_BLOCK END_ALGORITHM
+
+PROCESS_ALGORITHM paSamplePlastEndPos ON TaskInject(5001)
+
+
+VAR
+ fbSampleDelayTimer : TON;
+ dSampleDelayTime : TIME := t#10ms;
+ b : BOOL;
+ bStop : BOOL;
+END_VAR
+#BEGIN_EDIT_BLOCK
+(**************************************** WARNING ********************************************
+ *** The KEBA Kemro K2 System including software is not intended for safety control tasks! ***
+ ***                       For further information see Comment tab!                        ***
+ *********************************************************************************************)
+
+//sample after a defined time or if any movement in this function unit starts
+fbSampleDelayTimer(IN := TRUE, PT := dSampleDelayTime);
+
+IF mbNewStartEvent THEN
+   //start event for any inject movement was sent -> copy stored position
+   b := WRITE_SVREAL_DIRECT(sv_rPlastEndPosition, mrPlastEndPos);
+   bStop := TRUE;
+ELSIF fbSampleDelayTimer.Q THEN
+   //sample delay time elapsed -> sample actual position
+   b := WRITE_SVREAL_DIRECT(sv_rPlastEndPosition, sv_rScrewPosition);
+   bStop := TRUE;
+END_IF;
+
+IF bStop THEN   
+   fbSampleDelayTimer(IN := FALSE);
+   mbNewStartEvent := FALSE;
+   mevStart := EMPTY;
+   bStop := FALSE;
+   STOP_PROCESS_ALGORITHM();
+END_IF;
+
+
+;#END_EDIT_BLOCK END_ALGORITHM
+
+POSTUPDATE_ALGORITHM pPlastProfile ON PU_Task_7 WITH sv_bInitStart,sv_PlastProfVis.Profile.iNoOfPoints
+
+#BEGIN_EDIT_BLOCK
+(**************************************** WARNING ********************************************
+ *** The KEBA Kemro K2 System including software is not intended for safety control tasks! ***
+ ***                       For further information see Comment tab!                        ***
+ *********************************************************************************************)
+
+sv_MovePlast.prTargetValue := @sv_PlastProfVis.Profile.Points[(sv_PlastProfVis.Profile.iNoOfPoints+1)].rStartPos;
+
+
+;#END_EDIT_BLOCK END_ALGORITHM
+
+POSTUPDATE_ALGORITHM pCpyAccelerations ON PU_Task_7 WITH sv_PlastProfVis.Profile.Points[2].rRotationRamp
+
+
+VAR_TEMP
+ i : UDINT;
+END_VAR
+#BEGIN_EDIT_BLOCK
+FOR i:= 3 TO 20 DO
+    sv_PlastProfVis.Profile.Points[i].rRotationRamp := sv_PlastProfVis.Profile.Points[2].rRotationRamp;
+END_FOR;
+
+
+
+;#END_EDIT_BLOCK END_ALGORITHM
+
+PROCESS_ALGORITHM paInit ON TaskSlow AUTOSTART
+
+
+VAR
+ variableName : STRING(255);
+ swoState : KSWO_Status;
+END_VAR
+#BEGIN_EDIT_BLOCK
+(**************************************** WARNING ********************************************
+ *** The KEBA Kemro K2 System including software is not intended for safety control tasks! ***
+ ***                       For further information see Comment tab!                        ***
+ *********************************************************************************************)
+
+variableName := CONCAT(GET_MY_FU_NAME(),'.Plasticize.ActPlastTime ');
+swoState := KSWO_AddVariable(Task := TaskInject,
+                             Name := variableName,
+                             Variable := sv_PlastTimesAct.dActMoveTime);
+
+STOP_PROCESS_ALGORITHM();
+
+
+;#END_EDIT_BLOCK END_ALGORITHM
+
+(*
+The task slot is assigned to make sure that this eventa lgo is executed before ABControl - evaStart 
+*)
+
+EVENT_ALGORITHM evaStart ON EV_Task_3(50) WITH mevStart
+
+
+VAR_INPUT
+ evStartData : tevStartData;
+END_VAR
+#BEGIN_EDIT_BLOCK
+(**************************************** WARNING ********************************************
+ *** The KEBA Kemro K2 System including software is not intended for safety control tasks! ***
+ ***                       For further information see Comment tab!                        ***
+ *********************************************************************************************)
+
+//sample position before next movement starts
+IF evStartData.DeviceId = sv_DeviceId THEN
+   mrPlastEndPos := sv_rScrewPosition;
+   mbNewStartEvent := TRUE;
+END_IF;
+
+
+
+;#END_EDIT_BLOCK END_ALGORITHM
+
+
+
+END_ALGORITHM_BLOCK
+
+
+
+#END_OF_IEC_PART
+
+@Puma @IecEditor 6 126 @Pou 25 
+@@@BEG_Comment@@@
+@h    ! WARNING !
+@h    The Kemro K2 system (including software) only meets category B according to EN 954-1,
+@h    thus it is not intended for usage in safety-relevant control applications in the field 
+@h    of personal safety (e.g. emergency stop).
+@h    To implement potentially necessary safety-relevant control tasks, always use additional 
+@h    external safety devices that are intended for the particular purpose, and meet the necessary 
+@h    functional safety.
+@h    For further information see EN 954-1 (EN ISO 13849-1) and/or the K2-x00 user manual, chapter 
+@h    "CE conformity, directives and standards".
+
+
+In this AB the plast movements are realized.
+This means plasticizing in all operation modes, Intrusion and
+also the plast movement for auto purging
+
+@FunctionID: S_KPIEC_PRINJ_04 
+
+@@@END_Comment@@@
+
+@BEG_Contents 
+
+@BEG_Func 
+@RT(17)FuncTreeContainer 
+5 
+@Var @RT(14)GET_MY_FU_NAME @RT(0) @T @T @DERIVED 0 @F @RT(22)KEBA_STANDARD_FUNCTION @F 
+@T 
+@BEG_Attrib 
+0 @RT(0) @RT(0) 
+@END_Attrib 
+1 1 @F @F @F @F 
+
+@Var @RT(19)WRITE_SVREAL_DIRECT @RT(0) @T @T @DERIVED 0 @F @RT(22)KEBA_STANDARD_FUNCTION @F 
+@T 
+@BEG_Attrib 
+0 @RT(0) @RT(0) 
+@END_Attrib 
+1 1 @F @F @F @F 
+
+@Var @RT(15)WRITE_SV_DIRECT @RT(0) @T @T @DERIVED 0 @F @RT(22)KEBA_STANDARD_FUNCTION @F 
+@T 
+@BEG_Attrib 
+0 @RT(0) @RT(0) 
+@END_Attrib 
+1 1 @F @F @F @F 
+
+@Var @RT(19)WRITE_SVREAL_DIRECT @RT(0) @T @T @DERIVED 0 @F @RT(22)KEBA_STANDARD_FUNCTION @F 
+@T 
+@BEG_Attrib 
+0 @RT(0) @RT(0) 
+@END_Attrib 
+1 1 @F @F @F @F 
+
+@Var @RT(23)START_PROCESS_ALGORITHM @RT(0) @T @T @DERIVED 0 @F @RT(23)KEBA_STANDARD_PROCEDURE @F 
+@T 
+@BEG_Attrib 
+0 @RT(0) @RT(0) 
+@END_Attrib 
+1 1 @F @F @F @F 
+
+@END_Func 
+
+@BEG_Const 
+@RT(18)ConstTreeContainer 
+17 
+@Var @RT(23)cLockGroupHeatingNozzle @RT(0) @T @F @DT @RT(4)DINT @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+0 @RT(2)63 @RT(35)Members: Injection, Plast, Suckback 
+@END_Attrib 
+1 1 @F @F @F @F 
+
+@Var @RT(26)cLockGroupSafetyGateNozzle @RT(0) @T @F @DT @RT(4)DINT @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+0 @RT(2)62 @RT(59)Members: Nozzle Forward, Injection, Plast, Intrusion, Purge 
+@END_Attrib 
+1 1 @F @F @F @F 
+
+@Var @RT(15)cLockGroupMotor @RT(0) @T @F @DT @RT(4)DINT @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+0 @RT(2)69 @RT(56)Members: Mold, Ejector, Cores, Injection, Plast, Purge,  
+@END_Attrib 
+1 1 @F @F @F @F 
+
+@Var @RT(7)nActive @RT(0) @T @T @DERIVED 0 @F @RT(16)tnActiveInactive @F 
+@T 
+@BEG_Attrib 
+0 @RT(1)1 @RT(0) 
+@END_Attrib 
+1 1 @F @F @F @F 
+
+@Var @RT(12)nDeviceState @RT(0) @T @T @DERIVED 0 @F @RT(12)tnTraceLevel @F 
+@T 
+@BEG_Attrib 
+0 @RT(1)3 @RT(0) 
+@END_Attrib 
+1 1 @F @F @F @F 
+
+@Var @RT(9)nInactive @RT(0) @T @T @DERIVED 0 @F @RT(16)tnActiveInactive @F 
+@T 
+@BEG_Attrib 
+0 @RT(1)0 @RT(0) 
+@END_Attrib 
+1 1 @F @F @F @F 
+
+@Var @RT(10)cMovePlast @RT(0) @T @F @DT @RT(4)DINT @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+0 @RT(2)13 @RT(23)plast movement (rotate) 
+@END_Attrib 
+1 1 @F @F @F @F 
+
+@Var @RT(14)cMoveIntrusion @RT(0) @T @F @DT @RT(4)DINT @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+0 @RT(2)28 @RT(9)intrusion 
+@END_Attrib 
+1 1 @F @F @F @F 
+
+@Var @RT(15)cMovePlastPurge @RT(0) @T @F @DT @RT(4)DINT @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+0 @RT(2)34 @RT(26)plast movement for purging 
+@END_Attrib 
+1 1 @F @F @F @F 
+
+@Var @RT(6)nSetup @RT(0) @T @T @DERIVED 0 @F @RT(15)tnOperationMode @F 
+@T 
+@BEG_Attrib 
+0 @RT(1)0 @RT(36)Setup mode only for service engineer 
+@END_Attrib 
+1 1 @F @F @F @F 
+
+@Var @RT(21)nKAPPL_IMM_ServoValve @RT(0) @T @T @DERIVED 0 @F @RT(14)KAPPL_IMM_Type @F 
+@T 
+@BEG_Attrib 
+0 @RT(1)2 @RT(0) 
+@END_Attrib 
+1 1 @F @F @F @F 
+
+@Var @RT(22)nKAPPL_PressureControl @RT(0) @T @T @DERIVED 0 @F @RT(30)KAPPL_ServoValveControllerMode @F 
+@T 
+@BEG_Attrib 
+0 @RT(1)0 @RT(0) 
+@END_Attrib 
+1 1 @F @F @F @F 
+
+@Var @RT(18)tnCalibState_Error @RT(0) @T @T @DERIVED 0 @F @RT(12)tnCalibState @F 
+@T 
+@BEG_Attrib 
+0 @RT(1)3 @RT(32)error occured during calibration 
+@END_Attrib 
+1 1 @F @F @F @F 
+
+@Var @RT(14)nHalfAutomatic @RT(0) @T @T @DERIVED 0 @F @RT(15)tnOperationMode @F 
+@T 
+@BEG_Attrib 
+0 @RT(1)2 @RT(34)confirmation every cycle necessary 
+@END_Attrib 
+1 1 @F @F @F @F 
+
+@Var @RT(12)KCTRL_Ret_OK @RT(0) @T @T @DERIVED 0 @F @RT(9)KCTRL_Ret @F 
+@T 
+@BEG_Attrib 
+0 @RT(1)0 @RT(0) 
+@END_Attrib 
+1 1 @F @F @F @F 
+
+@Var @RT(13)nPosDependent @RT(0) @T @T @DERIVED 0 @F @RT(12)tnDecompMode @F 
+@T 
+@BEG_Attrib 
+0 @RT(1)2 @RT(0) 
+@END_Attrib 
+1 1 @F @F @F @F 
+
+@Var @RT(7)nNotUse @RT(0) @T @T @DERIVED 0 @F @RT(15)tnIntrusionMode @F 
+@T 
+@BEG_Attrib 
+0 @RT(1)0 @RT(0) 
+@END_Attrib 
+1 1 @F @F @F @F 
+
+@END_Const 
+
+@BEG_Export 
+
+@BEG_Kind 
+@ALGORITHM_BLOCK @RT(11)ABMovePlast @STRUCTURED_TEXT 
+@RT(0) @RT(0) @RT(0) 
+@END_Kind 
+
+@BEG_Dcl 
+@RT(16)DclTreeContainer 
+74 
+@Var @RT(16)sv_CalibStateRPM @RT(0) @T @T @DERIVED 0 @T @T @DT @RT(15)tsCalibMovement @RT(0) @T @T @UNKNOWN 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 8 @F @F @F @F 
+
+@Var @RT(12)sv_rPressure @RT(0) @T @F @DT @RT(4)REAL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 8 @F @F @F @F 
+
+@Var @RT(12)sv_rVelocity @RT(0) @T @F @DT @RT(4)REAL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 8 @F @F @F @F 
+
+@Var @RT(22)sv_rPlastStartPosition @RT(0) @T @F @DT @RT(4)REAL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(33)position at starting plasticizing @RT(0) 
+@END_Attrib 
+1 8 @F @F @F @F 
+
+@Var @RT(20)sv_rPlastEndPosition @RT(0) @T @F @DT @RT(4)REAL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(31)position at end of plasticizing @RT(0) 
+@END_Attrib 
+1 8 @F @F @F @F 
+
+@Var @RT(16)sv_OperationMode @RT(0) @T @T @DERIVED 0 @T @T @DT @RT(15)tnOperationMode @RT(0) @T @T @UNKNOWN 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 8 @F @F @F @F 
+
+@Var @RT(12)sv_MovePlast @RT(0) @T @T @DERIVED 0 @T @T @DT @RT(10)tsMoveData @RT(0) @T @T @UNKNOWN 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 8 @F @F @F @F 
+
+@Var @RT(17)sv_MovePlastPurge @RT(0) @T @T @DERIVED 0 @T @T @DT @RT(10)tsMoveData @RT(0) @T @T @UNKNOWN 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 8 @F @F @F @F 
+
+@Var @RT(16)sv_MoveIntrusion @RT(0) @T @T @DERIVED 0 @T @T @DT @RT(10)tsMoveData @RT(0) @T @T @UNKNOWN 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 8 @F @F @F @F 
+
+@Var @RT(15)sv_PlastProfVis @RT(0) @T @T @DERIVED 0 @T @T @DT @RT(21)KAPPL_VisProfilePlast @RT(0) @T @T @UNKNOWN 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 8 @F @F @F @F 
+
+@Var @RT(21)sv_PlastControlParams @RT(0) @T @T @DERIVED 0 @T @T @DT @RT(19)tsControlParameters @RT(0) @T @T @UNKNOWN 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 8 @F @F @F @F 
+
+@Var @RT(28)sv_BackPressureControlParams @RT(0) @T @T @DERIVED 0 @T @T @DT @RT(19)tsControlParameters @RT(0) @T @T @UNKNOWN 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 8 @F @F @F @F 
+
+@Var @RT(17)sv_rScrewPosition @RT(0) @T @F @DT @RT(4)REAL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 8 @F @F @F @F 
+
+@Var @RT(15)sv_rActScrewRpm @RT(0) @T @F @DT @RT(4)REAL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 8 @F @F @F @F 
+
+@Var @RT(19)sv_rMaxBackPressure @RT(0) @T @F @DT @RT(4)REAL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 8 @F @F @F @F 
+
+@Var @RT(10)sv_rMaxRpm @RT(0) @T @F @DT @RT(4)REAL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 8 @F @F @F @F 
+
+@Var @RT(20)sv_ScrewRevVelLintab @RT(0) @T @T @DERIVED 0 @T @T @DT @RT(16)KAPPL_LintabData @RT(0) @T @T @UNKNOWN 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 8 @F @F @F @F 
+
+@Var @RT(15)sv_iActiveStage @RT(0) @T @F @DT @RT(4)DINT @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 8 @F @F @F @F 
+
+@Var @RT(11)sv_DeviceId @RT(0) @T @T @DERIVED 0 @T @T @DT @RT(10)tsDeviceId @RT(0) @T @T @UNKNOWN 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 8 @F @F @F @F 
+
+@Var @RT(18)sv_ConstPlastSetup @RT(0) @T @T @DERIVED 0 @T @T @DT @RT(8)tsVelPre @RT(0) @T @T @UNKNOWN 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(36)const output for plast in setup mode @RT(0) 
+@END_Attrib 
+1 8 @F @F @F @F 
+
+@Var @RT(20)sv_IntrusionSettings @RT(0) @T @T @DERIVED 0 @T @T @DT @RT(16)tsIntrusionParam @RT(0) @T @T @UNKNOWN 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 8 @F @F @F @F 
+
+@Var @RT(16)sv_bOutputActive @RT(0) @T @F @DT @RT(4)BOOL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(16)Output is active @RT(0) 
+@END_Attrib 
+1 8 @F @F @F @F 
+
+@Var @RT(18)sv_bPreOutputReady @RT(0) @T @F @DT @RT(4)BOOL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(18)PreOutput is ready @RT(0) 
+@END_Attrib 
+1 8 @F @F @F @F 
+
+@Var @RT(16)sv_rBackPressure @RT(0) @T @F @DT @RT(4)REAL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 8 @F @F @F @F 
+
+@Var @RT(19)sv_bTransducerError @RT(0) @T @F @DT @RT(4)BOOL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 8 @F @F @F @F 
+
+@Var @RT(17)sv_MinOutputPlast @RT(0) @T @T @DERIVED 0 @T @T @DT @RT(11)tsMinOutput @RT(0) @T @T @UNKNOWN 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 8 @F @F @F @F 
+
+@Var @RT(19)sv_bPlastEndReached @RT(0) @T @F @DT @RT(4)BOOL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 8 @F @F @F @F 
+
+@Var @RT(16)sv_PurgeSettings @RT(0) @T @T @DERIVED 0 @T @T @DT @RT(15)tsPurgeSettings @RT(0) @T @T @UNKNOWN 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 8 @F @F @F @F 
+
+@Var @RT(22)sv_ConstChargePressure @RT(0) @T @T @DERIVED 0 @T @T @DT @RT(8)tsOutput @RT(0) @T @T @UNKNOWN 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 8 @F @F @F @F 
+
+@Var @RT(13)sv_bInitStart @RT(0) @T @F @DT @RT(4)BOOL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 8 @F @F @F @F 
+
+@Var @RT(16)sv_ActPurgeTimes @RT(0) @T @T @DERIVED 0 @T @T @DT @RT(15)tsActPurgeTimes @RT(0) @T @T @UNKNOWN 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 8 @F @F @F @F 
+
+@Var @RT(16)sv_PlastTimesSet @RT(0) @T @T @DERIVED 0 @T @T @DT @RT(10)tsSetTimes @RT(0) @T @T @UNKNOWN 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 8 @F @F @F @F 
+
+@Var @RT(16)sv_PlastTimesAct @RT(0) @T @T @DERIVED 0 @T @T @DT @RT(10)tsActTimes @RT(0) @T @T @UNKNOWN 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 8 @F @F @F @F 
+
+@Var @RT(14)sv_bDoRPMCalib @RT(0) @T @F @DT @RT(4)BOOL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 8 @F @F @F @F 
+
+@Var @RT(15)sv_rVelocityAbs @RT(0) @T @F @DT @RT(4)REAL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 8 @F @F @F @F 
+
+@Var @RT(15)sv_rPressureAbs @RT(0) @T @F @DT @RT(4)REAL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 8 @F @F @F @F 
+
+@Var @RT(12)sv_bInitDone @RT(0) @T @F @DT @RT(4)BOOL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 8 @F @F @F @F 
+
+@Var @RT(18)sv_LintabOutPlastV @RT(0) @T @T @DERIVED 0 @T @T @DT @RT(16)KAPPL_LintabData @RT(0) @T @T @UNKNOWN 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 8 @F @F @F @F 
+
+@Var @RT(20)sv_rMaxRotationPlast @RT(0) @T @F @DT @RT(4)REAL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 8 @F @F @F @F 
+
+@Var @RT(17)sv_rScrewDiameter @RT(0) @T @F @DT @RT(4)REAL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 8 @F @F @F @F 
+
+@Var @RT(18)sv_LintabOutPlastP @RT(0) @T @T @DERIVED 0 @T @T @DT @RT(16)KAPPL_LintabData @RT(0) @T @T @UNKNOWN 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 8 @F @F @F @F 
+
+@Var @RT(21)sv_rActScrewCircSpeed @RT(0) @T @F @DT @RT(4)REAL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 8 @F @F @F @F 
+
+@Var @RT(15)sv_rScrewVolume @RT(0) @T @F @DT @RT(4)REAL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 8 @F @F @F @F 
+
+@Var @RT(25)sv_DecompAftPlastSettings @RT(0) @T @T @DERIVED 0 @T @T @DT @RT(13)tsDecompParam @RT(0) @T @T @UNKNOWN 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 8 @F @F @F @F 
+
+@Var @RT(15)sv_rMaxPlastEnd @RT(0) @T @F @DT @RT(4)REAL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(36)max. for last point of plast profile @RT(0) 
+@END_Attrib 
+1 8 @F @F @F @F 
+
+@Var @RT(11)sv_IMM_Type @RT(0) @T @T @DERIVED 0 @T @T @DT @RT(14)KAPPL_IMM_Type @RT(0) @T @T @UNKNOWN 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(20)type of mold machine @RT(0) 
+@END_Attrib 
+1 8 @F @F @F @F 
+
+@Var @RT(27)sv_ServoValveControllerMode @RT(0) @T @T @DERIVED 0 @T @T @DT @RT(30)KAPPL_ServoValveControllerMode @RT(0) @T @T @UNKNOWN 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 8 @F @F @F @F 
+
+@Var @RT(19)sv_rActPressureHydr @RT(0) @T @F @DT @RT(4)REAL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(85)actual pressure in hydraulic cyinder(calculated from analog input of pressure sensor) @RT(0) 
+@END_Attrib 
+1 8 @F @F @F @F 
+
+@Var @RT(13)sv_TraceLevel @RT(0) @T @T @DERIVED 0 @T @T @DT @RT(12)tsTraceLevel @RT(0) @T @T @UNKNOWN 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 8 @F @F @F @F 
+
+@Var @RT(20)sv_IntrusionTimesAct @RT(0) @T @T @DERIVED 0 @T @T @DT @RT(10)tsActTimes @RT(0) @T @T @UNKNOWN 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 8 @F @F @F @F 
+
+@Var @RT(20)sv_IntrusionTimesSet @RT(0) @T @T @DERIVED 0 @T @T @DT @RT(10)tsSetTimes @RT(0) @T @T @UNKNOWN 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 8 @F @F @F @F 
+
+@Var @RT(25)sv_bServoValveLimitActive @RT(0) @T @F @DT @RT(4)BOOL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 8 @F @F @F @F 
+
+@Var @RT(27)sv_dCalculatedDurationPlast @RT(0) @T @F @DT @RT(4)TIME @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(36)Calculated duration for plasticizing @RT(0) 
+@END_Attrib 
+1 8 @F @F @F @F 
+
+@Var @RT(16)sv_rMaxCutOffPos @RT(0) @T @F @DT @RT(4)REAL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 8 @F @F @F @F 
+
+@Var @RT(15)sv_bPlastActive @RT(0) @T @F @DT @RT(4)BOOL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(29)plasticize movement is active @RT(0) 
+@END_Attrib 
+1 8 @F @F @F @F 
+
+@Var @RT(20)sv_rScrewSetPosition @RT(0) @T @F @DT @RT(4)REAL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 8 @F @F @F @F 
+
+@Var @RT(20)sv_rScrewPositionAbs @RT(0) @T @F @DT @RT(4)REAL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 8 @F @F @F @F 
+
+@Var @RT(9)PU_Task_7 @RT(0) @T @F @DT @RT(4)TASK @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 7 @F @F @F @F 
+
+@Var @RT(16)erNotPlasticized @RT(0) @T @F @DT @RT(5)ALARM @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 7 @F @F @F @F 
+
+@Var @RT(10)g_MoveCtrl @RT(0) @T @T @DERIVED 0 @T @T @DT @RT(10)tsMoveCtrl @RT(0) @T @T @UNKNOWN 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 6 @F @F @F @F 
+
+@Var @RT(12)abPlasticize @RT(0) @T @T @DERIVED 0 @T @T @DT @RT(12)ABPlasticize @RT(0) @T @T @UNKNOWN 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(12)abPlastSetup @RT(0) @T @T @DERIVED 0 @T @T @DT @RT(15)ABConstMovement @RT(0) @T @T @UNKNOWN 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(15)abRPMCalibSetup @RT(0) @T @T @DERIVED 0 @T @T @DT @RT(10)ABRPMCalib @RT(0) @T @T @UNKNOWN 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(11)abIntrusion @RT(0) @T @T @DERIVED 0 @T @T @DT @RT(15)ABConstMovement @RT(0) @T @T @UNKNOWN 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(12)abPlastPurge @RT(0) @T @T @DERIVED 0 @T @T @DT @RT(15)ABConstMovement @RT(0) @T @T @UNKNOWN 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(16)abLintabApplyVel @RT(0) @T @T @DERIVED 0 @T @T @DT @RT(13)ABLintabApply @RT(0) @T @T @UNKNOWN 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(17)abLintabApplyPres @RT(0) @T @T @DERIVED 0 @T @T @DT @RT(13)ABLintabApply @RT(0) @T @T @UNKNOWN 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(8)TaskSlow @RT(0) @T @F @DT @RT(4)TASK @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 7 @F @F @F @F 
+
+@Var @RT(10)TaskInject @RT(0) @T @F @DT @RT(4)TASK @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 7 @F @F @F @F 
+
+@Var @RT(8)mevStart @RT(0) @T @T @DERIVED 0 @T @T @DT @RT(8)tevStart @RT(0) @T @T @UNKNOWN 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(7)evStart @RT(0) @T @T @DERIVED 0 @T @T @DT @RT(8)tevStart @RT(0) @T @T @UNKNOWN 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 7 @F @F @F @F 
+
+@Var @RT(9)EV_Task_3 @RT(0) @T @T @RENAMED 0 @T @T @DT @RT(4)TASK @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 7 @F @F @F @F 
+
+@Var @RT(13)mrPlastEndPos @RT(0) @T @F @DT @RT(4)REAL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(15)mbNewStartEvent @RT(0) @T @F @DT @RT(4)BOOL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@END_Dcl 
+
+@END_Export 
+
+@BEG_Body 
+
+11 
+
+@BEG_Export 
+
+@BEG_Algo 
+@ALGORITHM @RT(9)aRegister @STRUCTURED_TEXT 
+@RT(0) @RT(0) @RT(0) @F @F 
+@END_Algo 
+
+@BEG_Dcl 
+@RT(16)DclTreeContainer 
+3 
+@Var @RT(15)abPlastRegister @RT(0) @T @T @DERIVED 0 @T @T @DT @RT(18)ABMovementRegister @RT(0) @T @T @UNKNOWN 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(19)abIntrusionRegister @RT(0) @T @T @DERIVED 0 @T @T @DT @RT(18)ABMovementRegister @RT(0) @T @T @UNKNOWN 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(20)abPlastPurgeRegister @RT(0) @T @T @DERIVED 0 @T @T @DT @RT(18)ABMovementRegister @RT(0) @T @T @UNKNOWN 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@END_Dcl 
+
+@END_Export 
+
+@BEG_Export 
+
+@BEG_Algo 
+@ALGORITHM @RT(4)aRun @SEQUENTIAL_FLOW_CHART 
+@RT(0) @RT(0) @RT(0) @F @F 
+@END_Algo 
+
+@BEG_Dcl 
+@RT(16)DclTreeContainer 
+8 
+@Var @RT(5)bStop @RT(0) @T @F @DT @RT(4)BOOL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(38)flag if the movement should be stopped @RT(0) 
+@END_Attrib 
+1 1 @F @F @F @F 
+
+@Var @RT(6)bReady @RT(0) @T @F @DT @RT(4)BOOL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(32)information if movement is ready @RT(0) 
+@END_Attrib 
+1 3 @F @F @F @F 
+
+@Var @RT(18)fbSetMovementState @RT(0) @T @T @DERIVED 0 @T @T @DT @RT(18)FBSetMovementState @RT(0) @T @T @UNKNOWN 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(5)dummy @RT(0) @T @F @DT @RT(4)DINT @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(6)bError @RT(0) @T @F @DT @RT(4)BOOL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(10)iErrorInfo @RT(0) @T @F @DT @RT(4)DINT @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(13)fbDebugTrace2 @RT(0) @T @T @DERIVED 0 @T @T @DT @RT(13)FBDebugTrace2 @RT(0) @T @T @UNKNOWN 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(1)b @RT(0) @T @F @DT @RT(4)BOOL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 4 @F @F @F @F 
+
+@END_Dcl 
+
+@END_Export 
+
+@BEG_Export 
+
+@BEG_Algo 
+@ALGORITHM @RT(5)aInit @STRUCTURED_TEXT 
+@RT(0) @RT(0) @RT(0) @F @F 
+@END_Algo 
+
+@BEG_Dcl 
+@RT(16)DclTreeContainer 
+0 
+@END_Dcl 
+
+@END_Export 
+
+@BEG_Export 
+
+@BEG_Algo 
+@POSTUPDATE_ALGORITHM @RT(17)pMinOutputChanged @STRUCTURED_TEXT 
+@RT(0) @RT(31)sv_MinOutputPlast,sv_bInitStart @RT(9)PU_Task_7 @F @F 
+@END_Algo 
+
+@BEG_Dcl 
+@RT(16)DclTreeContainer 
+5 
+@Var @RT(6)rScale @RT(0) @T @F @DT @RT(4)REAL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(14)revLintabParam @RT(0) @T @T @DERIVED 0 @T @T @DT @RT(24)KCTRL_Lintab_Param_Light @RT(0) @T @T @UNKNOWN 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(20)ab_LintabRevToOutput @RT(0) @T @T @DERIVED 0 @T @T @DT @RT(18)KCTRL_Lintab_Light @RT(0) @T @T @UNKNOWN 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(19)Lintab [rpm] -> [%] @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(7)rMinVel @RT(0) @T @F @DT @RT(4)REAL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(3)cPI @RT(0) @T @F @DT @RT(4)REAL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(10)3.14159265 @RT(0) @RT(0) 
+@END_Attrib 
+1 15 @F @F @F @F 
+
+@END_Dcl 
+
+@END_Export 
+
+@BEG_Export 
+
+@BEG_Algo 
+@POSTUPDATE_ALGORITHM @RT(22)pChargePressureChanged @STRUCTURED_TEXT 
+@RT(0) @RT(72)sv_ConstChargePressure,sv_bInitStart,sv_PlastProfVis.Profile.iNoOfPoints @RT(9)PU_Task_7 @F @F 
+@END_Algo 
+
+@BEG_Dcl 
+@RT(16)DclTreeContainer 
+1 
+@Var @RT(1)i @RT(0) @T @F @DT @RT(5)UDINT @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 4 @F @F @F @F 
+
+@END_Dcl 
+
+@END_Export 
+
+@BEG_Export 
+
+@BEG_Algo 
+@POSTUPDATE_ALGORITHM @RT(12)pMaxPlastEnd @STRUCTURED_TEXT 
+@RT(0) @RT(70)sv_bInitDone,sv_rScrewVolume,sv_DecompAftPlastSettings,sv_PlastProfVis @RT(9)PU_Task_7 @F @F 
+@END_Algo 
+
+@BEG_Dcl 
+@RT(16)DclTreeContainer 
+0 
+@END_Dcl 
+
+@END_Export 
+
+@BEG_Export 
+
+@BEG_Algo 
+@PROCESS_ALGORITHM @RT(19)paSamplePlastEndPos @STRUCTURED_TEXT 
+@RT(0) @RT(0) @RT(16)TaskInject(5001) @F @F 
+@END_Algo 
+
+@BEG_Dcl 
+@RT(16)DclTreeContainer 
+4 
+@Var @RT(18)fbSampleDelayTimer @RT(0) @T @T @DERIVED 0 @T @T @DT @RT(3)TON @RT(0) @T @T @UNKNOWN 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(16)dSampleDelayTime @RT(0) @T @F @DT @RT(4)TIME @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(6)t#10ms @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(1)b @RT(0) @T @F @DT @RT(4)BOOL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(5)bStop @RT(0) @T @F @DT @RT(4)BOOL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@END_Dcl 
+
+@END_Export 
+
+@BEG_Export 
+
+@BEG_Algo 
+@POSTUPDATE_ALGORITHM @RT(13)pPlastProfile @STRUCTURED_TEXT 
+@RT(0) @RT(49)sv_bInitStart,sv_PlastProfVis.Profile.iNoOfPoints @RT(9)PU_Task_7 @F @F 
+@END_Algo 
+
+@BEG_Dcl 
+@RT(16)DclTreeContainer 
+0 
+@END_Dcl 
+
+@END_Export 
+
+@BEG_Export 
+
+@BEG_Algo 
+@POSTUPDATE_ALGORITHM @RT(17)pCpyAccelerations @STRUCTURED_TEXT 
+@RT(0) @RT(47)sv_PlastProfVis.Profile.Points[2].rRotationRamp @RT(9)PU_Task_7 @F @F 
+@END_Algo 
+
+@BEG_Dcl 
+@RT(16)DclTreeContainer 
+1 
+@Var @RT(1)i @RT(0) @T @F @DT @RT(5)UDINT @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 4 @F @F @F @F 
+
+@END_Dcl 
+
+@END_Export 
+
+@BEG_Export 
+
+@BEG_Algo 
+@PROCESS_ALGORITHM @RT(6)paInit @STRUCTURED_TEXT 
+@RT(0) @RT(0) @RT(8)TaskSlow @T @F 
+@END_Algo 
+
+@BEG_Dcl 
+@RT(16)DclTreeContainer 
+2 
+@Var @RT(12)variableName @RT(0) @T @F @DT @RT(11)STRING(255) @RT(0) @T @T @STRING 0 @F @RT(3)255 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(8)swoState @RT(0) @T @T @DERIVED 0 @T @T @DT @RT(11)KSWO_Status @RT(0) @T @T @UNKNOWN 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@END_Dcl 
+
+@END_Export 
+
+@BEG_Export 
+
+@BEG_Algo 
+@EVENT_ALGORITHM @RT(8)evaStart @STRUCTURED_TEXT 
+@RT(0) @RT(8)mevStart @RT(13)EV_Task_3(50) @F @F 
+@END_Algo 
+
+@BEG_Dcl 
+@RT(16)DclTreeContainer 
+1 
+@Var @RT(11)evStartData @RT(0) @T @T @DERIVED 0 @T @T @DT @RT(12)tevStartData @RT(0) @T @T @UNKNOWN 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 1 @F @F @F @F 
+
+@END_Dcl 
+
+@END_Export 
+
+@BEG_Body 
+@TL(41)
+(**************************************** WARNING ********************************************
+ *** The KEBA Kemro K2 System including software is not intended for safety control tasks! ***
+ ***                       For further information see Comment tab!                        ***
+ *********************************************************************************************)
+
+//register plast movement
+sv_MovePlast.pdStartDelaySet := @sv_PlastTimesSet.dSetDelayTime;
+sv_MovePlast.pdStartDelayAct := @sv_PlastTimesAct.dActDelayTime;
+sv_MovePlast.pdActiveTimeAct := @sv_PlastTimesAct.dActMoveTime;
+sv_MovePlast.pdTimeLimit     := @sv_PlastTimesSet.dMaxMoveTime;
+sv_MovePlast.pbPosReached := @sv_bPlastEndReached;
+sv_MovePlast.LockGroups[1] := cLockGroupHeatingNozzle;
+sv_MovePlast.LockGroups[2] := cLockGroupSafetyGateNozzle;
+sv_MovePlast.LockGroups[3] := cLockGroupMotor;
+sv_MovePlast.Alarm.AlarmId := erNotPlasticized;
+sv_MovePlast.Alarm.SubId[1] := sv_DeviceId.CompId;
+sv_MovePlast.Alarm.SubId[2] := sv_DeviceId.IndexId;
+sv_MovePlast.sIconPath := CONCAT(GET_MY_FU_NAME(), "\hmi\images\movScrewRotate.gif");
+sv_MovePlast.EditorData.sODCIcon := "\hmi\images\editPlast.gif";
+abPlastRegister.aRegister(@sv_MovePlast);
+
+//register intrusion movement
+sv_MoveIntrusion.LockGroups[1] := cLockGroupHeatingNozzle;
+sv_MoveIntrusion.LockGroups[2] := cLockGroupSafetyGateNozzle;
+sv_MoveIntrusion.LockGroups[3] := cLockGroupMotor;
+sv_MoveIntrusion.sIconPath := CONCAT(GET_MY_FU_NAME(), "\hmi\images\movIntrusion.gif");
+sv_MoveIntrusion.EditorData.sODCIcon := "\hmi\images\editIntrusion.gif";
+sv_MoveIntrusion.pdStartDelaySet := @sv_IntrusionTimesSet.dSetDelayTime;
+sv_MoveIntrusion.pdStartDelayAct := @sv_IntrusionTimesAct.dActDelayTime;
+sv_MoveIntrusion.pdActiveTimeAct := @sv_IntrusionTimesAct.dActMoveTime;
+sv_MoveIntrusion.pdTimeLimit     := @sv_IntrusionTimesSet.dMaxMoveTime;
+sv_IntrusionTimesSet.dMaxMoveTime := sv_PlastTimesSet.dMaxMoveTime;
+abIntrusionRegister.aRegister(@sv_MoveIntrusion);
+
+//register plast part of purge movement
+sv_MovePlastPurge.LockGroups[1] := cLockGroupHeatingNozzle;
+sv_MovePlastPurge.LockGroups[2] := cLockGroupSafetyGateNozzle;
+sv_MovePlastPurge.LockGroups[3] := cLockGroupMotor;
+sv_MovePlastPurge.sIconPath := sv_MovePlast.sIconPath;
+abPlastPurgeRegister.aRegister(@sv_MovePlastPurge);
+
+@END_Body 
+
+@@@BEG_Comment@@@ 
+@TL(2)
+This algorithm is necessary for registering the available movements
+and the according parameters (Lockgroups, icon path, delay time, ....)
+@@@END_Comment@@@ 
+
+@BEG_SfcBody 
+19 14 16 
+
+@BEG_SfcData 2 
+@StepSeq @RT(4)sseq @F 1 
+@Loop @RT(4)loop @F 2 
+@StepSeq @RT(4)sseq @F 7 
+@Step @RT(5)START @F @T @F @F @RT(0) @F 
+@AcbCont @RT(7)unnamed @F 1 
+@Acb @RT(6)AStart @F @T @RT(1)P @RT(0) @F @F @T @TL(7)
+bReady := FALSE;
+fbSetMovementState(MoveId   := g_MoveCtrl.pData^.MoveId,
+                   MoveDir  := g_MoveCtrl.pData^.MoveDir,
+                   State    := nActive);
+sv_bPlastActive := TRUE;
+fbDebugTrace2(nDeviceState, 'Plast started');
+
+@F 
+
+@Trans @RT(6)TStart @F @T @F @F @T @F @TL(2)
+TRUE
+
+@RT(6)TStart @F 
+@Step @RT(13)S_CheckMoveId @F @F @F @F @RT(0) @F 
+@AcbCont @RT(7)unnamed @F 0 
+
+@AltBranch @RT(3)alt @F 3 
+@TransSeq @RT(4)tseq @F 1 
+@Trans @RT(6)TPlast @F @T @F @F @T @F @TL(2)
+g_MoveCtrl.pData^.MoveId = cMovePlast
+
+@RT(6)TPlast @F 
+
+@TransSeq @RT(4)tseq @F 4 
+@Trans @RT(10)TIntrusion @F @T @F @F @T @F @TL(2)
+g_MoveCtrl.pData^.MoveId = cMoveIntrusion
+
+@RT(10)TIntrusion @F 
+@Step @RT(11)S_Intrusion @F @F @F @F @RT(0) @F 
+@AcbCont @RT(7)unnamed @F 4 
+@Acb @RT(15)AResetMoveBlock @F @F @RT(1)P @RT(0) @F @F @F @F 
+@Acb @RT(10)AIntrusion @F @F @RT(1)N @RT(0) @F @F @F @F 
+@Acb @RT(18)AResetBackPressure @F @F @RT(2)P0 @RT(0) @F @F @F @F 
+@Acb @RT(16)ASetPosIntrusion @F @T @RT(2)P0 @RT(0) @F @F @T @TL(2)
+b := WRITE_SVREAL_DIRECT(sv_rScrewSetPosition, sv_rScrewPositionAbs);
+
+@F 
+
+@Trans @RT(15)TIntrusionReady @F @T @F @F @T @F @TL(2)
+NOT abIntrusion.aRun.bActive
+
+@RT(15)TIntrusionReady @F 
+@Goto @RT(7)S_Ready @F @F 
+
+@TransSeq @RT(4)tseq @F 4 
+@Trans @RT(6)TPurge @F @T @F @F @T @F @TL(2)
+g_MoveCtrl.pData^.MoveId = cMovePlastPurge
+
+@RT(6)TPurge @F 
+@Step @RT(7)S_Purge @F @F @F @F @RT(0) @F 
+@AcbCont @RT(7)unnamed @F 3 
+@Acb @RT(16)AResetPlastPurge @F @F @RT(1)P @RT(0) @F @F @F @F 
+@Acb @RT(11)APlastPurge @F @F @RT(1)N @RT(0) @F @F @F @F 
+@Acb @RT(12)ASetPosPurge @F @T @RT(2)P0 @RT(0) @F @F @T @TL(2)
+b := WRITE_SVREAL_DIRECT(sv_rScrewSetPosition, sv_rScrewPositionAbs);
+
+@F 
+
+@Trans @RT(16)TPlastPurgeReady @F @T @F @F @T @T @TL(2)
+NOT abPlastPurge.aRun.bActive
+
+@RT(16)TPlastPurgeReady @F 
+@Goto @RT(7)S_Ready @F @F 
+
+
+@Step @RT(13)S_CheckOpMode @F @F @F @F @RT(0) @F 
+@AcbCont @RT(7)unnamed @F 0 
+
+@AltBranch @RT(3)alt @F 2 
+@TransSeq @RT(4)tseq @F 5 
+@Trans @RT(13)TNotSetupMode @F @T @F @F @T @F @TL(2)
+(sv_OperationMode > nSetup)
+
+@RT(13)TNotSetupMode @F 
+@Step @RT(7)S_Plast @F @F @F @F @RT(0) @F 
+@AcbCont @RT(7)unnamed @F 4 
+@Acb @RT(16)AResetPlastBlock @F @F @RT(1)P @RT(0) @F @F @F @F 
+@Acb @RT(6)aPlast @F @F @RT(1)N @RT(0) @F @F @F @F 
+@Acb @RT(13)ASetServoMode @F @F @RT(1)P @RT(0) @F @F @F @F 
+@Acb @RT(12)ASetPosPlast @F @T @RT(2)P0 @RT(0) @F @F @T @TL(2)
+b := WRITE_SVREAL_DIRECT(sv_rScrewSetPosition, sv_rScrewPositionAbs);
+
+@F 
+
+@Trans @RT(11)TPlastReady @F @T @F @F @T @F @TL(2)
+NOT abPlasticize.aRun.bActive
+
+@RT(11)TPlastReady @F 
+@Step @RT(17)S_CorrectDuration @F @F @F @F @RT(0) @F 
+@AcbCont @RT(7)unnamed @F 2 
+@Acb @RT(16)ACorrectDuration @F @F @RT(1)P @RT(0) @F @F @F @F 
+@Acb @RT(25)AStartPlastEndPosSampling @F @T @RT(1)P @RT(0) @F @F @T @TL(5)
+//activate event algorithm and 
+//start sampling of plast endposition
+mevStart := evStart;
+START_PROCESS_ALGORITHM(paSamplePlastEndPos);
+
+@F 
+
+@Trans @RT(7)Trans21 @F @T @F @F @T @F @TL(2)
+TRUE
+
+@RT(7)Trans21 @F 
+
+@TransSeq @RT(4)tseq @F 3 
+@Trans @RT(10)TSetupMode @F @T @F @F @T @F @TL(2)
+(sv_OperationMode = nSetup)
+
+@RT(10)TSetupMode @F 
+@Step @RT(12)S_Setup_Mode @F @F @F @F @RT(0) @F 
+@AcbCont @RT(7)unnamed @F 0 
+
+@AltBranch @RT(3)alt @F 2 
+@TransSeq @RT(4)tseq @F 3 
+@Trans @RT(8)TNoCalib @F @T @F @F @T @F @TL(2)
+NOT sv_bDoRPMCalib
+
+@RT(8)TNoCalib @F 
+@Step @RT(12)S_PlastSetup @F @F @F @F @RT(0) @F 
+@AcbCont @RT(7)unnamed @F 2 
+@Acb @RT(16)AResetConstBlock @F @F @RT(1)P @RT(0) @F @F @F @F 
+@Acb @RT(11)aConstSetup @F @F @RT(1)N @RT(0) @F @F @F @F 
+
+@Trans @RT(16)TPlastSetupReady @F @T @F @F @T @F @TL(2)
+NOT abPlastSetup.aRun.bActive
+
+@RT(16)TPlastSetupReady @F 
+
+@TransSeq @RT(4)tseq @F 3 
+@Trans @RT(9)TRPMCalib @F @T @F @F @T @F @TL(2)
+sv_bDoRPMCalib
+
+@RT(9)TRPMCalib @F 
+@Step @RT(16)S_Plat_RPM_Calib @F @F @F @F @RT(0) @F 
+@AcbCont @RT(7)unnamed @F 3 
+@Acb @RT(14)AResetRPMCalib @F @F @RT(1)P @RT(0) @F @F @F @F 
+@Acb @RT(14)aRPMCalibSetup @F @F @RT(1)N @RT(0) @F @F @F @F 
+@Acb @RT(16)ACheckCalibError @F @F @RT(2)P0 @RT(0) @F @F @F @F 
+
+@Trans @RT(7)Trans22 @F @T @F @F @T @F @TL(2)
+NOT abRPMCalibSetup.aRun.bActive
+
+@RT(7)Trans22 @F 
+
+
+
+
+@Step @RT(7)S_Ready @F @F @T @F @RT(0) @F 
+@AcbCont @RT(7)unnamed @F 1 
+@Acb @RT(6)AReady @F @T @RT(1)P @RT(0) @F @F @T @TL(7)
+bReady := TRUE;
+fbSetMovementState(MoveId   := g_MoveCtrl.pData^.MoveId,
+                   MoveDir  := g_MoveCtrl.pData^.MoveDir,
+                   State    := nInactive);
+sv_bPlastActive := FALSE;
+fbDebugTrace2(nDeviceState, 'Plast ready');
+
+@F 
+
+
+@Trans @RT(6)TReady @F @T @T @T @T @T @TL(2)
+TRUE
+
+@RT(6)TReady @F 
+
+@END_SfcData 
+@SaActions 14 
+@SaText @RT(15)AResetMoveBlock 1 @TL(10)
+(**************************************** WARNING ********************************************
+ *** The KEBA Kemro K2 System including software is not intended for safety control tasks! ***
+ ***                       For further information see Comment tab!                        ***
+ *********************************************************************************************)
+
+abIntrusion.aRun(bStart := FALSE);
+
+//set move time
+abIntrusion.aSetMoveTime(dSetMoveTime := sv_IntrusionSettings.dIntrusionTime);
+
+
+@SaText @RT(16)AResetPlastBlock 1 @TL(8)
+(**************************************** WARNING ********************************************
+ *** The KEBA Kemro K2 System including software is not intended for safety control tasks! ***
+ ***                       For further information see Comment tab!                        ***
+ *********************************************************************************************)
+
+abPlasticize.aRun(ScrewRevVelLintab := sv_LintabOutPlastV,
+                  bStart := FALSE);
+
+
+@SaText @RT(16)AResetConstBlock 1 @TL(7)
+(**************************************** WARNING ********************************************
+ *** The KEBA Kemro K2 System including software is not intended for safety control tasks! ***
+ ***                       For further information see Comment tab!                        ***
+ *********************************************************************************************)
+
+abPlastSetup.aRun(bStart := FALSE);
+
+
+@SaText @RT(16)AResetPlastPurge 1 @TL(10)
+(**************************************** WARNING ********************************************
+ *** The KEBA Kemro K2 System including software is not intended for safety control tasks! ***
+ ***                       For further information see Comment tab!                        ***
+ *********************************************************************************************)
+ 
+abPlastPurge.aRun(bStart := FALSE);
+
+//set move time
+abPlastPurge.aSetMoveTime(dSetMoveTime := sv_PurgeSettings.PlastParams.dSetPlastTime);
+
+
+@SaText @RT(14)AResetRPMCalib 1 @TL(8)
+(**************************************** WARNING ********************************************
+ *** The KEBA Kemro K2 System including software is not intended for safety control tasks! ***
+ ***                       For further information see Comment tab!                        ***
+ *********************************************************************************************)
+
+bError := FALSE;
+abRPMCalibSetup.aRun(bStart := FALSE);
+
+
+@SaText @RT(13)ASetServoMode 1 @TL(4)
+IF sv_IMM_Type = nKAPPL_IMM_ServoValve THEN
+   sv_ServoValveControllerMode := nKAPPL_PressureControl;
+END_IF;
+
+
+@SaText @RT(16)ACheckCalibError 1 @TL(10)
+(**************************************** WARNING ********************************************
+ *** The KEBA Kemro K2 System including software is not intended for safety control tasks! ***
+ ***                       For further information see Comment tab!                        ***
+ *********************************************************************************************)
+
+IF bError THEN
+   sv_CalibStateRPM.Status := tnCalibState_Error;
+   dummy := Print("Calib Error: %i", iErrorInfo);
+END_IF;
+
+
+@SaText @RT(16)ACorrectDuration 1 @TL(12)
+(**************************************** WARNING ********************************************
+ *** The KEBA Kemro K2 System including software is not intended for safety control tasks! ***
+ ***                       For further information see Comment tab!                        ***
+ *********************************************************************************************)
+
+IF sv_OperationMode >= nHalfAutomatic THEN
+   //duration update only in HA and FA
+   sv_dCalculatedDurationPlast := sv_PlastTimesAct.dActMoveTime;
+END_IF;
+
+
+
+
+@SaText @RT(18)AResetBackPressure 1 @TL(7)
+(**************************************** WARNING ********************************************
+ *** The KEBA Kemro K2 System including software is not intended for safety control tasks! ***
+ ***                       For further information see Comment tab!                        ***
+ *********************************************************************************************)
+
+sv_rBackPressure := 0.0;
+
+
+@SaText @RT(14)aRPMCalibSetup 1 @TL(19)
+(**************************************** WARNING ********************************************
+ *** The KEBA Kemro K2 System including software is not intended for safety control tasks! ***
+ ***                       For further information see Comment tab!                        ***
+ *********************************************************************************************)
+
+//output pressure in bar, velocity in % of pump
+abRPMCalibSetup.aRun(bStart := TRUE,
+                     bStop := bStop OR bError,
+                     rActScrewRpm := sv_rActScrewRpm,
+                     dDelayTime := sv_PlastTimesSet.dSetDelayTimePump,
+                     rMaxAllowedAbsoluteValue := sv_rMaxRpm,
+                     bActive => sv_bOutputActive,
+                     rOutputPre => sv_rPressure,
+                     rOutputVel => sv_rVelocity,
+                     bPreOutputReached => sv_bPreOutputReady,
+                     iErrorInfo => iErrorInfo);
+
+bError := abRPMCalibSetup.aRun.bError OR bError;
+
+
+@SaText @RT(11)APlastPurge 1 @TL(23)
+(**************************************** WARNING ********************************************
+ *** The KEBA Kemro K2 System including software is not intended for safety control tasks! ***
+ ***                       For further information see Comment tab!                        ***
+ *********************************************************************************************)
+
+abPlastPurge.aRun(bStart := TRUE,
+                  bStop := bStop,
+                  dDelayTimeOn := sv_PlastTimesSet.dSetDelayTimePump,
+                  dDelayTimeOff := sv_PlastTimesSet.dSetDelayTimeValve,
+                  bActive => sv_bOutputActive,
+                  bPreOutputReached => sv_bPreOutputReady);
+
+b := WRITE_SVREAL_DIRECT(sv_rPressureAbs, abPlastPurge.aRun.rOutputPre);
+b := WRITE_SVREAL_DIRECT(sv_rVelocityAbs, abPlastPurge.aRun.rOutputVel);
+b := WRITE_SV_DIRECT(sv_ActPurgeTimes.dActPlastTime, abPlastPurge.aRun.dActTime);
+
+
+abLintabApplyPres.aCalc(rX := sv_rPressureAbs);
+b := WRITE_SVREAL_DIRECT(sv_rPressure, abLintabApplyPres.aCalc.rY);
+
+abLintabApplyVel.aCalc(rX := sv_rVelocityAbs);
+b := WRITE_SVREAL_DIRECT(sv_rVelocity, abLintabApplyVel.aCalc.rY);
+
+
+@SaText @RT(10)AIntrusion 1 @TL(26)
+(**************************************** WARNING ********************************************
+ *** The KEBA Kemro K2 System including software is not intended for safety control tasks! ***
+ ***                       For further information see Comment tab!                        ***
+ *********************************************************************************************)
+
+abIntrusion.aRun(bStart := TRUE,
+                 bStop := bStop,
+                 bUsePosDetect := FALSE,
+                 dMaxTime := sv_IntrusionTimesSet.dMaxMoveTime,
+                 dDelayTimeOn := sv_PlastTimesSet.dSetDelayTimePump,
+                 dDelayTimeOff := sv_PlastTimesSet.dSetDelayTimeValve,
+                 bActive => sv_bOutputActive,
+                 bPreOutputReached => sv_bPreOutputReady);
+
+b := WRITE_SVREAL_DIRECT(sv_rPressureAbs, abIntrusion.aRun.rOutputPre);
+b := WRITE_SVREAL_DIRECT(sv_rVelocityAbs, abIntrusion.aRun.rOutputVel);
+b := WRITE_SV_DIRECT(sv_IntrusionTimesAct.dActMoveTime, abIntrusion.aRun.dActTime);
+b := WRITE_SVREAL_DIRECT(sv_rBackPressure, sv_IntrusionSettings.rBackPressure); 
+
+
+abLintabApplyPres.aCalc(rX := sv_rPressureAbs);
+b := WRITE_SVREAL_DIRECT(sv_rPressure, abLintabApplyPres.aCalc.rY);
+
+abLintabApplyVel.aCalc(rX := sv_rVelocityAbs);
+b := WRITE_SVREAL_DIRECT(sv_rVelocity, abLintabApplyVel.aCalc.rY);
+
+
+@SaText @RT(11)aConstSetup 1 @TL(23)
+(**************************************** WARNING ********************************************
+ *** The KEBA Kemro K2 System including software is not intended for safety control tasks! ***
+ ***                       For further information see Comment tab!                        ***
+ *********************************************************************************************)
+
+abPlastSetup.aRun(bStart := TRUE,
+                  bStop := bStop,
+                  bUsePosDetect := FALSE,
+                  dDelayTimeOn := sv_PlastTimesSet.dSetDelayTimePump,
+                  dDelayTimeOff := sv_PlastTimesSet.dSetDelayTimeValve,
+                  rOutputPre => sv_rPressureAbs,
+                  rOutputVel => sv_rVelocityAbs,
+                  bActive => sv_bOutputActive,
+                  bPreOutputReached => sv_bPreOutputReady);
+
+
+abLintabApplyPres.aCalc(rX := sv_rPressureAbs,
+                        rY => sv_rPressure);
+
+
+abLintabApplyVel.aCalc(rX := sv_rVelocityAbs,
+                       rY => sv_rVelocity);
+
+
+@SaText @RT(6)aPlast 1 @TL(34)
+(**************************************** WARNING ********************************************
+ *** The KEBA Kemro K2 System including software is not intended for safety control tasks! ***
+ ***                       For further information see Comment tab!                        ***
+ *********************************************************************************************)
+
+abPlasticize.aRun(bStop := bStop OR sv_bTransducerError,
+                  bStart := TRUE,
+                  rActScrewPosition := sv_rScrewPosition,
+                  PlastControlParams := sv_PlastControlParams,
+                  BackPressureControlParams := sv_BackPressureControlParams,
+                  ScrewRevVelLintab := sv_LintabOutPlastV,
+                  dMaxMoveTime := sv_PlastTimesSet.dMaxMoveTime,
+                  rActBackPressure := sv_rActPressureHydr,
+                  rMaxBackPressure := sv_rMaxBackPressure,
+                  rActRpm := sv_rActScrewCircSpeed,
+                  rMaxRpm := sv_rMaxRotationPlast,
+                  IMM_Type := sv_IMM_Type,
+                  dDelayTimeOn := sv_PlastTimesSet.dSetDelayTimePump,
+                  dDelayTimeOff := sv_PlastTimesSet.dSetDelayTimeValve,
+                  bBackPressPIDIntStop := sv_bServoValveLimitActive,
+                  bActive => sv_bOutputActive,
+                  iActiveStage => sv_iActiveStage,
+                  bPreOutputReached => sv_bPreOutputReady);
+
+b := WRITE_SVREAL_DIRECT(sv_rPressure, abPlasticize.aRun.rPressureOutput);
+b := WRITE_SVREAL_DIRECT(sv_rBackPressure, abPlasticize.aRun.rBackPressureOutput);
+b := WRITE_SVREAL_DIRECT(sv_rVelocity, abPlasticize.aRun.rVelocityOutput);
+b := WRITE_SV_DIRECT(sv_PlastTimesAct.dActMoveTime, abPlasticize.aRun.dActMoveTime);
+
+// Do not use WRITE_SVREAL_DIRECT() here: these SV's are changed once per cycle and could be the signalled
+sv_rPlastStartPosition := abPlasticize.aRun.rPlastStartPosition;
+
+
+
+
+@SaTrans 0 
+@SaExits 0 
+@END_SfcBody 
+
+@@@BEG_Comment@@@ 
+@TL(3)
+This algorithm is responsible for executing the movement.
+Depending on MoveId and OperationMode the according movement is executed.
+The different actions contain the movement blocks and the according parameters.
+@@@END_Comment@@@ 
+
+@BEG_Body 
+@TL(23)
+(**************************************** WARNING ********************************************
+ *** The KEBA Kemro K2 System including software is not intended for safety control tasks! ***
+ ***                       For further information see Comment tab!                        ***
+ *********************************************************************************************)
+
+abPlasticize.aInit(pPlastProfile := @sv_PlastProfVis,
+                   MoveId := cMovePlast);
+
+abPlastSetup.aInit(pConst := @sv_ConstPlastSetup,
+                   MoveId := cMovePlast);
+
+abIntrusion.aInit(pConst := @sv_IntrusionSettings.ConstOutput,
+                  MoveId := cMoveIntrusion);
+
+abPlastPurge.aInit(pConst := @sv_PurgeSettings.PlastParams.ConstOutput,
+                   MoveId := cMovePlastPurge);
+
+abRPMCalibSetup.aInit(pbDebugCalibration := @sv_TraceLevel.bDebugCalibration);
+
+abLintabApplyPres.aInit(pLintab := @sv_LintabOutPlastP);
+
+abLintabApplyVel.aInit(pLintab := @sv_LintabOutPlastV);
+
+@END_Body 
+
+@@@BEG_Comment@@@ 
+@TL(0)
+
+@@@END_Comment@@@ 
+
+@BEG_Body 
+@TL(37)
+(**************************************** WARNING ********************************************
+ *** The KEBA Kemro K2 System including software is not intended for safety control tasks! ***
+ ***                       For further information see Comment tab!                        ***
+ *********************************************************************************************)
+
+// parametrize revolution -> liter lintab
+revLintabParam.Mode.bLinearExtrapolation := FALSE;
+revLintabParam.Mode.bSetNegativeValuesToZero := TRUE;
+revLintabParam.LintabPoints := sv_ScrewRevVelLintab.LintabPoints;
+ab_LintabRevToOutput.Par(Param := revLintabParam);
+IF (ab_LintabRevToOutput.Par.parStatus <> KCTRL_Ret_OK) THEN
+    rMinVel := 0.0;
+ELSE
+   ab_LintabRevToOutput.Init();
+   // calculate scalefactor circumferential speed [cm/s] to rpm [1/min]
+   rScale := 10.0 * 60.0 / (cPI * sv_rScrewDiameter);
+   // calculate min output value for profile [rpm] -> [%]
+   ab_LintabRevToOutput.Calculate(rX := sv_MinOutputPlast.rVelocity * rScale);
+   IF ab_LintabRevToOutput.Calculate.calcStatus <> KCTRL_Ret_OK THEN
+      rMinVel := 0.0;
+   ELSE 
+      rMinVel := ab_LintabRevToOutput.Calculate.rY;
+   END_IF;
+END_IF;
+   
+//copy minoutput to plast profile
+sv_PlastProfVis.rMinOutputVel := rMinVel;
+sv_PlastProfVis.rMinOutputPress := sv_MinOutputPlast.rPressure;
+
+//copy minoutput to const plast movement in setup mode
+sv_ConstPlastSetup.Velocity.rMinOutput := sv_MinOutputPlast.rVelocity;
+sv_ConstPlastSetup.Pressure.rMinOutput := sv_MinOutputPlast.rPressure;
+
+//copy minoutput to intrusion params
+sv_IntrusionSettings.ConstOutput.Velocity.rMinOutput := sv_MinOutputPlast.rVelocity;
+sv_IntrusionSettings.ConstOutput.Pressure.rMinOutput := sv_MinOutputPlast.rPressure;
+
+@END_Body 
+
+@@@BEG_Comment@@@ 
+@TL(0)
+
+@@@END_Comment@@@ 
+
+@BEG_Body 
+@TL(14)
+(**************************************** WARNING ********************************************
+ *** The KEBA Kemro K2 System including software is not intended for safety control tasks! ***
+ ***                       For further information see Comment tab!                        ***
+ *********************************************************************************************)
+ 
+//copy const value of charge pressure to every point of charge profile
+FOR i:= 1 TO sv_PlastProfVis.Profile.iNoOfPoints  DO
+    sv_PlastProfVis.Profile.Points[i].rPressure := sv_ConstChargePressure.Output.rOutputValue;
+    sv_PlastProfVis.Profile.Points[i].rPressRamp := sv_ConstChargePressure.Output.rRamp;
+END_FOR;
+
+sv_PlastProfVis.rPreOutputPress := sv_ConstChargePressure.PreOutput.rOutputValue;
+sv_PlastProfVis.rPreOutputPressRamp := sv_ConstChargePressure.PreOutput.rRamp;
+
+@END_Body 
+
+@@@BEG_Comment@@@ 
+@TL(3)
+This postupdate algorithm reacts on changes of the setting for
+constant pressure during charging. If the setting changes the new values
+are copied to the plst profile.
+@@@END_Comment@@@ 
+
+@BEG_Body 
+@TL(15)
+(**************************************** WARNING ********************************************
+ *** The KEBA Kemro K2 System including software is not intended for safety control tasks! ***
+ ***                       For further information see Comment tab!                        ***
+ *********************************************************************************************)
+
+IF sv_DecompAftPlastSettings.Mode = nPosDependent THEN
+   sv_rMaxPlastEnd := sv_rScrewVolume - sv_DecompAftPlastSettings.rDecompPos;
+ELSE
+   sv_rMaxPlastEnd := sv_rScrewVolume;
+END_IF;
+
+
+sv_rMaxCutOffPos := sv_DecompAftPlastSettings.rDecompPos + sv_PlastProfVis.Profile.Points[(sv_PlastProfVis.Profile.iNoOfPoints+1)].rStartPos;
+
+
+@END_Body 
+
+@@@BEG_Comment@@@ 
+@TL(0)
+
+@@@END_Comment@@@ 
+
+@BEG_Body 
+@TL(26)
+(**************************************** WARNING ********************************************
+ *** The KEBA Kemro K2 System including software is not intended for safety control tasks! ***
+ ***                       For further information see Comment tab!                        ***
+ *********************************************************************************************)
+
+//sample after a defined time or if any movement in this function unit starts
+fbSampleDelayTimer(IN := TRUE, PT := dSampleDelayTime);
+
+IF mbNewStartEvent THEN
+   //start event for any inject movement was sent -> copy stored position
+   b := WRITE_SVREAL_DIRECT(sv_rPlastEndPosition, mrPlastEndPos);
+   bStop := TRUE;
+ELSIF fbSampleDelayTimer.Q THEN
+   //sample delay time elapsed -> sample actual position
+   b := WRITE_SVREAL_DIRECT(sv_rPlastEndPosition, sv_rScrewPosition);
+   bStop := TRUE;
+END_IF;
+
+IF bStop THEN   
+   fbSampleDelayTimer(IN := FALSE);
+   mbNewStartEvent := FALSE;
+   mevStart := EMPTY;
+   bStop := FALSE;
+   STOP_PROCESS_ALGORITHM();
+END_IF;
+
+@END_Body 
+
+@@@BEG_Comment@@@ 
+@TL(0)
+
+@@@END_Comment@@@ 
+
+@BEG_Body 
+@TL(7)
+(**************************************** WARNING ********************************************
+ *** The KEBA Kemro K2 System including software is not intended for safety control tasks! ***
+ ***                       For further information see Comment tab!                        ***
+ *********************************************************************************************)
+
+sv_MovePlast.prTargetValue := @sv_PlastProfVis.Profile.Points[(sv_PlastProfVis.Profile.iNoOfPoints+1)].rStartPos;
+
+@END_Body 
+
+@@@BEG_Comment@@@ 
+@TL(0)
+
+@@@END_Comment@@@ 
+
+@BEG_Body 
+@TL(5)
+FOR i:= 3 TO 20 DO
+    sv_PlastProfVis.Profile.Points[i].rRotationRamp := sv_PlastProfVis.Profile.Points[2].rRotationRamp;
+END_FOR;
+
+
+@END_Body 
+
+@@@BEG_Comment@@@ 
+@TL(0)
+
+@@@END_Comment@@@ 
+
+@BEG_Body 
+@TL(12)
+(**************************************** WARNING ********************************************
+ *** The KEBA Kemro K2 System including software is not intended for safety control tasks! ***
+ ***                       For further information see Comment tab!                        ***
+ *********************************************************************************************)
+
+variableName := CONCAT(GET_MY_FU_NAME(),'.Plasticize.ActPlastTime ');
+swoState := KSWO_AddVariable(Task := TaskInject,
+                             Name := variableName,
+                             Variable := sv_PlastTimesAct.dActMoveTime);
+
+STOP_PROCESS_ALGORITHM();
+
+@END_Body 
+
+@@@BEG_Comment@@@ 
+@TL(0)
+
+@@@END_Comment@@@ 
+
+@BEG_Body 
+@TL(12)
+(**************************************** WARNING ********************************************
+ *** The KEBA Kemro K2 System including software is not intended for safety control tasks! ***
+ ***                       For further information see Comment tab!                        ***
+ *********************************************************************************************)
+
+//sample position before next movement starts
+IF evStartData.DeviceId = sv_DeviceId THEN
+   mrPlastEndPos := sv_rScrewPosition;
+   mbNewStartEvent := TRUE;
+END_IF;
+
+
+@END_Body 
+
+@@@BEG_Comment@@@ 
+@TL(1)
+The task slot is assigned to make sure that this eventa lgo is executed before ABControl - evaStart 
+@@@END_Comment@@@ 
+@END_Body 
+
+@END_Contents 

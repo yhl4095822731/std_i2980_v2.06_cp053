@@ -1,0 +1,278 @@
+(*
+Function to add or delete profile points in such a way that no profile error occured.
+Similar to function FBChangeNoOfProfileSteps (same algorithm for TVisProfile).
+*)
+
+IMPORT_OVER_LISTFILE
+ TVisProfilePlast
+
+END_IMPORT
+
+FUNCTION_BLOCK FBChangeNoOfProfileStepsPlast #DUMMY_EDIT_BLOCK
+
+VAR_IN_OUT
+ ProfileVis : TVisProfilePlast (* Change this profile *);
+END_VAR
+
+VAR_INPUT
+ bUseStartPosProfiles : BOOL (* => Input of sv_bUseStartPosProfile *);
+ bOpenEndProfile : BOOL (* Element of KAPPL_VISProfile *);
+ bDataStateIsReady : BOOL := TRUE (* => IF sv_DataState = nReady THEN TRUE (no saving/loading of data) *);
+END_VAR
+
+SYSTEM_VAR
+ sv_bProfileEditorActive : BOOL (* "profile dirty" flag (will be set / reset by HMI) *);
+END_VAR
+
+VAR_TEMP
+ uTmpCnt : UDINT (* temporary counter *);
+ rTmpSavePos : REAL (* Save first position, to rescue right startpoint *);
+ rTmpSaveStartRamp : REAL;
+ rTmpSaveMidRamp : REAL;
+END_VAR
+
+VAR
+ iNoOfPointsOld : UDINT := 0 (* Save old value number of profile steps  *);
+ iNoOfPoints : UDINT (* New number of profile steps *);
+END_VAR
+#BEGIN_EDIT_BLOCK
+(**************************************** WARNING ********************************************
+ *** The KEBA Kemro K2 System including software is not intended for safety control tasks! ***
+ ***                       For further information see Comment tab!                        ***
+ *********************************************************************************************)
+
+// add / remove points if number of profile steps is changed 
+
+IF bUseStartPosProfiles THEN
+    iNoOfPoints := ProfileVis.iNoOfPoints;
+ELSE
+    iNoOfPoints := ProfileVis.iNoOfPoints + 1; 
+END_IF;
+
+IF (NOT bDataStateIsReady) OR sv_bProfileEditorActive THEN
+   ;//data loading in progress or profile editor in HMI active
+   //-> do not modify profile points
+ELSIF (iNoOfPointsOld <> 0) AND (iNoOfPointsOld < iNoOfPoints) THEN
+   // Save mid ramp
+   rTmpSaveMidRamp := ProfileVis.Points[2].rRotationRamp;
+   // Point with last position
+   ProfileVis.Points[iNoOfPoints] := ProfileVis.Points[iNoOfPointsOld];
+   // Last HMI point
+   ProfileVis.Points[iNoOfPoints-1] := ProfileVis.Points[iNoOfPointsOld-1];
+   ProfileVis.Points[iNoOfPoints-1].rRotationRamp := rTmpSaveMidRamp;
+   // Open end profiles have often values < 0.0 
+   IF bOpenEndProfile THEN
+      ProfileVis.Points[iNoOfPoints].rStartPos := 0.0;
+   END_IF;
+   // insert a copy of the last step, in HMI the endposition of each step is shown = startpos of next point
+   FOR uTmpCnt := 1 TO iNoOfPoints - iNoOfPointsOld DO
+      ProfileVis.Points[iNoOfPointsOld-1+uTmpCnt] := ProfileVis.Points[iNoOfPoints-1];
+      ProfileVis.Points[iNoOfPointsOld-1+uTmpCnt].rStartPos := ProfileVis.Points[iNoOfPoints].rStartPos;
+   END_FOR;
+// delete points, insert 0.0-values to be sure that nothing can happend by some failure    
+ELSIF iNoOfPointsOld > iNoOfPoints AND bDataStateIsReady THEN 
+   // save start position, it can not be set by HMI 
+   rTmpSavePos := ProfileVis.Points[1].rStartPos;
+   // Save start ramp
+   rTmpSaveStartRamp := ProfileVis.Points[1].rRotationRamp;
+   FOR uTmpCnt := 1 TO iNoOfPoints DO
+      ProfileVis.Points[uTmpCnt] := ProfileVis.Points[iNoOfPointsOld - iNoOfPoints + uTmpCnt];
+   END_FOR;
+   ProfileVis.Points[1].rStartPos := rTmpSavePos;
+   ProfileVis.Points[1].rRotationRamp := rTmpSaveStartRamp;
+   FOR uTmpCnt := 1 TO iNoOfPointsOld - iNoOfPoints DO
+      ProfileVis.Points[iNoOfPoints + uTmpCnt].rStartPos := 0.0;
+      ProfileVis.Points[iNoOfPoints + uTmpCnt].rRotation := 0.0;
+      ProfileVis.Points[iNoOfPoints + uTmpCnt].rPressure := 0.0;
+      ProfileVis.Points[iNoOfPoints + uTmpCnt].rBackPressure := 0.0;
+   END_FOR;    
+END_IF;
+iNoOfPointsOld := iNoOfPoints;
+
+
+
+;#END_EDIT_BLOCK END_FUNCTION_BLOCK
+
+
+
+#END_OF_IEC_PART
+
+@Puma @IecEditor 6 103 @Pou 25 
+@@@BEG_Comment@@@
+Function to add or delete profile points in such a way that no profile error occured.
+Similar to function FBChangeNoOfProfileSteps (same algorithm for TVisProfile).
+@@@END_Comment@@@
+
+@BEG_Contents 
+
+@BEG_Func 
+@RT(17)FuncTreeContainer 
+0 
+@END_Func 
+
+@BEG_Const 
+@RT(18)ConstTreeContainer 
+0 
+@END_Const 
+
+@BEG_Export 
+
+@BEG_Kind 
+@FUNCTION_BLOCK @RT(29)FBChangeNoOfProfileStepsPlast @STRUCTURED_TEXT 
+@RT(0) @RT(0) @RT(0) 
+@END_Kind 
+
+@BEG_Dcl 
+@RT(16)DclTreeContainer 
+11 
+@Var @RT(10)ProfileVis @RT(0) @T @T @DERIVED 0 @T @T @DT @RT(16)TVisProfilePlast @RT(0) @T @T @UNKNOWN 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(19)Change this profile @RT(0) 
+@END_Attrib 
+1 2 @F @F @F @F 
+
+@Var @RT(20)bUseStartPosProfiles @RT(0) @T @F @DT @RT(4)BOOL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(34)=> Input of sv_bUseStartPosProfile @RT(0) 
+@END_Attrib 
+1 1 @F @F @F @F 
+
+@Var @RT(15)bOpenEndProfile @RT(0) @T @F @DT @RT(4)BOOL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(27)Element of KAPPL_VISProfile @RT(0) 
+@END_Attrib 
+1 1 @F @F @F @F 
+
+@Var @RT(17)bDataStateIsReady @RT(0) @T @F @DT @RT(4)BOOL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(4)TRUE @RT(65)=> IF sv_DataState = nReady THEN TRUE (no saving/loading of data) @RT(0) 
+@END_Attrib 
+1 1 @F @F @F @F 
+
+@Var @RT(7)uTmpCnt @RT(0) @T @F @DT @RT(5)UDINT @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(17)temporary counter @RT(0) 
+@END_Attrib 
+1 4 @F @F @F @F 
+
+@Var @RT(11)rTmpSavePos @RT(0) @T @F @DT @RT(4)REAL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(47)Save first position, to rescue right startpoint @RT(0) 
+@END_Attrib 
+1 4 @F @F @F @F 
+
+@Var @RT(14)iNoOfPointsOld @RT(0) @T @F @DT @RT(5)UDINT @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(1)0 @RT(39)Save old value number of profile steps  @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(11)iNoOfPoints @RT(0) @T @F @DT @RT(5)UDINT @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(27)New number of profile steps @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(23)sv_bProfileEditorActive @RT(0) @T @F @DT @RT(4)BOOL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(49)"profile dirty" flag (will be set / reset by HMI) @RT(0) 
+@END_Attrib 
+1 8 @F @F @F @F 
+
+@Var @RT(17)rTmpSaveStartRamp @RT(0) @T @F @DT @RT(4)REAL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 4 @F @F @F @F 
+
+@Var @RT(15)rTmpSaveMidRamp @RT(0) @T @F @DT @RT(4)REAL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 4 @F @F @F @F 
+
+@END_Dcl 
+
+@END_Export 
+
+@BEG_Body 
+@TL(54)
+(**************************************** WARNING ********************************************
+ *** The KEBA Kemro K2 System including software is not intended for safety control tasks! ***
+ ***                       For further information see Comment tab!                        ***
+ *********************************************************************************************)
+
+// add / remove points if number of profile steps is changed 
+
+IF bUseStartPosProfiles THEN
+    iNoOfPoints := ProfileVis.iNoOfPoints;
+ELSE
+    iNoOfPoints := ProfileVis.iNoOfPoints + 1; 
+END_IF;
+
+IF (NOT bDataStateIsReady) OR sv_bProfileEditorActive THEN
+   ;//data loading in progress or profile editor in HMI active
+   //-> do not modify profile points
+ELSIF (iNoOfPointsOld <> 0) AND (iNoOfPointsOld < iNoOfPoints) THEN
+   // Save mid ramp
+   rTmpSaveMidRamp := ProfileVis.Points[2].rRotationRamp;
+   // Point with last position
+   ProfileVis.Points[iNoOfPoints] := ProfileVis.Points[iNoOfPointsOld];
+   // Last HMI point
+   ProfileVis.Points[iNoOfPoints-1] := ProfileVis.Points[iNoOfPointsOld-1];
+   ProfileVis.Points[iNoOfPoints-1].rRotationRamp := rTmpSaveMidRamp;
+   // Open end profiles have often values < 0.0 
+   IF bOpenEndProfile THEN
+      ProfileVis.Points[iNoOfPoints].rStartPos := 0.0;
+   END_IF;
+   // insert a copy of the last step, in HMI the endposition of each step is shown = startpos of next point
+   FOR uTmpCnt := 1 TO iNoOfPoints - iNoOfPointsOld DO
+      ProfileVis.Points[iNoOfPointsOld-1+uTmpCnt] := ProfileVis.Points[iNoOfPoints-1];
+      ProfileVis.Points[iNoOfPointsOld-1+uTmpCnt].rStartPos := ProfileVis.Points[iNoOfPoints].rStartPos;
+   END_FOR;
+// delete points, insert 0.0-values to be sure that nothing can happend by some failure    
+ELSIF iNoOfPointsOld > iNoOfPoints AND bDataStateIsReady THEN 
+   // save start position, it can not be set by HMI 
+   rTmpSavePos := ProfileVis.Points[1].rStartPos;
+   // Save start ramp
+   rTmpSaveStartRamp := ProfileVis.Points[1].rRotationRamp;
+   FOR uTmpCnt := 1 TO iNoOfPoints DO
+      ProfileVis.Points[uTmpCnt] := ProfileVis.Points[iNoOfPointsOld - iNoOfPoints + uTmpCnt];
+   END_FOR;
+   ProfileVis.Points[1].rStartPos := rTmpSavePos;
+   ProfileVis.Points[1].rRotationRamp := rTmpSaveStartRamp;
+   FOR uTmpCnt := 1 TO iNoOfPointsOld - iNoOfPoints DO
+      ProfileVis.Points[iNoOfPoints + uTmpCnt].rStartPos := 0.0;
+      ProfileVis.Points[iNoOfPoints + uTmpCnt].rRotation := 0.0;
+      ProfileVis.Points[iNoOfPoints + uTmpCnt].rPressure := 0.0;
+      ProfileVis.Points[iNoOfPoints + uTmpCnt].rBackPressure := 0.0;
+   END_FOR;    
+END_IF;
+iNoOfPointsOld := iNoOfPoints;
+
+
+@END_Body 
+
+@END_Contents 

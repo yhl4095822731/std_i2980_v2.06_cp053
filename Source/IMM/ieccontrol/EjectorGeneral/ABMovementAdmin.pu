@@ -1,0 +1,2319 @@
+IMPORT_OVER_LISTFILE
+ IS_LINKED
+, WRITE_SV_DIRECT
+, nAnaOutputModeMid
+, cMoveFwd
+, cMoveShake
+, cMoveBwd
+, nVibrate
+, cCompMold
+, cCompPump
+, KAPPL_VisProfile
+, tnEjectorMode
+, tsMinOutput
+, tsVelPre
+, tsMoveCtrl
+, ABMoveFwd
+, ABMoveBwd
+, ABMoveShake
+, ABOutputRequest
+, tsActTimes
+, tsEndPosData
+, tnOperationMode
+, tsCalibMovement
+, tsRequiredPumps
+, tsHydrMaxValues
+, KAPPL_LintabData
+, tsCylinderData
+, tyPumpData
+, tyNumberOfDevices
+, ABMovePVCalib
+, KSYS_Status
+, ABCalcHydrMaxValues
+, ABUpdateRelLintabPre
+, ABUpdateRelLintabVel
+, tCalculatedProfiles
+
+END_IMPORT
+
+ALGORITHM_BLOCK ABMovementAdmin #DUMMY_EDIT_BLOCK
+
+SYSTEM_VAR
+ sv_bInitStart : BOOL;
+ sv_bDeviceStart : BOOL (* Start Device *);
+ sv_EjectorFwdVis : KAPPL_VisProfile;
+ sv_EjectorFwdVisShake : KAPPL_VisProfile;
+ sv_EjectorBwdVisShake : KAPPL_VisProfile;
+ sv_EjectorBwdVis : KAPPL_VisProfile;
+ sv_EjectorMode : tnEjectorMode;
+ sv_MinOutputFwd : tsMinOutput;
+ sv_MinOutputBwd : tsMinOutput;
+ sv_ConstFwdVis : tsVelPre;
+ sv_ConstBwdVis : tsVelPre;
+ sv_rEjectorStroke : REAL;
+ sv_EjectorFwdTimesAct : tsActTimes;
+ sv_EjectorBwdTimesAct : tsActTimes;
+ sv_dCalculatedDurationFwd : TIME (* Calculated duration for ejector fwd *);
+ sv_dCalculatedDurationBwd : TIME (* Calculated duration for ejector bwd *);
+ sv_rFwdCalcDurationStartPos : REAL (* Start position for calculation of ejector fwd duration *);
+ sv_rBwdCalcDurationStartPos : REAL (* Start position for calculation of ejector bwd duration *);
+ sv_rShakeFwdCalcDurStartPos : REAL (* Start position for calculation of ejector fwd shake duration *);
+ sv_bInitDone : BOOL;
+ sv_bUseProgramSwitches : BOOL (* TRUE: create sequence by using program switches; FALSE: use sequence from ODC editor *);
+ sv_bTransducerAvailable : BOOL (* chad(CR_0038565) *);
+ sv_bLimitSwitchesAvailable : BOOL (* chad(CR_0038565) *);
+ ai_Position : REAL (* chad(CR_0038565) *);
+ sv_EjectorBwdMonData : tsEndPosData (* chad(CR_0038565) *);
+ sv_EjectorFwdMonData : tsEndPosData (* chad(CR_0038565) *);
+ di_EjectorFwd : BOOL (* chad(CR_0038565) *);
+ di_EjectorBwd : BOOL (* chad(CR_0038565) *);
+ sv_ConstBwdVisLS : tsVelPre (* chad(CR_0038565) *);
+ sv_ConstFwdVisLS : tsVelPre (* chad(CR_0038565) *);
+ sv_OperationMode : tnOperationMode;
+ sv_rMaxPressureFwd : REAL;
+ sv_rMaxPressureBwd : REAL;
+ sv_rMaxSpeedFwd : REAL;
+ sv_rMaxSpeedBwd : REAL;
+ sv_iActiveStage : DINT;
+ sv_bDeviceReady : BOOL;
+ sv_iActiveStageFwd : DINT (* active profile stage ejector fwd *);
+ sv_iActiveStageBwd : DINT (* active profile stage ejector bwd *);
+ sv_bFwdActive : BOOL;
+ sv_bBwdActive : BOOL;
+ sv_CalibState : tsCalibMovement;
+ sv_rShakeTargetPos : REAL;
+ sv_RequiredPumps : tsRequiredPumps;
+ sv_HydrMaxValues : tsHydrMaxValues (* hydraulic max values for ejector movements *);
+ sv_LintabOutFwdP : KAPPL_LintabData;
+ sv_LintabOutFwdV : KAPPL_LintabData;
+ sv_LintabOutBwdP : KAPPL_LintabData;
+ sv_LintabOutBwdV : KAPPL_LintabData;
+ sv_CylinderData : tsCylinderData;
+ sv_PumpData : tyPumpData;
+ sv_NumberOfDevices : tyNumberOfDevices;
+ sv_bDoPumpVelocityCalib : BOOL;
+ sv_rMaxSpeedBwdCalc : REAL;
+ sv_rMaxSpeedFwdCalc : REAL;
+ sv_rMaxSpeedReducePercent : REAL;
+ sv_rMaxSpeedFwdCalib : REAL;
+ sv_rMaxSpeedBwdCalib : REAL;
+ sv_bODCCombinedMoveActive : BOOL;
+ sv_bFALSE : BOOL;
+END_VAR
+
+SYSTEM_OBJECT
+ PU_Task_7 : TASK;
+ TaskAnalog : TASK;
+ EV_Task_1 : TASK;
+ PU_Task_3 : TASK (* chad(CR_0038565) *);
+END_OBJECT
+
+VAR_EXTERNAL
+ g_MoveCtrl : tsMoveCtrl;
+ g_dActMoveTimeFwd : TIME;
+ g_dActMoveTimeBwd : TIME;
+END_VAR
+
+VAR
+ abMoveFwd : ABMoveFwd;
+ abMoveBwd : ABMoveBwd;
+ abMoveShake : ABMoveShake;
+ abOutputRequest : ABOutputRequest;
+ mpbEjectorParallelToMold : REFTO BOOL;
+ abMovePVCalib : ABMovePVCalib;
+ miDigitsToFloor : SINT := 2;
+END_VAR
+
+POSTUPDATE_ALGORITHM pInitStart ON PU_Task_7 WITH sv_bInitStart
+
+
+VAR
+ state : KSYS_Status;
+ abCalcMaxValues : ABCalcHydrMaxValues;
+END_VAR
+#BEGIN_EDIT_BLOCK
+(**************************************** WARNING ********************************************
+ *** The KEBA Kemro K2 System including software is not intended for safety control tasks! ***
+ ***                       For further information see Comment tab!                        ***
+ *********************************************************************************************)
+
+IF sv_bInitStart THEN
+    //register and initialize Movement Ejector Forward
+    abMoveFwd.aRegister();
+    abMoveFwd.aInit(pProfile := @sv_EjectorFwdVis,
+                    pdCalculatedDuration := @sv_dCalculatedDurationFwd,
+                    prCalcDurationStartPosition := @sv_rFwdCalcDurationStartPos);
+    
+    //register and initialize Movement Ejector Backward
+    abMoveBwd.aRegister();
+    abMoveBwd.aInit(pProfile := @sv_EjectorBwdVis,
+                    pdCalculatedDuration := @sv_dCalculatedDurationBwd,
+                    prCalcDurationStartPosition := @sv_rBwdCalcDurationStartPos);
+    
+    //register and initialize ejector shaking movement
+    abMoveShake.aRegister();
+    abMoveShake.aInit(pFwdProfile := @sv_EjectorFwdVisShake, 
+                      pBwdProfile := @sv_EjectorBwdVis, 
+                      pBwdShakeProfile := @sv_EjectorBwdVisShake,
+                      prShakeFwdCalcDurStartPos := @sv_rShakeFwdCalcDurStartPos);
+   
+    //block for pump calib
+    abMovePVCalib.aInit();
+   
+    //init calculation of hydraulic max values
+    abCalcMaxValues.aInit(pRequiredPumps := @sv_RequiredPumps,
+                          pHydrMaxValues := @sv_HydrMaxValues);
+   
+END_IF;
+
+mpbEjectorParallelToMold := GET_SYNC_REFTO('CentralCoordination1.sv_bEjectorFwdDuringMldOpen', T#0s, state);
+
+
+;#END_EDIT_BLOCK END_ALGORITHM
+
+POSTUPDATE_ALGORITHM pDeviceStart ON EV_Task_1 WITH sv_bDeviceStart
+
+#BEGIN_EDIT_BLOCK
+(**************************************** WARNING ********************************************
+ *** The KEBA Kemro K2 System including software is not intended for safety control tasks! ***
+ ***                       For further information see Comment tab!                        ***
+ *********************************************************************************************)
+
+IF sv_bDeviceStart THEN
+   //start device
+   START_PROCESS_ALGORITHM(paRun);
+END_IF;
+
+
+;#END_EDIT_BLOCK END_ALGORITHM
+
+POSTUPDATE_ALGORITHM pInitRelLintabUpdater ON PU_Task_7 WITH sv_bInitDone
+
+
+VAR
+ abUpdateRelLintabPreFwd : ABUpdateRelLintabPre;
+ abUpdateRelLintabVelFwd : ABUpdateRelLintabVel;
+ abUpdateRelLintabPreBwd : ABUpdateRelLintabPre;
+ abUpdateRelLintabVelBwd : ABUpdateRelLintabVel;
+END_VAR
+#BEGIN_EDIT_BLOCK
+(**************************************** WARNING ********************************************
+ *** The KEBA Kemro K2 System including software is not intended for safety control tasks! ***
+ ***                       For further information see Comment tab!                        ***
+ *********************************************************************************************)
+
+// InitUpdatePreLintabFwd:
+abUpdateRelLintabPreFwd.aInit(pLintabOut := @sv_LintabOutFwdP,
+                              prMaxPressure := @sv_rMaxPressureFwd,
+                              prMaxHydrPressure := @sv_HydrMaxValues.rMaxPressure,
+                              bUseForce := TRUE,
+                              bFwd := TRUE,
+                              pCylinderData := @sv_CylinderData);
+
+// InitUpdateVelLintabFwd:
+abUpdateRelLintabVelFwd.aInit(pLintabOut := @sv_LintabOutFwdV,
+                              prMaxSpeed := @sv_rMaxSpeedFwd,
+                              prMaxSpeedCalc := @sv_rMaxSpeedFwdCalc,
+                              prMaxSpeedCalib := @sv_rMaxSpeedFwdCalib,
+                              prMaxSpeedReducePercent := @sv_rMaxSpeedReducePercent,
+                              iMaxSpeedDigitsToFloor := miDigitsToFloor,
+                              prAbsFlow := @sv_HydrMaxValues.rAbsFlow,
+                              bFwd := TRUE,
+                              pCylinderData := @sv_CylinderData);
+
+// InitUpdatePreLintabBwd:
+abUpdateRelLintabPreBwd.aInit(pLintabOut := @sv_LintabOutBwdP,
+                              prMaxPressure := @sv_rMaxPressureBwd,
+                              prMaxHydrPressure := @sv_HydrMaxValues.rMaxPressure,
+                              bUseForce := TRUE,
+                              bFwd := FALSE,
+                              pCylinderData := @sv_CylinderData);
+
+// InitUpdateVelLintabBwd:
+abUpdateRelLintabVelBwd.aInit(pLintabOut := @sv_LintabOutBwdV,
+                              prMaxSpeed := @sv_rMaxSpeedBwd,
+                              prMaxSpeedCalc := @sv_rMaxSpeedBwdCalc,
+                              prMaxSpeedCalib := @sv_rMaxSpeedBwdCalib,
+                              prMaxSpeedReducePercent := @sv_rMaxSpeedReducePercent,                             
+                              iMaxSpeedDigitsToFloor := miDigitsToFloor,                              
+                              prAbsFlow := @sv_HydrMaxValues.rAbsFlow,
+                              bFwd := FALSE,
+                              pCylinderData := @sv_CylinderData);
+
+
+;#END_EDIT_BLOCK END_ALGORITHM
+
+PROCESS_ALGORITHM paRun ON TaskAnalog(5000)
+
+
+VAR_TEMP
+ iPump : DINT;
+ b : BOOL;
+END_VAR
+
+VAR
+ bRequestPump : BOOL;
+ bPumpRequested : BOOL;
+END_VAR
+
+(* IecGraph-Code *)
+
+(* init step *)
+INITIAL_STEP START:
+Action20 (P);
+ADecidePumpRequest (P);
+END_STEP
+
+ACTION Action20: #BEGIN_EDIT_BLOCK
+b := WRITE_SV_DIRECT(sv_bDeviceStart, sv_bFALSE);
+
+;#END_EDIT_BLOCK END_ACTION (*Action20*)
+
+(* steps *)
+STEP OUTPUT_REQUEST:
+AOutputRequest (P);
+ACheckOutput (N);
+END_STEP
+
+ACTION AOutputRequest: #BEGIN_EDIT_BLOCK
+abOutputRequest.aRequest(pMoveData := g_MoveCtrl.pData,
+                         AnaOutputMode := nAnaOutputModeMid);
+bPumpRequested := TRUE;
+
+;#END_EDIT_BLOCK END_ACTION (*AOutputRequest*)
+ACTION ACheckOutput: #BEGIN_EDIT_BLOCK
+abOutputRequest.aCheck();
+
+;#END_EDIT_BLOCK END_ACTION (*ACheckOutput*)
+STEP OUTPUT:
+END_STEP
+
+STEP Step14:
+END_STEP
+
+STEP S_Fwd:
+AForward (N);
+END_STEP
+
+STEP S_PumpCalib:
+ACalib (N);
+END_STEP
+
+STEP S_Bwd:
+ABackward (N);
+END_STEP
+
+STEP S_Shaking:
+AShake (N);
+END_STEP
+
+STEP READY:
+Action2 (P);
+END_STEP
+
+ACTION Action2: #BEGIN_EDIT_BLOCK
+IF bPumpRequested THEN
+   abOutputRequest.aRelease(pMoveData := g_MoveCtrl.pData);
+   bPumpRequested := FALSE;
+END_IF;
+
+g_MoveCtrl.bReady := TRUE;
+IF NOT sv_bDeviceStart THEN
+    STOP_PROCESS_ALGORITHM();
+END_IF;
+
+;#END_EDIT_BLOCK END_ACTION (*Action2*)
+
+(* transitions *)
+GO_ON_TRANSITION TPumpNeeded (* Trans12 *) FROM START TO OUTPUT_REQUEST :=  #BEGIN_EDIT_BLOCK
+bRequestPump
+;#END_EDIT_BLOCK
+END_TRANSITION
+
+GO_ON_TRANSITION TNoRequest (* Trans35 *) FROM START TO OUTPUT :=  #BEGIN_EDIT_BLOCK
+NOT bRequestPump
+;#END_EDIT_BLOCK
+END_TRANSITION
+
+TRANSITION Trans13 (* Trans13 *) FROM OUTPUT_REQUEST TO READY :=  #BEGIN_EDIT_BLOCK
+g_MoveCtrl.bStop
+;#END_EDIT_BLOCK
+END_TRANSITION
+
+GO_ON_TRANSITION Trans15 (* Trans15 *) FROM OUTPUT_REQUEST TO OUTPUT :=  #BEGIN_EDIT_BLOCK
+abOutputRequest.aCheck.bReady
+;#END_EDIT_BLOCK
+END_TRANSITION
+
+GO_ON_TRANSITION Trans9 (* Trans9 *) FROM OUTPUT TO Step14 :=  #BEGIN_EDIT_BLOCK
+g_MoveCtrl.pData^.MoveDir = cMoveFwd 
+;#END_EDIT_BLOCK
+END_TRANSITION
+
+GO_ON_TRANSITION TNoPumpCalib (* Trans17 *) FROM Step14 TO S_Fwd :=  #BEGIN_EDIT_BLOCK
+NOT sv_bDoPumpVelocityCalib
+;#END_EDIT_BLOCK
+END_TRANSITION
+
+GO_ON_TRANSITION TForwardReady (* TForwardReady *) FROM S_Fwd TO READY :=  #BEGIN_EDIT_BLOCK
+abMoveFwd.aRun.bReady
+;#END_EDIT_BLOCK
+END_TRANSITION
+
+GO_ON_TRANSITION TPumpCalib (* Trans18 *) FROM Step14 TO S_PumpCalib :=  #BEGIN_EDIT_BLOCK
+sv_bDoPumpVelocityCalib
+;#END_EDIT_BLOCK
+END_TRANSITION
+
+TRANSITION TPumpCalibReady (* Trans24 *) FROM S_PumpCalib TO READY :=  #BEGIN_EDIT_BLOCK
+abMovePVCalib.aRun.bReady
+;#END_EDIT_BLOCK
+END_TRANSITION
+
+GO_ON_TRANSITION Trans2 (* Trans2 *) FROM OUTPUT TO S_Bwd :=  #BEGIN_EDIT_BLOCK
+g_MoveCtrl.pData^.MoveDir = cMoveBwd
+;#END_EDIT_BLOCK
+END_TRANSITION
+
+GO_ON_TRANSITION TBackwardReady (* TBackwardReady *) FROM S_Bwd TO READY :=  #BEGIN_EDIT_BLOCK
+abMoveBwd.aRun.bReady
+;#END_EDIT_BLOCK
+END_TRANSITION
+
+GO_ON_TRANSITION TShake (* Trans12 *) FROM OUTPUT TO S_Shaking :=  #BEGIN_EDIT_BLOCK
+g_MoveCtrl.pData^.MoveDir = cMoveAll
+;#END_EDIT_BLOCK
+END_TRANSITION
+
+GO_ON_TRANSITION TShakingReady (* TShakingReady *) FROM S_Shaking TO READY :=  #BEGIN_EDIT_BLOCK
+abMoveShake.aRun.bReady
+;#END_EDIT_BLOCK
+END_TRANSITION
+
+TRANSITION Trans8 (* Trans8 *) FROM READY TO START :=  #BEGIN_EDIT_BLOCK
+TRUE
+;#END_EDIT_BLOCK
+END_TRANSITION
+
+(* end IecGraph-Code *)
+(* sfc-code *)
+
+(* stand alone actions *)
+ACTION AForward: #BEGIN_EDIT_BLOCK
+abMoveFwd.aRun(bStop :=g_MoveCtrl.bStop);
+b := WRITE_SV_DIRECT(sv_EjectorFwdTimesAct.dActMoveTime, g_dActMoveTimeFwd);
+
+
+;#END_EDIT_BLOCK END_ACTION (*AForward*)
+ACTION ABackward: #BEGIN_EDIT_BLOCK
+abMoveBwd.aRun(bStop :=g_MoveCtrl.bStop);
+b := WRITE_SV_DIRECT(sv_EjectorBwdTimesAct.dActMoveTime, g_dActMoveTimeBwd);
+
+
+;#END_EDIT_BLOCK END_ACTION (*ABackward*)
+ACTION AShake: #BEGIN_EDIT_BLOCK
+abMoveShake.aRun();
+
+;#END_EDIT_BLOCK END_ACTION (*AShake*)
+ACTION ADecidePumpRequest: #BEGIN_EDIT_BLOCK
+(**************************************** WARNING ********************************************
+ *** The KEBA Kemro K2 System including software is not intended for safety control tasks! ***
+ ***                       For further information see Comment tab!                        ***
+ *********************************************************************************************)
+
+IF ((sv_OperationMode = nManual) AND (NOT sv_bODCCombinedMoveActive)) OR (sv_OperationMode = nSetup) THEN
+   //movement was started by button (=not via ODC sequence) or in setup mode -> request pump
+   bRequestPump := TRUE;
+ELSIF mpbEjectorParallelToMold^ THEN
+   abOutputRequest.aCheckRequiredPumpsFree(RequiredPumps := sv_RequiredPumps.RequiredPumps);
+   IF abOutputRequest.aCheckRequiredPumpsFree.bRequiredPumpsFree THEN
+      bRequestPump := TRUE;
+   ELSE
+      //check if all required pumps are actually used by mold
+      //in this case no pump request is necessary (only open the valve)
+      bRequestPump := FALSE;
+      FOR iPump := 1 TO sv_NumberOfDevices[cCompPump] DO
+         IF sv_RequiredPumps.RequiredPumps[iPump] AND (sv_PumpData[iPump].ActiveDevice.CompId <> cCompMold) THEN
+            //required pump is actually not used by mold
+            //-> wait for all pumps are free (no "parallel" movement) 
+            bRequestPump := TRUE;
+            EXIT;
+         END_IF;
+      END_FOR;
+   END_IF;   
+ELSE
+   //any other case
+   bRequestPump := TRUE;
+END_IF;
+
+;#END_EDIT_BLOCK END_ACTION (*ADecidePumpRequest*)
+ACTION ACalib: #BEGIN_EDIT_BLOCK
+(**************************************** WARNING ********************************************
+ *** The KEBA Kemro K2 System including software is not intended for safety control tasks! ***
+ ***                       For further information see Comment tab!                        ***
+ *********************************************************************************************)
+
+abMovePVCalib.aRun(bStop :=g_MoveCtrl.bStop);
+
+;#END_EDIT_BLOCK END_ACTION (*ACalib*)
+(* end sfc-code *)
+
+
+END_ALGORITHM
+
+POSTUPDATE_ALGORITHM pEjtFwdVisProfilChanged ON PU_Task_7 WITH sv_EjectorFwdVis
+
+
+VAR_TEMP
+ rEndOutputPressTemp : REAL;
+ rEndOutputVelTemp : REAL;
+END_VAR
+#BEGIN_EDIT_BLOCK
+rEndOutputPressTemp := sv_EjectorFwdVisShake.rEndOutputPress;
+rEndOutputVelTemp   := sv_EjectorFwdVisShake.rEndOutputVel;
+
+sv_EjectorFwdVisShake := sv_EjectorFwdVis;    // FwdVis has no rEndOutputPress or rEndOutputVel
+
+sv_EjectorFwdVisShake.rEndOutputPress := rEndOutputPressTemp;
+sv_EjectorFwdVisShake.rEndOutputVel   := rEndOutputVelTemp;
+
+
+
+
+;#END_EDIT_BLOCK END_ALGORITHM
+
+POSTUPDATE_ALGORITHM pEjtBwdVisProfilChanged ON PU_Task_7 WITH sv_EjectorBwdVis,sv_EjectorMode,sv_bUseProgramSwitches,sv_rShakeTargetPos
+
+
+VAR_TEMP
+ rEndOutputPressTemp : REAL;
+ rEndOutputVelTemp : REAL;
+ pCalculatedProfiles : REFTO tCalculatedProfiles;
+END_VAR
+#BEGIN_EDIT_BLOCK
+(**************************************** WARNING ********************************************
+ *** The KEBA Kemro K2 System including software is not intended for safety control tasks! ***
+ ***                       For further information see Comment tab!                        ***
+ *********************************************************************************************)
+
+rEndOutputPressTemp := sv_EjectorBwdVisShake.rEndOutputPress;
+rEndOutputVelTemp   := sv_EjectorBwdVisShake.rEndOutputVel  ;
+pCalculatedProfiles := sv_EjectorBwdVisShake.pCalculatedProfile;
+
+sv_EjectorBwdVisShake := sv_EjectorBwdVis;   // BwdVis has no rEndOutputPress and rEndOutputVel
+
+IF sv_EjectorMode = nVibrate OR NOT sv_bUseProgramSwitches THEN
+   IF sv_EjectorBwdVisShake.Profile.iNoOfPoints > 1 THEN
+      sv_EjectorBwdVisShake.Profile.iNoOfPoints := sv_EjectorBwdVisShake.Profile.iNoOfPoints-1;
+   END_IF;   
+END_IF;
+
+IF NOT sv_bUseProgramSwitches THEN
+   //sequence programmed by machine sequencer
+   //copy shake target position from propertie dialog to bwd shake profile
+   sv_EjectorBwdVisShake.Profile.Points[(sv_EjectorBwdVisShake.Profile.iNoOfPoints+1)].rStartPos := sv_rShakeTargetPos;
+END_IF;
+
+sv_EjectorBwdVisShake.rEndOutputPress := rEndOutputPressTemp;
+sv_EjectorBwdVisShake.rEndOutputVel   := rEndOutputVelTemp  ;
+
+sv_EjectorBwdVisShake.pCalculatedProfile := pCalculatedProfiles;
+
+
+
+;#END_EDIT_BLOCK END_ALGORITHM
+
+POSTUPDATE_ALGORITHM pStrokeChanged ON PU_Task_7 WITH sv_rEjectorStroke
+
+#BEGIN_EDIT_BLOCK
+(**************************************** WARNING ********************************************
+ *** The KEBA Kemro K2 System including software is not intended for safety control tasks! ***
+ ***                       For further information see Comment tab!                        ***
+ *********************************************************************************************)
+
+//copy stroke to start position of first profile point
+sv_EjectorBwdVis.Profile.Points[1].rStartPos := sv_rEjectorStroke;
+
+
+;#END_EDIT_BLOCK END_ALGORITHM
+
+POSTUPDATE_ALGORITHM pMinOutputFwd ON PU_Task_7 WITH sv_MinOutputFwd,sv_bInitStart
+
+#BEGIN_EDIT_BLOCK
+(**************************************** WARNING ********************************************
+ *** The KEBA Kemro K2 System including software is not intended for safety control tasks! ***
+ ***                       For further information see Comment tab!                        ***
+ *********************************************************************************************)
+
+//copy minoutput
+sv_EjectorFwdVis.rMinOutputVel  := sv_MinOutputFwd.rVelocity;
+sv_EjectorFwdVis.rMinOutputPress := sv_MinOutputFwd.rPressure;
+
+sv_ConstFwdVis.Velocity.rMinOutput := sv_MinOutputFwd.rVelocity;
+sv_ConstFwdVis.Pressure.rMinOutput := sv_MinOutputFwd.rPressure;
+
+//chad(CR_0038565) - limit switches
+sv_ConstFwdVisLS.Velocity.rMinOutput := sv_MinOutputFwd.rVelocity;
+sv_ConstFwdVisLS.Pressure.rMinOutput := sv_MinOutputFwd.rPressure;
+
+
+;#END_EDIT_BLOCK END_ALGORITHM
+
+POSTUPDATE_ALGORITHM pMinOutputBwd ON PU_Task_7 WITH sv_MinOutputBwd,sv_bInitStart
+
+#BEGIN_EDIT_BLOCK
+(**************************************** WARNING ********************************************
+ *** The KEBA Kemro K2 System including software is not intended for safety control tasks! ***
+ ***                       For further information see Comment tab!                        ***
+ *********************************************************************************************)
+
+//copy minoutput
+sv_EjectorBwdVis.rMinOutputVel  := sv_MinOutputBwd.rVelocity;
+sv_EjectorBwdVis.rMinOutputPress := sv_MinOutputBwd.rPressure;
+
+sv_ConstBwdVis.Velocity.rMinOutput := sv_MinOutputBwd.rVelocity;
+sv_ConstBwdVis.Pressure.rMinOutput := sv_MinOutputBwd.rPressure;
+
+//chad(CR_0038565) - limit switches
+sv_ConstBwdVisLS.Velocity.rMinOutput := sv_MinOutputBwd.rVelocity;
+sv_ConstBwdVisLS.Pressure.rMinOutput := sv_MinOutputBwd.rPressure;
+
+
+;#END_EDIT_BLOCK END_ALGORITHM
+
+POSTUPDATE_ALGORITHM pReCalcStartPositions ON PU_Task_7 WITH sv_EjectorFwdVis.Profile, sv_EjectorBwdVis.Profile, sv_EjectorBwdVisShake.Profile, sv_bInitDone
+
+#BEGIN_EDIT_BLOCK
+(**************************************** WARNING ********************************************
+ *** The KEBA Kemro K2 System including software is not intended for safety control tasks! ***
+ ***                       For further information see Comment tab!                        ***
+ *********************************************************************************************)
+
+//Calculate fwd, fwd shake and bwd start position for calculation of duration
+sv_rFwdCalcDurationStartPos := sv_EjectorBwdVis.Profile.Points[sv_EjectorBwdVis.Profile.iNoOfPoints + 1].rStartPos;
+
+sv_rShakeFwdCalcDurStartPos := sv_EjectorBwdVisShake.Profile.Points[sv_EjectorBwdVisShake.Profile.iNoOfPoints + 1].rStartPos;
+
+sv_rBwdCalcDurationStartPos := sv_EjectorFwdVis.Profile.Points[sv_EjectorFwdVis.Profile.iNoOfPoints + 1].rStartPos;
+
+
+;#END_EDIT_BLOCK END_ALGORITHM
+
+POSTUPDATE_ALGORITHM pTransducerUseNotUse ON PU_Task_3 WITH sv_bInitStart
+
+#BEGIN_EDIT_BLOCK
+(**************************************** WARNING ********************************************
+ *** The KEBA Kemro K2 System including software is not intended for safety control tasks! ***
+ ***                       For further information see Comment tab!                        ***
+ *********************************************************************************************)
+
+sv_bTransducerAvailable := IS_LINKED(ai_Position);
+sv_bLimitSwitchesAvailable := IS_LINKED(di_EjectorFwd) AND IS_LINKED(di_EjectorBwd);
+
+IF sv_bTransducerAvailable THEN
+   //set transducer input for autocalibration
+   sv_CalibState.prInputSensor := @ai_Position;
+END_IF;
+
+IF sv_bLimitSwitchesAvailable THEN
+   //limit switch depending
+   sv_EjectorFwdMonData.pbDI := @di_EjectorFwd;
+   sv_EjectorBwdMonData.pbDI := @di_EjectorBwd; 
+   sv_EjectorFwdMonData.pProfile := EMPTY;
+   sv_EjectorBwdMonData.pProfile := EMPTY;
+   sv_EjectorFwdMonData.rActPos := EMPTY;
+   sv_EjectorBwdMonData.rActPos := EMPTY;
+END_IF;  
+
+
+;#END_EDIT_BLOCK END_ALGORITHM
+
+POSTUPDATE_ALGORITHM pShakeEndOutput ON PU_Task_7 WITH sv_EjectorFwdVisShake.rEndOutputPress,sv_EjectorFwdVisShake.rEndOutputVel
+
+
+VAR
+ rFactorPress : REAL;
+ rFactorVel : REAL;
+END_VAR
+#BEGIN_EDIT_BLOCK
+(**************************************** WARNING ********************************************
+ *** The KEBA Kemro K2 System including software is not intended for safety control tasks! ***
+ ***                       For further information see Comment tab!                        ***
+ *********************************************************************************************)
+
+IF sv_rMaxPressureFwd <> 0.0 THEN
+    rFactorPress := sv_rMaxPressureBwd / sv_rMaxPressureFwd;
+ELSE
+    rFactorPress := 1.0;
+END_IF;
+IF sv_rMaxSpeedFwd <> 0.0 THEN
+    rFactorVel := sv_rMaxSpeedBwd / sv_rMaxSpeedFwd;
+ELSE
+    rFactorVel := 1.0;
+END_IF;
+
+//copy endoutput values to bwd vis shake profile
+sv_EjectorBwdVisShake.rEndOutputPress := rFactorPress * sv_EjectorFwdVisShake.rEndOutputPress;
+sv_EjectorBwdVisShake.rEndOutputVel := rFactorVel * sv_EjectorFwdVisShake.rEndOutputVel;
+
+
+;#END_EDIT_BLOCK END_ALGORITHM
+
+POSTUPDATE_ALGORITHM pActiveProfileStage ON PU_Task_3 WITH sv_iActiveStage,sv_bDeviceReady
+
+#BEGIN_EDIT_BLOCK
+(**************************************** WARNING ********************************************
+ *** The KEBA Kemro K2 System including software is not intended for safety control tasks! ***
+ ***                       For further information see Comment tab!                        ***
+ *********************************************************************************************)
+
+IF NOT sv_bDeviceReady THEN
+   
+   IF sv_OperationMode = nSetup THEN
+      //movement in setup mode active
+      //-> reset active stage information
+      sv_iActiveStageFwd := 0;
+      sv_iActiveStageBwd := 0;
+   ELSE
+      
+      //ejector movement in manual - half - or fullauto mode 
+      IF sv_bFwdActive THEN
+   
+         //reset bwd stage info if fwd movement is started
+         sv_iActiveStageBwd := 0; 
+         
+         IF sv_iActiveStage > 0 THEN
+            sv_iActiveStageFwd := sv_iActiveStage;
+         END_IF;
+          
+      ELSIF sv_bBwdActive THEN
+         
+         //reset Fwd stage info if bwd movement is started
+         sv_iActiveStageFwd := 0;
+         
+         IF sv_iActiveStage > 0 THEN
+            sv_iActiveStageBwd := sv_iActiveStage;
+         END_IF;
+      END_IF;
+   END_IF;
+   
+END_IF;
+
+
+
+
+
+;#END_EDIT_BLOCK END_ALGORITHM
+
+
+
+END_ALGORITHM_BLOCK
+
+
+
+#END_OF_IEC_PART
+
+@Puma @IecEditor 6 97 @Pou 25 
+@@@BEG_Comment@@@
+
+@@@END_Comment@@@
+
+@BEG_Contents 
+
+@BEG_Func 
+@RT(17)FuncTreeContainer 
+2 
+@Var @RT(9)IS_LINKED @RT(0) @T @T @DERIVED 0 @F @RT(22)KEBA_STANDARD_FUNCTION @F 
+@T 
+@BEG_Attrib 
+0 @RT(0) @RT(0) 
+@END_Attrib 
+1 1 @F @F @F @F 
+
+@Var @RT(15)WRITE_SV_DIRECT @RT(0) @T @T @DERIVED 0 @F @RT(22)KEBA_STANDARD_FUNCTION @F 
+@T 
+@BEG_Attrib 
+0 @RT(0) @RT(0) 
+@END_Attrib 
+1 1 @F @F @F @F 
+
+@END_Func 
+
+@BEG_Const 
+@RT(18)ConstTreeContainer 
+7 
+@Var @RT(17)nAnaOutputModeMid @RT(0) @T @T @DERIVED 0 @F @RT(15)tnAnaOutputMode @F 
+@T 
+@BEG_Attrib 
+0 @RT(1)0 @RT(0) 
+@END_Attrib 
+1 1 @F @F @F @F 
+
+@Var @RT(8)cMoveFwd @RT(0) @T @F @DT @RT(4)DINT @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+0 @RT(2)12 @RT(16)movement forward 
+@END_Attrib 
+1 1 @F @F @F @F 
+
+@Var @RT(10)cMoveShake @RT(0) @T @F @DT @RT(4)DINT @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+0 @RT(2)18 @RT(51)shaking movement (for example ejector vibrate mode) 
+@END_Attrib 
+1 1 @F @F @F @F 
+
+@Var @RT(8)cMoveBwd @RT(0) @T @F @DT @RT(4)DINT @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+0 @RT(2)11 @RT(17)movement backward 
+@END_Attrib 
+1 1 @F @F @F @F 
+
+@Var @RT(8)nVibrate @RT(0) @T @T @DERIVED 0 @F @RT(13)tnEjectorMode @F 
+@T 
+@BEG_Attrib 
+0 @RT(1)3 @RT(0) 
+@END_Attrib 
+1 1 @F @F @F @F 
+
+@Var @RT(9)cCompMold @RT(0) @T @F @DT @RT(4)DINT @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+0 @RT(3)101 @RT(14)Component Mold 
+@END_Attrib 
+1 1 @F @F @F @F 
+
+@Var @RT(9)cCompPump @RT(0) @T @F @DT @RT(4)DINT @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+0 @RT(3)113 @RT(14)Component Pump 
+@END_Attrib 
+1 1 @F @F @F @F 
+
+@END_Const 
+
+@BEG_Export 
+
+@BEG_Kind 
+@ALGORITHM_BLOCK @RT(15)ABMovementAdmin @STRUCTURED_TEXT 
+@RT(0) @RT(0) @RT(0) 
+@END_Kind 
+
+@BEG_Dcl 
+@RT(16)DclTreeContainer 
+74 
+@Var @RT(13)sv_bInitStart @RT(0) @T @F @DT @RT(4)BOOL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 8 @F @F @F @F 
+
+@Var @RT(15)sv_bDeviceStart @RT(0) @T @F @DT @RT(4)BOOL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(12)Start Device @RT(0) 
+@END_Attrib 
+1 8 @F @F @F @F 
+
+@Var @RT(16)sv_EjectorFwdVis @RT(0) @T @T @DERIVED 0 @T @T @DT @RT(16)KAPPL_VisProfile @RT(0) @T @T @UNKNOWN 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 8 @F @F @F @F 
+
+@Var @RT(21)sv_EjectorFwdVisShake @RT(0) @T @T @DERIVED 0 @T @T @DT @RT(16)KAPPL_VisProfile @RT(0) @T @T @UNKNOWN 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 8 @F @F @F @F 
+
+@Var @RT(21)sv_EjectorBwdVisShake @RT(0) @T @T @DERIVED 0 @T @T @DT @RT(16)KAPPL_VisProfile @RT(0) @T @T @UNKNOWN 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 8 @F @F @F @F 
+
+@Var @RT(16)sv_EjectorBwdVis @RT(0) @T @T @DERIVED 0 @T @T @DT @RT(16)KAPPL_VisProfile @RT(0) @T @T @UNKNOWN 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 8 @F @F @F @F 
+
+@Var @RT(14)sv_EjectorMode @RT(0) @T @T @DERIVED 0 @T @T @DT @RT(13)tnEjectorMode @RT(0) @T @T @UNKNOWN 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 8 @F @F @F @F 
+
+@Var @RT(15)sv_MinOutputFwd @RT(0) @T @T @DERIVED 0 @T @T @DT @RT(11)tsMinOutput @RT(0) @T @T @UNKNOWN 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 8 @F @F @F @F 
+
+@Var @RT(15)sv_MinOutputBwd @RT(0) @T @T @DERIVED 0 @T @T @DT @RT(11)tsMinOutput @RT(0) @T @T @UNKNOWN 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 8 @F @F @F @F 
+
+@Var @RT(14)sv_ConstFwdVis @RT(0) @T @T @DERIVED 0 @T @T @DT @RT(8)tsVelPre @RT(0) @T @T @UNKNOWN 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 8 @F @F @F @F 
+
+@Var @RT(14)sv_ConstBwdVis @RT(0) @T @T @DERIVED 0 @T @T @DT @RT(8)tsVelPre @RT(0) @T @T @UNKNOWN 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 8 @F @F @F @F 
+
+@Var @RT(17)sv_rEjectorStroke @RT(0) @T @F @DT @RT(4)REAL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 8 @F @F @F @F 
+
+@Var @RT(9)PU_Task_7 @RT(0) @T @F @DT @RT(4)TASK @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 7 @F @F @F @F 
+
+@Var @RT(10)TaskAnalog @RT(0) @T @F @DT @RT(4)TASK @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 7 @F @F @F @F 
+
+@Var @RT(9)EV_Task_1 @RT(0) @T @F @DT @RT(4)TASK @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 7 @F @F @F @F 
+
+@Var @RT(10)g_MoveCtrl @RT(0) @T @T @DERIVED 0 @T @T @DT @RT(10)tsMoveCtrl @RT(0) @T @T @UNKNOWN 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 6 @F @F @F @F 
+
+@Var @RT(9)abMoveFwd @RT(0) @T @T @DERIVED 0 @T @T @DT @RT(9)ABMoveFwd @RT(0) @T @T @UNKNOWN 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(9)abMoveBwd @RT(0) @T @T @DERIVED 0 @T @T @DT @RT(9)ABMoveBwd @RT(0) @T @T @UNKNOWN 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(11)abMoveShake @RT(0) @T @T @DERIVED 0 @T @T @DT @RT(11)ABMoveShake @RT(0) @T @T @UNKNOWN 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(15)abOutputRequest @RT(0) @T @T @DERIVED 0 @T @T @DT @RT(15)ABOutputRequest @RT(0) @T @T @UNKNOWN 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(17)g_dActMoveTimeFwd @RT(0) @T @F @DT @RT(4)TIME @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 6 @F @F @F @F 
+
+@Var @RT(21)sv_EjectorFwdTimesAct @RT(0) @T @T @DERIVED 0 @T @T @DT @RT(10)tsActTimes @RT(0) @T @T @UNKNOWN 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 8 @F @F @F @F 
+
+@Var @RT(17)g_dActMoveTimeBwd @RT(0) @T @F @DT @RT(4)TIME @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 6 @F @F @F @F 
+
+@Var @RT(21)sv_EjectorBwdTimesAct @RT(0) @T @T @DERIVED 0 @T @T @DT @RT(10)tsActTimes @RT(0) @T @T @UNKNOWN 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 8 @F @F @F @F 
+
+@Var @RT(25)sv_dCalculatedDurationFwd @RT(0) @T @F @DT @RT(4)TIME @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(35)Calculated duration for ejector fwd @RT(0) 
+@END_Attrib 
+1 8 @F @F @F @F 
+
+@Var @RT(25)sv_dCalculatedDurationBwd @RT(0) @T @F @DT @RT(4)TIME @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(35)Calculated duration for ejector bwd @RT(0) 
+@END_Attrib 
+1 8 @F @F @F @F 
+
+@Var @RT(27)sv_rFwdCalcDurationStartPos @RT(0) @T @F @DT @RT(4)REAL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(54)Start position for calculation of ejector fwd duration @RT(0) 
+@END_Attrib 
+1 8 @F @F @F @F 
+
+@Var @RT(27)sv_rBwdCalcDurationStartPos @RT(0) @T @F @DT @RT(4)REAL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(54)Start position for calculation of ejector bwd duration @RT(0) 
+@END_Attrib 
+1 8 @F @F @F @F 
+
+@Var @RT(27)sv_rShakeFwdCalcDurStartPos @RT(0) @T @F @DT @RT(4)REAL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(60)Start position for calculation of ejector fwd shake duration @RT(0) 
+@END_Attrib 
+1 8 @F @F @F @F 
+
+@Var @RT(12)sv_bInitDone @RT(0) @T @F @DT @RT(4)BOOL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 8 @F @F @F @F 
+
+@Var @RT(22)sv_bUseProgramSwitches @RT(0) @T @F @DT @RT(4)BOOL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(84)TRUE: create sequence by using program switches; FALSE: use sequence from ODC editor @RT(0) 
+@END_Attrib 
+1 8 @F @F @F @F 
+
+@Var @RT(23)sv_bTransducerAvailable @RT(0) @T @F @DT @RT(4)BOOL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(16)chad(CR_0038565) @RT(0) 
+@END_Attrib 
+1 8 @F @F @F @F 
+
+@Var @RT(26)sv_bLimitSwitchesAvailable @RT(0) @T @F @DT @RT(4)BOOL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(16)chad(CR_0038565) @RT(0) 
+@END_Attrib 
+1 8 @F @F @F @F 
+
+@Var @RT(11)ai_Position @RT(0) @T @F @DT @RT(4)REAL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(16)chad(CR_0038565) @RT(0) 
+@END_Attrib 
+1 8 @F @F @F @F 
+
+@Var @RT(20)sv_EjectorBwdMonData @RT(0) @T @T @DERIVED 0 @T @T @DT @RT(12)tsEndPosData @RT(0) @T @T @UNKNOWN 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(16)chad(CR_0038565) @RT(0) 
+@END_Attrib 
+1 8 @F @F @F @F 
+
+@Var @RT(20)sv_EjectorFwdMonData @RT(0) @T @T @DERIVED 0 @T @T @DT @RT(12)tsEndPosData @RT(0) @T @T @UNKNOWN 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(16)chad(CR_0038565) @RT(0) 
+@END_Attrib 
+1 8 @F @F @F @F 
+
+@Var @RT(9)PU_Task_3 @RT(0) @T @F @DT @RT(4)TASK @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(16)chad(CR_0038565) @RT(0) 
+@END_Attrib 
+1 7 @F @F @F @F 
+
+@Var @RT(13)di_EjectorFwd @RT(0) @T @F @DT @RT(4)BOOL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(16)chad(CR_0038565) @RT(0) 
+@END_Attrib 
+1 8 @F @F @F @F 
+
+@Var @RT(13)di_EjectorBwd @RT(0) @T @F @DT @RT(4)BOOL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(16)chad(CR_0038565) @RT(0) 
+@END_Attrib 
+1 8 @F @F @F @F 
+
+@Var @RT(16)sv_ConstBwdVisLS @RT(0) @T @T @DERIVED 0 @T @T @DT @RT(8)tsVelPre @RT(0) @T @T @UNKNOWN 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(16)chad(CR_0038565) @RT(0) 
+@END_Attrib 
+1 8 @F @F @F @F 
+
+@Var @RT(16)sv_ConstFwdVisLS @RT(0) @T @T @DERIVED 0 @T @T @DT @RT(8)tsVelPre @RT(0) @T @T @UNKNOWN 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(16)chad(CR_0038565) @RT(0) 
+@END_Attrib 
+1 8 @F @F @F @F 
+
+@Var @RT(24)mpbEjectorParallelToMold @RT(0) @T @T @REFTO 0 @T @DT @RT(4)BOOL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(16)sv_OperationMode @RT(0) @T @T @DERIVED 0 @T @T @DT @RT(15)tnOperationMode @RT(0) @T @T @UNKNOWN 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 8 @F @F @F @F 
+
+@Var @RT(18)sv_rMaxPressureFwd @RT(0) @T @F @DT @RT(4)REAL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 8 @F @F @F @F 
+
+@Var @RT(18)sv_rMaxPressureBwd @RT(0) @T @F @DT @RT(4)REAL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 8 @F @F @F @F 
+
+@Var @RT(15)sv_rMaxSpeedFwd @RT(0) @T @F @DT @RT(4)REAL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 8 @F @F @F @F 
+
+@Var @RT(15)sv_rMaxSpeedBwd @RT(0) @T @F @DT @RT(4)REAL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 8 @F @F @F @F 
+
+@Var @RT(15)sv_iActiveStage @RT(0) @T @T @RENAMED 0 @T @T @DT @RT(4)DINT @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 8 @F @F @F @F 
+
+@Var @RT(15)sv_bDeviceReady @RT(0) @T @T @RENAMED 0 @T @T @DT @RT(4)BOOL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 8 @F @F @F @F 
+
+@Var @RT(18)sv_iActiveStageFwd @RT(0) @T @F @DT @RT(4)DINT @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(32)active profile stage ejector fwd @RT(0) 
+@END_Attrib 
+1 8 @F @F @F @F 
+
+@Var @RT(18)sv_iActiveStageBwd @RT(0) @T @F @DT @RT(4)DINT @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(32)active profile stage ejector bwd @RT(0) 
+@END_Attrib 
+1 8 @F @F @F @F 
+
+@Var @RT(13)sv_bFwdActive @RT(0) @T @F @DT @RT(4)BOOL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 8 @F @F @F @F 
+
+@Var @RT(13)sv_bBwdActive @RT(0) @T @F @DT @RT(4)BOOL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 8 @F @F @F @F 
+
+@Var @RT(13)sv_CalibState @RT(0) @T @T @DERIVED 0 @T @T @DT @RT(15)tsCalibMovement @RT(0) @T @T @UNKNOWN 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 8 @F @F @F @F 
+
+@Var @RT(18)sv_rShakeTargetPos @RT(0) @T @T @RENAMED 0 @T @T @DT @RT(4)REAL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 8 @F @F @F @F 
+
+@Var @RT(16)sv_RequiredPumps @RT(0) @T @T @DERIVED 0 @T @T @DT @RT(15)tsRequiredPumps @RT(0) @T @T @UNKNOWN 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 8 @F @F @F @F 
+
+@Var @RT(16)sv_HydrMaxValues @RT(0) @T @T @DERIVED 0 @T @T @DT @RT(15)tsHydrMaxValues @RT(0) @T @T @UNKNOWN 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(42)hydraulic max values for ejector movements @RT(0) 
+@END_Attrib 
+1 8 @F @F @F @F 
+
+@Var @RT(16)sv_LintabOutFwdP @RT(0) @T @T @DERIVED 0 @T @T @DT @RT(16)KAPPL_LintabData @RT(0) @T @T @UNKNOWN 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 8 @F @F @F @F 
+
+@Var @RT(16)sv_LintabOutFwdV @RT(0) @T @T @DERIVED 0 @T @T @DT @RT(16)KAPPL_LintabData @RT(0) @T @T @UNKNOWN 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 8 @F @F @F @F 
+
+@Var @RT(16)sv_LintabOutBwdP @RT(0) @T @T @DERIVED 0 @T @T @DT @RT(16)KAPPL_LintabData @RT(0) @T @T @UNKNOWN 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 8 @F @F @F @F 
+
+@Var @RT(16)sv_LintabOutBwdV @RT(0) @T @T @DERIVED 0 @T @T @DT @RT(16)KAPPL_LintabData @RT(0) @T @T @UNKNOWN 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 8 @F @F @F @F 
+
+@Var @RT(15)sv_CylinderData @RT(0) @T @T @DERIVED 0 @T @T @DT @RT(14)tsCylinderData @RT(0) @T @T @UNKNOWN 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 8 @F @F @F @F 
+
+@Var @RT(11)sv_PumpData @RT(0) @T @T @DERIVED 0 @T @T @DT @RT(10)tyPumpData @RT(0) @T @T @UNKNOWN 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 8 @F @F @F @F 
+
+@Var @RT(18)sv_NumberOfDevices @RT(0) @T @T @DERIVED 0 @T @T @DT @RT(17)tyNumberOfDevices @RT(0) @T @T @UNKNOWN 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 8 @F @F @F @F 
+
+@Var @RT(13)abMovePVCalib @RT(0) @T @T @DERIVED 0 @T @T @DT @RT(13)ABMovePVCalib @RT(0) @T @T @UNKNOWN 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(23)sv_bDoPumpVelocityCalib @RT(0) @T @F @DT @RT(4)BOOL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 8 @F @F @F @F 
+
+@Var @RT(19)sv_rMaxSpeedBwdCalc @RT(0) @T @T @RENAMED 0 @T @T @DT @RT(4)REAL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 8 @F @F @F @F 
+
+@Var @RT(19)sv_rMaxSpeedFwdCalc @RT(0) @T @T @RENAMED 0 @T @T @DT @RT(4)REAL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 8 @F @F @F @F 
+
+@Var @RT(25)sv_rMaxSpeedReducePercent @RT(0) @T @F @DT @RT(4)REAL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 8 @F @F @F @F 
+
+@Var @RT(20)sv_rMaxSpeedFwdCalib @RT(0) @T @T @RENAMED 0 @T @T @DT @RT(4)REAL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 8 @F @F @F @F 
+
+@Var @RT(20)sv_rMaxSpeedBwdCalib @RT(0) @T @T @RENAMED 0 @T @T @DT @RT(4)REAL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 8 @F @F @F @F 
+
+@Var @RT(25)sv_bODCCombinedMoveActive @RT(0) @T @F @DT @RT(4)BOOL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 8 @F @F @F @F 
+
+@Var @RT(15)miDigitsToFloor @RT(0) @T @F @DT @RT(4)SINT @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(1)2 @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(9)sv_bFALSE @RT(0) @T @F @DT @RT(4)BOOL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 8 @F @F @F @F 
+
+@END_Dcl 
+
+@END_Export 
+
+@BEG_Body 
+
+13 
+
+@BEG_Export 
+
+@BEG_Algo 
+@POSTUPDATE_ALGORITHM @RT(10)pInitStart @STRUCTURED_TEXT 
+@RT(0) @RT(13)sv_bInitStart @RT(9)PU_Task_7 @F @F 
+@END_Algo 
+
+@BEG_Dcl 
+@RT(16)DclTreeContainer 
+2 
+@Var @RT(5)state @RT(0) @T @T @DERIVED 0 @T @T @DT @RT(11)KSYS_Status @RT(0) @T @T @UNKNOWN 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(15)abCalcMaxValues @RT(0) @T @T @DERIVED 0 @T @T @DT @RT(19)ABCalcHydrMaxValues @RT(0) @T @T @UNKNOWN 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@END_Dcl 
+
+@END_Export 
+
+@BEG_Export 
+
+@BEG_Algo 
+@POSTUPDATE_ALGORITHM @RT(12)pDeviceStart @STRUCTURED_TEXT 
+@RT(0) @RT(15)sv_bDeviceStart @RT(9)EV_Task_1 @F @F 
+@END_Algo 
+
+@BEG_Dcl 
+@RT(16)DclTreeContainer 
+0 
+@END_Dcl 
+
+@END_Export 
+
+@BEG_Export 
+
+@BEG_Algo 
+@POSTUPDATE_ALGORITHM @RT(21)pInitRelLintabUpdater @STRUCTURED_TEXT 
+@RT(0) @RT(12)sv_bInitDone @RT(9)PU_Task_7 @F @F 
+@END_Algo 
+
+@BEG_Dcl 
+@RT(16)DclTreeContainer 
+4 
+@Var @RT(23)abUpdateRelLintabPreFwd @RT(0) @T @T @DERIVED 0 @T @T @DT @RT(20)ABUpdateRelLintabPre @RT(0) @T @T @UNKNOWN 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(23)abUpdateRelLintabVelFwd @RT(0) @T @T @DERIVED 0 @T @T @DT @RT(20)ABUpdateRelLintabVel @RT(0) @T @T @UNKNOWN 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(23)abUpdateRelLintabPreBwd @RT(0) @T @T @DERIVED 0 @T @T @DT @RT(20)ABUpdateRelLintabPre @RT(0) @T @T @UNKNOWN 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(23)abUpdateRelLintabVelBwd @RT(0) @T @T @DERIVED 0 @T @T @DT @RT(20)ABUpdateRelLintabVel @RT(0) @T @T @UNKNOWN 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@END_Dcl 
+
+@END_Export 
+
+@BEG_Export 
+
+@BEG_Algo 
+@PROCESS_ALGORITHM @RT(5)paRun @SEQUENTIAL_FLOW_CHART 
+@RT(0) @RT(0) @RT(16)TaskAnalog(5000) @F @F 
+@END_Algo 
+
+@BEG_Dcl 
+@RT(16)DclTreeContainer 
+4 
+@Var @RT(12)bRequestPump @RT(0) @T @F @DT @RT(4)BOOL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(14)bPumpRequested @RT(0) @T @F @DT @RT(4)BOOL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(5)iPump @RT(0) @T @F @DT @RT(4)DINT @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 4 @F @F @F @F 
+
+@Var @RT(1)b @RT(0) @T @F @DT @RT(4)BOOL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 4 @F @F @F @F 
+
+@END_Dcl 
+
+@END_Export 
+
+@BEG_Export 
+
+@BEG_Algo 
+@POSTUPDATE_ALGORITHM @RT(23)pEjtFwdVisProfilChanged @STRUCTURED_TEXT 
+@RT(0) @RT(16)sv_EjectorFwdVis @RT(9)PU_Task_7 @F @F 
+@END_Algo 
+
+@BEG_Dcl 
+@RT(16)DclTreeContainer 
+2 
+@Var @RT(19)rEndOutputPressTemp @RT(0) @T @F @DT @RT(4)REAL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 4 @F @F @F @F 
+
+@Var @RT(17)rEndOutputVelTemp @RT(0) @T @F @DT @RT(4)REAL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 4 @F @F @F @F 
+
+@END_Dcl 
+
+@END_Export 
+
+@BEG_Export 
+
+@BEG_Algo 
+@POSTUPDATE_ALGORITHM @RT(23)pEjtBwdVisProfilChanged @STRUCTURED_TEXT 
+@RT(0) @RT(73)sv_EjectorBwdVis,sv_EjectorMode,sv_bUseProgramSwitches,sv_rShakeTargetPos @RT(9)PU_Task_7 @F @F 
+@END_Algo 
+
+@BEG_Dcl 
+@RT(16)DclTreeContainer 
+3 
+@Var @RT(19)rEndOutputPressTemp @RT(0) @T @F @DT @RT(4)REAL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 4 @F @F @F @F 
+
+@Var @RT(17)rEndOutputVelTemp @RT(0) @T @F @DT @RT(4)REAL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 4 @F @F @F @F 
+
+@Var @RT(19)pCalculatedProfiles @RT(0) @T @T @REFTO 0 @F @DERIVED 0 @T @T @DT @RT(19)tCalculatedProfiles @RT(0) @T @T @UNKNOWN 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 4 @F @F @F @F 
+
+@END_Dcl 
+
+@END_Export 
+
+@BEG_Export 
+
+@BEG_Algo 
+@POSTUPDATE_ALGORITHM @RT(14)pStrokeChanged @STRUCTURED_TEXT 
+@RT(0) @RT(17)sv_rEjectorStroke @RT(9)PU_Task_7 @F @F 
+@END_Algo 
+
+@BEG_Dcl 
+@RT(16)DclTreeContainer 
+0 
+@END_Dcl 
+
+@END_Export 
+
+@BEG_Export 
+
+@BEG_Algo 
+@POSTUPDATE_ALGORITHM @RT(13)pMinOutputFwd @STRUCTURED_TEXT 
+@RT(0) @RT(29)sv_MinOutputFwd,sv_bInitStart @RT(9)PU_Task_7 @F @F 
+@END_Algo 
+
+@BEG_Dcl 
+@RT(16)DclTreeContainer 
+0 
+@END_Dcl 
+
+@END_Export 
+
+@BEG_Export 
+
+@BEG_Algo 
+@POSTUPDATE_ALGORITHM @RT(13)pMinOutputBwd @STRUCTURED_TEXT 
+@RT(0) @RT(29)sv_MinOutputBwd,sv_bInitStart @RT(9)PU_Task_7 @F @F 
+@END_Algo 
+
+@BEG_Dcl 
+@RT(16)DclTreeContainer 
+0 
+@END_Dcl 
+
+@END_Export 
+
+@BEG_Export 
+
+@BEG_Algo 
+@POSTUPDATE_ALGORITHM @RT(21)pReCalcStartPositions @STRUCTURED_TEXT 
+@RT(0) @RT(95)sv_EjectorFwdVis.Profile, sv_EjectorBwdVis.Profile, sv_EjectorBwdVisShake.Profile, sv_bInitDone @RT(9)PU_Task_7 @F @F 
+@END_Algo 
+
+@BEG_Dcl 
+@RT(16)DclTreeContainer 
+0 
+@END_Dcl 
+
+@END_Export 
+
+@BEG_Export 
+
+@BEG_Algo 
+@POSTUPDATE_ALGORITHM @RT(20)pTransducerUseNotUse @STRUCTURED_TEXT 
+@RT(0) @RT(13)sv_bInitStart @RT(9)PU_Task_3 @F @F 
+@END_Algo 
+
+@BEG_Dcl 
+@RT(16)DclTreeContainer 
+0 
+@END_Dcl 
+
+@END_Export 
+
+@BEG_Export 
+
+@BEG_Algo 
+@POSTUPDATE_ALGORITHM @RT(15)pShakeEndOutput @STRUCTURED_TEXT 
+@RT(0) @RT(73)sv_EjectorFwdVisShake.rEndOutputPress,sv_EjectorFwdVisShake.rEndOutputVel @RT(9)PU_Task_7 @F @F 
+@END_Algo 
+
+@BEG_Dcl 
+@RT(16)DclTreeContainer 
+2 
+@Var @RT(12)rFactorPress @RT(0) @T @F @DT @RT(4)REAL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(10)rFactorVel @RT(0) @T @F @DT @RT(4)REAL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@END_Dcl 
+
+@END_Export 
+
+@BEG_Export 
+
+@BEG_Algo 
+@POSTUPDATE_ALGORITHM @RT(19)pActiveProfileStage @STRUCTURED_TEXT 
+@RT(0) @RT(31)sv_iActiveStage,sv_bDeviceReady @RT(9)PU_Task_3 @F @F 
+@END_Algo 
+
+@BEG_Dcl 
+@RT(16)DclTreeContainer 
+0 
+@END_Dcl 
+
+@END_Export 
+
+@BEG_Body 
+@TL(36)
+(**************************************** WARNING ********************************************
+ *** The KEBA Kemro K2 System including software is not intended for safety control tasks! ***
+ ***                       For further information see Comment tab!                        ***
+ *********************************************************************************************)
+
+IF sv_bInitStart THEN
+    //register and initialize Movement Ejector Forward
+    abMoveFwd.aRegister();
+    abMoveFwd.aInit(pProfile := @sv_EjectorFwdVis,
+                    pdCalculatedDuration := @sv_dCalculatedDurationFwd,
+                    prCalcDurationStartPosition := @sv_rFwdCalcDurationStartPos);
+    
+    //register and initialize Movement Ejector Backward
+    abMoveBwd.aRegister();
+    abMoveBwd.aInit(pProfile := @sv_EjectorBwdVis,
+                    pdCalculatedDuration := @sv_dCalculatedDurationBwd,
+                    prCalcDurationStartPosition := @sv_rBwdCalcDurationStartPos);
+    
+    //register and initialize ejector shaking movement
+    abMoveShake.aRegister();
+    abMoveShake.aInit(pFwdProfile := @sv_EjectorFwdVisShake, 
+                      pBwdProfile := @sv_EjectorBwdVis, 
+                      pBwdShakeProfile := @sv_EjectorBwdVisShake,
+                      prShakeFwdCalcDurStartPos := @sv_rShakeFwdCalcDurStartPos);
+   
+    //block for pump calib
+    abMovePVCalib.aInit();
+   
+    //init calculation of hydraulic max values
+    abCalcMaxValues.aInit(pRequiredPumps := @sv_RequiredPumps,
+                          pHydrMaxValues := @sv_HydrMaxValues);
+   
+END_IF;
+
+mpbEjectorParallelToMold := GET_SYNC_REFTO('CentralCoordination1.sv_bEjectorFwdDuringMldOpen', T#0s, state);
+
+@END_Body 
+
+@@@BEG_Comment@@@ 
+@TL(0)
+
+@@@END_Comment@@@ 
+
+@BEG_Body 
+@TL(10)
+(**************************************** WARNING ********************************************
+ *** The KEBA Kemro K2 System including software is not intended for safety control tasks! ***
+ ***                       For further information see Comment tab!                        ***
+ *********************************************************************************************)
+
+IF sv_bDeviceStart THEN
+   //start device
+   START_PROCESS_ALGORITHM(paRun);
+END_IF;
+
+@END_Body 
+
+@@@BEG_Comment@@@ 
+@TL(0)
+
+@@@END_Comment@@@ 
+
+@BEG_Body 
+@TL(43)
+(**************************************** WARNING ********************************************
+ *** The KEBA Kemro K2 System including software is not intended for safety control tasks! ***
+ ***                       For further information see Comment tab!                        ***
+ *********************************************************************************************)
+
+// InitUpdatePreLintabFwd:
+abUpdateRelLintabPreFwd.aInit(pLintabOut := @sv_LintabOutFwdP,
+                              prMaxPressure := @sv_rMaxPressureFwd,
+                              prMaxHydrPressure := @sv_HydrMaxValues.rMaxPressure,
+                              bUseForce := TRUE,
+                              bFwd := TRUE,
+                              pCylinderData := @sv_CylinderData);
+
+// InitUpdateVelLintabFwd:
+abUpdateRelLintabVelFwd.aInit(pLintabOut := @sv_LintabOutFwdV,
+                              prMaxSpeed := @sv_rMaxSpeedFwd,
+                              prMaxSpeedCalc := @sv_rMaxSpeedFwdCalc,
+                              prMaxSpeedCalib := @sv_rMaxSpeedFwdCalib,
+                              prMaxSpeedReducePercent := @sv_rMaxSpeedReducePercent,
+                              iMaxSpeedDigitsToFloor := miDigitsToFloor,
+                              prAbsFlow := @sv_HydrMaxValues.rAbsFlow,
+                              bFwd := TRUE,
+                              pCylinderData := @sv_CylinderData);
+
+// InitUpdatePreLintabBwd:
+abUpdateRelLintabPreBwd.aInit(pLintabOut := @sv_LintabOutBwdP,
+                              prMaxPressure := @sv_rMaxPressureBwd,
+                              prMaxHydrPressure := @sv_HydrMaxValues.rMaxPressure,
+                              bUseForce := TRUE,
+                              bFwd := FALSE,
+                              pCylinderData := @sv_CylinderData);
+
+// InitUpdateVelLintabBwd:
+abUpdateRelLintabVelBwd.aInit(pLintabOut := @sv_LintabOutBwdV,
+                              prMaxSpeed := @sv_rMaxSpeedBwd,
+                              prMaxSpeedCalc := @sv_rMaxSpeedBwdCalc,
+                              prMaxSpeedCalib := @sv_rMaxSpeedBwdCalib,
+                              prMaxSpeedReducePercent := @sv_rMaxSpeedReducePercent,                             
+                              iMaxSpeedDigitsToFloor := miDigitsToFloor,                              
+                              prAbsFlow := @sv_HydrMaxValues.rAbsFlow,
+                              bFwd := FALSE,
+                              pCylinderData := @sv_CylinderData);
+
+@END_Body 
+
+@@@BEG_Comment@@@ 
+@TL(0)
+
+@@@END_Comment@@@ 
+
+@BEG_SfcBody 
+17 17 21 
+
+@BEG_SfcData 2 
+@StepSeq @RT(4)sseq @F 1 
+@Loop @RT(4)loop @F 2 
+@StepSeq @RT(4)sseq @F 5 
+@Step @RT(5)START @F @T @F @F @RT(0) @F 
+@AcbCont @RT(7)unnamed @F 2 
+@Acb @RT(8)Action20 @F @T @RT(1)P @RT(0) @F @F @T @TL(2)
+b := WRITE_SV_DIRECT(sv_bDeviceStart, sv_bFALSE);
+
+@F 
+@Acb @RT(18)ADecidePumpRequest @F @F @RT(1)P @RT(0) @F @F @F @F 
+
+@AltBranch @RT(3)alt @F 2 
+@TransSeq @RT(4)tseq @F 1 
+@Trans @RT(11)TPumpNeeded @F @T @F @F @T @F @TL(2)
+bRequestPump
+
+@RT(7)Trans12 @F 
+
+@TransSeq @RT(4)tseq @F 2 
+@Trans @RT(10)TNoRequest @F @T @F @F @T @F @TL(2)
+NOT bRequestPump
+
+@RT(7)Trans35 @F 
+@Goto @RT(6)OUTPUT @F @F 
+
+
+@Step @RT(14)OUTPUT_REQUEST @F @F @F @F @RT(0) @F 
+@AcbCont @RT(7)unnamed @F 2 
+@Acb @RT(14)AOutputRequest @F @T @RT(1)P @RT(0) @F @F @T @TL(4)
+abOutputRequest.aRequest(pMoveData := g_MoveCtrl.pData,
+                         AnaOutputMode := nAnaOutputModeMid);
+bPumpRequested := TRUE;
+
+@F 
+@Acb @RT(12)ACheckOutput @F @T @RT(1)N @RT(0) @F @F @T @TL(2)
+abOutputRequest.aCheck();
+
+@F 
+
+@AltBranch @RT(3)alt @F 2 
+@TransSeq @RT(4)tseq @F 1 
+@Trans @RT(7)Trans13 @F @T @F @F @T @T @TL(2)
+g_MoveCtrl.bStop
+
+@RT(7)Trans13 @F 
+
+@TransSeq @RT(4)tseq @F 3 
+@Trans @RT(7)Trans15 @F @T @F @F @T @F @TL(2)
+abOutputRequest.aCheck.bReady
+
+@RT(7)Trans15 @F 
+@Step @RT(6)OUTPUT @F @F @T @F @RT(0) @F 
+@AcbCont @RT(7)unnamed @F 0 
+
+@AltBranch @RT(3)alt @F 3 
+@TransSeq @RT(4)tseq @F 3 
+@Trans @RT(6)Trans9 @F @T @F @F @T @F @TL(2)
+g_MoveCtrl.pData^.MoveDir = cMoveFwd 
+
+@RT(6)Trans9 @F 
+@Step @RT(6)Step14 @F @F @F @F @RT(0) @F 
+@AcbCont @RT(7)unnamed @F 0 
+
+@AltBranch @RT(3)alt @F 2 
+@TransSeq @RT(4)tseq @F 3 
+@Trans @RT(12)TNoPumpCalib @F @T @F @F @T @F @TL(2)
+NOT sv_bDoPumpVelocityCalib
+
+@RT(7)Trans17 @F 
+@Step @RT(5)S_Fwd @F @F @F @F @RT(0) @F 
+@AcbCont @RT(7)unnamed @F 1 
+@Acb @RT(8)AForward @F @F @RT(1)N @RT(0) @F @F @F @F 
+
+@Trans @RT(13)TForwardReady @F @T @F @F @T @F @TL(2)
+abMoveFwd.aRun.bReady
+
+@RT(13)TForwardReady @F 
+
+@TransSeq @RT(4)tseq @F 3 
+@Trans @RT(10)TPumpCalib @F @T @F @F @T @F @TL(2)
+sv_bDoPumpVelocityCalib
+
+@RT(7)Trans18 @F 
+@Step @RT(11)S_PumpCalib @F @F @F @F @RT(0) @F 
+@AcbCont @RT(7)unnamed @F 1 
+@Acb @RT(6)ACalib @F @F @RT(1)N @RT(0) @F @F @T @F 
+
+@Trans @RT(15)TPumpCalibReady @F @T @F @F @T @T @TL(2)
+abMovePVCalib.aRun.bReady
+
+@RT(7)Trans24 @F 
+
+
+
+@TransSeq @RT(4)tseq @F 3 
+@Trans @RT(6)Trans2 @F @T @F @F @T @F @TL(2)
+g_MoveCtrl.pData^.MoveDir = cMoveBwd
+
+@RT(6)Trans2 @F 
+@Step @RT(5)S_Bwd @F @F @F @F @RT(0) @F 
+@AcbCont @RT(7)unnamed @F 1 
+@Acb @RT(9)ABackward @F @F @RT(1)N @RT(0) @F @F @F @F 
+
+@Trans @RT(14)TBackwardReady @F @T @F @F @T @F @TL(2)
+abMoveBwd.aRun.bReady
+
+@RT(14)TBackwardReady @F 
+
+@TransSeq @RT(4)tseq @F 3 
+@Trans @RT(6)TShake @F @T @F @F @T @F @TL(2)
+g_MoveCtrl.pData^.MoveDir = cMoveAll
+
+@RT(7)Trans12 @F 
+@Step @RT(9)S_Shaking @F @F @F @F @RT(0) @F 
+@AcbCont @RT(7)unnamed @F 1 
+@Acb @RT(6)AShake @F @F @RT(1)N @RT(0) @F @F @F @F 
+
+@Trans @RT(13)TShakingReady @F @T @F @F @T @F @TL(2)
+abMoveShake.aRun.bReady
+
+@RT(13)TShakingReady @F 
+
+
+
+
+@Step @RT(5)READY @F @F @F @F @RT(0) @F 
+@AcbCont @RT(7)unnamed @F 1 
+@Acb @RT(7)Action2 @F @T @RT(1)P @RT(0) @F @F @T @TL(10)
+IF bPumpRequested THEN
+   abOutputRequest.aRelease(pMoveData := g_MoveCtrl.pData);
+   bPumpRequested := FALSE;
+END_IF;
+
+g_MoveCtrl.bReady := TRUE;
+IF NOT sv_bDeviceStart THEN
+    STOP_PROCESS_ALGORITHM();
+END_IF;
+
+@F 
+
+
+@Trans @RT(6)Trans8 @F @T @T @T @T @T @TL(2)
+TRUE
+
+@RT(6)Trans8 @F 
+
+@END_SfcData 
+@SaActions 5 
+@SaText @RT(8)AForward 1 @TL(4)
+abMoveFwd.aRun(bStop :=g_MoveCtrl.bStop);
+b := WRITE_SV_DIRECT(sv_EjectorFwdTimesAct.dActMoveTime, g_dActMoveTimeFwd);
+
+
+
+@SaText @RT(9)ABackward 1 @TL(4)
+abMoveBwd.aRun(bStop :=g_MoveCtrl.bStop);
+b := WRITE_SV_DIRECT(sv_EjectorBwdTimesAct.dActMoveTime, g_dActMoveTimeBwd);
+
+
+
+@SaText @RT(6)AShake 1 @TL(2)
+abMoveShake.aRun();
+
+
+@SaText @RT(18)ADecidePumpRequest 1 @TL(30)
+(**************************************** WARNING ********************************************
+ *** The KEBA Kemro K2 System including software is not intended for safety control tasks! ***
+ ***                       For further information see Comment tab!                        ***
+ *********************************************************************************************)
+
+IF ((sv_OperationMode = nManual) AND (NOT sv_bODCCombinedMoveActive)) OR (sv_OperationMode = nSetup) THEN
+   //movement was started by button (=not via ODC sequence) or in setup mode -> request pump
+   bRequestPump := TRUE;
+ELSIF mpbEjectorParallelToMold^ THEN
+   abOutputRequest.aCheckRequiredPumpsFree(RequiredPumps := sv_RequiredPumps.RequiredPumps);
+   IF abOutputRequest.aCheckRequiredPumpsFree.bRequiredPumpsFree THEN
+      bRequestPump := TRUE;
+   ELSE
+      //check if all required pumps are actually used by mold
+      //in this case no pump request is necessary (only open the valve)
+      bRequestPump := FALSE;
+      FOR iPump := 1 TO sv_NumberOfDevices[cCompPump] DO
+         IF sv_RequiredPumps.RequiredPumps[iPump] AND (sv_PumpData[iPump].ActiveDevice.CompId <> cCompMold) THEN
+            //required pump is actually not used by mold
+            //-> wait for all pumps are free (no "parallel" movement) 
+            bRequestPump := TRUE;
+            EXIT;
+         END_IF;
+      END_FOR;
+   END_IF;   
+ELSE
+   //any other case
+   bRequestPump := TRUE;
+END_IF;
+
+
+@SaText @RT(6)ACalib 1 @TL(7)
+(**************************************** WARNING ********************************************
+ *** The KEBA Kemro K2 System including software is not intended for safety control tasks! ***
+ ***                       For further information see Comment tab!                        ***
+ *********************************************************************************************)
+
+abMovePVCalib.aRun(bStop :=g_MoveCtrl.bStop);
+
+
+@SaTrans 0 
+@SaExits 0 
+@END_SfcBody 
+
+@@@BEG_Comment@@@ 
+@TL(0)
+
+@@@END_Comment@@@ 
+
+@BEG_Body 
+@TL(10)
+rEndOutputPressTemp := sv_EjectorFwdVisShake.rEndOutputPress;
+rEndOutputVelTemp   := sv_EjectorFwdVisShake.rEndOutputVel;
+
+sv_EjectorFwdVisShake := sv_EjectorFwdVis;    // FwdVis has no rEndOutputPress or rEndOutputVel
+
+sv_EjectorFwdVisShake.rEndOutputPress := rEndOutputPressTemp;
+sv_EjectorFwdVisShake.rEndOutputVel   := rEndOutputVelTemp;
+
+
+
+@END_Body 
+
+@@@BEG_Comment@@@ 
+@TL(0)
+
+@@@END_Comment@@@ 
+
+@BEG_Body 
+@TL(29)
+(**************************************** WARNING ********************************************
+ *** The KEBA Kemro K2 System including software is not intended for safety control tasks! ***
+ ***                       For further information see Comment tab!                        ***
+ *********************************************************************************************)
+
+rEndOutputPressTemp := sv_EjectorBwdVisShake.rEndOutputPress;
+rEndOutputVelTemp   := sv_EjectorBwdVisShake.rEndOutputVel  ;
+pCalculatedProfiles := sv_EjectorBwdVisShake.pCalculatedProfile;
+
+sv_EjectorBwdVisShake := sv_EjectorBwdVis;   // BwdVis has no rEndOutputPress and rEndOutputVel
+
+IF sv_EjectorMode = nVibrate OR NOT sv_bUseProgramSwitches THEN
+   IF sv_EjectorBwdVisShake.Profile.iNoOfPoints > 1 THEN
+      sv_EjectorBwdVisShake.Profile.iNoOfPoints := sv_EjectorBwdVisShake.Profile.iNoOfPoints-1;
+   END_IF;   
+END_IF;
+
+IF NOT sv_bUseProgramSwitches THEN
+   //sequence programmed by machine sequencer
+   //copy shake target position from propertie dialog to bwd shake profile
+   sv_EjectorBwdVisShake.Profile.Points[(sv_EjectorBwdVisShake.Profile.iNoOfPoints+1)].rStartPos := sv_rShakeTargetPos;
+END_IF;
+
+sv_EjectorBwdVisShake.rEndOutputPress := rEndOutputPressTemp;
+sv_EjectorBwdVisShake.rEndOutputVel   := rEndOutputVelTemp  ;
+
+sv_EjectorBwdVisShake.pCalculatedProfile := pCalculatedProfiles;
+
+
+@END_Body 
+
+@@@BEG_Comment@@@ 
+@TL(0)
+
+@@@END_Comment@@@ 
+
+@BEG_Body 
+@TL(8)
+(**************************************** WARNING ********************************************
+ *** The KEBA Kemro K2 System including software is not intended for safety control tasks! ***
+ ***                       For further information see Comment tab!                        ***
+ *********************************************************************************************)
+
+//copy stroke to start position of first profile point
+sv_EjectorBwdVis.Profile.Points[1].rStartPos := sv_rEjectorStroke;
+
+@END_Body 
+
+@@@BEG_Comment@@@ 
+@TL(0)
+
+@@@END_Comment@@@ 
+
+@BEG_Body 
+@TL(16)
+(**************************************** WARNING ********************************************
+ *** The KEBA Kemro K2 System including software is not intended for safety control tasks! ***
+ ***                       For further information see Comment tab!                        ***
+ *********************************************************************************************)
+
+//copy minoutput
+sv_EjectorFwdVis.rMinOutputVel  := sv_MinOutputFwd.rVelocity;
+sv_EjectorFwdVis.rMinOutputPress := sv_MinOutputFwd.rPressure;
+
+sv_ConstFwdVis.Velocity.rMinOutput := sv_MinOutputFwd.rVelocity;
+sv_ConstFwdVis.Pressure.rMinOutput := sv_MinOutputFwd.rPressure;
+
+//chad(CR_0038565) - limit switches
+sv_ConstFwdVisLS.Velocity.rMinOutput := sv_MinOutputFwd.rVelocity;
+sv_ConstFwdVisLS.Pressure.rMinOutput := sv_MinOutputFwd.rPressure;
+
+@END_Body 
+
+@@@BEG_Comment@@@ 
+@TL(0)
+
+@@@END_Comment@@@ 
+
+@BEG_Body 
+@TL(16)
+(**************************************** WARNING ********************************************
+ *** The KEBA Kemro K2 System including software is not intended for safety control tasks! ***
+ ***                       For further information see Comment tab!                        ***
+ *********************************************************************************************)
+
+//copy minoutput
+sv_EjectorBwdVis.rMinOutputVel  := sv_MinOutputBwd.rVelocity;
+sv_EjectorBwdVis.rMinOutputPress := sv_MinOutputBwd.rPressure;
+
+sv_ConstBwdVis.Velocity.rMinOutput := sv_MinOutputBwd.rVelocity;
+sv_ConstBwdVis.Pressure.rMinOutput := sv_MinOutputBwd.rPressure;
+
+//chad(CR_0038565) - limit switches
+sv_ConstBwdVisLS.Velocity.rMinOutput := sv_MinOutputBwd.rVelocity;
+sv_ConstBwdVisLS.Pressure.rMinOutput := sv_MinOutputBwd.rPressure;
+
+@END_Body 
+
+@@@BEG_Comment@@@ 
+@TL(0)
+
+@@@END_Comment@@@ 
+
+@BEG_Body 
+@TL(12)
+(**************************************** WARNING ********************************************
+ *** The KEBA Kemro K2 System including software is not intended for safety control tasks! ***
+ ***                       For further information see Comment tab!                        ***
+ *********************************************************************************************)
+
+//Calculate fwd, fwd shake and bwd start position for calculation of duration
+sv_rFwdCalcDurationStartPos := sv_EjectorBwdVis.Profile.Points[sv_EjectorBwdVis.Profile.iNoOfPoints + 1].rStartPos;
+
+sv_rShakeFwdCalcDurStartPos := sv_EjectorBwdVisShake.Profile.Points[sv_EjectorBwdVisShake.Profile.iNoOfPoints + 1].rStartPos;
+
+sv_rBwdCalcDurationStartPos := sv_EjectorFwdVis.Profile.Points[sv_EjectorFwdVis.Profile.iNoOfPoints + 1].rStartPos;
+
+@END_Body 
+
+@@@BEG_Comment@@@ 
+@TL(0)
+
+@@@END_Comment@@@ 
+
+@BEG_Body 
+@TL(23)
+(**************************************** WARNING ********************************************
+ *** The KEBA Kemro K2 System including software is not intended for safety control tasks! ***
+ ***                       For further information see Comment tab!                        ***
+ *********************************************************************************************)
+
+sv_bTransducerAvailable := IS_LINKED(ai_Position);
+sv_bLimitSwitchesAvailable := IS_LINKED(di_EjectorFwd) AND IS_LINKED(di_EjectorBwd);
+
+IF sv_bTransducerAvailable THEN
+   //set transducer input for autocalibration
+   sv_CalibState.prInputSensor := @ai_Position;
+END_IF;
+
+IF sv_bLimitSwitchesAvailable THEN
+   //limit switch depending
+   sv_EjectorFwdMonData.pbDI := @di_EjectorFwd;
+   sv_EjectorBwdMonData.pbDI := @di_EjectorBwd; 
+   sv_EjectorFwdMonData.pProfile := EMPTY;
+   sv_EjectorBwdMonData.pProfile := EMPTY;
+   sv_EjectorFwdMonData.rActPos := EMPTY;
+   sv_EjectorBwdMonData.rActPos := EMPTY;
+END_IF;  
+
+@END_Body 
+
+@@@BEG_Comment@@@ 
+@TL(0)
+
+@@@END_Comment@@@ 
+
+@BEG_Body 
+@TL(20)
+(**************************************** WARNING ********************************************
+ *** The KEBA Kemro K2 System including software is not intended for safety control tasks! ***
+ ***                       For further information see Comment tab!                        ***
+ *********************************************************************************************)
+
+IF sv_rMaxPressureFwd <> 0.0 THEN
+    rFactorPress := sv_rMaxPressureBwd / sv_rMaxPressureFwd;
+ELSE
+    rFactorPress := 1.0;
+END_IF;
+IF sv_rMaxSpeedFwd <> 0.0 THEN
+    rFactorVel := sv_rMaxSpeedBwd / sv_rMaxSpeedFwd;
+ELSE
+    rFactorVel := 1.0;
+END_IF;
+
+//copy endoutput values to bwd vis shake profile
+sv_EjectorBwdVisShake.rEndOutputPress := rFactorPress * sv_EjectorFwdVisShake.rEndOutputPress;
+sv_EjectorBwdVisShake.rEndOutputVel := rFactorVel * sv_EjectorFwdVisShake.rEndOutputVel;
+
+@END_Body 
+
+@@@BEG_Comment@@@ 
+@TL(0)
+
+@@@END_Comment@@@ 
+
+@BEG_Body 
+@TL(40)
+(**************************************** WARNING ********************************************
+ *** The KEBA Kemro K2 System including software is not intended for safety control tasks! ***
+ ***                       For further information see Comment tab!                        ***
+ *********************************************************************************************)
+
+IF NOT sv_bDeviceReady THEN
+   
+   IF sv_OperationMode = nSetup THEN
+      //movement in setup mode active
+      //-> reset active stage information
+      sv_iActiveStageFwd := 0;
+      sv_iActiveStageBwd := 0;
+   ELSE
+      
+      //ejector movement in manual - half - or fullauto mode 
+      IF sv_bFwdActive THEN
+   
+         //reset bwd stage info if fwd movement is started
+         sv_iActiveStageBwd := 0; 
+         
+         IF sv_iActiveStage > 0 THEN
+            sv_iActiveStageFwd := sv_iActiveStage;
+         END_IF;
+          
+      ELSIF sv_bBwdActive THEN
+         
+         //reset Fwd stage info if bwd movement is started
+         sv_iActiveStageFwd := 0;
+         
+         IF sv_iActiveStage > 0 THEN
+            sv_iActiveStageBwd := sv_iActiveStage;
+         END_IF;
+      END_IF;
+   END_IF;
+   
+END_IF;
+
+
+
+
+@END_Body 
+
+@@@BEG_Comment@@@ 
+@TL(0)
+
+@@@END_Comment@@@ 
+@END_Body 
+
+@END_Contents 

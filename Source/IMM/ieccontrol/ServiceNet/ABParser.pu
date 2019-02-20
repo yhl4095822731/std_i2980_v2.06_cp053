@@ -1,0 +1,3196 @@
+(*
+@h    ! WARNING !
+@h    The Kemro K2 system (including software) only meets category B according to EN 954-1,
+@h    thus it is not intended for usage in safety-relevant control applications in the field 
+@h    of personal safety (e.g. emergency stop).
+@h    To implement potentially necessary safety-relevant control tasks, always use additional 
+@h    external safety devices that are intended for the particular purpose, and meet the necessary 
+@h    functional safety.
+@h    For further information see EN 954-1 (EN ISO 13849-1) and/or the K2-x00 user manual, chapter 
+@h    "CE conformity, directives and standards".
+
+Function block for parsing data stream sent by ServiceNet Server
+data presentation: JSON (see http://www.json.org/)
+
+syntax restrictions: 
+  -> no syntax evaluation of data type "array", tokens within an array are skipped
+  -> recursion level for data type "object" is 255 maximum
+  
+semantic actions implemented for key - value pairs with values of type "number", 
+  "true", "false" and "object"
+
+output of parsed data is stored in a hashtable.
+
+objects defined recursive are represented "flat" in same hashtable by adding the parent key
+separated by a "." as a prefix to the object key.
+
+the hashtable and it's content is deleted only when reseting input "Execute", 
+so received data is available in hashtable even if it has not been sent in the 
+latest message.
+
+data types in hashtable: 
+-> int numbers, true, false: 4 bytes signed integer (DINT)
+-> numbers containing '.' or 'e'/'E': 4 byte float (REAL)
+
+functions available to get a DINT or a REAL value from hashtable.
+
+additionally the parser measures the time since last complete object has
+been received for easy timeout detection in calling block.
+
+see documentation for a detailed description.
+*)
+
+IMPORT_OVER_LISTFILE
+ ASCII_TO_STRING
+, KMEM_HashMapL_Create
+, CONVERT_DWORD_TO_REAL
+, KMEM_HashMapL_Add
+, KMEM_HashMapL_Delete
+, KNETWORK_TcpReceive
+, tyByteBuf
+, tnSymbol
+, tsDataElem
+, KMEM_CreateData
+, KMEM_Status
+
+END_IMPORT
+
+ALGORITHM_BLOCK ABParser #DUMMY_EDIT_BLOCK
+
+VAR
+ mTcpHdl : REFERENCE (* tcp handle for reading data *);
+ miReadBufIdx : UDINT (* pointer to next character to read in inputstream *);
+ mHdlNumDataTable : REFERENCE (* handle of hashtable for storing numeric and boolean data elements *);
+END_VAR
+
+(*
+@h    ! WARNING !
+@h    The Kemro K2 system (including software) only meets category B according to EN 954-1,
+@h    thus it is not intended for usage in safety-relevant control applications in the field 
+@h    of personal safety (e.g. emergency stop).
+@h    To implement potentially necessary safety-relevant control tasks, always use additional 
+@h    external safety devices that are intended for the particular purpose, and meet the necessary 
+@h    functional safety.
+@h    For further information see EN 954-1 (EN ISO 13849-1) and/or the K2-x00 user manual, chapter 
+@h    "CE conformity, directives and standards".
+
+PRIVATE. Not intended to be called from outside this block.
+
+algorithm that provides the next character from input data for the scanner.
+the received data should be parsed without the need of waiting for a whole message to 
+be available. 
+This is caused by implementation of KNETWORK_TcpReceive() which clears the receive buffer each
+time it is called (and not only on falling edge of execute), no matter how many bytes could be received.
+For performance reasons we do not want to use an additional copy operation to a second receive buffer.
+
+A pointer to the next character to read from read buffer is maintained, only if no more characters
+are available in read buffer KNETWORK_TcpReceive() is called. 
+
+*)
+
+ALGORITHM aNextChar
+
+
+VAR_IN_OUT
+ ch : BYTE (* next character from input source, only valid if bAvailable is set *);
+END_VAR
+
+VAR_OUTPUT
+ bAvailable : BOOL (* indicates if a character is available *);
+END_VAR
+
+VAR
+ fbTcpRcv : KNETWORK_TcpReceive;
+ yRcvBuf : tyByteBuf;
+ bTrace : BOOL;
+ sch : STRING(2);
+ dummy : DINT;
+END_VAR
+#BEGIN_EDIT_BLOCK
+(**************************************** WARNING ********************************************
+ *** The KEBA Kemro K2 System including software is not intended for safety control tasks! ***
+ ***                       For further information see Comment tab!                        ***
+ *********************************************************************************************)
+
+// TODO: call TCP specific code from outside in order to be independent from data source
+//       new method to set buffer from outside
+
+// no more data available in read buffer ...
+IF (NOT(miReadBufIdx < fbTcpRcv.BytesReceived)) THEN
+  // ... read new data from TCP connection 
+  fbTcpRcv(TRUE, mTcpHdl, 255, yRcvBuf); 
+  // reset pointer to next character to read from read buffer
+  miReadBufIdx := 0; 
+END_IF;
+
+// if data available in readbuffer
+IF (miReadBufIdx < fbTcpRcv.BytesReceived) THEN
+  // return next character
+  ch := yRcvBuf[miReadBufIdx]; 
+  // set available output flag
+  bAvailable := TRUE; 
+  // increase read buffer pointer
+  miReadBufIdx := miReadBufIdx + 1; 
+    
+  IF (bTrace) THEN
+    sch := ASCII_TO_STRING(ch);
+    dummy := Print('ABParser.aNextChar: character:                            0x%02x     %s', ch, sch);
+  END_IF;
+ELSE
+  // reset available output flag
+  bAvailable := FALSE; 
+END_IF;
+
+
+;#END_EDIT_BLOCK END_ALGORITHM
+
+(*
+@h    ! WARNING !
+@h    The Kemro K2 system (including software) only meets category B according to EN 954-1,
+@h    thus it is not intended for usage in safety-relevant control applications in the field 
+@h    of personal safety (e.g. emergency stop).
+@h    To implement potentially necessary safety-relevant control tasks, always use additional 
+@h    external safety devices that are intended for the particular purpose, and meet the necessary 
+@h    functional safety.
+@h    For further information see EN 954-1 (EN ISO 13849-1) and/or the K2-x00 user manual, chapter 
+@h    "CE conformity, directives and standards".
+
+PRIVATE. Not intended to be called from outside this block.
+
+algorithm that provides the next token (type and value) for the parser (see symbols.tu).
+Scanner starts scanning on raising edge of Execute and does not stop until Execute gets false again, 
+a valid token or a syntax error is detected.
+Each time a token is detected the Done flag is set and the function block returns. 
+Function block also returns if no more input data is available.
+This means it is not guaranteed to receive a token each on function call, this depends on the input
+data available.
+In order to enable the parser to detect the end of an object without the need of trailing characters 
+(no more data available does not mean the end of object necessarily) the scanner reports a "strong" token
+immediately without reading next character. A "strong" token is a token that can be detected definitly 
+without knowing the character following, examples are '}' or ':' in contrast to tokens like a number.
+
+To prevent endless loops by fault a return is done in any case if no valid token is detected after a 
+certain number of characters read. 
+
+in case of a reconnection also receive buffer should be cleared, therefore an additional var input is available
+
+
+
+           
+*)
+
+ALGORITHM aScan
+
+
+VAR_INPUT
+ Execute : BOOL (* raising edge scans next symbol *);
+ bConnectionReset : BOOL (* reset receive buffer (execute must be false) *);
+END_VAR
+
+VAR_OUTPUT
+ Done : BOOL (* symbol detected *);
+ Error : BOOL (* unknown symbol *);
+ Symbol : tnSymbol (* symbol type *);
+ sSymbol : WSTRING(255) (* contains value in case of nString symbol *);
+ iSymbol : DINT (* contains value in case of nIntNumber symbol *);
+ rSymbol : LREAL (* contains value in case of nFloatSymbol *);
+END_VAR
+
+VAR
+ iState : DINT (* internal scanner state *);
+ ch : BYTE (* actual character *);
+ bSign : BOOL (* marker sign detected *);
+ iTmpCnt : DINT (* helper variable *);
+ iExp : DINT (* helper variable for calculating value of exp when scanning a real number *);
+ yCmpBuf : tyByteBuf (* helper structure when scanning fixed symbols *);
+ iCntTimeout : DINT (* counter for breaking while loop *);
+END_VAR
+#BEGIN_EDIT_BLOCK
+(**************************************** WARNING ********************************************
+ *** The KEBA Kemro K2 System including software is not intended for safety control tasks! ***
+ ***                       For further information see Comment tab!                        ***
+ *********************************************************************************************)
+
+IF (Execute = TRUE) THEN
+    iCntTimeout := 2048; // break after this number of characters even if more availble
+    WHILE (iCntTimeout > 0) DO
+       iCntTimeout := iCntTimeout - 1; 
+        
+    
+       CASE (iState) OF 
+           ////////////////////////////////////
+           ////      error state
+           -1:  
+                Error := TRUE;
+                // in case of an error skip characters until next "strong" character
+                IF (
+                     (ch <= 16#20)            // non printable characters
+                     OR (ch = 16#7B)          // {
+                     OR (ch = 16#7D)          // }    
+                     OR (ch = 16#5B)          // [
+                     OR (ch = 16#5D)          // ]
+                     OR (ch = 16#2C)          // , 
+                     OR (ch = 16#3A)          // :  
+                    ) THEN
+                        Done := TRUE; 
+                        RETURN;     
+                END_IF;
+        
+                aNextChar(ch);
+                IF (NOT aNextChar.bAvailable) THEN
+                    RETURN;               
+                END_IF;
+                  
+           0:  // symbol unknown 
+               Symbol := nUnknown;         
+    
+               IF (NOT (ch <= 16#20)) THEN
+                    // valid character
+                    iState := 10; 
+               ELSE               
+                    // skip ignore chars 
+                    aNextChar(ch);
+                    IF (NOT aNextChar.bAvailable) THEN
+                        RETURN;               
+                    END_IF;
+               END_IF;
+    
+           10: // evaluate start character
+               CASE (BYTE_TO_INT(ch)) OF
+                 /////////////////////////////////////////////////////////  
+                 //         "        start of string detected               
+                 16#22:          
+                      Symbol := nString;
+                      aNextChar(ch); 
+                      IF (NOT aNextChar.bAvailable) THEN
+                        RETURN;               
+                      END_IF;
+                      
+                      IF (ch <> 16#22) THEN
+                          // character belongs to string
+                          sSymbol := (STRING_TO_WSTRING(ASCII_TO_STRING(ch)));                   
+                          // proceed with evaluating the string
+                          iState := 100;
+                      ELSE 
+                          // character " closes empty string
+                          sSymbol := "";                   
+                          iState := 9999; 
+                      END_IF;
+    
+                 /////////////////////////////////////////////////////////  
+                 //         -     start of signed number detected, store sign flag                            
+                 16#2D:    
+                      bSign := TRUE; 
+                      iSymbol := 0;  // initialize symbol value with 0
+                      
+                      // proceed with evaluating an integer number
+                      iState := 200;                     
+    
+                 /////////////////////////////////////////////////////////               
+                 //         0 .. 9, start of unsigned number detected                                  
+                 16#30 .. 16#39: 
+                      bSign := FALSE; 
+                      // initialize symbol value with character read which is already part of the numbmer               
+                      iSymbol := BYTE_TO_DINT(ch) - 16#30; 
+                      // proceed with valuating an integer number               
+                      iState := 200; 
+                   
+                 /////////////////////////////////////////////////////////     
+                 //     t  start of symbol "true" detected               
+                 16#74:
+                      // proceed with evaluating a fixed symbol
+                      iState := 300; 
+                      Symbol := nTrue; 
+                      // initialize compare buffer with expected characters               
+                      iTmpCnt := 3;   
+                      yCmpBuf[2] := 16#72; // r
+                      yCmpBuf[1] := 16#75; // u
+                      yCmpBuf[0] := 16#65; // e  
+                   
+                 /////////////////////////////////////////////////////////  
+                 //     f  start of symbol "false"
+                 16#66:       
+                      // proceed with evaluating a fixed symbol
+                      iState := 300;                   
+                      Symbol := nFalse; 
+                      // initialize compare buffer with expected characters
+                      iTmpCnt := 4;                   
+                      yCmpBuf[3] := 16#61; // a
+                      yCmpBuf[2] := 16#6C; // l
+                      yCmpBuf[1] := 16#73; // s
+                      yCmpBuf[0] := 16#65; // e                  
+                   
+                 /////////////////////////////////////////////////////////  
+                 //     n  start of symbol "null"
+                 16#6E:          
+                      // proceed with evaluating a fixed symbol
+                      iState := 300;                   
+                      Symbol := nNull; 
+                      // initialize compare buffer with expected characters
+                      iTmpCnt := 3;                   
+                      yCmpBuf[2] := 16#75; // u
+                      yCmpBuf[1] := 16#6C; // l
+                      yCmpBuf[0] := 16#6C; // l
+                      
+                 /////////////////////////////////////////////////////////  
+                 //     {   symbol LBrace detected
+                 16#7B:          
+                      iState := 9999; 
+                      Symbol := nLBrace;
+                  
+                 /////////////////////////////////////////////////////////  
+                 //     }   symbol RBrace detected
+                 16#7D:         
+                        iState := 9999; 
+                        Symbol := nRBrace;
+    
+                 /////////////////////////////////////////////////////////  
+                 //     [   symbol LBrak detected
+                 16#5B:         
+                      iState := 9999; 
+                      Symbol := nLBrak;
+                      
+                 /////////////////////////////////////////////////////////  
+                 //     [   symbol RBrak detected
+                 16#5D:          
+                      iState := 9999; 
+                      Symbol := nRBrak;                  
+    
+                 /////////////////////////////////////////////////////////  
+                 //     ,   symbol Comma detected
+                 16#2C:           
+                      iState := 9999; 
+                      Symbol := nComma;                  
+    
+                 /////////////////////////////////////////////////////////  
+                 //     :   symbol separator detected
+                 16#3A:            
+                      iState := 9999; 
+                      Symbol := nSeparator;                  
+    
+               ELSE
+                  // error, unknown symbol
+                  iState := -1; 
+               END_CASE;     
+
+           ////////////////////////////////////
+           ////      scan symbol of type string
+           100:
+                // next character no end of string?
+                IF(ch <> 16#22) THEN
+                    // read next
+                    aNextChar(ch);         
+                    IF (NOT aNextChar.bAvailable) THEN
+                       RETURN;               
+                    END_IF;
+                    
+                    
+                    IF (ch = 16#5C) THEN 
+                        // backslash, evaluate ctrl sequence                        
+                        iState := 110; 
+                    ELSE
+                        IF(ch <> 16#22) THEN 
+                           // any other character except '"' or '\'
+                           sSymbol := CONCAT(sSymbol, STRING_TO_WSTRING(ASCII_TO_STRING(ch)));  
+                        END_IF;
+                    END_IF;
+                ELSE 
+                    // end of string detected
+                    iState := 9999; 
+                END_IF;
+        
+    
+           /////////////////////////////////////////////////////
+           ////  string - ctrl char (backslash) detected
+           110:       
+                aNextChar(ch);         
+                IF (NOT aNextChar.bAvailable) THEN
+                    RETURN;  
+                END_IF;
+         
+                CASE (BYTE_TO_DINT(ch)) OF
+                    16#22: // "
+                       sSymbol := CONCAT(sSymbol, '"');
+                       iState := 120; 
+                    16#5C: // backslash
+                       sSymbol := CONCAT(sSymbol, '\');
+                       iState := 120; 
+                    16#2F, // slash
+                    16#62, // b
+                    16#66, // f
+                    16#6E, // n
+                    16#72, // r
+                    16#74: // t 
+                        sSymbol := CONCAT(sSymbol, "\", STRING_TO_WSTRING(ASCII_TO_STRING(ch))); 
+                        iState := 120; 
+           
+                    16#75: // u
+                        sSymbol := CONCAT(sSymbol, "?"); 
+                        iState := 130; 
+                ELSE
+                    iState := -1; 
+                END_CASE;
+  
+           /////////////////////////////////////////////////////
+           ////  string - ctrl char (backslash) + single character 
+           120:       
+               aNextChar(ch);         
+               IF (NOT aNextChar.bAvailable) THEN
+                  RETURN;  
+               END_IF;
+               sSymbol := CONCAT(sSymbol, STRING_TO_WSTRING(ASCII_TO_STRING(ch)));         
+           
+               iState := 100; // proceed with parsing string symbol
+
+          /////////////////////////////////////////////////////
+          ////  string - ctrl char (backslash) + u, followed by 4 hexdigits 
+          130.. 139:
+               aNextChar(ch);         
+               IF (NOT aNextChar.bAvailable) THEN
+                  RETURN;  
+               END_IF;
+               iState := iState + 1; 
+               IF (iState = 135) THEN
+                  sSymbol := CONCAT(sSymbol, STRING_TO_WSTRING(ASCII_TO_STRING(ch)));         
+                  iState := 100; // proceed with parsing string symbol
+               END_IF;  
+
+          /////////////////////////////////////////////////////
+          ////  integer number, can be signed
+          200:        
+               Symbol := nIntNumber; 
+               aNextChar(ch); 
+               IF (NOT aNextChar.bAvailable) THEN
+                    RETURN;               
+               END_IF;
+        
+               CASE (BYTE_TO_DINT(ch)) OF
+                    16#30 .. 16#39:  // dec. digit
+                        iSymbol := iSymbol * 10 + (BYTE_TO_DINT(ch) - 16#30);
+            
+                    16#2E: // .
+                        Symbol := nFloatNumber; 
+                        rSymbol := DINT_TO_LREAL(iSymbol); 
+                        IF (bSign) THEN
+                            rSymbol := -rSymbol;                 
+                        END_IF;
+                        iTmpCnt   := 10; 
+                        iState := 210;  // proceed with float number
+            
+                    16#45, 16#65: // E, e
+                        Symbol := nFloatNumber; 
+                        rSymbol := DINT_TO_LREAL(iSymbol);     
+                        IF (bSign) THEN
+                            rSymbol := -rSymbol;                 
+                        END_IF;
+                        iState := 220; // proceed with float number
+               ELSE
+                        // finished, consider sign
+                        IF (bSign) THEN
+                            iSymbol := -iSymbol;                 
+                        END_IF;
+
+                        iState := 10000; 
+               END_CASE;
+        
+
+          /////////////////////////////////////////////////////
+          ////  float number (comma has been detected)
+          210:        
+               aNextChar(ch); 
+               IF (NOT aNextChar.bAvailable) THEN
+                  RETURN;               
+               END_IF;
+           
+               CASE (BYTE_TO_DINT(ch)) OF
+                    16#30 .. 16#39:  // dec. digit
+                        IF (bSign) THEN
+                            rSymbol := rSymbol - DINT_TO_LREAL((BYTE_TO_DINT(ch) - 16#30)) / DINT_TO_LREAL(iTmpCnt);                
+                        ELSE 
+                            rSymbol := rSymbol + DINT_TO_LREAL((BYTE_TO_DINT(ch) - 16#30)) / DINT_TO_LREAL(iTmpCnt);
+                        END_IF;
+                        iTmpCnt := iTmpCnt * 10; 
+            
+                    16#45, 16#65: // E, e
+                        iState := 220; 
+               ELSE
+                    // finished
+                    iState := 10000; 
+               END_CASE;
+
+          /////////////////////////////////////////////////////
+          ////  float number ('e'/'E' has been detected)
+          220:
+                aNextChar(ch); 
+                IF (NOT aNextChar.bAvailable) THEN
+                  RETURN;               
+                END_IF;
+        
+                iExp := 0; 
+                CASE (BYTE_TO_DINT(ch)) OF        
+                   16#2B: // +
+                      bSign := FALSE;
+                      iState := 230; 
+             
+                   16#2D: // - 
+                      bSign := TRUE;
+                      iState := 230; 
+             
+                   16#30 .. 16#39:  // dec. digit
+                      bSign := FALSE;             
+                      iExp := BYTE_TO_DINT(ch) - 16#30;
+                      iState := 240; 
+                ELSE
+                   iState := -1;
+                END_CASE;
+
+          ///////////////////////////////////////////////////////////////
+          ////  float number ('e'/'E' followed by sign has been detected)
+          230:
+                aNextChar(ch); 
+                IF (NOT aNextChar.bAvailable) THEN
+                    RETURN;               
+                END_IF;
+           
+                CASE (BYTE_TO_DINT(ch)) OF        
+                      16#30 .. 16#39:  // dec. digit
+                         iExp := BYTE_TO_DINT(ch) - 16#30;
+                         iState := 240; 
+                ELSE             
+                      iState := -1;         
+                END_CASE;
+   
+          ///////////////////////////////////////////////////////////////
+          ////  float number ('e'/'E' optionally followed by sign has been detected)
+          240:
+                  aNextChar(ch); 
+                  IF (NOT aNextChar.bAvailable) THEN
+                     RETURN;               
+                  END_IF;
+        
+                  CASE (BYTE_TO_DINT(ch)) OF        
+                     16#30 .. 16#39:  // dec. digit
+                        iExp := iExp * 10 + BYTE_TO_DINT(ch) - 16#30;
+                  ELSE          
+                     // float number finished, calculate value
+                     IF (bSign) THEN
+                        iExp := -iExp; 
+                     END_IF;
+                     rSymbol := rSymbol * EXPT(10.0, DINT_TO_LREAL(iExp)); 
+                     iState := 10000;  
+                  END_CASE;
+
+          /////////////////////////////////////////////////////
+          ////  fixed symbol (true, false, null) detected
+          300:
+                aNextChar(ch); 
+                IF (NOT aNextChar.bAvailable) THEN
+                    RETURN;               
+                END_IF;
+
+                // compare with buffer
+                iTmpCnt := iTmpCnt - 1;
+                IF (iTmpCnt < 0) THEN
+                    // equal .. finished 
+                    iState := 10000; 
+                ELSE 
+                    // expected other character -> error
+                    IF (yCmpBuf[iTmpCnt] <> ch) THEN
+                        iState := -1;             
+                    END_IF;
+                END_IF;
+
+          //////////////////////////////////////////////////////////
+          ////  "strong" symbol detected, 
+          ///   next character not read until now
+          9999:
+                ch := 0;  // mark character invalid, step 0 will read next character initially 
+                Done := TRUE;   
+                RETURN; 
+
+          //////////////////////////////////////////////////////////
+          ////  "weak" symbol detected, 
+          /// next character already available on local variable ch
+          10000:
+                // symbol detected
+                Done := TRUE;   
+                RETURN; 
+
+       END_CASE;
+    END_WHILE;        
+ELSE 
+    IF (bConnectionReset) THEN
+      // new connection ... clear read buffer and state 
+      miReadBufIdx := 16#7FFFFFFF; 
+      ch := 0;   
+      iState := 0; 
+    END_IF;    
+    
+    // execute false ... clear var outputs
+    IF (iState <= 10000) THEN
+      iState := 0;  
+    END_IF;
+    Symbol := nUnknown;
+    sSymbol := "";
+    iSymbol := 0; 
+    rSymbol := 0.0; 
+    Done := FALSE; 
+    Error := FALSE; 
+END_IF;
+
+
+
+
+
+
+
+
+
+
+
+
+;#END_EDIT_BLOCK END_ALGORITHM
+
+(*
+@h    ! WARNING !
+@h    The Kemro K2 system (including software) only meets category B according to EN 954-1,
+@h    thus it is not intended for usage in safety-relevant control applications in the field 
+@h    of personal safety (e.g. emergency stop).
+@h    To implement potentially necessary safety-relevant control tasks, always use additional 
+@h    external safety devices that are intended for the particular purpose, and meet the necessary 
+@h    functional safety.
+@h    For further information see EN 954-1 (EN ISO 13849-1) and/or the K2-x00 user manual, chapter 
+@h    "CE conformity, directives and standards".
+
+PRIVATE. Not intended to be called from outside this block.
+helper method for tracing
+*)
+
+ALGORITHM aTrace
+
+
+VAR
+ dummy : DINT;
+ sdummy : STRING(255);
+END_VAR
+#BEGIN_EDIT_BLOCK
+(**************************************** WARNING ********************************************
+ *** The KEBA Kemro K2 System including software is not intended for safety control tasks! ***
+ ***                       For further information see Comment tab!                        ***
+ *********************************************************************************************)
+
+IF (aScan.Symbol = nString) THEN
+    sdummy:= WSTRING_TO_STRING(aScan.sSymbol);
+    dummy:=Print("SCANNER: type string: %s", sdummy );
+ELSIF (aScan.Symbol = nIntNumber) THEN 
+    dummy:=Print("SCANNER: type int: %d", aScan.iSymbol);        
+ELSIF (aScan.Symbol = nFloatNumber)   THEN      
+    dummy:=Print("SCANNER: type float: %f", aScan.rSymbol);        
+ELSE   
+    dummy:=Print("SCANNER: other\r\n");                
+END_IF;
+
+
+;#END_EDIT_BLOCK END_ALGORITHM
+
+(*
+@h    ! WARNING !
+@h    The Kemro K2 system (including software) only meets category B according to EN 954-1,
+@h    thus it is not intended for usage in safety-relevant control applications in the field 
+@h    of personal safety (e.g. emergency stop).
+@h    To implement potentially necessary safety-relevant control tasks, always use additional 
+@h    external safety devices that are intended for the particular purpose, and meet the necessary 
+@h    functional safety.
+@h    For further information see EN 954-1 (EN ISO 13849-1) and/or the K2-x00 user manual, chapter 
+@h    "CE conformity, directives and standards".
+
+Algorithm for parsing data stream sent by ServiceNet Server
+data presentation: JSON (see http://www.json.org/)
+
+syntax restrictions: 
+  -> no syntax evaluation of data type "array", tokens within an array are skipped
+  -> recursion level for data type "object" is 255 maximum
+  
+semantic actions implemented for key - value pairs with values of type "number", 
+  "true", "false" and "object"
+
+output of parsed data is stored in a hashtable.
+
+objects defined recursive are represented "flat" in same hashtable by adding the parent key
+separated by a "." as a prefix to the object key.
+
+the hashtable and it's content is deleted only when reseting input "Execute", 
+so received data is available in hashtable even if it has not been sent in the 
+latest message.
+
+data types in hashtable: 
+-> int numbers, true, false: 4 bytes signed integer (DINT)
+-> numbers containing '.' or 'e'/'E': 4 byte float (REAL)
+
+functions available to get a DINT or a REAL value from hashtable.
+
+additionally the parser measures the time since last complete object has
+been received for easy timeout detection in calling block.
+
+see documentation for a detailed description.
+*)
+
+ALGORITHM aParse
+
+
+VAR_INPUT
+ Execute : BOOL (* parses input data when true, reset all if false *);
+ TcpHdl : REFERENCE (* handle for TCP connection to read from *);
+END_VAR
+
+VAR_OUTPUT
+ ObjRcvCnt : DINT (* number incremented each time an object is recieved (not counting recursive objects) *);
+ Error : BOOL (* indicates any type of error  *);
+ ElapsedTimeSinceLastObj : TIME (* shows time elapsed since last object has been received *);
+END_VAR
+
+VAR_TEMP
+ iTmp : INT;
+END_VAR
+
+VAR
+ bExecuteOld : BOOL;
+ dummy : DINT;
+ iState : DINT;
+ iCntStartToken : DINT;
+ sErrMsg : STRING(255);
+ iCntTimeOut : DINT;
+ iCntTimeoutInteral : DINT;
+ sKey : STRING(255);
+ tmpVal : tsDataElem;
+ memCreateData : KMEM_CreateData;
+ s : KMEM_Status;
+ sParent : STRING(255);
+ yKeyPosStack : tyByteBuf;
+ iArrayRecCnt : DINT;
+ iKeyPosStackIdx : DINT;
+ bTrace : BOOL;
+END_VAR
+#BEGIN_EDIT_BLOCK
+(**************************************** WARNING ********************************************
+ *** The KEBA Kemro K2 System including software is not intended for safety control tasks! ***
+ ***                       For further information see Comment tab!                        ***
+ *********************************************************************************************)
+
+IF (Execute = TRUE) THEN
+   // create the data table for numeric and boolean values if not existing 
+   IF (mHdlNumDataTable = EMPTY) THEN 
+      memCreateData := KMEM_HashMapL_Create('', tmpVal, 10, 255);
+      mHdlNumDataTable := memCreateData.Handle;
+   END_IF;
+   
+   // increase time
+   ElapsedTimeSinceLastObj := ElapsedTimeSinceLastObj + T#100ms;
+    
+   // raising edge ... read var inputs   
+   IF (bExecuteOld = FALSE) THEN
+      mTcpHdl := TcpHdl;      
+      aScan(Execute := FALSE, bConnectionReset := TRUE); 
+      aScan.bConnectionReset := FALSE;
+   END_IF;
+   bExecuteOld := Execute; 
+   
+   // return in case of an error
+   IF (Error) THEN
+      RETURN;  
+   END_IF;    
+  
+   // initialize timeout counter 
+   // break loop anyway after 32 read symbols even if more symbols would be available
+   iCntTimeOut := 32;   
+
+   REPEAT
+      iCntTimeOut := iCntTimeOut - 1; 
+      // new symbol detected? 
+      IF (aScan.Done) THEN
+         IF (NOT aScan.Error) THEN
+            IF (bTrace) THEN
+               aTrace();           
+            END_IF;
+
+            iCntTimeoutInteral := 100;  
+            
+            WHILE (TRUE) DO
+               iCntTimeoutInteral := iCntTimeoutInteral - 1;         
+               IF (iCntTimeoutInteral = 0) THEN
+                  iState := -1;
+                  sErrMsg := 'internal error'; 
+               END_IF;    
+               
+               ////////////////////////////////////
+               ////      error state
+               IF (iState = -1) THEN
+                  Error := TRUE;      
+                  sErrMsg := CONCAT('ServiceNet Parse ERROR: ', sErrMsg); 
+                  dummy := Print(sErrMsg); 
+                  aScan(Execute := FALSE); 
+                  RETURN;
+               END_IF;            
+               
+               ////////////////////////////////////
+               ////      start object "{"
+               IF (iState = 0) THEN 
+                  IF (aScan.Symbol = nLBrace) THEN
+                     iState := 10; 
+                     iCntStartToken := iCntStartToken + 1; 
+                     EXIT; // next symbol
+                  ELSE
+                     iState := -1;
+                     sErrMsg := "expected symbol '{'";
+                  END_IF;
+               END_IF;
+        
+               ////////////////////////////////////
+               ////      member | "}"  
+               IF (iState = 10) THEN  
+                  IF (aScan.Symbol = nString) THEN  // member 
+                     sKey := CONCAT(sParent, WSTRING_TO_STRING(aScan.sSymbol));                 
+                     iState := 100; 
+                     EXIT; // next symbol
+                  ELSE 
+                     sKey := '';
+                     iState := 20;  // end object
+                  END_IF;        
+               END_IF;
+
+               ////////////////////////////////////
+               ////      end object "}"  
+               IF (iState = 20) THEN 
+                  IF (aScan.Symbol = nRBrace) THEN
+                     iCntStartToken := iCntStartToken - 1; 
+                     IF (iCntStartToken = 0) THEN // end 1st level object 
+                        ObjRcvCnt := ObjRcvCnt + 1; 
+                        ElapsedTimeSinceLastObj := T#0ms;                 
+                        iState := 0;     // finished parsing object
+                     ELSE
+                        iState := 150;   // end value
+                     END_IF;
+                     EXIT; // next symbol
+                  ELSE             
+                     sErrMsg := CONCAT("expected symbol '}' in object '", sKey, "'");
+                     iState := -1; 
+                  END_IF;
+               END_IF;
+
+               ////////////////////////////////////
+               ////      separator ":"
+               IF (iState = 100) THEN 
+                  IF (aScan.Symbol = nSeparator) THEN
+                     iState := 110;             
+                     EXIT; // next symbol
+                  ELSE
+                     sErrMsg := CONCAT("expected symbol ':' after object ", sKey);
+                     iState := -1; 
+                  END_IF;        
+               END_IF;    
+
+               ////////////////////////////////////
+               ////      separator ":"
+               IF (iState = 110) THEN // value
+                  CASE (aScan.Symbol) OF
+                     nString: 
+                        iState := 150;
+                        EXIT; // not implemented yet
+                
+                     nIntNumber:
+                        tmpVal.data := DINT_TO_DWORD(aScan.iSymbol);
+                        tmpVal.dataType := nDTInt;                
+                        s := KMEM_HashMapL_Add(mHdlNumDataTable, sKey, tmpVal); 
+                        IF (bTrace) THEN 
+                          dummy := Print('added int "%s" %d ', sKey, aScan.iSymbol);
+                        END_IF;                
+                        iState := 150;                
+                        EXIT;
+               
+                     nFloatNumber:
+                        IF (CONVERT_REAL_TO_DWORD(LREAL_TO_REAL(aScan.rSymbol), tmpVal.data)) THEN 
+                           tmpVal.dataType := nDTFloat;                
+                           s := KMEM_HashMapL_Add(mHdlNumDataTable, sKey, tmpVal); 
+                           IF (bTrace) THEN
+                              dummy := Print('added float "%s" %f ', sKey, aScan.rSymbol);                        
+                           END_IF;
+                        END_IF;
+                        iState := 150;
+                        EXIT; 
+
+                     nLBrak:  // array
+                        iState := 120;
+
+                     nLBrace: // object
+                        // parent to stack
+                        // FIXME: workaround for CR_0048964
+                        iTmp := LEN(sParent);
+                        yKeyPosStack[iKeyPosStackIdx] := INT_TO_BYTE(iTmp);
+   //                    yKeyPosStack[iKeyPosStackIdx] := INT_TO_BYTE(LEN(sParent));
+                        //
+                
+                        iKeyPosStackIdx := iKeyPosStackIdx + 1; 
+                        IF (iKeyPosStackIdx < 256) THEN
+                           sParent := CONCAT(sKey, ".");
+                           iState := 0; 
+                        ELSE
+                           sErrMsg := "parser stack overflow";
+                           iState := -1;     
+                        END_IF;
+                     
+                     nTrue:
+                        tmpVal.data := 1;
+                        tmpVal.dataType := nDTInt;                
+                        s := KMEM_HashMapL_Add(mHdlNumDataTable, sKey, tmpVal); 
+                        IF (bTrace) THEN
+                           dummy := Print('added bool "%s" TRUE ', sKey);                        
+                        END_IF;
+                     
+                        iState := 150;
+                        EXIT; 
+
+                     nFalse:
+                        tmpVal.data := 0;
+                        tmpVal.dataType := nDTInt;                
+                        s := KMEM_HashMapL_Add(mHdlNumDataTable, sKey, tmpVal); 
+                        IF (bTrace) THEN
+                           dummy := Print('added bool "%s" FALSE ', sKey);
+                        END_IF;
+                     
+                        iState := 150;
+                        EXIT; 
+
+                     nNull:
+                        iState := 150;
+                        EXIT; // not implemented yet
+                  ELSE
+                     sErrMsg := CONCAT("expected value after object ", sKey);
+                     iState := -1; 
+                  END_CASE;   
+               END_IF;
+
+               ////////////////////////////////////
+               ////      array
+               IF (iState = 120) THEN 
+                  // not implemented, skip 
+                  IF (aScan.Symbol = nRBrak) THEN // end array
+                     iArrayRecCnt := iArrayRecCnt - 1; 
+                     IF (iArrayRecCnt = 0) THEN
+                        iState := 150;                 
+                     END_IF;
+                  ELSIF (aScan.Symbol = nLBrak) THEN
+                     iArrayRecCnt := iArrayRecCnt + 1;                 
+                  END_IF;
+                
+                  EXIT; // any ... next token 
+               END_IF;
+
+               ////////////////////////////////////
+               ////      end value: "}" | ","
+               IF (iState = 150) THEN 
+                  IF (aScan.Symbol = nRBrace) THEN
+                     IF (iKeyPosStackIdx > 0) THEN
+                        iKeyPosStackIdx := iKeyPosStackIdx - 1;                                    
+                        sParent := LEFT(sParent, BYTE_TO_INT(yKeyPosStack[iKeyPosStackIdx]));
+                     ELSE 
+                        sParent := ""; 
+                     END_IF; 
+                     iState := 20; // end object
+                  ELSIF (aScan.Symbol = nComma) THEN 
+                     iState := 10; // next member
+                     EXIT;
+                  ELSE 
+                     sErrMsg := CONCAT("expected member or end object '}' in object ", sKey);
+                     iState := -1; 
+                  END_IF;                                
+               END_IF;   
+            END_WHILE;        
+         ELSE
+            // parser error
+            dummy:= Print('ABParser.aParser(): error ');     
+         END_IF;
+    
+         aScan(Execute := FALSE);       
+      END_IF;
+      // next symbol ...    
+      aScan(Execute := TRUE); 
+   UNTIL ((NOT aScan.Done) OR (iCntTimeOut = 0))
+   END_REPEAT; 
+ELSE 
+   // execute false ... clear var outputs and local variables
+   bExecuteOld := Execute; 
+   IF (mHdlNumDataTable <> EMPTY) THEN
+      s := KMEM_HashMapL_Delete(mHdlNumDataTable);    
+      mHdlNumDataTable := EMPTY;        
+   END_IF;
+    
+   iState := 0; 
+   Error := FALSE;     
+   sErrMsg := '';
+   sParent := ''; 
+   iKeyPosStackIdx := 0; 
+   ObjRcvCnt := 0; 
+   iCntStartToken := 0; 
+   iArrayRecCnt := 0;    
+   ElapsedTimeSinceLastObj := T#0ms; 
+END_IF;
+
+
+
+
+
+;#END_EDIT_BLOCK END_ALGORITHM
+
+(*
+@h    ! WARNING !
+@h    The Kemro K2 system (including software) only meets category B according to EN 954-1,
+@h    thus it is not intended for usage in safety-relevant control applications in the field 
+@h    of personal safety (e.g. emergency stop).
+@h    To implement potentially necessary safety-relevant control tasks, always use additional 
+@h    external safety devices that are intended for the particular purpose, and meet the necessary 
+@h    functional safety.
+@h    For further information see EN 954-1 (EN ISO 13849-1) and/or the K2-x00 user manual, chapter 
+@h    "CE conformity, directives and standards".
+
+PRIVATE. Not intended to be called from outside this block.
+
+returns the value of a numeric data item stored in hashtable mapped by a certain key
+TRUE if found, FALSE in case of an error
+*)
+
+FUNCTION fGetNumValue : BOOL
+ #DUMMY_EDIT_BLOCK
+
+VAR_INPUT
+ Key : STRING(255) (* Key for data item to get *);
+END_VAR
+
+VAR_IN_OUT
+ Value : tsDataElem (* Buffer for value *);
+END_VAR
+
+VAR
+ s : KMEM_Status;
+END_VAR
+#BEGIN_EDIT_BLOCK
+(**************************************** WARNING ********************************************
+ *** The KEBA Kemro K2 System including software is not intended for safety control tasks! ***
+ ***                       For further information see Comment tab!                        ***
+ *********************************************************************************************)
+
+s := KMEM_HashMapGet(mHdlNumDataTable, Key, Value);
+fGetNumValue := s = KMEM_Status_OK; 
+
+
+;#END_EDIT_BLOCK END_FUNCTION
+
+(*
+@h    ! WARNING !
+@h    The Kemro K2 system (including software) only meets category B according to EN 954-1,
+@h    thus it is not intended for usage in safety-relevant control applications in the field 
+@h    of personal safety (e.g. emergency stop).
+@h    To implement potentially necessary safety-relevant control tasks, always use additional 
+@h    external safety devices that are intended for the particular purpose, and meet the necessary 
+@h    functional safety.
+@h    For further information see EN 954-1 (EN ISO 13849-1) and/or the K2-x00 user manual, chapter 
+@h    "CE conformity, directives and standards".
+
+PRIVATE. Not intended to be called from outside this block.
+
+returns the value of a DINT data item stored in hashtable mapped by a certain key
+TRUE if found, FALSE in case of an error
+*)
+
+FUNCTION fGetDINTValue : BOOL
+ #DUMMY_EDIT_BLOCK
+
+VAR_INPUT
+ Key : STRING(255) (* Key for data item to get *);
+END_VAR
+
+VAR_IN_OUT
+ ioValue : DINT (* value *);
+END_VAR
+
+VAR
+ tmpValue : tsDataElem;
+ bFound : BOOL;
+END_VAR
+#BEGIN_EDIT_BLOCK
+(**************************************** WARNING ********************************************
+ *** The KEBA Kemro K2 System including software is not intended for safety control tasks! ***
+ ***                       For further information see Comment tab!                        ***
+ *********************************************************************************************)
+
+bFound := fGetNumValue(Key, tmpValue); 
+IF ((bFound) AND (tmpValue.dataType = nDTInt)) THEN
+   bFound := TRUE; 
+   ioValue := DWORD_TO_DINT(tmpValue.data);
+ELSE
+   bFound := FALSE; 
+END_IF;
+  
+fGetDINTValue := bFound;
+
+
+;#END_EDIT_BLOCK END_FUNCTION
+
+(*
+@h    ! WARNING !
+@h    The Kemro K2 system (including software) only meets category B according to EN 954-1,
+@h    thus it is not intended for usage in safety-relevant control applications in the field 
+@h    of personal safety (e.g. emergency stop).
+@h    To implement potentially necessary safety-relevant control tasks, always use additional 
+@h    external safety devices that are intended for the particular purpose, and meet the necessary 
+@h    functional safety.
+@h    For further information see EN 954-1 (EN ISO 13849-1) and/or the K2-x00 user manual, chapter 
+@h    "CE conformity, directives and standards".
+
+PRIVATE. Not intended to be called from outside this block.
+
+returns the value of a DINT data item stored in hashtable mapped by a certain key
+if not found on raising edge of Execute, 
+the algorithm will try to find the value each time a new object has been parsed
+*)
+
+ALGORITHM aGetDINTValue
+
+
+VAR_INPUT
+ Execute : BOOL;
+ Key : STRING(255);
+END_VAR
+
+VAR_IN_OUT
+ iValue : DINT;
+END_VAR
+
+VAR_OUTPUT
+ bFound : BOOL;
+END_VAR
+
+VAR
+ bExecOld : BOOL;
+ iCntOld : DINT;
+END_VAR
+#BEGIN_EDIT_BLOCK
+(**************************************** WARNING ********************************************
+ *** The KEBA Kemro K2 System including software is not intended for safety control tasks! ***
+ ***                       For further information see Comment tab!                        ***
+ *********************************************************************************************)
+
+IF ((Execute = TRUE) AND (bExecOld = FALSE)) THEN
+    // raising edge .. immediate, otherwise if new object recieved since last call
+   iCntOld := aParse.ObjRcvCnt - 1;  
+   bFound := FALSE; 
+END_IF;     
+
+IF (aParse.ObjRcvCnt <> iCntOld) THEN
+   bFound := fGetDINTValue(Key, iValue);
+   iCntOld := aParse.ObjRcvCnt;
+END_IF;
+
+bExecOld := Execute; 
+
+
+;#END_EDIT_BLOCK END_ALGORITHM
+
+(*
+@h    ! WARNING !
+@h    The Kemro K2 system (including software) only meets category B according to EN 954-1,
+@h    thus it is not intended for usage in safety-relevant control applications in the field 
+@h    of personal safety (e.g. emergency stop).
+@h    To implement potentially necessary safety-relevant control tasks, always use additional 
+@h    external safety devices that are intended for the particular purpose, and meet the necessary 
+@h    functional safety.
+@h    For further information see EN 954-1 (EN ISO 13849-1) and/or the K2-x00 user manual, chapter 
+@h    "CE conformity, directives and standards".
+
+PRIVATE. Not intended to be called from outside this block.
+
+returns the value of a REAL data item stored in hashtable mapped by a certain key
+TRUE if found, FALSE in case of an error
+*)
+
+FUNCTION fGetRealValue : BOOL
+ #DUMMY_EDIT_BLOCK
+
+VAR_INPUT
+ Key : STRING(255) (* Key for data item to get *);
+END_VAR
+
+VAR_IN_OUT
+ rValue : REAL (* value *);
+END_VAR
+
+VAR
+ tmpValue : tsDataElem;
+ bFound : BOOL;
+END_VAR
+#BEGIN_EDIT_BLOCK
+(**************************************** WARNING ********************************************
+ *** The KEBA Kemro K2 System including software is not intended for safety control tasks! ***
+ ***                       For further information see Comment tab!                        ***
+ *********************************************************************************************)
+
+bFound := fGetNumValue(Key, tmpValue);
+IF (bFound) THEN
+   bFound := CONVERT_DWORD_TO_REAL(tmpValue.data, rValue);
+END_IF;
+fGetRealValue := bFound; 
+
+
+;#END_EDIT_BLOCK END_FUNCTION
+
+(*
+@h    ! WARNING !
+@h    The Kemro K2 system (including software) only meets category B according to EN 954-1,
+@h    thus it is not intended for usage in safety-relevant control applications in the field 
+@h    of personal safety (e.g. emergency stop).
+@h    To implement potentially necessary safety-relevant control tasks, always use additional 
+@h    external safety devices that are intended for the particular purpose, and meet the necessary 
+@h    functional safety.
+@h    For further information see EN 954-1 (EN ISO 13849-1) and/or the K2-x00 user manual, chapter 
+@h    "CE conformity, directives and standards".
+
+returns the value of a REAL data item stored in hashtable mapped by a certain key
+if not found on raising edge of Execute, 
+the algorithm will try to find the value each time a new object has been parsed
+*)
+
+ALGORITHM aGetRealValue
+
+
+VAR_INPUT
+ Execute : BOOL;
+ Key : STRING(255);
+END_VAR
+
+VAR_IN_OUT
+ rValue : REAL;
+END_VAR
+
+VAR_OUTPUT
+ bFound : BOOL;
+END_VAR
+
+VAR
+ bExecOld : BOOL;
+ iCntOld : DINT;
+END_VAR
+#BEGIN_EDIT_BLOCK
+(**************************************** WARNING ********************************************
+ *** The KEBA Kemro K2 System including software is not intended for safety control tasks! ***
+ ***                       For further information see Comment tab!                        ***
+ *********************************************************************************************)
+
+IF ((Execute = TRUE) AND (bExecOld = FALSE)) THEN
+   // raising edge .. immediate, otherwise if new object recieved since last call
+   iCntOld := aParse.ObjRcvCnt - 1;  
+   bFound := FALSE; 
+END_IF;     
+
+IF (aParse.ObjRcvCnt <> iCntOld) THEN
+   bFound := fGetRealValue(Key, rValue);
+   iCntOld := aParse.ObjRcvCnt;
+END_IF;
+
+bExecOld := Execute; 
+
+
+;#END_EDIT_BLOCK END_ALGORITHM
+
+
+
+END_ALGORITHM_BLOCK
+
+
+
+#END_OF_IEC_PART
+
+@Puma @IecEditor 6 121 @Pou 25 
+@@@BEG_Comment@@@
+@h    ! WARNING !
+@h    The Kemro K2 system (including software) only meets category B according to EN 954-1,
+@h    thus it is not intended for usage in safety-relevant control applications in the field 
+@h    of personal safety (e.g. emergency stop).
+@h    To implement potentially necessary safety-relevant control tasks, always use additional 
+@h    external safety devices that are intended for the particular purpose, and meet the necessary 
+@h    functional safety.
+@h    For further information see EN 954-1 (EN ISO 13849-1) and/or the K2-x00 user manual, chapter 
+@h    "CE conformity, directives and standards".
+
+Function block for parsing data stream sent by ServiceNet Server
+data presentation: JSON (see http://www.json.org/)
+
+syntax restrictions: 
+  -> no syntax evaluation of data type "array", tokens within an array are skipped
+  -> recursion level for data type "object" is 255 maximum
+  
+semantic actions implemented for key - value pairs with values of type "number", 
+  "true", "false" and "object"
+
+output of parsed data is stored in a hashtable.
+
+objects defined recursive are represented "flat" in same hashtable by adding the parent key
+separated by a "." as a prefix to the object key.
+
+the hashtable and it's content is deleted only when reseting input "Execute", 
+so received data is available in hashtable even if it has not been sent in the 
+latest message.
+
+data types in hashtable: 
+-> int numbers, true, false: 4 bytes signed integer (DINT)
+-> numbers containing '.' or 'e'/'E': 4 byte float (REAL)
+
+functions available to get a DINT or a REAL value from hashtable.
+
+additionally the parser measures the time since last complete object has
+been received for easy timeout detection in calling block.
+
+see documentation for a detailed description.
+@@@END_Comment@@@
+
+@BEG_Contents 
+
+@BEG_Func 
+@RT(17)FuncTreeContainer 
+5 
+@Var @RT(15)ASCII_TO_STRING @RT(0) @T @T @DERIVED 0 @F @RT(22)KEBA_STANDARD_FUNCTION @F 
+@T 
+@BEG_Attrib 
+0 @RT(0) @RT(0) 
+@END_Attrib 
+1 1 @F @F @F @F 
+
+@Var @RT(20)KMEM_HashMapL_Create @RT(0) @T @T @DERIVED 0 @F @RT(22)KEBA_STANDARD_FUNCTION @F 
+@T 
+@BEG_Attrib 
+0 @RT(0) @RT(0) 
+@END_Attrib 
+1 1 @F @F @F @F 
+
+@Var @RT(21)CONVERT_DWORD_TO_REAL @RT(0) @T @T @DERIVED 0 @F @RT(22)KEBA_STANDARD_FUNCTION @F 
+@T 
+@BEG_Attrib 
+0 @RT(0) @RT(0) 
+@END_Attrib 
+1 1 @F @F @F @F 
+
+@Var @RT(17)KMEM_HashMapL_Add @RT(0) @T @T @DERIVED 0 @F @RT(22)KEBA_STANDARD_FUNCTION @F 
+@T 
+@BEG_Attrib 
+0 @RT(0) @RT(0) 
+@END_Attrib 
+1 1 @F @F @F @F 
+
+@Var @RT(20)KMEM_HashMapL_Delete @RT(0) @T @T @DERIVED 0 @F @RT(22)KEBA_STANDARD_FUNCTION @F 
+@T 
+@BEG_Attrib 
+0 @RT(0) @RT(0) 
+@END_Attrib 
+1 1 @F @F @F @F 
+
+@END_Func 
+
+@BEG_Const 
+@RT(18)ConstTreeContainer 
+0 
+@END_Const 
+
+@BEG_Export 
+
+@BEG_Kind 
+@ALGORITHM_BLOCK @RT(8)ABParser @STRUCTURED_TEXT 
+@RT(0) @RT(0) @RT(0) 
+@END_Kind 
+
+@BEG_Dcl 
+@RT(16)DclTreeContainer 
+3 
+@Var @RT(7)mTcpHdl @RT(0) @T @F @DT @RT(9)REFERENCE @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(27)tcp handle for reading data @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(12)miReadBufIdx @RT(0) @T @F @DT @RT(5)UDINT @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(48)pointer to next character to read in inputstream @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(16)mHdlNumDataTable @RT(0) @T @F @DT @RT(9)REFERENCE @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(65)handle of hashtable for storing numeric and boolean data elements @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@END_Dcl 
+
+@END_Export 
+
+@BEG_Body 
+
+9 
+
+@BEG_Export 
+
+@BEG_Algo 
+@ALGORITHM @RT(9)aNextChar @STRUCTURED_TEXT 
+@RT(0) @RT(0) @RT(0) @F @F 
+@END_Algo 
+
+@BEG_Dcl 
+@RT(16)DclTreeContainer 
+7 
+@Var @RT(2)ch @RT(0) @T @F @DT @RT(4)BYTE @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(65)next character from input source, only valid if bAvailable is set @RT(0) 
+@END_Attrib 
+1 2 @F @F @F @F 
+
+@Var @RT(10)bAvailable @RT(0) @T @F @DT @RT(4)BOOL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(37)indicates if a character is available @RT(0) 
+@END_Attrib 
+1 3 @F @F @F @F 
+
+@Var @RT(8)fbTcpRcv @RT(0) @T @T @DERIVED 0 @T @T @DT @RT(19)KNETWORK_TcpReceive @RT(0) @T @T @UNKNOWN 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(7)yRcvBuf @RT(0) @T @T @DERIVED 0 @T @T @DT @RT(9)tyByteBuf @RT(0) @T @T @UNKNOWN 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(6)bTrace @RT(0) @T @F @DT @RT(4)BOOL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(3)sch @RT(0) @T @F @DT @RT(9)STRING(2) @RT(0) @T @T @STRING 0 @F @RT(1)2 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(5)dummy @RT(0) @T @F @DT @RT(4)DINT @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@END_Dcl 
+
+@END_Export 
+
+@BEG_Export 
+
+@BEG_Algo 
+@ALGORITHM @RT(5)aScan @STRUCTURED_TEXT 
+@RT(0) @RT(0) @RT(0) @F @F 
+@END_Algo 
+
+@BEG_Dcl 
+@RT(16)DclTreeContainer 
+15 
+@Var @RT(7)Execute @RT(0) @T @F @DT @RT(4)BOOL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(30)raising edge scans next symbol @RT(0) 
+@END_Attrib 
+1 1 @F @F @F @F 
+
+@Var @RT(16)bConnectionReset @RT(0) @T @F @DT @RT(4)BOOL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(44)reset receive buffer (execute must be false) @RT(0) 
+@END_Attrib 
+1 1 @F @F @F @F 
+
+@Var @RT(4)Done @RT(0) @T @F @DT @RT(4)BOOL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(15)symbol detected @RT(0) 
+@END_Attrib 
+1 3 @F @F @F @F 
+
+@Var @RT(5)Error @RT(0) @T @F @DT @RT(4)BOOL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(14)unknown symbol @RT(0) 
+@END_Attrib 
+1 3 @F @F @F @F 
+
+@Var @RT(6)Symbol @RT(0) @T @T @DERIVED 0 @T @T @DT @RT(8)tnSymbol @RT(0) @T @T @UNKNOWN 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(11)symbol type @RT(0) 
+@END_Attrib 
+1 3 @F @F @F @F 
+
+@Var @RT(7)sSymbol @RT(0) @T @F @DT @RT(12)WSTRING(255) @RT(0) @T @T @STRING 0 @T @RT(3)255 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(40)contains value in case of nString symbol @RT(0) 
+@END_Attrib 
+1 3 @F @F @F @F 
+
+@Var @RT(7)iSymbol @RT(0) @T @F @DT @RT(4)DINT @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(43)contains value in case of nIntNumber symbol @RT(0) 
+@END_Attrib 
+1 3 @F @F @F @F 
+
+@Var @RT(7)rSymbol @RT(0) @T @F @DT @RT(5)LREAL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(38)contains value in case of nFloatSymbol @RT(0) 
+@END_Attrib 
+1 3 @F @F @F @F 
+
+@Var @RT(6)iState @RT(0) @T @F @DT @RT(4)DINT @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(22)internal scanner state @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(2)ch @RT(0) @T @F @DT @RT(4)BYTE @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(16)actual character @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(5)bSign @RT(0) @T @F @DT @RT(4)BOOL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(20)marker sign detected @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(7)iTmpCnt @RT(0) @T @F @DT @RT(4)DINT @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(15)helper variable @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(4)iExp @RT(0) @T @F @DT @RT(4)DINT @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(72)helper variable for calculating value of exp when scanning a real number @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(7)yCmpBuf @RT(0) @T @T @DERIVED 0 @T @T @DT @RT(9)tyByteBuf @RT(0) @T @T @UNKNOWN 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(44)helper structure when scanning fixed symbols @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(11)iCntTimeout @RT(0) @T @F @DT @RT(4)DINT @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(31)counter for breaking while loop @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@END_Dcl 
+
+@END_Export 
+
+@BEG_Export 
+
+@BEG_Algo 
+@ALGORITHM @RT(6)aTrace @STRUCTURED_TEXT 
+@RT(0) @RT(0) @RT(0) @F @F 
+@END_Algo 
+
+@BEG_Dcl 
+@RT(16)DclTreeContainer 
+2 
+@Var @RT(5)dummy @RT(0) @T @F @DT @RT(4)DINT @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(6)sdummy @RT(0) @T @F @DT @RT(11)STRING(255) @RT(0) @T @T @STRING 0 @F @RT(3)255 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@END_Dcl 
+
+@END_Export 
+
+@BEG_Export 
+
+@BEG_Algo 
+@ALGORITHM @RT(6)aParse @STRUCTURED_TEXT 
+@RT(0) @RT(0) @RT(0) @F @F 
+@END_Algo 
+
+@BEG_Dcl 
+@RT(16)DclTreeContainer 
+22 
+@Var @RT(7)Execute @RT(0) @T @F @DT @RT(4)BOOL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(47)parses input data when true, reset all if false @RT(0) 
+@END_Attrib 
+1 1 @F @F @F @F 
+
+@Var @RT(6)TcpHdl @RT(0) @T @F @DT @RT(9)REFERENCE @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(38)handle for TCP connection to read from @RT(0) 
+@END_Attrib 
+1 1 @F @F @F @F 
+
+@Var @RT(9)ObjRcvCnt @RT(0) @T @F @DT @RT(4)DINT @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(83)number incremented each time an object is recieved (not counting recursive objects) @RT(0) 
+@END_Attrib 
+1 3 @F @F @F @F 
+
+@Var @RT(5)Error @RT(0) @T @F @DT @RT(4)BOOL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(28)indicates any type of error  @RT(0) 
+@END_Attrib 
+1 3 @F @F @F @F 
+
+@Var @RT(23)ElapsedTimeSinceLastObj @RT(0) @T @F @DT @RT(4)TIME @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(54)shows time elapsed since last object has been received @RT(0) 
+@END_Attrib 
+1 3 @F @F @F @F 
+
+@Var @RT(11)bExecuteOld @RT(0) @T @F @DT @RT(4)BOOL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(5)dummy @RT(0) @T @F @DT @RT(4)DINT @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(6)iState @RT(0) @T @F @DT @RT(4)DINT @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(14)iCntStartToken @RT(0) @T @F @DT @RT(4)DINT @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(7)sErrMsg @RT(0) @T @F @DT @RT(11)STRING(255) @RT(0) @T @T @STRING 0 @F @RT(3)255 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(11)iCntTimeOut @RT(0) @T @F @DT @RT(4)DINT @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(18)iCntTimeoutInteral @RT(0) @T @F @DT @RT(4)DINT @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(4)sKey @RT(0) @T @F @DT @RT(11)STRING(255) @RT(0) @T @T @STRING 0 @F @RT(3)255 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(6)tmpVal @RT(0) @T @T @DERIVED 0 @T @T @DT @RT(10)tsDataElem @RT(0) @T @T @UNKNOWN 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(13)memCreateData @RT(0) @T @T @DERIVED 0 @T @T @DT @RT(15)KMEM_CreateData @RT(0) @T @T @UNKNOWN 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(1)s @RT(0) @T @T @DERIVED 0 @T @T @DT @RT(11)KMEM_Status @RT(0) @T @T @UNKNOWN 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(7)sParent @RT(0) @T @F @DT @RT(11)STRING(255) @RT(0) @T @T @STRING 0 @F @RT(3)255 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(12)yKeyPosStack @RT(0) @T @T @DERIVED 0 @T @T @DT @RT(9)tyByteBuf @RT(0) @T @T @UNKNOWN 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(12)iArrayRecCnt @RT(0) @T @F @DT @RT(4)DINT @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(15)iKeyPosStackIdx @RT(0) @T @F @DT @RT(4)DINT @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(4)iTmp @RT(0) @T @F @DT @RT(3)INT @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 4 @F @F @F @F 
+
+@Var @RT(6)bTrace @RT(0) @T @F @DT @RT(4)BOOL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@END_Dcl 
+
+@END_Export 
+
+@BEG_Export 
+
+@BEG_Algo 
+@FUNCTION @RT(12)fGetNumValue @STRUCTURED_TEXT 
+@RT(4)BOOL @RT(0) @RT(0) @F @F 
+@END_Algo 
+
+@BEG_Dcl 
+@RT(16)DclTreeContainer 
+3 
+@Var @RT(3)Key @RT(0) @T @F @DT @RT(11)STRING(255) @RT(0) @T @T @STRING 0 @F @RT(3)255 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(24)Key for data item to get @RT(0) 
+@END_Attrib 
+1 1 @F @F @F @F 
+
+@Var @RT(5)Value @RT(0) @T @T @DERIVED 0 @F @RT(10)tsDataElem @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(16)Buffer for value @RT(0) 
+@END_Attrib 
+1 2 @F @F @F @F 
+
+@Var @RT(1)s @RT(0) @T @T @DERIVED 0 @T @T @DT @RT(11)KMEM_Status @RT(0) @T @T @UNKNOWN 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@END_Dcl 
+
+@END_Export 
+
+@BEG_Export 
+
+@BEG_Algo 
+@FUNCTION @RT(13)fGetDINTValue @STRUCTURED_TEXT 
+@RT(4)BOOL @RT(0) @RT(0) @F @F 
+@END_Algo 
+
+@BEG_Dcl 
+@RT(16)DclTreeContainer 
+4 
+@Var @RT(3)Key @RT(0) @T @F @DT @RT(11)STRING(255) @RT(0) @T @T @STRING 0 @F @RT(3)255 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(24)Key for data item to get @RT(0) 
+@END_Attrib 
+1 1 @F @F @F @F 
+
+@Var @RT(7)ioValue @RT(0) @T @F @DT @RT(4)DINT @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(5)value @RT(0) 
+@END_Attrib 
+1 2 @F @F @F @F 
+
+@Var @RT(8)tmpValue @RT(0) @T @T @DERIVED 0 @T @T @DT @RT(10)tsDataElem @RT(0) @T @T @UNKNOWN 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(6)bFound @RT(0) @T @F @DT @RT(4)BOOL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@END_Dcl 
+
+@END_Export 
+
+@BEG_Export 
+
+@BEG_Algo 
+@ALGORITHM @RT(13)aGetDINTValue @STRUCTURED_TEXT 
+@RT(0) @RT(0) @RT(0) @F @F 
+@END_Algo 
+
+@BEG_Dcl 
+@RT(16)DclTreeContainer 
+6 
+@Var @RT(7)Execute @RT(0) @T @F @DT @RT(4)BOOL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 1 @F @F @F @F 
+
+@Var @RT(3)Key @RT(0) @T @F @DT @RT(11)STRING(255) @RT(0) @T @T @STRING 0 @F @RT(3)255 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 1 @F @F @F @F 
+
+@Var @RT(6)iValue @RT(0) @T @F @DT @RT(4)DINT @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 2 @F @F @F @F 
+
+@Var @RT(6)bFound @RT(0) @T @F @DT @RT(4)BOOL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 3 @F @F @F @F 
+
+@Var @RT(8)bExecOld @RT(0) @T @F @DT @RT(4)BOOL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(7)iCntOld @RT(0) @T @F @DT @RT(4)DINT @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@END_Dcl 
+
+@END_Export 
+
+@BEG_Export 
+
+@BEG_Algo 
+@FUNCTION @RT(13)fGetRealValue @STRUCTURED_TEXT 
+@RT(4)BOOL @RT(0) @RT(0) @F @F 
+@END_Algo 
+
+@BEG_Dcl 
+@RT(16)DclTreeContainer 
+4 
+@Var @RT(3)Key @RT(0) @T @F @DT @RT(11)STRING(255) @RT(0) @T @T @STRING 0 @F @RT(3)255 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(24)Key for data item to get @RT(0) 
+@END_Attrib 
+1 1 @F @F @F @F 
+
+@Var @RT(6)rValue @RT(0) @T @F @DT @RT(4)REAL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(5)value @RT(0) 
+@END_Attrib 
+1 2 @F @F @F @F 
+
+@Var @RT(8)tmpValue @RT(0) @T @T @DERIVED 0 @T @T @DT @RT(10)tsDataElem @RT(0) @T @T @UNKNOWN 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(6)bFound @RT(0) @T @F @DT @RT(4)BOOL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@END_Dcl 
+
+@END_Export 
+
+@BEG_Export 
+
+@BEG_Algo 
+@ALGORITHM @RT(13)aGetRealValue @STRUCTURED_TEXT 
+@RT(0) @RT(0) @RT(0) @F @F 
+@END_Algo 
+
+@BEG_Dcl 
+@RT(16)DclTreeContainer 
+6 
+@Var @RT(7)Execute @RT(0) @T @F @DT @RT(4)BOOL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 1 @F @F @F @F 
+
+@Var @RT(3)Key @RT(0) @T @F @DT @RT(11)STRING(255) @RT(0) @T @T @STRING 0 @F @RT(3)255 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 1 @F @F @F @F 
+
+@Var @RT(6)rValue @RT(0) @T @F @DT @RT(4)REAL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 2 @F @F @F @F 
+
+@Var @RT(6)bFound @RT(0) @T @F @DT @RT(4)BOOL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 3 @F @F @F @F 
+
+@Var @RT(8)bExecOld @RT(0) @T @F @DT @RT(4)BOOL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(7)iCntOld @RT(0) @T @F @DT @RT(4)DINT @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@END_Dcl 
+
+@END_Export 
+
+@BEG_Body 
+@TL(34)
+(**************************************** WARNING ********************************************
+ *** The KEBA Kemro K2 System including software is not intended for safety control tasks! ***
+ ***                       For further information see Comment tab!                        ***
+ *********************************************************************************************)
+
+// TODO: call TCP specific code from outside in order to be independent from data source
+//       new method to set buffer from outside
+
+// no more data available in read buffer ...
+IF (NOT(miReadBufIdx < fbTcpRcv.BytesReceived)) THEN
+  // ... read new data from TCP connection 
+  fbTcpRcv(TRUE, mTcpHdl, 255, yRcvBuf); 
+  // reset pointer to next character to read from read buffer
+  miReadBufIdx := 0; 
+END_IF;
+
+// if data available in readbuffer
+IF (miReadBufIdx < fbTcpRcv.BytesReceived) THEN
+  // return next character
+  ch := yRcvBuf[miReadBufIdx]; 
+  // set available output flag
+  bAvailable := TRUE; 
+  // increase read buffer pointer
+  miReadBufIdx := miReadBufIdx + 1; 
+    
+  IF (bTrace) THEN
+    sch := ASCII_TO_STRING(ch);
+    dummy := Print('ABParser.aNextChar: character:                            0x%02x     %s', ch, sch);
+  END_IF;
+ELSE
+  // reset available output flag
+  bAvailable := FALSE; 
+END_IF;
+
+@END_Body 
+
+@@@BEG_Comment@@@ 
+@TL(22)
+@h    ! WARNING !
+@h    The Kemro K2 system (including software) only meets category B according to EN 954-1,
+@h    thus it is not intended for usage in safety-relevant control applications in the field 
+@h    of personal safety (e.g. emergency stop).
+@h    To implement potentially necessary safety-relevant control tasks, always use additional 
+@h    external safety devices that are intended for the particular purpose, and meet the necessary 
+@h    functional safety.
+@h    For further information see EN 954-1 (EN ISO 13849-1) and/or the K2-x00 user manual, chapter 
+@h    "CE conformity, directives and standards".
+
+PRIVATE. Not intended to be called from outside this block.
+
+algorithm that provides the next character from input data for the scanner.
+the received data should be parsed without the need of waiting for a whole message to 
+be available. 
+This is caused by implementation of KNETWORK_TcpReceive() which clears the receive buffer each
+time it is called (and not only on falling edge of execute), no matter how many bytes could be received.
+For performance reasons we do not want to use an additional copy operation to a second receive buffer.
+
+A pointer to the next character to read from read buffer is maintained, only if no more characters
+are available in read buffer KNETWORK_TcpReceive() is called. 
+
+@@@END_Comment@@@ 
+
+@BEG_Body 
+@TL(442)
+(**************************************** WARNING ********************************************
+ *** The KEBA Kemro K2 System including software is not intended for safety control tasks! ***
+ ***                       For further information see Comment tab!                        ***
+ *********************************************************************************************)
+
+IF (Execute = TRUE) THEN
+    iCntTimeout := 2048; // break after this number of characters even if more availble
+    WHILE (iCntTimeout > 0) DO
+       iCntTimeout := iCntTimeout - 1; 
+        
+    
+       CASE (iState) OF 
+           ////////////////////////////////////
+           ////      error state
+           -1:  
+                Error := TRUE;
+                // in case of an error skip characters until next "strong" character
+                IF (
+                     (ch <= 16#20)            // non printable characters
+                     OR (ch = 16#7B)          // {
+                     OR (ch = 16#7D)          // }    
+                     OR (ch = 16#5B)          // [
+                     OR (ch = 16#5D)          // ]
+                     OR (ch = 16#2C)          // , 
+                     OR (ch = 16#3A)          // :  
+                    ) THEN
+                        Done := TRUE; 
+                        RETURN;     
+                END_IF;
+        
+                aNextChar(ch);
+                IF (NOT aNextChar.bAvailable) THEN
+                    RETURN;               
+                END_IF;
+                  
+           0:  // symbol unknown 
+               Symbol := nUnknown;         
+    
+               IF (NOT (ch <= 16#20)) THEN
+                    // valid character
+                    iState := 10; 
+               ELSE               
+                    // skip ignore chars 
+                    aNextChar(ch);
+                    IF (NOT aNextChar.bAvailable) THEN
+                        RETURN;               
+                    END_IF;
+               END_IF;
+    
+           10: // evaluate start character
+               CASE (BYTE_TO_INT(ch)) OF
+                 /////////////////////////////////////////////////////////  
+                 //         "        start of string detected               
+                 16#22:          
+                      Symbol := nString;
+                      aNextChar(ch); 
+                      IF (NOT aNextChar.bAvailable) THEN
+                        RETURN;               
+                      END_IF;
+                      
+                      IF (ch <> 16#22) THEN
+                          // character belongs to string
+                          sSymbol := (STRING_TO_WSTRING(ASCII_TO_STRING(ch)));                   
+                          // proceed with evaluating the string
+                          iState := 100;
+                      ELSE 
+                          // character " closes empty string
+                          sSymbol := "";                   
+                          iState := 9999; 
+                      END_IF;
+    
+                 /////////////////////////////////////////////////////////  
+                 //         -     start of signed number detected, store sign flag                            
+                 16#2D:    
+                      bSign := TRUE; 
+                      iSymbol := 0;  // initialize symbol value with 0
+                      
+                      // proceed with evaluating an integer number
+                      iState := 200;                     
+    
+                 /////////////////////////////////////////////////////////               
+                 //         0 .. 9, start of unsigned number detected                                  
+                 16#30 .. 16#39: 
+                      bSign := FALSE; 
+                      // initialize symbol value with character read which is already part of the numbmer               
+                      iSymbol := BYTE_TO_DINT(ch) - 16#30; 
+                      // proceed with valuating an integer number               
+                      iState := 200; 
+                   
+                 /////////////////////////////////////////////////////////     
+                 //     t  start of symbol "true" detected               
+                 16#74:
+                      // proceed with evaluating a fixed symbol
+                      iState := 300; 
+                      Symbol := nTrue; 
+                      // initialize compare buffer with expected characters               
+                      iTmpCnt := 3;   
+                      yCmpBuf[2] := 16#72; // r
+                      yCmpBuf[1] := 16#75; // u
+                      yCmpBuf[0] := 16#65; // e  
+                   
+                 /////////////////////////////////////////////////////////  
+                 //     f  start of symbol "false"
+                 16#66:       
+                      // proceed with evaluating a fixed symbol
+                      iState := 300;                   
+                      Symbol := nFalse; 
+                      // initialize compare buffer with expected characters
+                      iTmpCnt := 4;                   
+                      yCmpBuf[3] := 16#61; // a
+                      yCmpBuf[2] := 16#6C; // l
+                      yCmpBuf[1] := 16#73; // s
+                      yCmpBuf[0] := 16#65; // e                  
+                   
+                 /////////////////////////////////////////////////////////  
+                 //     n  start of symbol "null"
+                 16#6E:          
+                      // proceed with evaluating a fixed symbol
+                      iState := 300;                   
+                      Symbol := nNull; 
+                      // initialize compare buffer with expected characters
+                      iTmpCnt := 3;                   
+                      yCmpBuf[2] := 16#75; // u
+                      yCmpBuf[1] := 16#6C; // l
+                      yCmpBuf[0] := 16#6C; // l
+                      
+                 /////////////////////////////////////////////////////////  
+                 //     {   symbol LBrace detected
+                 16#7B:          
+                      iState := 9999; 
+                      Symbol := nLBrace;
+                  
+                 /////////////////////////////////////////////////////////  
+                 //     }   symbol RBrace detected
+                 16#7D:         
+                        iState := 9999; 
+                        Symbol := nRBrace;
+    
+                 /////////////////////////////////////////////////////////  
+                 //     [   symbol LBrak detected
+                 16#5B:         
+                      iState := 9999; 
+                      Symbol := nLBrak;
+                      
+                 /////////////////////////////////////////////////////////  
+                 //     [   symbol RBrak detected
+                 16#5D:          
+                      iState := 9999; 
+                      Symbol := nRBrak;                  
+    
+                 /////////////////////////////////////////////////////////  
+                 //     ,   symbol Comma detected
+                 16#2C:           
+                      iState := 9999; 
+                      Symbol := nComma;                  
+    
+                 /////////////////////////////////////////////////////////  
+                 //     :   symbol separator detected
+                 16#3A:            
+                      iState := 9999; 
+                      Symbol := nSeparator;                  
+    
+               ELSE
+                  // error, unknown symbol
+                  iState := -1; 
+               END_CASE;     
+
+           ////////////////////////////////////
+           ////      scan symbol of type string
+           100:
+                // next character no end of string?
+                IF(ch <> 16#22) THEN
+                    // read next
+                    aNextChar(ch);         
+                    IF (NOT aNextChar.bAvailable) THEN
+                       RETURN;               
+                    END_IF;
+                    
+                    
+                    IF (ch = 16#5C) THEN 
+                        // backslash, evaluate ctrl sequence                        
+                        iState := 110; 
+                    ELSE
+                        IF(ch <> 16#22) THEN 
+                           // any other character except '"' or '\'
+                           sSymbol := CONCAT(sSymbol, STRING_TO_WSTRING(ASCII_TO_STRING(ch)));  
+                        END_IF;
+                    END_IF;
+                ELSE 
+                    // end of string detected
+                    iState := 9999; 
+                END_IF;
+        
+    
+           /////////////////////////////////////////////////////
+           ////  string - ctrl char (backslash) detected
+           110:       
+                aNextChar(ch);         
+                IF (NOT aNextChar.bAvailable) THEN
+                    RETURN;  
+                END_IF;
+         
+                CASE (BYTE_TO_DINT(ch)) OF
+                    16#22: // "
+                       sSymbol := CONCAT(sSymbol, '"');
+                       iState := 120; 
+                    16#5C: // backslash
+                       sSymbol := CONCAT(sSymbol, '\');
+                       iState := 120; 
+                    16#2F, // slash
+                    16#62, // b
+                    16#66, // f
+                    16#6E, // n
+                    16#72, // r
+                    16#74: // t 
+                        sSymbol := CONCAT(sSymbol, "\", STRING_TO_WSTRING(ASCII_TO_STRING(ch))); 
+                        iState := 120; 
+           
+                    16#75: // u
+                        sSymbol := CONCAT(sSymbol, "?"); 
+                        iState := 130; 
+                ELSE
+                    iState := -1; 
+                END_CASE;
+  
+           /////////////////////////////////////////////////////
+           ////  string - ctrl char (backslash) + single character 
+           120:       
+               aNextChar(ch);         
+               IF (NOT aNextChar.bAvailable) THEN
+                  RETURN;  
+               END_IF;
+               sSymbol := CONCAT(sSymbol, STRING_TO_WSTRING(ASCII_TO_STRING(ch)));         
+           
+               iState := 100; // proceed with parsing string symbol
+
+          /////////////////////////////////////////////////////
+          ////  string - ctrl char (backslash) + u, followed by 4 hexdigits 
+          130.. 139:
+               aNextChar(ch);         
+               IF (NOT aNextChar.bAvailable) THEN
+                  RETURN;  
+               END_IF;
+               iState := iState + 1; 
+               IF (iState = 135) THEN
+                  sSymbol := CONCAT(sSymbol, STRING_TO_WSTRING(ASCII_TO_STRING(ch)));         
+                  iState := 100; // proceed with parsing string symbol
+               END_IF;  
+
+          /////////////////////////////////////////////////////
+          ////  integer number, can be signed
+          200:        
+               Symbol := nIntNumber; 
+               aNextChar(ch); 
+               IF (NOT aNextChar.bAvailable) THEN
+                    RETURN;               
+               END_IF;
+        
+               CASE (BYTE_TO_DINT(ch)) OF
+                    16#30 .. 16#39:  // dec. digit
+                        iSymbol := iSymbol * 10 + (BYTE_TO_DINT(ch) - 16#30);
+            
+                    16#2E: // .
+                        Symbol := nFloatNumber; 
+                        rSymbol := DINT_TO_LREAL(iSymbol); 
+                        IF (bSign) THEN
+                            rSymbol := -rSymbol;                 
+                        END_IF;
+                        iTmpCnt   := 10; 
+                        iState := 210;  // proceed with float number
+            
+                    16#45, 16#65: // E, e
+                        Symbol := nFloatNumber; 
+                        rSymbol := DINT_TO_LREAL(iSymbol);     
+                        IF (bSign) THEN
+                            rSymbol := -rSymbol;                 
+                        END_IF;
+                        iState := 220; // proceed with float number
+               ELSE
+                        // finished, consider sign
+                        IF (bSign) THEN
+                            iSymbol := -iSymbol;                 
+                        END_IF;
+
+                        iState := 10000; 
+               END_CASE;
+        
+
+          /////////////////////////////////////////////////////
+          ////  float number (comma has been detected)
+          210:        
+               aNextChar(ch); 
+               IF (NOT aNextChar.bAvailable) THEN
+                  RETURN;               
+               END_IF;
+           
+               CASE (BYTE_TO_DINT(ch)) OF
+                    16#30 .. 16#39:  // dec. digit
+                        IF (bSign) THEN
+                            rSymbol := rSymbol - DINT_TO_LREAL((BYTE_TO_DINT(ch) - 16#30)) / DINT_TO_LREAL(iTmpCnt);                
+                        ELSE 
+                            rSymbol := rSymbol + DINT_TO_LREAL((BYTE_TO_DINT(ch) - 16#30)) / DINT_TO_LREAL(iTmpCnt);
+                        END_IF;
+                        iTmpCnt := iTmpCnt * 10; 
+            
+                    16#45, 16#65: // E, e
+                        iState := 220; 
+               ELSE
+                    // finished
+                    iState := 10000; 
+               END_CASE;
+
+          /////////////////////////////////////////////////////
+          ////  float number ('e'/'E' has been detected)
+          220:
+                aNextChar(ch); 
+                IF (NOT aNextChar.bAvailable) THEN
+                  RETURN;               
+                END_IF;
+        
+                iExp := 0; 
+                CASE (BYTE_TO_DINT(ch)) OF        
+                   16#2B: // +
+                      bSign := FALSE;
+                      iState := 230; 
+             
+                   16#2D: // - 
+                      bSign := TRUE;
+                      iState := 230; 
+             
+                   16#30 .. 16#39:  // dec. digit
+                      bSign := FALSE;             
+                      iExp := BYTE_TO_DINT(ch) - 16#30;
+                      iState := 240; 
+                ELSE
+                   iState := -1;
+                END_CASE;
+
+          ///////////////////////////////////////////////////////////////
+          ////  float number ('e'/'E' followed by sign has been detected)
+          230:
+                aNextChar(ch); 
+                IF (NOT aNextChar.bAvailable) THEN
+                    RETURN;               
+                END_IF;
+           
+                CASE (BYTE_TO_DINT(ch)) OF        
+                      16#30 .. 16#39:  // dec. digit
+                         iExp := BYTE_TO_DINT(ch) - 16#30;
+                         iState := 240; 
+                ELSE             
+                      iState := -1;         
+                END_CASE;
+   
+          ///////////////////////////////////////////////////////////////
+          ////  float number ('e'/'E' optionally followed by sign has been detected)
+          240:
+                  aNextChar(ch); 
+                  IF (NOT aNextChar.bAvailable) THEN
+                     RETURN;               
+                  END_IF;
+        
+                  CASE (BYTE_TO_DINT(ch)) OF        
+                     16#30 .. 16#39:  // dec. digit
+                        iExp := iExp * 10 + BYTE_TO_DINT(ch) - 16#30;
+                  ELSE          
+                     // float number finished, calculate value
+                     IF (bSign) THEN
+                        iExp := -iExp; 
+                     END_IF;
+                     rSymbol := rSymbol * EXPT(10.0, DINT_TO_LREAL(iExp)); 
+                     iState := 10000;  
+                  END_CASE;
+
+          /////////////////////////////////////////////////////
+          ////  fixed symbol (true, false, null) detected
+          300:
+                aNextChar(ch); 
+                IF (NOT aNextChar.bAvailable) THEN
+                    RETURN;               
+                END_IF;
+
+                // compare with buffer
+                iTmpCnt := iTmpCnt - 1;
+                IF (iTmpCnt < 0) THEN
+                    // equal .. finished 
+                    iState := 10000; 
+                ELSE 
+                    // expected other character -> error
+                    IF (yCmpBuf[iTmpCnt] <> ch) THEN
+                        iState := -1;             
+                    END_IF;
+                END_IF;
+
+          //////////////////////////////////////////////////////////
+          ////  "strong" symbol detected, 
+          ///   next character not read until now
+          9999:
+                ch := 0;  // mark character invalid, step 0 will read next character initially 
+                Done := TRUE;   
+                RETURN; 
+
+          //////////////////////////////////////////////////////////
+          ////  "weak" symbol detected, 
+          /// next character already available on local variable ch
+          10000:
+                // symbol detected
+                Done := TRUE;   
+                RETURN; 
+
+       END_CASE;
+    END_WHILE;        
+ELSE 
+    IF (bConnectionReset) THEN
+      // new connection ... clear read buffer and state 
+      miReadBufIdx := 16#7FFFFFFF; 
+      ch := 0;   
+      iState := 0; 
+    END_IF;    
+    
+    // execute false ... clear var outputs
+    IF (iState <= 10000) THEN
+      iState := 0;  
+    END_IF;
+    Symbol := nUnknown;
+    sSymbol := "";
+    iSymbol := 0; 
+    rSymbol := 0.0; 
+    Done := FALSE; 
+    Error := FALSE; 
+END_IF;
+
+
+
+
+
+
+
+
+
+
+
+@END_Body 
+
+@@@BEG_Comment@@@ 
+@TL(32)
+@h    ! WARNING !
+@h    The Kemro K2 system (including software) only meets category B according to EN 954-1,
+@h    thus it is not intended for usage in safety-relevant control applications in the field 
+@h    of personal safety (e.g. emergency stop).
+@h    To implement potentially necessary safety-relevant control tasks, always use additional 
+@h    external safety devices that are intended for the particular purpose, and meet the necessary 
+@h    functional safety.
+@h    For further information see EN 954-1 (EN ISO 13849-1) and/or the K2-x00 user manual, chapter 
+@h    "CE conformity, directives and standards".
+
+PRIVATE. Not intended to be called from outside this block.
+
+algorithm that provides the next token (type and value) for the parser (see symbols.tu).
+Scanner starts scanning on raising edge of Execute and does not stop until Execute gets false again, 
+a valid token or a syntax error is detected.
+Each time a token is detected the Done flag is set and the function block returns. 
+Function block also returns if no more input data is available.
+This means it is not guaranteed to receive a token each on function call, this depends on the input
+data available.
+In order to enable the parser to detect the end of an object without the need of trailing characters 
+(no more data available does not mean the end of object necessarily) the scanner reports a "strong" token
+immediately without reading next character. A "strong" token is a token that can be detected definitly 
+without knowing the character following, examples are '}' or ':' in contrast to tokens like a number.
+
+To prevent endless loops by fault a return is done in any case if no valid token is detected after a 
+certain number of characters read. 
+
+in case of a reconnection also receive buffer should be cleared, therefore an additional var input is available
+
+
+
+           
+@@@END_Comment@@@ 
+
+@BEG_Body 
+@TL(16)
+(**************************************** WARNING ********************************************
+ *** The KEBA Kemro K2 System including software is not intended for safety control tasks! ***
+ ***                       For further information see Comment tab!                        ***
+ *********************************************************************************************)
+
+IF (aScan.Symbol = nString) THEN
+    sdummy:= WSTRING_TO_STRING(aScan.sSymbol);
+    dummy:=Print("SCANNER: type string: %s", sdummy );
+ELSIF (aScan.Symbol = nIntNumber) THEN 
+    dummy:=Print("SCANNER: type int: %d", aScan.iSymbol);        
+ELSIF (aScan.Symbol = nFloatNumber)   THEN      
+    dummy:=Print("SCANNER: type float: %f", aScan.rSymbol);        
+ELSE   
+    dummy:=Print("SCANNER: other\r\n");                
+END_IF;
+
+@END_Body 
+
+@@@BEG_Comment@@@ 
+@TL(12)
+@h    ! WARNING !
+@h    The Kemro K2 system (including software) only meets category B according to EN 954-1,
+@h    thus it is not intended for usage in safety-relevant control applications in the field 
+@h    of personal safety (e.g. emergency stop).
+@h    To implement potentially necessary safety-relevant control tasks, always use additional 
+@h    external safety devices that are intended for the particular purpose, and meet the necessary 
+@h    functional safety.
+@h    For further information see EN 954-1 (EN ISO 13849-1) and/or the K2-x00 user manual, chapter 
+@h    "CE conformity, directives and standards".
+
+PRIVATE. Not intended to be called from outside this block.
+helper method for tracing
+@@@END_Comment@@@ 
+
+@BEG_Body 
+@TL(266)
+(**************************************** WARNING ********************************************
+ *** The KEBA Kemro K2 System including software is not intended for safety control tasks! ***
+ ***                       For further information see Comment tab!                        ***
+ *********************************************************************************************)
+
+IF (Execute = TRUE) THEN
+   // create the data table for numeric and boolean values if not existing 
+   IF (mHdlNumDataTable = EMPTY) THEN 
+      memCreateData := KMEM_HashMapL_Create('', tmpVal, 10, 255);
+      mHdlNumDataTable := memCreateData.Handle;
+   END_IF;
+   
+   // increase time
+   ElapsedTimeSinceLastObj := ElapsedTimeSinceLastObj + T#100ms;
+    
+   // raising edge ... read var inputs   
+   IF (bExecuteOld = FALSE) THEN
+      mTcpHdl := TcpHdl;      
+      aScan(Execute := FALSE, bConnectionReset := TRUE); 
+      aScan.bConnectionReset := FALSE;
+   END_IF;
+   bExecuteOld := Execute; 
+   
+   // return in case of an error
+   IF (Error) THEN
+      RETURN;  
+   END_IF;    
+  
+   // initialize timeout counter 
+   // break loop anyway after 32 read symbols even if more symbols would be available
+   iCntTimeOut := 32;   
+
+   REPEAT
+      iCntTimeOut := iCntTimeOut - 1; 
+      // new symbol detected? 
+      IF (aScan.Done) THEN
+         IF (NOT aScan.Error) THEN
+            IF (bTrace) THEN
+               aTrace();           
+            END_IF;
+
+            iCntTimeoutInteral := 100;  
+            
+            WHILE (TRUE) DO
+               iCntTimeoutInteral := iCntTimeoutInteral - 1;         
+               IF (iCntTimeoutInteral = 0) THEN
+                  iState := -1;
+                  sErrMsg := 'internal error'; 
+               END_IF;    
+               
+               ////////////////////////////////////
+               ////      error state
+               IF (iState = -1) THEN
+                  Error := TRUE;      
+                  sErrMsg := CONCAT('ServiceNet Parse ERROR: ', sErrMsg); 
+                  dummy := Print(sErrMsg); 
+                  aScan(Execute := FALSE); 
+                  RETURN;
+               END_IF;            
+               
+               ////////////////////////////////////
+               ////      start object "{"
+               IF (iState = 0) THEN 
+                  IF (aScan.Symbol = nLBrace) THEN
+                     iState := 10; 
+                     iCntStartToken := iCntStartToken + 1; 
+                     EXIT; // next symbol
+                  ELSE
+                     iState := -1;
+                     sErrMsg := "expected symbol '{'";
+                  END_IF;
+               END_IF;
+        
+               ////////////////////////////////////
+               ////      member | "}"  
+               IF (iState = 10) THEN  
+                  IF (aScan.Symbol = nString) THEN  // member 
+                     sKey := CONCAT(sParent, WSTRING_TO_STRING(aScan.sSymbol));                 
+                     iState := 100; 
+                     EXIT; // next symbol
+                  ELSE 
+                     sKey := '';
+                     iState := 20;  // end object
+                  END_IF;        
+               END_IF;
+
+               ////////////////////////////////////
+               ////      end object "}"  
+               IF (iState = 20) THEN 
+                  IF (aScan.Symbol = nRBrace) THEN
+                     iCntStartToken := iCntStartToken - 1; 
+                     IF (iCntStartToken = 0) THEN // end 1st level object 
+                        ObjRcvCnt := ObjRcvCnt + 1; 
+                        ElapsedTimeSinceLastObj := T#0ms;                 
+                        iState := 0;     // finished parsing object
+                     ELSE
+                        iState := 150;   // end value
+                     END_IF;
+                     EXIT; // next symbol
+                  ELSE             
+                     sErrMsg := CONCAT("expected symbol '}' in object '", sKey, "'");
+                     iState := -1; 
+                  END_IF;
+               END_IF;
+
+               ////////////////////////////////////
+               ////      separator ":"
+               IF (iState = 100) THEN 
+                  IF (aScan.Symbol = nSeparator) THEN
+                     iState := 110;             
+                     EXIT; // next symbol
+                  ELSE
+                     sErrMsg := CONCAT("expected symbol ':' after object ", sKey);
+                     iState := -1; 
+                  END_IF;        
+               END_IF;    
+
+               ////////////////////////////////////
+               ////      separator ":"
+               IF (iState = 110) THEN // value
+                  CASE (aScan.Symbol) OF
+                     nString: 
+                        iState := 150;
+                        EXIT; // not implemented yet
+                
+                     nIntNumber:
+                        tmpVal.data := DINT_TO_DWORD(aScan.iSymbol);
+                        tmpVal.dataType := nDTInt;                
+                        s := KMEM_HashMapL_Add(mHdlNumDataTable, sKey, tmpVal); 
+                        IF (bTrace) THEN 
+                          dummy := Print('added int "%s" %d ', sKey, aScan.iSymbol);
+                        END_IF;                
+                        iState := 150;                
+                        EXIT;
+               
+                     nFloatNumber:
+                        IF (CONVERT_REAL_TO_DWORD(LREAL_TO_REAL(aScan.rSymbol), tmpVal.data)) THEN 
+                           tmpVal.dataType := nDTFloat;                
+                           s := KMEM_HashMapL_Add(mHdlNumDataTable, sKey, tmpVal); 
+                           IF (bTrace) THEN
+                              dummy := Print('added float "%s" %f ', sKey, aScan.rSymbol);                        
+                           END_IF;
+                        END_IF;
+                        iState := 150;
+                        EXIT; 
+
+                     nLBrak:  // array
+                        iState := 120;
+
+                     nLBrace: // object
+                        // parent to stack
+                        // FIXME: workaround for CR_0048964
+                        iTmp := LEN(sParent);
+                        yKeyPosStack[iKeyPosStackIdx] := INT_TO_BYTE(iTmp);
+   //                    yKeyPosStack[iKeyPosStackIdx] := INT_TO_BYTE(LEN(sParent));
+                        //
+                
+                        iKeyPosStackIdx := iKeyPosStackIdx + 1; 
+                        IF (iKeyPosStackIdx < 256) THEN
+                           sParent := CONCAT(sKey, ".");
+                           iState := 0; 
+                        ELSE
+                           sErrMsg := "parser stack overflow";
+                           iState := -1;     
+                        END_IF;
+                     
+                     nTrue:
+                        tmpVal.data := 1;
+                        tmpVal.dataType := nDTInt;                
+                        s := KMEM_HashMapL_Add(mHdlNumDataTable, sKey, tmpVal); 
+                        IF (bTrace) THEN
+                           dummy := Print('added bool "%s" TRUE ', sKey);                        
+                        END_IF;
+                     
+                        iState := 150;
+                        EXIT; 
+
+                     nFalse:
+                        tmpVal.data := 0;
+                        tmpVal.dataType := nDTInt;                
+                        s := KMEM_HashMapL_Add(mHdlNumDataTable, sKey, tmpVal); 
+                        IF (bTrace) THEN
+                           dummy := Print('added bool "%s" FALSE ', sKey);
+                        END_IF;
+                     
+                        iState := 150;
+                        EXIT; 
+
+                     nNull:
+                        iState := 150;
+                        EXIT; // not implemented yet
+                  ELSE
+                     sErrMsg := CONCAT("expected value after object ", sKey);
+                     iState := -1; 
+                  END_CASE;   
+               END_IF;
+
+               ////////////////////////////////////
+               ////      array
+               IF (iState = 120) THEN 
+                  // not implemented, skip 
+                  IF (aScan.Symbol = nRBrak) THEN // end array
+                     iArrayRecCnt := iArrayRecCnt - 1; 
+                     IF (iArrayRecCnt = 0) THEN
+                        iState := 150;                 
+                     END_IF;
+                  ELSIF (aScan.Symbol = nLBrak) THEN
+                     iArrayRecCnt := iArrayRecCnt + 1;                 
+                  END_IF;
+                
+                  EXIT; // any ... next token 
+               END_IF;
+
+               ////////////////////////////////////
+               ////      end value: "}" | ","
+               IF (iState = 150) THEN 
+                  IF (aScan.Symbol = nRBrace) THEN
+                     IF (iKeyPosStackIdx > 0) THEN
+                        iKeyPosStackIdx := iKeyPosStackIdx - 1;                                    
+                        sParent := LEFT(sParent, BYTE_TO_INT(yKeyPosStack[iKeyPosStackIdx]));
+                     ELSE 
+                        sParent := ""; 
+                     END_IF; 
+                     iState := 20; // end object
+                  ELSIF (aScan.Symbol = nComma) THEN 
+                     iState := 10; // next member
+                     EXIT;
+                  ELSE 
+                     sErrMsg := CONCAT("expected member or end object '}' in object ", sKey);
+                     iState := -1; 
+                  END_IF;                                
+               END_IF;   
+            END_WHILE;        
+         ELSE
+            // parser error
+            dummy:= Print('ABParser.aParser(): error ');     
+         END_IF;
+    
+         aScan(Execute := FALSE);       
+      END_IF;
+      // next symbol ...    
+      aScan(Execute := TRUE); 
+   UNTIL ((NOT aScan.Done) OR (iCntTimeOut = 0))
+   END_REPEAT; 
+ELSE 
+   // execute false ... clear var outputs and local variables
+   bExecuteOld := Execute; 
+   IF (mHdlNumDataTable <> EMPTY) THEN
+      s := KMEM_HashMapL_Delete(mHdlNumDataTable);    
+      mHdlNumDataTable := EMPTY;        
+   END_IF;
+    
+   iState := 0; 
+   Error := FALSE;     
+   sErrMsg := '';
+   sParent := ''; 
+   iKeyPosStackIdx := 0; 
+   ObjRcvCnt := 0; 
+   iCntStartToken := 0; 
+   iArrayRecCnt := 0;    
+   ElapsedTimeSinceLastObj := T#0ms; 
+END_IF;
+
+
+
+
+@END_Body 
+
+@@@BEG_Comment@@@ 
+@TL(39)
+@h    ! WARNING !
+@h    The Kemro K2 system (including software) only meets category B according to EN 954-1,
+@h    thus it is not intended for usage in safety-relevant control applications in the field 
+@h    of personal safety (e.g. emergency stop).
+@h    To implement potentially necessary safety-relevant control tasks, always use additional 
+@h    external safety devices that are intended for the particular purpose, and meet the necessary 
+@h    functional safety.
+@h    For further information see EN 954-1 (EN ISO 13849-1) and/or the K2-x00 user manual, chapter 
+@h    "CE conformity, directives and standards".
+
+Algorithm for parsing data stream sent by ServiceNet Server
+data presentation: JSON (see http://www.json.org/)
+
+syntax restrictions: 
+  -> no syntax evaluation of data type "array", tokens within an array are skipped
+  -> recursion level for data type "object" is 255 maximum
+  
+semantic actions implemented for key - value pairs with values of type "number", 
+  "true", "false" and "object"
+
+output of parsed data is stored in a hashtable.
+
+objects defined recursive are represented "flat" in same hashtable by adding the parent key
+separated by a "." as a prefix to the object key.
+
+the hashtable and it's content is deleted only when reseting input "Execute", 
+so received data is available in hashtable even if it has not been sent in the 
+latest message.
+
+data types in hashtable: 
+-> int numbers, true, false: 4 bytes signed integer (DINT)
+-> numbers containing '.' or 'e'/'E': 4 byte float (REAL)
+
+functions available to get a DINT or a REAL value from hashtable.
+
+additionally the parser measures the time since last complete object has
+been received for easy timeout detection in calling block.
+
+see documentation for a detailed description.
+@@@END_Comment@@@ 
+
+@BEG_Body 
+@TL(8)
+(**************************************** WARNING ********************************************
+ *** The KEBA Kemro K2 System including software is not intended for safety control tasks! ***
+ ***                       For further information see Comment tab!                        ***
+ *********************************************************************************************)
+
+s := KMEM_HashMapGet(mHdlNumDataTable, Key, Value);
+fGetNumValue := s = KMEM_Status_OK; 
+
+@END_Body 
+
+@@@BEG_Comment@@@ 
+@TL(14)
+@h    ! WARNING !
+@h    The Kemro K2 system (including software) only meets category B according to EN 954-1,
+@h    thus it is not intended for usage in safety-relevant control applications in the field 
+@h    of personal safety (e.g. emergency stop).
+@h    To implement potentially necessary safety-relevant control tasks, always use additional 
+@h    external safety devices that are intended for the particular purpose, and meet the necessary 
+@h    functional safety.
+@h    For further information see EN 954-1 (EN ISO 13849-1) and/or the K2-x00 user manual, chapter 
+@h    "CE conformity, directives and standards".
+
+PRIVATE. Not intended to be called from outside this block.
+
+returns the value of a numeric data item stored in hashtable mapped by a certain key
+TRUE if found, FALSE in case of an error
+@@@END_Comment@@@ 
+
+@BEG_Body 
+@TL(15)
+(**************************************** WARNING ********************************************
+ *** The KEBA Kemro K2 System including software is not intended for safety control tasks! ***
+ ***                       For further information see Comment tab!                        ***
+ *********************************************************************************************)
+
+bFound := fGetNumValue(Key, tmpValue); 
+IF ((bFound) AND (tmpValue.dataType = nDTInt)) THEN
+   bFound := TRUE; 
+   ioValue := DWORD_TO_DINT(tmpValue.data);
+ELSE
+   bFound := FALSE; 
+END_IF;
+  
+fGetDINTValue := bFound;
+
+@END_Body 
+
+@@@BEG_Comment@@@ 
+@TL(14)
+@h    ! WARNING !
+@h    The Kemro K2 system (including software) only meets category B according to EN 954-1,
+@h    thus it is not intended for usage in safety-relevant control applications in the field 
+@h    of personal safety (e.g. emergency stop).
+@h    To implement potentially necessary safety-relevant control tasks, always use additional 
+@h    external safety devices that are intended for the particular purpose, and meet the necessary 
+@h    functional safety.
+@h    For further information see EN 954-1 (EN ISO 13849-1) and/or the K2-x00 user manual, chapter 
+@h    "CE conformity, directives and standards".
+
+PRIVATE. Not intended to be called from outside this block.
+
+returns the value of a DINT data item stored in hashtable mapped by a certain key
+TRUE if found, FALSE in case of an error
+@@@END_Comment@@@ 
+
+@BEG_Body 
+@TL(18)
+(**************************************** WARNING ********************************************
+ *** The KEBA Kemro K2 System including software is not intended for safety control tasks! ***
+ ***                       For further information see Comment tab!                        ***
+ *********************************************************************************************)
+
+IF ((Execute = TRUE) AND (bExecOld = FALSE)) THEN
+    // raising edge .. immediate, otherwise if new object recieved since last call
+   iCntOld := aParse.ObjRcvCnt - 1;  
+   bFound := FALSE; 
+END_IF;     
+
+IF (aParse.ObjRcvCnt <> iCntOld) THEN
+   bFound := fGetDINTValue(Key, iValue);
+   iCntOld := aParse.ObjRcvCnt;
+END_IF;
+
+bExecOld := Execute; 
+
+@END_Body 
+
+@@@BEG_Comment@@@ 
+@TL(15)
+@h    ! WARNING !
+@h    The Kemro K2 system (including software) only meets category B according to EN 954-1,
+@h    thus it is not intended for usage in safety-relevant control applications in the field 
+@h    of personal safety (e.g. emergency stop).
+@h    To implement potentially necessary safety-relevant control tasks, always use additional 
+@h    external safety devices that are intended for the particular purpose, and meet the necessary 
+@h    functional safety.
+@h    For further information see EN 954-1 (EN ISO 13849-1) and/or the K2-x00 user manual, chapter 
+@h    "CE conformity, directives and standards".
+
+PRIVATE. Not intended to be called from outside this block.
+
+returns the value of a DINT data item stored in hashtable mapped by a certain key
+if not found on raising edge of Execute, 
+the algorithm will try to find the value each time a new object has been parsed
+@@@END_Comment@@@ 
+
+@BEG_Body 
+@TL(11)
+(**************************************** WARNING ********************************************
+ *** The KEBA Kemro K2 System including software is not intended for safety control tasks! ***
+ ***                       For further information see Comment tab!                        ***
+ *********************************************************************************************)
+
+bFound := fGetNumValue(Key, tmpValue);
+IF (bFound) THEN
+   bFound := CONVERT_DWORD_TO_REAL(tmpValue.data, rValue);
+END_IF;
+fGetRealValue := bFound; 
+
+@END_Body 
+
+@@@BEG_Comment@@@ 
+@TL(14)
+@h    ! WARNING !
+@h    The Kemro K2 system (including software) only meets category B according to EN 954-1,
+@h    thus it is not intended for usage in safety-relevant control applications in the field 
+@h    of personal safety (e.g. emergency stop).
+@h    To implement potentially necessary safety-relevant control tasks, always use additional 
+@h    external safety devices that are intended for the particular purpose, and meet the necessary 
+@h    functional safety.
+@h    For further information see EN 954-1 (EN ISO 13849-1) and/or the K2-x00 user manual, chapter 
+@h    "CE conformity, directives and standards".
+
+PRIVATE. Not intended to be called from outside this block.
+
+returns the value of a REAL data item stored in hashtable mapped by a certain key
+TRUE if found, FALSE in case of an error
+@@@END_Comment@@@ 
+
+@BEG_Body 
+@TL(18)
+(**************************************** WARNING ********************************************
+ *** The KEBA Kemro K2 System including software is not intended for safety control tasks! ***
+ ***                       For further information see Comment tab!                        ***
+ *********************************************************************************************)
+
+IF ((Execute = TRUE) AND (bExecOld = FALSE)) THEN
+   // raising edge .. immediate, otherwise if new object recieved since last call
+   iCntOld := aParse.ObjRcvCnt - 1;  
+   bFound := FALSE; 
+END_IF;     
+
+IF (aParse.ObjRcvCnt <> iCntOld) THEN
+   bFound := fGetRealValue(Key, rValue);
+   iCntOld := aParse.ObjRcvCnt;
+END_IF;
+
+bExecOld := Execute; 
+
+@END_Body 
+
+@@@BEG_Comment@@@ 
+@TL(13)
+@h    ! WARNING !
+@h    The Kemro K2 system (including software) only meets category B according to EN 954-1,
+@h    thus it is not intended for usage in safety-relevant control applications in the field 
+@h    of personal safety (e.g. emergency stop).
+@h    To implement potentially necessary safety-relevant control tasks, always use additional 
+@h    external safety devices that are intended for the particular purpose, and meet the necessary 
+@h    functional safety.
+@h    For further information see EN 954-1 (EN ISO 13849-1) and/or the K2-x00 user manual, chapter 
+@h    "CE conformity, directives and standards".
+
+returns the value of a REAL data item stored in hashtable mapped by a certain key
+if not found on raising edge of Execute, 
+the algorithm will try to find the value each time a new object has been parsed
+@@@END_Comment@@@ 
+@END_Body 
+
+@END_Contents 

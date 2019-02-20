@@ -1,0 +1,222 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<base:Mask xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xmlns:base="http://www.keba.at/viewedit.model.base" widgetId="kvs.mask" name="MoldMask1">
+  <resolution width="714" height="476"/>
+  <position x="1" y="1"/>
+  <attributeValues key="Title" value="Mold"/>
+  <attributeValues key="Background" value="BG_Desktop:30,30,30"/>
+  <attributeValues key="Icon" value="Mold1/hmi/images/iconMoldMask.gif"/>
+  <layout layoutID="kvs.layout.GridLayout" name="GridLayout">
+    <attributeValues key="Rows" value="2"/>
+    <attributeValues key="Columns" value="1"/>
+    <attributeValues key="Hgap" value="0"/>
+    <attributeValues key="Vgap" value="8"/>
+  </layout>
+  <widgetInstances xsi:type="base:ContainerWidgetInstance" widgetId="keplast.kvs.borderpanelsmall" name="panelMoldClose" layoutConstraint="null">
+    <resolution width="714" height="234"/>
+    <position/>
+    <attributeValues key="Title" value="Mold close"/>
+    <layout layoutID="keplast.kvs.layout.multisplitlayout" name="MultiSplitLayout">
+      <attributeValues key="InsetsRight" value="3, 33, 0, 0"/>
+    </layout>
+    <widgetInstances xsi:type="base:ContainerWidgetInstance" widgetId="kvs.panel" name="panelCloseRight" layoutConstraint="RIGHT">
+      <resolution width="320" height="194"/>
+      <position x="391" y="36"/>
+      <layout layoutID="kvs.layout.BorderLayout" name="BorderLayout"/>
+      <widgetInstances xsi:type="base:ContainerWidgetInstance" widgetId="kvs.panel" name="panelProfileCloseView" layoutConstraint="NORTH">
+        <resolution width="320" height="108"/>
+        <position/>
+        <border name="EmptyBorder" id="kv.border.EmptyBorder">
+          <attributeValues key="InnerInsets" value="0, 5, 5, 42"/>
+        </border>
+        <layout layoutID="kvs.layout.BorderLayout" name="BorderLayout"/>
+        <widgetInstances widgetId="keplast.kvs.kprofile.view" name="profileView1" layoutConstraint="NORTH">
+          <resolution width="273" height="103"/>
+          <position x="5"/>
+          <attributeValues key="Profile" value="Mold1.sv_MoldFwdProfVisSrc"/>
+        </widgetInstances>
+      </widgetInstances>
+      <widgetInstances xsi:type="base:ContainerWidgetInstance" widgetId="kvs.panel" name="panelCloseRightParams" layoutConstraint="SOUTH">
+        <resolution width="320" height="87"/>
+        <position y="107"/>
+        <layout layoutID="kvs.layout.VerticalFlowLayout" name="VerticalFlowLayout">
+          <attributeValues key="Vgap" value="0"/>
+          <attributeValues key="Hgap" value="0"/>
+        </layout>
+        <widgetInstances widgetId="keplast.kvs.actsetnumfieldtext" name="numfieldMoldProtectTime" layoutConstraint="null">
+          <resolution width="320" height="29"/>
+          <position/>
+          <attributeValues key="VariableActual" value="Mold1.sv_dMoldProtectTimeAct"/>
+          <attributeValues key="Variable" value="Mold1.sv_dMoldProtectTimeSet"/>
+          <dynamicAttributes key="Create">
+            <value function="isDeviceElectric : UserFunctions" equal="false" unequal="true">
+              <parameter key="1" value="devicename;PlastFunctionUtils.createDeviceName(&quot;Mold1&quot;)"/>
+            </value>
+          </dynamicAttributes>
+        </widgetInstances>
+        <widgetInstances widgetId="keplast.kvs.twoplausnumfieldtext" name="numfieldProtectFromTo" layoutConstraint="null">
+          <resolution width="320" height="29"/>
+          <position y="29"/>
+          <attributeValues key="RemoveUnitLeft" value="true"/>
+          <attributeValues key="VariableLeft" value="Mold1.sv_MoldFwdProfVisSrc.Profile.Points[18].rStartPos"/>
+          <attributeValues key="VariableRight" value="Mold1.sv_MoldFwdProfVisSrc.Profile.Points[19].rStartPos"/>
+          <attributeValues key="Text" value="Protect from-to"/>
+          <attributeValues key="_TextWidth" value="118"/>
+          <dynamicAttributes key="VariableLeft">
+            <value function="doesDeviceExist : UserFunctions" equal="MotionProtectMold1.sv_rProtectStartPos" unequal="Mold1.sv_MoldFwdProfVisSrc.Profile.Points[18].rStartPos">
+              <parameter key="1" value="devicename; PlastFunctionUtils.createDeviceName(&quot;MotionProtectMold1&quot;)"/>
+            </value>
+          </dynamicAttributes>
+          <dynamicAttributes key="VariableRight">
+            <value function="doesDeviceExist : UserFunctions" equal="MotionProtectMold1.sv_rProtectStopPos" unequal="Mold1.sv_MoldFwdProfVisSrc.Profile.Points[19].rStartPos">
+              <parameter key="1" value="devicename; PlastFunctionUtils.createDeviceName(&quot;MotionProtectMold1&quot;)"/>
+            </value>
+          </dynamicAttributes>
+          <dynamicAttributes key="Text">
+            <value function="doesDeviceExist : UserFunctions" equal="Protect range" unequal="Protect from-to">
+              <parameter key="1" value="devicename; PlastFunctionUtils.createDeviceName(&quot;MotionProtectMold1&quot;)"/>
+            </value>
+          </dynamicAttributes>
+          <dynamicAttributes key="VariableLowerLimitLeft">
+            <value function="doesDeviceExist : UserFunctions" equal="" unequal="Mold1.sv_MoldFwdProfVisSrc.Profile.Points[19].rStartPos">
+              <parameter key="1" value="devicename; PlastFunctionUtils.createDeviceName(&quot;MotionProtectMold1&quot;)"/>
+            </value>
+          </dynamicAttributes>
+          <dynamicAttributes key="VariableUpperLimitLeft">
+            <value function="doesDeviceExist : UserFunctions" equal="" unequal="Mold1.sv_MoldFwdProfVisSrc.Profile.Points[17].rStartPos">
+              <parameter key="1" value="devicename; PlastFunctionUtils.createDeviceName(&quot;MotionProtectMold1&quot;)"/>
+            </value>
+          </dynamicAttributes>
+          <dynamicAttributes key="VariableUpperLimitRight">
+            <value function="doesDeviceExist : UserFunctions" equal="" unequal="Mold1.sv_MoldFwdProfVisSrc.Profile.Points[18].rStartPos">
+              <parameter key="1" value="devicename; PlastFunctionUtils.createDeviceName(&quot;MotionProtectMold1&quot;)"/>
+            </value>
+          </dynamicAttributes>
+          <dynamicAttributes key="LowerLimitLeft">
+            <value function="doesDeviceExist : UserFunctions" equal="4.9E-324" unequal="0.0">
+              <parameter key="1" value="devicename; PlastFunctionUtils.createDeviceName(&quot;MotionProtectMold1&quot;)"/>
+            </value>
+          </dynamicAttributes>
+        </widgetInstances>
+        <widgetInstances widgetId="keplast.kvs.actsetnumfieldtext" name="actSetNumFieldText" layoutConstraint="null">
+          <resolution width="320" height="29"/>
+          <position y="58"/>
+        </widgetInstances>
+      </widgetInstances>
+    </widgetInstances>
+    <widgetInstances widgetId="keplast.kvs.kprofile.nofstages" name="profileStagesField1" layoutConstraint="TITLE_RIGHT">
+      <resolution width="120" height="22"/>
+      <position x="591" y="3"/>
+      <attributeValues key="Profile" value="Mold1.sv_MoldFwdProfVisSrc"/>
+    </widgetInstances>
+    <widgetInstances widgetId="keplast.kvs.kprofile.table" name="profileTableMoldClose" layoutConstraint="LEFT">
+      <resolution width="347" height="197"/>
+      <position x="6" y="33"/>
+      <attributeValues key="ProfileName" value="Mold1.sv_MoldFwdProfVisSrc"/>
+      <attributeValues key="IsLeftRightIncreasing" value="false"/>
+      <attributeValues key="IsUpDownIncreasing" value="false"/>
+      <attributeValues key="VariableActPosition" value="Mold1.sv_rMoldPosition"/>
+      <attributeValues key="VariableMaxPosition" value="Mold1.sv_rMoldStroke"/>
+      <attributeValues key="VariableIsReachedLeft" value="Mold1.sv_bMoldOpen"/>
+      <attributeValues key="VariableIsReachedRight" value="Mold1.sv_bMoldClosed"/>
+      <attributeValues key="VisiblePressure" value="false"/>
+      <attributeValues key="VisibleVelocity" value="true"/>
+      <attributeValues key="VisibleLastPosition" value="false"/>
+      <attributeValues key="ProfileReverted" value="true"/>
+      <attributeValues key="TextLastStage" value="End"/>
+      <attributeValues key="TextOneToLastStage" value="Protect"/>
+      <attributeValues key="VisibleOneToLastPressure" value="true"/>
+      <attributeValues key="VariableProtectPressPlaus" value="Mold1.sv_rMaxPressureProtect"/>
+      <attributeValues key="VisibleLastVelocity" value="true"/>
+      <attributeValues key="VisibleLastPressure" value="true"/>
+      <dynamicAttributes key="TextLastStage">
+        <value function="isDeviceHydraulic : UserFunctions" equal="High pres." unequal="End">
+          <parameter key="1" value="devicename; PlastFunctionUtils.createDeviceName(&quot;Mold1&quot;)"/>
+        </value>
+      </dynamicAttributes>
+    </widgetInstances>
+    <widgetInstances widgetId="keplast.kvs.separator" name="separator1" layoutConstraint="SEPARATOR">
+      <resolution width="2" height="197"/>
+      <position x="356" y="33"/>
+      <attributeValues key="Foreground" value="gray_mid:153,153,153"/>
+    </widgetInstances>
+  </widgetInstances>
+  <widgetInstances xsi:type="base:ContainerWidgetInstance" widgetId="keplast.kvs.borderpanelsmall" name="panelMoldOpen" layoutConstraint="null">
+    <resolution width="714" height="234"/>
+    <position y="242"/>
+    <attributeValues key="Title" value="Mold open"/>
+    <layout layoutID="keplast.kvs.layout.multisplitlayout" name="MultiSplitLayout">
+      <attributeValues key="InsetsRight" value="3, 33, 0, 0"/>
+    </layout>
+    <widgetInstances xsi:type="base:ContainerWidgetInstance" widgetId="kvs.panel" name="panelOpenRight" layoutConstraint="RIGHT">
+      <resolution width="320" height="166"/>
+      <position x="391" y="36"/>
+      <layout layoutID="kvs.layout.BorderLayout" name="BorderLayout"/>
+      <widgetInstances xsi:type="base:ContainerWidgetInstance" widgetId="kvs.panel" name="panelOpenRightParams" layoutConstraint="SOUTH">
+        <resolution width="320" height="58"/>
+        <position y="108"/>
+        <layout layoutID="kvs.layout.VerticalFlowLayout" name="VerticalFlowLayout">
+          <attributeValues key="Hgap" value="0"/>
+          <attributeValues key="Vgap" value="0"/>
+        </layout>
+        <widgetInstances widgetId="keplast.kvs.numfieldtext" name="fReleaseEndPos" layoutConstraint="null">
+          <resolution width="320" height="29"/>
+          <position/>
+          <attributeValues key="Variable" value="Mold1.sv_rOpenPosHighPre"/>
+          <dynamicAttributes key="Create">
+            <value function="doesVariableExist : UserFunctions" equal="true" unequal="false">
+              <parameter key="1" value="variableasstring;PlastFunctionUtils.createVariableString(&quot;Mold1.do_OpenHighPre&quot;)"/>
+            </value>
+          </dynamicAttributes>
+        </widgetInstances>
+        <widgetInstances widgetId="keplast.kvs.numfieldtext" name="fAmplifierActivation" layoutConstraint="null">
+          <resolution width="320" height="29"/>
+          <position y="29"/>
+          <attributeValues key="Variable" value="Mold1.sv_rPressureAmpActivationForce"/>
+          <dynamicAttributes key="Create">
+            <value function="doesVariableExist_AND_doesVariableExist : UserFunctions" equal="true" unequal="false">
+              <parameter key="1" value="variableasstring;PlastFunctionUtils.createVariableString(&quot;Mold1.ai_ClampPress&quot;)"/>
+              <parameter key="2" value="variableasstring;PlastFunctionUtils.createVariableString(&quot;Mold1.do_PressureAmplifier&quot;)"/>
+            </value>
+          </dynamicAttributes>
+        </widgetInstances>
+      </widgetInstances>
+      <widgetInstances xsi:type="base:ContainerWidgetInstance" widgetId="kvs.panel" name="panelProfileOpenView" layoutConstraint="NORTH">
+        <resolution width="320" height="108"/>
+        <position/>
+        <border name="EmptyBorder" id="kv.border.EmptyBorder">
+          <attributeValues key="InnerInsets" value="0, 5, 5, 42"/>
+        </border>
+        <layout layoutID="kvs.layout.BorderLayout" name="BorderLayout"/>
+        <widgetInstances widgetId="keplast.kvs.kprofile.view" name="profileView2" layoutConstraint="NORTH">
+          <resolution width="273" height="103"/>
+          <position x="5"/>
+          <attributeValues key="Profile" value="Mold1.sv_MoldBwdProfVis"/>
+        </widgetInstances>
+      </widgetInstances>
+    </widgetInstances>
+    <widgetInstances widgetId="keplast.kvs.kprofile.nofstages" name="profileStagesField2" layoutConstraint="TITLE_RIGHT">
+      <resolution width="120" height="22"/>
+      <position x="591" y="3"/>
+      <attributeValues key="Profile" value="Mold1.sv_MoldBwdProfVis"/>
+    </widgetInstances>
+    <widgetInstances widgetId="keplast.kvs.kprofile.table" name="profileTableMoldOpen" layoutConstraint="LEFT">
+      <resolution width="347" height="197"/>
+      <position x="6" y="33"/>
+      <attributeValues key="ProfileName" value="Mold1.sv_MoldBwdProfVis"/>
+      <attributeValues key="IsLeftRightIncreasing" value="false"/>
+      <attributeValues key="IsUpDownIncreasing" value="true"/>
+      <attributeValues key="VariableActPosition" value="Mold1.sv_rMoldPosition"/>
+      <attributeValues key="VariableMaxPosition" value="Mold1.sv_rMoldStroke"/>
+      <attributeValues key="VariableIsReachedLeft" value="Mold1.sv_bMoldOpen"/>
+      <attributeValues key="VariableIsReachedRight" value="Mold1.sv_bMoldClosed"/>
+      <attributeValues key="VisiblePressure" value="false"/>
+      <attributeValues key="VisibleVelocity" value="true"/>
+      <attributeValues key="TextLastStage" value="End"/>
+    </widgetInstances>
+    <widgetInstances widgetId="keplast.kvs.separator" name="separator2" layoutConstraint="SEPARATOR">
+      <resolution width="2" height="197"/>
+      <position x="356" y="33"/>
+      <attributeValues key="Foreground" value="gray_mid:153,153,153"/>
+    </widgetInstances>
+  </widgetInstances>
+</base:Mask>

@@ -1,0 +1,328 @@
+(*
+@h    ! WARNING !
+@h    The Kemro K2 system (including software) only meets category B according to EN 954-1,
+@h    thus it is not intended for usage in safety-relevant control applications in the field 
+@h    of personal safety (e.g. emergency stop).
+@h    To implement potentially necessary safety-relevant control tasks, always use additional 
+@h    external safety devices that are intended for the particular purpose, and meet the necessary 
+@h    functional safety.
+@h    For further information see EN 954-1 (EN ISO 13849-1) and/or the K2-x00 user manual, chapter 
+@h    "CE conformity, directives and standards".
+
+This algorithm block reacts on changes of infolog relevant machine states and creates an infolog entry
+in group --- IlogUser0 ---.
+*)
+
+IMPORT_OVER_LISTFILE
+ KPROT_UserInfoLog
+, KPROT_Status
+
+END_IMPORT
+
+ALGORITHM_BLOCK ABInfoLog #DUMMY_EDIT_BLOCK
+
+SYSTEM_VAR
+ sv_bAllMotorsRunning : BOOL;
+ sv_bMoldHeatingOn : BOOL;
+ sv_bNozzleHeatingOn : BOOL;
+END_VAR
+
+SYSTEM_OBJECT
+ PU_Task_13 : TASK;
+END_OBJECT
+
+VAR
+ mStatus : KPROT_Status;
+END_VAR
+
+POSTUPDATE_ALGORITHM pLogMotorOnOff ON PU_Task_13 WITH sv_bAllMotorsRunning
+
+
+VAR_IN_OUT
+ bOn : BOOL;
+END_VAR
+#BEGIN_EDIT_BLOCK
+(**************************************** WARNING ********************************************
+ *** The KEBA Kemro K2 System including software is not intended for safety control tasks! ***
+ ***                       For further information see Comment tab!                        ***
+ *********************************************************************************************)
+
+IF (bOn) THEN 
+  mStatus := KPROT_UserInfoLog("%5s", 0, 0, 0, 0, "Motor on"); 
+ELSE    
+  mStatus := KPROT_UserInfoLog("%5s", 0, 0, 0, 0, "Motor off"); 
+END_IF;    
+
+
+;#END_EDIT_BLOCK END_ALGORITHM
+
+POSTUPDATE_ALGORITHM pLogMoldHeatingOnOff ON PU_Task_13 WITH sv_bMoldHeatingOn
+
+
+VAR_IN_OUT
+ bOn : BOOL;
+END_VAR
+#BEGIN_EDIT_BLOCK
+(**************************************** WARNING ********************************************
+ *** The KEBA Kemro K2 System including software is not intended for safety control tasks! ***
+ ***                       For further information see Comment tab!                        ***
+ *********************************************************************************************)
+
+IF (bOn) THEN 
+  mStatus := KPROT_UserInfoLog("%5s", 0, 0, 0, 0, "Mold heating on"); 
+ELSE    
+  mStatus := KPROT_UserInfoLog("%5s", 0, 0, 0, 0, "Mold heating off"); 
+END_IF;    
+
+
+;#END_EDIT_BLOCK END_ALGORITHM
+
+POSTUPDATE_ALGORITHM pLogNozzleHeatingOnOff ON PU_Task_13 WITH sv_bNozzleHeatingOn
+
+
+VAR_IN_OUT
+ bOn : BOOL;
+END_VAR
+#BEGIN_EDIT_BLOCK
+(**************************************** WARNING ********************************************
+ *** The KEBA Kemro K2 System including software is not intended for safety control tasks! ***
+ ***                       For further information see Comment tab!                        ***
+ *********************************************************************************************)
+
+IF (bOn) THEN 
+  mStatus := KPROT_UserInfoLog("%5s", 0, 0, 0, 0, "Nozzle heating on"); 
+ELSE    
+  mStatus := KPROT_UserInfoLog("%5s", 0, 0, 0, 0, "Nozzle heating off"); 
+END_IF;    
+
+
+;#END_EDIT_BLOCK END_ALGORITHM
+
+
+
+END_ALGORITHM_BLOCK
+
+
+
+#END_OF_IEC_PART
+
+@Puma @IecEditor 6 131 @Pou 25 
+@@@BEG_Comment@@@
+@h    ! WARNING !
+@h    The Kemro K2 system (including software) only meets category B according to EN 954-1,
+@h    thus it is not intended for usage in safety-relevant control applications in the field 
+@h    of personal safety (e.g. emergency stop).
+@h    To implement potentially necessary safety-relevant control tasks, always use additional 
+@h    external safety devices that are intended for the particular purpose, and meet the necessary 
+@h    functional safety.
+@h    For further information see EN 954-1 (EN ISO 13849-1) and/or the K2-x00 user manual, chapter 
+@h    "CE conformity, directives and standards".
+
+This algorithm block reacts on changes of infolog relevant machine states and creates an infolog entry
+in group --- IlogUser0 ---.
+@@@END_Comment@@@
+
+@BEG_Contents 
+
+@BEG_Func 
+@RT(17)FuncTreeContainer 
+1 
+@Var @RT(17)KPROT_UserInfoLog @RT(0) @T @T @DERIVED 0 @F @RT(37)KEBA_STANDARD_FUNCTION : KPROT_Status @F 
+@T 
+@BEG_Attrib 
+0 @RT(0) @RT(0) 
+@END_Attrib 
+1 1 @F @F @F @F 
+
+@END_Func 
+
+@BEG_Const 
+@RT(18)ConstTreeContainer 
+0 
+@END_Const 
+
+@BEG_Export 
+
+@BEG_Kind 
+@ALGORITHM_BLOCK @RT(9)ABInfoLog @STRUCTURED_TEXT 
+@RT(0) @RT(0) @RT(0) 
+@END_Kind 
+
+@BEG_Dcl 
+@RT(16)DclTreeContainer 
+5 
+@Var @RT(10)PU_Task_13 @RT(0) @T @F @DT @RT(4)TASK @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 7 @F @F @F @F 
+
+@Var @RT(20)sv_bAllMotorsRunning @RT(0) @T @F @DT @RT(4)BOOL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 8 @F @F @F @F 
+
+@Var @RT(17)sv_bMoldHeatingOn @RT(0) @T @F @DT @RT(4)BOOL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 8 @F @F @F @F 
+
+@Var @RT(19)sv_bNozzleHeatingOn @RT(0) @T @F @DT @RT(4)BOOL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 8 @F @F @F @F 
+
+@Var @RT(7)mStatus @RT(0) @T @T @DERIVED 0 @F @RT(12)KPROT_Status @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@END_Dcl 
+
+@END_Export 
+
+@BEG_Body 
+
+3 
+
+@BEG_Export 
+
+@BEG_Algo 
+@POSTUPDATE_ALGORITHM @RT(14)pLogMotorOnOff @STRUCTURED_TEXT 
+@RT(0) @RT(20)sv_bAllMotorsRunning @RT(10)PU_Task_13 @F @F 
+@END_Algo 
+
+@BEG_Dcl 
+@RT(16)DclTreeContainer 
+1 
+@Var @RT(3)bOn @RT(0) @T @F @DT @RT(4)BOOL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 2 @F @F @F @F 
+
+@END_Dcl 
+
+@END_Export 
+
+@BEG_Export 
+
+@BEG_Algo 
+@POSTUPDATE_ALGORITHM @RT(20)pLogMoldHeatingOnOff @STRUCTURED_TEXT 
+@RT(0) @RT(17)sv_bMoldHeatingOn @RT(10)PU_Task_13 @F @F 
+@END_Algo 
+
+@BEG_Dcl 
+@RT(16)DclTreeContainer 
+1 
+@Var @RT(3)bOn @RT(0) @T @F @DT @RT(4)BOOL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 2 @F @F @F @F 
+
+@END_Dcl 
+
+@END_Export 
+
+@BEG_Export 
+
+@BEG_Algo 
+@POSTUPDATE_ALGORITHM @RT(22)pLogNozzleHeatingOnOff @STRUCTURED_TEXT 
+@RT(0) @RT(19)sv_bNozzleHeatingOn @RT(10)PU_Task_13 @F @F 
+@END_Algo 
+
+@BEG_Dcl 
+@RT(16)DclTreeContainer 
+1 
+@Var @RT(3)bOn @RT(0) @T @F @DT @RT(4)BOOL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 2 @F @F @F @F 
+
+@END_Dcl 
+
+@END_Export 
+
+@BEG_Body 
+@TL(11)
+(**************************************** WARNING ********************************************
+ *** The KEBA Kemro K2 System including software is not intended for safety control tasks! ***
+ ***                       For further information see Comment tab!                        ***
+ *********************************************************************************************)
+
+IF (bOn) THEN 
+  mStatus := KPROT_UserInfoLog("%5s", 0, 0, 0, 0, "Motor on"); 
+ELSE    
+  mStatus := KPROT_UserInfoLog("%5s", 0, 0, 0, 0, "Motor off"); 
+END_IF;    
+
+@END_Body 
+
+@@@BEG_Comment@@@ 
+@TL(0)
+
+@@@END_Comment@@@ 
+
+@BEG_Body 
+@TL(11)
+(**************************************** WARNING ********************************************
+ *** The KEBA Kemro K2 System including software is not intended for safety control tasks! ***
+ ***                       For further information see Comment tab!                        ***
+ *********************************************************************************************)
+
+IF (bOn) THEN 
+  mStatus := KPROT_UserInfoLog("%5s", 0, 0, 0, 0, "Mold heating on"); 
+ELSE    
+  mStatus := KPROT_UserInfoLog("%5s", 0, 0, 0, 0, "Mold heating off"); 
+END_IF;    
+
+@END_Body 
+
+@@@BEG_Comment@@@ 
+@TL(0)
+
+@@@END_Comment@@@ 
+
+@BEG_Body 
+@TL(11)
+(**************************************** WARNING ********************************************
+ *** The KEBA Kemro K2 System including software is not intended for safety control tasks! ***
+ ***                       For further information see Comment tab!                        ***
+ *********************************************************************************************)
+
+IF (bOn) THEN 
+  mStatus := KPROT_UserInfoLog("%5s", 0, 0, 0, 0, "Nozzle heating on"); 
+ELSE    
+  mStatus := KPROT_UserInfoLog("%5s", 0, 0, 0, 0, "Nozzle heating off"); 
+END_IF;    
+
+@END_Body 
+
+@@@BEG_Comment@@@ 
+@TL(0)
+
+@@@END_Comment@@@ 
+@END_Body 
+
+@END_Contents 

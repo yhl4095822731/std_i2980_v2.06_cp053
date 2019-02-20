@@ -1,0 +1,313 @@
+(*
+@h    ! WARNING !
+@h    The Kemro K2 system (including software) only meets category B according to EN 954-1,
+@h    thus it is not intended for usage in safety-relevant control applications in the field 
+@h    of personal safety (e.g. emergency stop).
+@h    To implement potentially necessary safety-relevant control tasks, always use additional 
+@h    external safety devices that are intended for the particular purpose, and meet the necessary 
+@h    functional safety.
+@h    For further information see EN 954-1 (EN ISO 13849-1) and/or the K2-x00 user manual, chapter 
+@h    "CE conformity, directives and standards".
+
+This AB is used to detect if a target position is reached.
+The endposition is reached if actual position is lower or equal / bigger or equal
+(depending on the movedirection) than the target position
+a given tolerance will also be considered
+*)
+
+IMPORT_OVER_LISTFILE
+ tsTargetPosData
+, KCTRL_LimitSwitch
+, KCTRL_LimitSwitch_Param
+
+END_IMPORT
+
+ALGORITHM_BLOCK ABTargetPosMon #DUMMY_EDIT_BLOCK
+
+SYSTEM_VAR
+ sv_TargetPosData : tsTargetPosData;
+ sv_bInitStart : BOOL;
+END_VAR
+
+SYSTEM_OBJECT
+ TaskAnalog : TASK;
+ PU_Task_3 : TASK;
+END_OBJECT
+
+VAR
+ abLimitSwitch : KCTRL_LimitSwitch;
+ LimitSwitchParam : KCTRL_LimitSwitch_Param;
+ mpTolerance : REFTO REAL;
+ mprTargetPos : REFTO REAL;
+END_VAR
+
+PROCESS_ALGORITHM paRun ON TaskAnalog(3000)
+
+#BEGIN_EDIT_BLOCK
+(**************************************** WARNING ********************************************
+ *** The KEBA Kemro K2 System including software is not intended for safety control tasks! ***
+ ***                       For further information see Comment tab!                        ***
+ *********************************************************************************************)
+
+abLimitSwitch.Calculate(rX := sv_TargetPosData.rActPos^);
+sv_TargetPosData.pbPosReached^ := abLimitSwitch.Calculate.bY;
+ 
+
+
+;#END_EDIT_BLOCK END_ALGORITHM
+
+POSTUPDATE_ALGORITHM pParameterChanged ON PU_Task_3 WITH mpTolerance^,mprTargetPos^,sv_bInitStart
+
+
+VAR
+ bInitDone : BOOL;
+END_VAR
+#BEGIN_EDIT_BLOCK
+(**************************************** WARNING ********************************************
+ *** The KEBA Kemro K2 System including software is not intended for safety control tasks! ***
+ ***                       For further information see Comment tab!                        ***
+ *********************************************************************************************)
+
+IF NOT bInitDone THEN
+    mpTolerance := sv_TargetPosData.rTolerance;
+    mprTargetPos := sv_TargetPosData.rTargetPos;
+    bInitDone := TRUE;
+END_IF;
+
+LimitSwitchParam.rLimit := mprTargetPos^;
+LimitSwitchParam.rDiffPEdge := sv_TargetPosData.rTolerance^;
+LimitSwitchParam.rDiffNEdge := sv_TargetPosData.rTolerance^;
+
+IF sv_TargetPosData.bDirection THEN
+    LimitSwitchParam.bModeInvert := FALSE;
+ELSE
+    LimitSwitchParam.bModeInvert := TRUE;
+END_IF;
+
+abLimitSwitch.Par(Param := LimitSwitchParam);
+abLimitSwitch.Init(rX := sv_TargetPosData.rActPos^);
+
+abLimitSwitch.Calculate(rX := sv_TargetPosData.rActPos^);
+sv_TargetPosData.pbPosReached^ := abLimitSwitch.Calculate.bY;
+
+
+START_PROCESS_ALGORITHM(paRun);
+
+
+;#END_EDIT_BLOCK END_ALGORITHM
+
+
+
+END_ALGORITHM_BLOCK
+
+
+
+#END_OF_IEC_PART
+
+@Puma @IecEditor 6 22 @Pou 25 
+@@@BEG_Comment@@@
+@h    ! WARNING !
+@h    The Kemro K2 system (including software) only meets category B according to EN 954-1,
+@h    thus it is not intended for usage in safety-relevant control applications in the field 
+@h    of personal safety (e.g. emergency stop).
+@h    To implement potentially necessary safety-relevant control tasks, always use additional 
+@h    external safety devices that are intended for the particular purpose, and meet the necessary 
+@h    functional safety.
+@h    For further information see EN 954-1 (EN ISO 13849-1) and/or the K2-x00 user manual, chapter 
+@h    "CE conformity, directives and standards".
+
+This AB is used to detect if a target position is reached.
+The endposition is reached if actual position is lower or equal / bigger or equal
+(depending on the movedirection) than the target position
+a given tolerance will also be considered
+@@@END_Comment@@@
+
+@BEG_Contents 
+
+@BEG_Func 
+@RT(17)FuncTreeContainer 
+0 
+@END_Func 
+
+@BEG_Const 
+@RT(18)ConstTreeContainer 
+0 
+@END_Const 
+
+@BEG_Export 
+
+@BEG_Kind 
+@ALGORITHM_BLOCK @RT(14)ABTargetPosMon @STRUCTURED_TEXT 
+@RT(0) @RT(0) @RT(0) 
+@END_Kind 
+
+@BEG_Dcl 
+@RT(16)DclTreeContainer 
+8 
+@Var @RT(16)sv_TargetPosData @RT(0) @T @T @DERIVED 0 @T @T @DT @RT(15)tsTargetPosData @RT(0) @T @T @UNKNOWN 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 8 @F @F @F @F 
+
+@Var @RT(10)TaskAnalog @RT(0) @T @T @RENAMED 0 @T @T @DT @RT(4)TASK @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 7 @F @F @F @F 
+
+@Var @RT(13)sv_bInitStart @RT(0) @T @F @DT @RT(4)BOOL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 8 @F @F @F @F 
+
+@Var @RT(13)abLimitSwitch @RT(0) @T @T @DERIVED 0 @T @T @DT @RT(17)KCTRL_LimitSwitch @RT(0) @T @T @UNKNOWN 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(16)LimitSwitchParam @RT(0) @T @T @DERIVED 0 @T @T @DT @RT(23)KCTRL_LimitSwitch_Param @RT(0) @T @T @UNKNOWN 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(11)mpTolerance @RT(0) @T @T @REFTO 0 @T @DT @RT(4)REAL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(12)mprTargetPos @RT(0) @T @T @REFTO 0 @T @DT @RT(4)REAL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(9)PU_Task_3 @RT(0) @T @T @RENAMED 0 @T @T @DT @RT(4)TASK @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 7 @F @F @F @F 
+
+@END_Dcl 
+
+@END_Export 
+
+@BEG_Body 
+
+2 
+
+@BEG_Export 
+
+@BEG_Algo 
+@PROCESS_ALGORITHM @RT(5)paRun @STRUCTURED_TEXT 
+@RT(0) @RT(0) @RT(16)TaskAnalog(3000) @F @F 
+@END_Algo 
+
+@BEG_Dcl 
+@RT(16)DclTreeContainer 
+0 
+@END_Dcl 
+
+@END_Export 
+
+@BEG_Export 
+
+@BEG_Algo 
+@POSTUPDATE_ALGORITHM @RT(17)pParameterChanged @STRUCTURED_TEXT 
+@RT(0) @RT(40)mpTolerance^,mprTargetPos^,sv_bInitStart @RT(9)PU_Task_3 @F @F 
+@END_Algo 
+
+@BEG_Dcl 
+@RT(16)DclTreeContainer 
+1 
+@Var @RT(9)bInitDone @RT(0) @T @F @DT @RT(4)BOOL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@END_Dcl 
+
+@END_Export 
+
+@BEG_Body 
+@TL(9)
+(**************************************** WARNING ********************************************
+ *** The KEBA Kemro K2 System including software is not intended for safety control tasks! ***
+ ***                       For further information see Comment tab!                        ***
+ *********************************************************************************************)
+
+abLimitSwitch.Calculate(rX := sv_TargetPosData.rActPos^);
+sv_TargetPosData.pbPosReached^ := abLimitSwitch.Calculate.bY;
+ 
+
+@END_Body 
+
+@@@BEG_Comment@@@ 
+@TL(0)
+
+@@@END_Comment@@@ 
+
+@BEG_Body 
+@TL(30)
+(**************************************** WARNING ********************************************
+ *** The KEBA Kemro K2 System including software is not intended for safety control tasks! ***
+ ***                       For further information see Comment tab!                        ***
+ *********************************************************************************************)
+
+IF NOT bInitDone THEN
+    mpTolerance := sv_TargetPosData.rTolerance;
+    mprTargetPos := sv_TargetPosData.rTargetPos;
+    bInitDone := TRUE;
+END_IF;
+
+LimitSwitchParam.rLimit := mprTargetPos^;
+LimitSwitchParam.rDiffPEdge := sv_TargetPosData.rTolerance^;
+LimitSwitchParam.rDiffNEdge := sv_TargetPosData.rTolerance^;
+
+IF sv_TargetPosData.bDirection THEN
+    LimitSwitchParam.bModeInvert := FALSE;
+ELSE
+    LimitSwitchParam.bModeInvert := TRUE;
+END_IF;
+
+abLimitSwitch.Par(Param := LimitSwitchParam);
+abLimitSwitch.Init(rX := sv_TargetPosData.rActPos^);
+
+abLimitSwitch.Calculate(rX := sv_TargetPosData.rActPos^);
+sv_TargetPosData.pbPosReached^ := abLimitSwitch.Calculate.bY;
+
+
+START_PROCESS_ALGORITHM(paRun);
+
+@END_Body 
+
+@@@BEG_Comment@@@ 
+@TL(0)
+
+@@@END_Comment@@@ 
+@END_Body 
+
+@END_Contents 

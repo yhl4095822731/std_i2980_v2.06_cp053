@@ -1,0 +1,2545 @@
+(*
+@h    ! WARNING !
+@h    The Kemro K2 system (including software) only meets category B according to EN 954-1,
+@h    thus it is not intended for usage in safety-relevant control applications in the field 
+@h    of personal safety (e.g. emergency stop).
+@h    To implement potentially necessary safety-relevant control tasks, always use additional 
+@h    external safety devices that are intended for the particular purpose, and meet the necessary 
+@h    functional safety.
+@h    For further information see EN 954-1 (EN ISO 13849-1) and/or the K2-x00 user manual, chapter 
+@h    "CE conformity, directives and standards".
+
+This main Movement-Control Algorithm-Block is instanced in each FU that provides machine-movements
+and is responsible for starting and stopping a movement.
+- Receiving the evStart event
+- checking LockList if Movement is locked
+- Movement Delay
+- sending state-event evStartedStopped
+- Starting ABMovementAdmin
+- Receiving the evStop event
+- Receiving the evCheckLocklist event
+- Receiving the evLockGroupEnableDisable event
+*)
+
+IMPORT_OVER_LISTFILE
+ SET_ALARM
+, SET_EVENT
+, CHECK_REF
+, cCompAll
+, cAllDevIndex
+, cMaxGroupLocks
+, cMaxDeviceMovements
+, cLockGroupNone
+, tsMoveCtrl
+, tyMoveDataArray
+, tevStop
+, tevStart
+, tevLockUnlock
+, tevLockUnlockGroup
+, tevStartedStopped
+, tsMoveData
+, tsDeviceId
+, ABLockList
+, FBDebugTrace
+, tsTraceLevel
+, tevCheckLocklist
+, tnOperationMode
+, tevLockGroupEnableDisable
+, tyDisabledLockGroups
+, tevStartedStoppedData
+, tevStartData
+, FBGetMovementData
+, tevStopData
+, tevLockUnlockData
+, tevLockUnlockGroupData
+, tevCheckLocklistData
+, tevLockGroupEnableDisableData
+
+END_IMPORT
+
+ALGORITHM_BLOCK ABControl #DUMMY_EDIT_BLOCK
+
+SYSTEM_VAR
+ sv_Movements : tyMoveDataArray;
+ sv_NumberOfMovements : DINT;
+ sv_bDeviceReady : BOOL;
+ sv_bDeviceStart : BOOL (* Start Device *);
+ sv_bFALSE : BOOL (* always false, used to set a reference false *);
+ sv_DeviceId : tsDeviceId;
+ sv_TraceLevel : tsTraceLevel;
+ sv_bInitDone : BOOL;
+ sv_OperationMode : tnOperationMode;
+END_VAR
+
+SYSTEM_OBJECT
+ TaskAnalog : TASK;
+ erDeviceActive : ALARM;
+ evStop : tevStop;
+ evStart : tevStart;
+ evLockUnlock : tevLockUnlock;
+ evLockUnlockGroup : tevLockUnlockGroup;
+ evStartedStopped : tevStartedStopped;
+ EV_Task_3 : TASK;
+ evCheckLocklist : tevCheckLocklist;
+ erMovementNotAvailable : ALARM;
+ erInitNotReady : ALARM;
+ evLockGroupEnableDisable : tevLockGroupEnableDisable;
+END_OBJECT
+
+VAR_EXTERNAL
+ g_MoveCtrl : tsMoveCtrl;
+END_VAR
+
+VAR
+ mbStop : BOOL;
+ mbDeviceActive : BOOL;
+ mpbPosReached : REFTO BOOL;
+ mpMoveData : REFTO tsMoveData;
+ abLockList : ABLockList;
+ fbDebugTrace : FBDebugTrace;
+ mDisabledLockGroups : tyDisabledLockGroups (* array that contains which lockgroups of every sv_Move is ignored *);
+ mbReadyDetected : BOOL (* synchronise paMoveControl and paCheckReady because the active movement can be executed in a faster task than TaskAnalog *);
+ mbAlreadyStarted : BOOL (* TRUE: sv_bDeviceStart was already set in evaStart *);
+END_VAR
+
+ALGORITHM aSaveLastActiveTime
+
+
+VAR
+ b : BOOL;
+ iInstance : DINT;
+END_VAR
+#BEGIN_EDIT_BLOCK
+(**************************************** WARNING ********************************************
+ *** The KEBA Kemro K2 System including software is not intended for safety control tasks! ***
+ ***                       For further information see Comment tab!                        ***
+ *********************************************************************************************)
+
+//save last movement time
+IF CHECK_REF(g_MoveCtrl.pData^.pdLastActiveTime^) AND CHECK_REF(g_MoveCtrl.pData^.pdActiveTimeAct^) THEN
+   b := WRITE_SV_DIRECT(g_MoveCtrl.pData^.pdLastActiveTime^, g_MoveCtrl.pData^.pdActiveTimeAct^);
+END_IF;
+
+//also consider instanceable movements
+IF g_MoveCtrl.pData^.bInstanceable THEN
+   iInstance := g_MoveCtrl.iCount;
+   IF CHECK_REF(g_MoveCtrl.pData^.InstanceData.pLastActiveTimeArray^[iInstance]) AND 
+      CHECK_REF(g_MoveCtrl.pData^.InstanceData.pActiveTimeArray^[iInstance]) THEN
+      b := WRITE_SV_DIRECT(g_MoveCtrl.pData^.InstanceData.pLastActiveTimeArray^[iInstance], g_MoveCtrl.pData^.InstanceData.pActiveTimeArray^[iInstance]);
+   END_IF;
+END_IF;
+
+
+
+;#END_EDIT_BLOCK END_ALGORITHM
+
+PROCESS_ALGORITHM paMoveControl ON TaskAnalog(3)
+
+
+VAR
+ evStartedStoppedData : tevStartedStoppedData;
+ dDelay : TIME;
+ bStartDelayLinked : BOOL;
+ bActDelayLinked : BOOL;
+END_VAR
+
+(* IecGraph-Code *)
+
+(* init step *)
+INITIAL_STEP START:
+END_STEP
+
+
+(* steps *)
+STEP IDLE:
+END_STEP
+
+STEP S_CHECK_ALREADY_STARTED:
+END_STEP
+
+STEP CHECK:
+aCheckLockList (N);
+END_STEP
+
+STEP Step21:
+Action38 (N);
+END_STEP
+
+ACTION Action38: #BEGIN_EDIT_BLOCK
+IF sv_TraceLevel.bDeviceState THEN
+   fbDebugTrace(CONCAT('ABControl: movement stopped because of mbStop ', BOOL_TO_STRING(mbStop),
+                       ' OR mpbPosReached^ ', BOOL_TO_STRING(mpbPosReached^),
+                       ' OR abLockList.aCheck.bAbort ', BOOL_TO_STRING(abLockList.aCheck.bAbort)));
+END_IF;
+
+sv_bDeviceReady := TRUE;
+mbDeviceActive := FALSE;
+
+// sending stopped-Message
+evStartedStoppedData.DeviceId := sv_DeviceId;
+evStartedStoppedData.MoveId := g_MoveCtrl.pData^.MoveId;
+evStartedStoppedData.MoveDir := g_MoveCtrl.pData^.MoveDir;
+evStartedStoppedData.State := nStopped;
+SET_EVENT(evStartedStopped,evStartedStoppedData);
+STOP_PROCESS_ALGORITHM();
+
+;#END_EDIT_BLOCK END_ACTION (*Action38*)
+STEP DELAY:
+aGetDelay (P);
+aDelayReady (P0);
+aCheckLockList (N);
+aWriteActDelayTime (N);
+END_STEP
+
+STEP Step22:
+Action381a (P);
+END_STEP
+
+ACTION Action381a: #BEGIN_EDIT_BLOCK
+mbReadyDetected := FALSE;
+START_PROCESS_ALGORITHM(paCheckReady);
+
+;#END_EDIT_BLOCK END_ACTION (*Action381a*)
+STEP START_MOVE:
+aStart (P);
+END_STEP
+
+ACTION aStart: #BEGIN_EDIT_BLOCK
+IF sv_TraceLevel.bDeviceState THEN
+   fbDebugTrace(CONCAT('ABControl: setting sv_bDeviceStart to start ABMovementAdmin for movement ',
+                       DINT_TO_STRING(mpMoveData^.MoveId), '/', DINT_TO_STRING(mpMoveData^.MoveDir)));
+END_IF;
+
+//save last movement time
+aSaveLastActiveTime();
+
+g_MoveCtrl.bStop := FALSE;
+g_MoveCtrl.bReady := FALSE;
+sv_bDeviceStart := TRUE;
+
+;#END_EDIT_BLOCK END_ACTION (*aStart*)
+STEP ACTIVE:
+Action381 (P);
+aCheckLockList (N);
+END_STEP
+
+ACTION Action381: #BEGIN_EDIT_BLOCK
+mbReadyDetected := FALSE;
+mbAlreadyStarted := FALSE;
+START_PROCESS_ALGORITHM(paCheckReady);
+
+;#END_EDIT_BLOCK END_ACTION (*Action381*)
+STEP TO_RESUME:
+aStop (P);
+END_STEP
+
+STEP STOP:
+aStop (P);
+END_STEP
+
+STEP READY:
+END_STEP
+
+
+(* transitions *)
+GO_ON_TRANSITION Trans5 (* Trans5 *) FROM START TO IDLE :=  #BEGIN_EDIT_BLOCK
+TRUE
+;#END_EDIT_BLOCK
+END_TRANSITION
+
+GO_ON_TRANSITION Trans12 (* Trans12 *) FROM IDLE TO S_CHECK_ALREADY_STARTED :=  #BEGIN_EDIT_BLOCK
+(*wait for evStart*)
+TRUE
+;#END_EDIT_BLOCK
+END_TRANSITION
+
+GO_ON_TRANSITION TNotStarted (* Trans34 *) FROM S_CHECK_ALREADY_STARTED TO CHECK :=  #BEGIN_EDIT_BLOCK
+NOT mbAlreadyStarted
+;#END_EDIT_BLOCK
+END_TRANSITION
+
+GO_ON_TRANSITION TAlreadyStarted (* Trans35 *) FROM S_CHECK_ALREADY_STARTED TO ACTIVE :=  #BEGIN_EDIT_BLOCK
+mbAlreadyStarted
+;#END_EDIT_BLOCK
+END_TRANSITION
+
+GO_ON_TRANSITION Trans1 (* Trans1 *) FROM CHECK TO Step21 :=  #BEGIN_EDIT_BLOCK
+mbStop OR
+mpbPosReached^ OR
+abLockList.aCheck.bAbort
+
+;#END_EDIT_BLOCK
+END_TRANSITION
+
+TRANSITION Trans32 (* Trans32 *) FROM Step21 TO READY :=  #BEGIN_EDIT_BLOCK
+TRUE
+;#END_EDIT_BLOCK
+END_TRANSITION
+
+GO_ON_TRANSITION Trans3 (* Trans3 *) FROM CHECK TO DELAY :=  #BEGIN_EDIT_BLOCK
+NOT abLockList.aCheck.bLocked
+;#END_EDIT_BLOCK
+END_TRANSITION
+
+GO_ON_TRANSITION Trans27 (* Trans27 *) FROM DELAY TO START_MOVE :=  #BEGIN_EDIT_BLOCK
+DELAY.T >= dDelay
+;#END_EDIT_BLOCK
+END_TRANSITION
+
+TRANSITION Trans29 (* Trans29 *) FROM DELAY TO Step22 :=  #BEGIN_EDIT_BLOCK
+mbStop OR
+abLockList.aCheck.bAbort
+;#END_EDIT_BLOCK
+END_TRANSITION
+
+TRANSITION Trans33 (* Trans33 *) FROM Step22 TO STOP :=  #BEGIN_EDIT_BLOCK
+TRUE
+;#END_EDIT_BLOCK
+END_TRANSITION
+
+TRANSITION Trans30 (* Trans30 *) FROM DELAY TO CHECK :=  #BEGIN_EDIT_BLOCK
+abLockList.aCheck.bLocked
+;#END_EDIT_BLOCK
+END_TRANSITION
+
+TRANSITION Trans24 (* Trans24 *) FROM START_MOVE TO ACTIVE :=  #BEGIN_EDIT_BLOCK
+TRUE
+;#END_EDIT_BLOCK
+END_TRANSITION
+
+GO_ON_TRANSITION Trans7 (* Trans7 *) FROM ACTIVE TO STOP :=  #BEGIN_EDIT_BLOCK
+(*stopped by evStop*)
+mbStop OR
+(*position reached*)
+mpbPosReached^ OR
+(*locked by nLockAbort*)
+abLockList.aCheck.bAbort
+
+;#END_EDIT_BLOCK
+END_TRANSITION
+
+TRANSITION Trans8 (* Trans8 *) FROM ACTIVE TO TO_RESUME :=  #BEGIN_EDIT_BLOCK
+(*locked by nLockResume*)
+abLockList.aCheck.bLocked
+;#END_EDIT_BLOCK
+END_TRANSITION
+
+TRANSITION Ready (* Trans13 *) FROM TO_RESUME TO CHECK :=  #BEGIN_EDIT_BLOCK
+g_MoveCtrl.bReady
+;#END_EDIT_BLOCK
+END_TRANSITION
+
+GO_ON_TRANSITION Trans22 (* Trans22 *) FROM ACTIVE TO IDLE :=  #BEGIN_EDIT_BLOCK
+(*movement ready*)
+mbReadyDetected
+
+;#END_EDIT_BLOCK
+END_TRANSITION
+
+GO_ON_TRANSITION Trans4 (* Trans4 *) FROM STOP TO READY :=  #BEGIN_EDIT_BLOCK
+mbReadyDetected
+;#END_EDIT_BLOCK
+END_TRANSITION
+
+GO_ON_TRANSITION Trans10 (* Trans10 *) FROM READY TO IDLE :=  #BEGIN_EDIT_BLOCK
+TRUE
+;#END_EDIT_BLOCK
+END_TRANSITION
+
+(* end IecGraph-Code *)
+(* sfc-code *)
+
+(* stand alone actions *)
+ACTION aStop: #BEGIN_EDIT_BLOCK
+IF NOT g_MoveCtrl.bReady THEN
+   // stop movement if its active
+   g_MoveCtrl.bStop := TRUE;
+END_IF;
+
+
+;#END_EDIT_BLOCK END_ACTION (*aStop*)
+ACTION aCheckLockList: #BEGIN_EDIT_BLOCK
+(**************************************** WARNING ********************************************
+ *** The KEBA Kemro K2 System including software is not intended for safety control tasks! ***
+ ***                       For further information see Comment tab!                        ***
+ *********************************************************************************************)
+
+// checking locklist if the actual movement is locked
+abLockList.aCheck(MoveDir := g_MoveCtrl.pData^.MoveDir, MoveId := g_MoveCtrl.pData^.MoveId);
+
+;#END_EDIT_BLOCK END_ACTION (*aCheckLockList*)
+ACTION aGetDelay: #BEGIN_EDIT_BLOCK
+(**************************************** WARNING ********************************************
+ *** The KEBA Kemro K2 System including software is not intended for safety control tasks! ***
+ ***                       For further information see Comment tab!                        ***
+ *********************************************************************************************)
+
+IF CHECK_REF(mpMoveData^.pdStartDelaySet^) AND sv_OperationMode <> nSetup AND sv_OperationMode <> nManual THEN
+   //not always linked
+   dDelay := mpMoveData^.pdStartDelaySet^;
+   bStartDelayLinked := TRUE;
+ELSE
+   dDelay := T#0s;
+   bStartDelayLinked := FALSE;
+END_IF;
+IF CHECK_REF(mpMoveData^.pbStartDelayActive^) AND dDelay > T#0s THEN
+   //setting active-flag
+   mpMoveData^.pbStartDelayActive^ := TRUE;
+END_IF;
+
+bActDelayLinked := CHECK_REF(mpMoveData^.pdStartDelayAct^);
+
+;#END_EDIT_BLOCK END_ACTION (*aGetDelay*)
+ACTION aDelayReady: #BEGIN_EDIT_BLOCK
+(**************************************** WARNING ********************************************
+ *** The KEBA Kemro K2 System including software is not intended for safety control tasks! ***
+ ***                       For further information see Comment tab!                        ***
+ *********************************************************************************************)
+
+IF CHECK_REF(mpMoveData^.pbStartDelayActive^) THEN
+   //resetting active-flag
+   mpMoveData^.pbStartDelayActive^ := FALSE;
+END_IF;
+
+
+;#END_EDIT_BLOCK END_ACTION (*aDelayReady*)
+ACTION aWriteActDelayTime: #BEGIN_EDIT_BLOCK
+(**************************************** WARNING ********************************************
+ *** The KEBA Kemro K2 System including software is not intended for safety control tasks! ***
+ ***                       For further information see Comment tab!                        ***
+ *********************************************************************************************)
+
+IF bStartDelayLinked AND bActDelayLinked THEN
+    mpMoveData^.pdStartDelayAct^ := DELAY.T;
+END_IF;
+
+;#END_EDIT_BLOCK END_ACTION (*aWriteActDelayTime*)
+(* end sfc-code *)
+
+
+END_ALGORITHM
+
+(*
+This Algo receives the evStart event, checks the startconditions and starts paMoveControl.
+
+*)
+
+EVENT_ALGORITHM evaStart ON EV_Task_3 WITH evStart
+
+
+VAR_INPUT
+ evStartData : tevStartData;
+END_VAR
+
+VAR
+ fbGetMovementData : FBGetMovementData;
+ pbActivated : REFTO BOOL;
+ pTmpMoveData : REFTO tsMoveData;
+ evStartedStoppedData : tevStartedStoppedData;
+ dummy : DINT;
+ bMoveDelay : BOOL (* TRUE: movement delay is necessary *);
+END_VAR
+#BEGIN_EDIT_BLOCK
+(**************************************** WARNING ********************************************
+ *** The KEBA Kemro K2 System including software is not intended for safety control tasks! ***
+ ***                       For further information see Comment tab!                        ***
+ *********************************************************************************************)
+
+IF evStartData.DeviceId.CompId = sv_DeviceId.CompId AND
+   evStartData.DeviceId.IndexId = sv_DeviceId.IndexId  THEN
+   
+   IF sv_bInitDone THEN   
+       
+      IF CHECK_REF(evStartData.pMovementData^) THEN
+         //ref may not be linked if evStart is sent by customer engineer
+         pTmpMoveData := evStartData.pMovementData; 
+      ELSE
+         //getting sv_MoveXxx from sv_Movements
+         fbGetMovementData(MoveDir := evStartData.MoveDir, MoveId := evStartData.MoveId);
+         IF fbGetMovementData.bFound THEN
+            pTmpMoveData:= fbGetMovementData.pMoveData; 
+         ELSE
+            // movement does not exist
+            SET_ALARM(Name := erMovementNotAvailable,
+                      SubID1 := sv_DeviceId.CompId,
+                      SubID2 := sv_DeviceId.IndexId,
+                      SubID3 := evStartData.MoveId,
+                      SubID4 := evStartData.MoveDir);
+            RETURN;
+         END_IF;
+      END_IF;
+      
+      IF sv_TraceLevel.bDeviceState THEN
+         fbDebugTrace(CONCAT('ABControl: evStart received ',
+                             DINT_TO_STRING(pTmpMoveData^.MoveId), '/', DINT_TO_STRING(pTmpMoveData^.MoveDir)));
+      END_IF;
+      
+      IF pTmpMoveData^.bIgnoreByABControl THEN
+         //start event for this movement should be ignored by ABControl
+         IF sv_TraceLevel.bDeviceState THEN
+            fbDebugTrace('ABControl: bIgnoreByABControl TRUE -> not starting movement');
+         END_IF;
+         RETURN;
+      END_IF;
+                   
+     // RETURN and ignore start event if movement has linked activated flag and flag is false
+     // -> movement does not want to start
+     pbActivated := pTmpMoveData^.pbActivated;
+      IF (CHECK_REF(pbActivated^) AND (pbActivated^ = FALSE)) THEN
+         // movement was not started because it is deactivated
+         IF sv_TraceLevel.bDeviceState THEN
+            fbDebugTrace('ABControl: pbActivated^ FALSE -> not starting movement');
+         END_IF;
+
+         evStartedStoppedData.DeviceId := sv_DeviceId;
+         evStartedStoppedData.MoveId := pTmpMoveData^.MoveId;
+         evStartedStoppedData.MoveDir := pTmpMoveData^.MoveDir;
+         evStartedStoppedData.State := nStartNotAllowed;
+         SET_EVENT(evStartedStopped, evStartedStoppedData);
+         RETURN;
+      END_IF;
+       
+      IF NOT mbDeviceActive THEN
+         
+         IF CHECK_REF(evStartData.pbPosReached^) THEN
+            mpbPosReached := evStartData.pbPosReached;
+         ELSE
+            mpbPosReached := @sv_bFALSE;
+         END_IF;
+         
+         mpMoveData := pTmpMoveData;
+         g_MoveCtrl.pData := mpMoveData;
+         g_MoveCtrl.iCount := evStartData.IntermediateCond;
+          
+         abLockList.aCheck(MoveDir := g_MoveCtrl.pData^.MoveDir, MoveId := g_MoveCtrl.pData^.MoveId);
+         IF NOT abLockList.aCheck.bAbort THEN
+            //start paMoveControl if movement isn't locked by "nLockAbort"
+            IF sv_TraceLevel.bDeviceState THEN
+               fbDebugTrace('ABControl: all checks OK -> starting movement');
+            END_IF;
+            sv_bDeviceReady := FALSE;
+            mbDeviceActive := TRUE;
+            mbStop := FALSE;
+            
+            bMoveDelay := TRUE;
+            IF (sv_OperationMode < nHalfAutomatic) OR (NOT CHECK_REF(mpMoveData^.pdStartDelaySet^)) THEN
+               bMoveDelay := FALSE;
+            ELSIF (CHECK_REF(mpMoveData^.pdStartDelaySet^) AND (mpMoveData^.pdStartDelaySet^ = t#0s)) THEN
+               bMoveDelay := FALSE;               
+            END_IF;
+            
+            IF (NOT abLockList.aCheck.bLocked) AND (NOT bMoveDelay) THEN                                              
+               //movement is not locked and no delaytime should be executed
+               IF sv_TraceLevel.bDeviceState THEN
+                  fbDebugTrace('ABControl - evaStart: set sv_bDeviceStart');
+               END_IF;
+               
+               //save last movement time
+               aSaveLastActiveTime();
+               
+               g_MoveCtrl.bStop := FALSE;
+               g_MoveCtrl.bReady := FALSE;
+               mbAlreadyStarted := TRUE;
+               sv_bDeviceStart := TRUE;
+            ELSE
+               mbAlreadyStarted := FALSE;
+            END_IF;
+            
+            // sending started-Message
+            evStartedStoppedData.DeviceId := sv_DeviceId;
+            evStartedStoppedData.MoveId := g_MoveCtrl.pData^.MoveId;
+            evStartedStoppedData.MoveDir := g_MoveCtrl.pData^.MoveDir;
+            evStartedStoppedData.State := nStarted;
+            SET_EVENT(evStartedStopped,evStartedStoppedData);
+
+            START_PROCESS_ALGORITHM(paMoveControl);
+         ELSE
+            IF sv_TraceLevel.bDeviceState THEN
+               fbDebugTrace('ABControl: device is locked by at least 1 alarm with bAbort TRUE -> not starting movement');
+            END_IF;
+            // movement was not started because it is locked
+            evStartedStoppedData.DeviceId := sv_DeviceId;
+            evStartedStoppedData.MoveId := g_MoveCtrl.pData^.MoveId;
+            evStartedStoppedData.MoveDir := g_MoveCtrl.pData^.MoveDir;
+            evStartedStoppedData.State := nStartNotAllowed;
+            SET_EVENT(evStartedStopped, evStartedStoppedData);
+         END_IF;
+      ELSE
+         // Device already active
+         IF sv_TraceLevel.bDeviceState THEN
+            fbDebugTrace('ABControl: Device already active -> not starting movement');
+         END_IF;
+         
+         dummy := Print('set alarm erDeviceActive in ABControl.pu');
+         dummy := Print('active movement:     %d.%d %d/%d',
+                  sv_DeviceId.CompId, sv_DeviceId.IndexId,
+                  mpMoveData^.MoveId, mpMoveData^.MoveDir); 
+         dummy := Print('tried to start:      %d.%d %d/%d',
+                  sv_DeviceId.CompId, sv_DeviceId.IndexId,
+                  pTmpMoveData^.MoveId, pTmpMoveData^.MoveDir);
+         
+         SET_ALARM(Name := erDeviceActive,
+                   SubID1 :=sv_DeviceId.CompId,
+                   SubID2 := sv_DeviceId.IndexId);
+         
+         // movement was not started because device is alread active
+         evStartedStoppedData.DeviceId := sv_DeviceId;
+         evStartedStoppedData.MoveId := pTmpMoveData^.MoveId;
+         evStartedStoppedData.MoveDir := pTmpMoveData^.MoveDir;
+         evStartedStoppedData.State := nStartNotAllowed;
+         SET_EVENT(evStartedStopped, evStartedStoppedData);
+         
+      END_IF;
+   ELSE
+      // it was tried to start the device during initialisation
+      SET_ALARM(Name := erInitNotReady,
+                SubID1 := sv_DeviceId.CompId,
+                SubID2 := sv_DeviceId.IndexId);
+   END_IF;   
+END_IF;
+                                       
+
+
+;#END_EDIT_BLOCK END_ALGORITHM
+
+(*
+Receives the stopevent and signalls paMoveControl to stop the running movement.
+*)
+
+EVENT_ALGORITHM evaStop ON EV_Task_3 WITH evStop
+
+
+VAR_INPUT
+ evStopData : tevStopData;
+END_VAR
+#BEGIN_EDIT_BLOCK
+(**************************************** WARNING ********************************************
+ *** The KEBA Kemro K2 System including software is not intended for safety control tasks! ***
+ ***                       For further information see Comment tab!                        ***
+ *********************************************************************************************)
+
+IF evStopData.DeviceId = sv_DeviceId THEN
+   
+   IF sv_TraceLevel.bDeviceState THEN
+      fbDebugTrace('ABControl : evStop received');
+   END_IF;
+
+   //stopping movement
+   mbStop := TRUE;
+END_IF;
+
+
+;#END_EDIT_BLOCK END_ALGORITHM
+
+(*
+Receives the lockevent and makes an entry into the locklist.
+*)
+
+EVENT_ALGORITHM evaLockUnlock ON EV_Task_3 WITH evLockUnlock
+
+
+VAR_INPUT
+ evLockUnlockData : tevLockUnlockData;
+END_VAR
+
+VAR
+ fbGetMovementData : FBGetMovementData;
+END_VAR
+#BEGIN_EDIT_BLOCK
+(**************************************** WARNING ********************************************
+ *** The KEBA Kemro K2 System including software is not intended for safety control tasks! ***
+ ***                       For further information see Comment tab!                        ***
+ *********************************************************************************************)
+
+IF sv_NumberOfMovements = 0 THEN
+   // no movement registered
+   RETURN;
+END_IF;
+
+
+ IF (evLockUnlockData.DeviceId.CompId = sv_DeviceId.CompId   OR evLockUnlockData.DeviceId.CompId =  cCompAll    ) AND
+    (evLockUnlockData.DeviceId.IndexId = sv_DeviceId.IndexId OR evLockUnlockData.DeviceId.IndexId = cAllDevIndex) THEN
+   
+    //checking if the movement exists which should be locked/unlocked
+    fbGetMovementData(MoveDir := evLockUnlockData.MoveDir, MoveId := evLockUnlockData.MoveId);
+   
+    IF fbGetMovementData.bFound THEN
+       
+      IF evLockUnlockData.Mode = nUnlock THEN
+         // UNLOCK Movement
+         abLockList.aRemove.Entry.DeviceIdSender := evLockUnlockData.DeviceIdSender;
+         abLockList.aRemove.Entry.MoveDir        := evLockUnlockData.MoveDir;
+         abLockList.aRemove.Entry.MoveId         := evLockUnlockData.MoveId;
+         abLockList.aRemove.Entry.Alarm          := evLockUnlockData.Alarm; 
+         // remove movement from locklist
+         abLockList.aRemove();
+          
+         IF sv_TraceLevel.bLockUnlock THEN
+            fbDebugTrace(CONCAT("movement ",
+                                DINT_TO_STRING(evLockUnlockData.MoveDir), '/', DINT_TO_STRING(evLockUnlockData.MoveId),
+                                ' unlocked by Device: ',
+                                DINT_TO_STRING(evLockUnlockData.DeviceIdSender.CompId), '.', DINT_TO_STRING(evLockUnlockData.DeviceIdSender.IndexId),
+                                ' alarm ', GET_ALARM_NAME(evLockUnlockData.Alarm.AlarmId)));
+         END_IF;
+      ELSE
+         // LOCK Movement
+         abLockList.aAdd.Entry.DeviceIdSender   := evLockUnlockData.DeviceIdSender;
+         abLockList.aAdd.Entry.MoveDir          := evLockUnlockData.MoveDir;
+         abLockList.aAdd.Entry.MoveId           := evLockUnlockData.MoveId;
+         abLockList.aAdd.Entry.Alarm            := evLockUnlockData.Alarm;
+         abLockList.aAdd.bDisable               := FALSE;
+         
+         IF evLockUnlockData.Mode = nLockResume THEN
+         
+            abLockList.aAdd.Entry.bStopDevice := FALSE;
+            
+         ELSIF evLockUnlockData.Mode = nLockAbort THEN
+            
+            abLockList.aAdd.Entry.bStopDevice := TRUE;
+         END_IF;
+         
+         abLockList.aAdd.bSetAlarmImmediately := evLockUnlockData.bSetAlarmImmediately;
+         
+         // add movement to locklist
+         abLockList.aAdd();
+          
+         IF sv_TraceLevel.bLockUnlock THEN
+            fbDebugTrace(CONCAT("movement ",
+                                DINT_TO_STRING(evLockUnlockData.MoveDir), '/', DINT_TO_STRING(evLockUnlockData.MoveId),
+                                ' locked   by Device: ',
+                                DINT_TO_STRING(evLockUnlockData.DeviceIdSender.CompId), '.', DINT_TO_STRING(evLockUnlockData.DeviceIdSender.IndexId),
+                                ' alarm ', GET_ALARM_NAME(evLockUnlockData.Alarm.AlarmId)));
+         END_IF;
+      END_IF;
+   ELSE
+      //movement doesn't exist
+      SET_ALARM(Name := erMovementNotAvailable,
+               SubID1 := sv_DeviceId.CompId,
+               SubID2 := sv_DeviceId.IndexId,
+               SubID3 := evLockUnlockData.MoveId,
+               SubID4 := evLockUnlockData.MoveDir);
+   END_IF;       
+END_IF;
+
+
+;#END_EDIT_BLOCK END_ALGORITHM
+
+(*
+Receives the group-lockevent, checks if the running movement is member of the group that should be locked and 
+makes an entry into the locklist.
+*)
+
+EVENT_ALGORITHM evaLockUnlockGroup ON EV_Task_3 WITH evLockUnlockGroup
+
+
+VAR_INPUT
+ evLockUnlockGroupData : tevLockUnlockGroupData;
+END_VAR
+
+VAR_TEMP
+ i : DINT;
+ ii : DINT;
+END_VAR
+#BEGIN_EDIT_BLOCK
+(**************************************** WARNING ********************************************
+ *** The KEBA Kemro K2 System including software is not intended for safety control tasks! ***
+ ***                       For further information see Comment tab!                        ***
+ *********************************************************************************************)
+
+//checking all movements if they are member of the group that should be locked
+FOR i := 1 TO sv_NumberOfMovements DO
+   FOR ii := 1 TO cMaxGroupLocks DO        
+      IF sv_Movements[i]^.LockGroups[ii] = evLockUnlockGroupData.Group THEN
+      
+         IF evLockUnlockGroupData.Mode = nUnlock THEN
+            // UNLOCK Movement
+            abLockList.aRemove.Entry.DeviceIdSender := evLockUnlockGroupData.DeviceIdSender; 
+            abLockList.aRemove.Entry.MoveDir        := sv_Movements[i]^.MoveDir;
+            abLockList.aRemove.Entry.MoveId         := sv_Movements[i]^.MoveId;
+            abLockList.aRemove.Entry.Alarm          := evLockUnlockGroupData.Alarm;
+            // remove movement from locklist
+            abLockList.aRemove();
+             
+            IF sv_TraceLevel.bLockUnlock THEN
+                fbDebugTrace(CONCAT("movement ",
+                                    DINT_TO_STRING(sv_Movements[i]^.MoveDir), '/', DINT_TO_STRING(sv_Movements[i]^.MoveId),
+                                    ' unlocked (group) by Device: ',
+                                    DINT_TO_STRING(evLockUnlockGroupData.DeviceIdSender.CompId), '.', DINT_TO_STRING(evLockUnlockGroupData.DeviceIdSender.IndexId),
+                                    ' group ', DINT_TO_STRING(evLockUnlockGroupData.Group),
+                                    ' alarm ', GET_ALARM_NAME(evLockUnlockGroupData.Alarm.AlarmId)));
+            END_IF;
+         ELSE
+            // LOCK Movement
+            abLockList.aAdd.Entry.DeviceIdSender   := evLockUnlockGroupData.DeviceIdSender; 
+            abLockList.aAdd.Entry.MoveDir          := sv_Movements[i]^.MoveDir;
+            abLockList.aAdd.Entry.MoveId           := sv_Movements[i]^.MoveId;
+            abLockList.aAdd.Entry.Alarm            := evLockUnlockGroupData.Alarm;
+            abLockList.aAdd.bDisable               := mDisabledLockGroups[i][ii];
+            
+            IF evLockUnlockGroupData.Mode = nLockResume THEN
+            
+               abLockList.aAdd.Entry.bStopDevice := FALSE;
+               
+            ELSIF evLockUnlockGroupData.Mode = nLockAbort THEN
+               
+               abLockList.aAdd.Entry.bStopDevice := TRUE;
+            END_IF;
+            
+            abLockList.aAdd.bSetAlarmImmediately := evLockUnlockGroupData.bSetAlarmImmediately;
+            
+            // add movement to locklist
+            abLockList.aAdd();
+             
+            IF sv_TraceLevel.bLockUnlock THEN
+                fbDebugTrace(CONCAT("movement ",
+                                    DINT_TO_STRING(sv_Movements[i]^.MoveDir), '/', DINT_TO_STRING(sv_Movements[i]^.MoveId),
+                                    ' locked   (group) by Device: ',
+                                    DINT_TO_STRING(evLockUnlockGroupData.DeviceIdSender.CompId), '.', DINT_TO_STRING(evLockUnlockGroupData.DeviceIdSender.IndexId),
+                                    ' group ', DINT_TO_STRING(evLockUnlockGroupData.Group),
+                                    ' alarm ', GET_ALARM_NAME(evLockUnlockGroupData.Alarm.AlarmId)));
+            END_IF;
+         END_IF;
+             
+         EXIT;  //matching lockgroup found -> EXIT loop and check next movement
+               
+      END_IF;      
+   END_FOR;      
+END_FOR;
+
+
+
+
+;#END_EDIT_BLOCK END_ALGORITHM
+
+PROCESS_ALGORITHM paCheckReady ON TaskAnalog(4294967295)
+
+
+VAR
+ evStartedStoppedData : tevStartedStoppedData;
+END_VAR
+#BEGIN_EDIT_BLOCK
+(**************************************** WARNING ********************************************
+ *** The KEBA Kemro K2 System including software is not intended for safety control tasks! ***
+ ***                       For further information see Comment tab!                        ***
+ *********************************************************************************************)
+
+IF abLockList.aCheck.bLocked AND NOT abLockList.aCheck.bAbort THEN
+   //movement resumed -> stop algo and don´t set ready flag!
+   STOP_PROCESS_ALGORITHM();
+ELSE
+   IF g_MoveCtrl.bReady THEN
+      STOP_PROCESS_ALGORITHM(paMoveControl);
+      sv_bDeviceReady := TRUE;
+      mbDeviceActive := FALSE;
+      mbReadyDetected := TRUE;
+      
+      // sending stopped-Message
+      evStartedStoppedData.DeviceId := sv_DeviceId;
+      evStartedStoppedData.MoveId := g_MoveCtrl.pData^.MoveId;
+      evStartedStoppedData.MoveDir := g_MoveCtrl.pData^.MoveDir;
+      evStartedStoppedData.State := nStopped;
+      SET_EVENT(evStartedStopped,evStartedStoppedData);
+      STOP_PROCESS_ALGORITHM();
+   END_IF;  
+END_IF;
+
+
+;#END_EDIT_BLOCK END_ALGORITHM
+
+(*
+This Algo receives the evCheckLocklist event,
+checks the startconditions for the movement and outputs alarms if it is not allowed.
+The movement itself is not started.
+*)
+
+EVENT_ALGORITHM evaCheckLocklist ON EV_Task_3 WITH evCheckLocklist
+
+
+VAR_INPUT
+ evCheckLocklistData : tevCheckLocklistData;
+END_VAR
+
+VAR_TEMP
+ pMoveData : REFTO tsMoveData;
+END_VAR
+
+VAR
+ fbGetMovementData : FBGetMovementData;
+END_VAR
+#BEGIN_EDIT_BLOCK
+(**************************************** WARNING ********************************************
+ *** The KEBA Kemro K2 System including software is not intended for safety control tasks! ***
+ ***                       For further information see Comment tab!                        ***
+ *********************************************************************************************)
+
+IF evCheckLocklistData.DeviceId.CompId = sv_DeviceId.CompId AND
+   evCheckLocklistData.DeviceId.IndexId = sv_DeviceId.IndexId  THEN
+   
+   IF sv_TraceLevel.bDeviceState THEN
+      fbDebugTrace(sText := 'ABControl: evCheckLocklist received');
+   END_IF;
+   
+   IF sv_bInitDone THEN   
+         IF CHECK_REF(evCheckLocklistData.pMovementData^) THEN
+            //ref may not be linked if evStart is sent by customer engineer
+            pMoveData := evCheckLocklistData.pMovementData; 
+         ELSE
+            //getting sv_MoveXxx from sv_Movements
+            fbGetMovementData(MoveDir := evCheckLocklistData.MoveDir, MoveId := evCheckLocklistData.MoveId);
+            IF fbGetMovementData.bFound THEN
+               pMoveData:= fbGetMovementData.pMoveData; 
+            ELSE
+               // movement does not exist
+               SET_ALARM(Name := erMovementNotAvailable,
+                        SubID1 := sv_DeviceId.CompId,
+                        SubID2 := sv_DeviceId.IndexId,
+                        SubID3 := evCheckLocklistData.MoveId,
+                        SubID4 := evCheckLocklistData.MoveDir);
+               RETURN;
+            END_IF;
+         END_IF;
+        
+         // only check the locklist if the movement is allowed, to not try to start the movement
+         // this is neeeded to display ALL alarms in case when a movement is not allowed
+         // by safety checks
+         abLockList.aCheck(MoveDir := pMoveData^.MoveDir, MoveId := pMoveData^.MoveId);
+   ELSE
+      // it was tried to start the device during initialisation
+      SET_ALARM(Name := erInitNotReady,
+               SubID1 :=sv_DeviceId.CompId,
+               SubID2 := sv_DeviceId.IndexId);
+   END_IF;   
+END_IF;
+                                       
+
+
+;#END_EDIT_BLOCK END_ALGORITHM
+
+(*
+receives evLockGroupEnableDisable event and updates locklist
+if a registered movement of this function unit is a member of the
+specified lockgroup
+*)
+
+EVENT_ALGORITHM evaEnableDisableLockGroup ON EV_Task_3 WITH evLockGroupEnableDisable
+
+
+VAR_INPUT
+ evLockGroupEnableDisableData : tevLockGroupEnableDisableData;
+END_VAR
+
+VAR_TEMP
+ i : DINT;
+ j : DINT;
+END_VAR
+
+VAR
+ sMode : STRING(20);
+END_VAR
+#BEGIN_EDIT_BLOCK
+(**************************************** WARNING ********************************************
+ *** The KEBA Kemro K2 System including software is not intended for safety control tasks! ***
+ ***                       For further information see Comment tab!                        ***
+ *********************************************************************************************)
+
+IF (evLockGroupEnableDisableData.DeviceIdReceiver.CompId = sv_DeviceId.CompId OR evLockGroupEnableDisableData.DeviceIdReceiver.CompId = cCompAll) AND
+   (evLockGroupEnableDisableData.DeviceIdReceiver.IndexId = sv_DeviceId.IndexId OR evLockGroupEnableDisableData.DeviceIdReceiver.IndexId = cAllDevIndex) THEN
+
+   //check all registered movements if the sent MoveDir and MoveId are equal
+   FOR i := 1 TO sv_NumberOfMovements DO
+      
+      IF ((sv_Movements[i]^.MoveDir = evLockGroupEnableDisableData.MoveDir) OR (evLockGroupEnableDisableData.MoveDir = cMoveAll)) AND
+         ((sv_Movements[i]^.MoveId = evLockGroupEnableDisableData.MoveId) OR (evLockGroupEnableDisableData.MoveId = cMoveAll)) THEN
+      
+         //check if this movement is a member of the sent lockgroup
+         FOR j := 1 TO cMaxGroupLocks DO
+            
+            IF sv_Movements[i]^.LockGroups[j] = evLockGroupEnableDisableData.LockGroup THEN                
+               IF evLockGroupEnableDisableData.Mode = nLockGroupDisable THEN         
+                  mDisabledLockGroups[i][j] := TRUE;                                
+               ELSE
+                  mDisabledLockGroups[i][j] := FALSE;
+               END_IF;
+               
+               IF sv_TraceLevel.bLockUnlock THEN
+                  IF mDisabledLockGroups[i][j] THEN
+                     sMode := ' disabled';    
+                  ELSE
+                     sMode := ' enabled';
+                  END_IF;
+                  
+                  fbDebugTrace(CONCAT('lockgroup ', DINT_TO_STRING(evLockGroupEnableDisableData.LockGroup), ' of movement ',
+                        DINT_TO_STRING(sv_Movements[i]^.MoveDir), '/', DINT_TO_STRING(sv_Movements[i]^.MoveId),
+                        sMode, ' by Device ', DINT_TO_STRING(evLockGroupEnableDisableData.DeviceIdSender.CompId),
+                        '.', DINT_TO_STRING(evLockGroupEnableDisableData.DeviceIdSender.IndexId)));
+               END_IF;
+               
+               //update locklist
+               abLockList.aUpdateLockDisable.Entry.DeviceIdSender := evLockGroupEnableDisableData.DeviceIdSender;
+               abLockList.aUpdateLockDisable.Entry.MoveDir := sv_Movements[i]^.MoveDir;
+               abLockList.aUpdateLockDisable.Entry.MoveId := sv_Movements[i]^.MoveId;
+               abLockList.aUpdateLockDisable.Entry.Alarm := evLockGroupEnableDisableData.Alarm;
+               abLockList.aUpdateLockDisable.bDisable := mDisabledLockGroups[i][j];
+               abLockList.aUpdateLockDisable();            
+               EXIT;
+            END_IF;
+            
+         END_FOR;  //end_for check lockgroups of the movement
+      END_IF;  //end_if MoveDir and MoveId fit to event data   
+   END_FOR; //end_for check all movements
+
+END_IF;
+
+
+
+
+
+
+;#END_EDIT_BLOCK END_ALGORITHM
+
+
+
+END_ALGORITHM_BLOCK
+
+
+
+#END_OF_IEC_PART
+
+@Puma @IecEditor 6 97 @Pou 25 
+@@@BEG_Comment@@@
+@h    ! WARNING !
+@h    The Kemro K2 system (including software) only meets category B according to EN 954-1,
+@h    thus it is not intended for usage in safety-relevant control applications in the field 
+@h    of personal safety (e.g. emergency stop).
+@h    To implement potentially necessary safety-relevant control tasks, always use additional 
+@h    external safety devices that are intended for the particular purpose, and meet the necessary 
+@h    functional safety.
+@h    For further information see EN 954-1 (EN ISO 13849-1) and/or the K2-x00 user manual, chapter 
+@h    "CE conformity, directives and standards".
+
+This main Movement-Control Algorithm-Block is instanced in each FU that provides machine-movements
+and is responsible for starting and stopping a movement.
+- Receiving the evStart event
+- checking LockList if Movement is locked
+- Movement Delay
+- sending state-event evStartedStopped
+- Starting ABMovementAdmin
+- Receiving the evStop event
+- Receiving the evCheckLocklist event
+- Receiving the evLockGroupEnableDisable event
+@@@END_Comment@@@
+
+@BEG_Contents 
+
+@BEG_Func 
+@RT(17)FuncTreeContainer 
+3 
+@Var @RT(9)SET_ALARM @RT(0) @T @T @DERIVED 0 @F @RT(23)KEBA_STANDARD_PROCEDURE @F 
+@T 
+@BEG_Attrib 
+0 @RT(0) @RT(0) 
+@END_Attrib 
+1 1 @F @F @F @F 
+
+@Var @RT(9)SET_EVENT @RT(0) @T @T @DERIVED 0 @F @RT(23)KEBA_STANDARD_PROCEDURE @F 
+@T 
+@BEG_Attrib 
+0 @RT(0) @RT(0) 
+@END_Attrib 
+1 1 @F @F @F @F 
+
+@Var @RT(9)CHECK_REF @RT(0) @T @T @DERIVED 0 @F @RT(23)KEBA_STANDARD_PROCEDURE @F 
+@T 
+@BEG_Attrib 
+0 @RT(0) @RT(0) 
+@END_Attrib 
+1 1 @F @F @F @F 
+
+@END_Func 
+
+@BEG_Const 
+@RT(18)ConstTreeContainer 
+5 
+@Var @RT(8)cCompAll @RT(0) @T @F @DT @RT(4)DINT @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+0 @RT(10)cMaxCompId @RT(22)to lock all components 
+@END_Attrib 
+1 1 @F @F @F @F 
+
+@Var @RT(12)cAllDevIndex @RT(0) @T @F @DT @RT(4)DINT @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+0 @RT(2)11 @RT(59)to lock all devices of a component ( = cMaxDeviceIndex + 1) 
+@END_Attrib 
+1 1 @F @F @F @F 
+
+@Var @RT(14)cMaxGroupLocks @RT(0) @T @F @DT @RT(4)DINT @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+0 @RT(2)10 @RT(47)maximum number of group-membership per movement 
+@END_Attrib 
+1 1 @F @F @F @F 
+
+@Var @RT(19)cMaxDeviceMovements @RT(0) @T @F @DT @RT(4)DINT @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+0 @RT(2)20 @RT(34)max number of movements per device 
+@END_Attrib 
+1 1 @F @F @F @F 
+
+@Var @RT(14)cLockGroupNone @RT(0) @T @F @DT @RT(4)DINT @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+0 @RT(2)60 @RT(13)Members: None 
+@END_Attrib 
+1 1 @F @F @F @F 
+
+@END_Const 
+
+@BEG_Export 
+
+@BEG_Kind 
+@ALGORITHM_BLOCK @RT(9)ABControl @STRUCTURED_TEXT 
+@RT(0) @RT(0) @RT(0) 
+@END_Kind 
+
+@BEG_Dcl 
+@RT(16)DclTreeContainer 
+31 
+@Var @RT(10)g_MoveCtrl @RT(0) @T @T @DERIVED 0 @T @T @DT @RT(10)tsMoveCtrl @RT(0) @T @T @UNKNOWN 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 6 @F @F @F @F 
+
+@Var @RT(12)sv_Movements @RT(0) @T @T @DERIVED 0 @T @T @DT @RT(15)tyMoveDataArray @RT(0) @T @T @UNKNOWN 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 8 @F @F @F @F 
+
+@Var @RT(20)sv_NumberOfMovements @RT(0) @T @F @DT @RT(4)DINT @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 8 @F @F @F @F 
+
+@Var @RT(10)TaskAnalog @RT(0) @T @T @RENAMED 0 @T @T @DT @RT(4)TASK @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 7 @F @F @F @F 
+
+@Var @RT(14)erDeviceActive @RT(0) @T @F @DT @RT(5)ALARM @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 7 @F @F @F @F 
+
+@Var @RT(15)sv_bDeviceReady @RT(0) @T @F @DT @RT(4)BOOL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 8 @F @F @F @F 
+
+@Var @RT(15)sv_bDeviceStart @RT(0) @T @F @DT @RT(4)BOOL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(12)Start Device @RT(0) 
+@END_Attrib 
+1 8 @F @F @F @F 
+
+@Var @RT(9)sv_bFALSE @RT(0) @T @F @DT @RT(4)BOOL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(43)always false, used to set a reference false @RT(0) 
+@END_Attrib 
+1 8 @F @F @F @F 
+
+@Var @RT(6)evStop @RT(0) @T @T @DERIVED 0 @T @T @DT @RT(7)tevStop @RT(0) @T @T @UNKNOWN 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 7 @F @F @F @F 
+
+@Var @RT(7)evStart @RT(0) @T @T @DERIVED 0 @T @T @DT @RT(8)tevStart @RT(0) @T @T @UNKNOWN 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 7 @F @F @F @F 
+
+@Var @RT(12)evLockUnlock @RT(0) @T @T @DERIVED 0 @T @T @DT @RT(13)tevLockUnlock @RT(0) @T @T @UNKNOWN 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 7 @F @F @F @F 
+
+@Var @RT(17)evLockUnlockGroup @RT(0) @T @T @DERIVED 0 @T @T @DT @RT(18)tevLockUnlockGroup @RT(0) @T @T @UNKNOWN 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 7 @F @F @F @F 
+
+@Var @RT(16)evStartedStopped @RT(0) @T @T @DERIVED 0 @T @T @DT @RT(17)tevStartedStopped @RT(0) @T @T @UNKNOWN 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 7 @F @F @F @F 
+
+@Var @RT(6)mbStop @RT(0) @T @F @DT @RT(4)BOOL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(14)mbDeviceActive @RT(0) @T @F @DT @RT(4)BOOL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(13)mpbPosReached @RT(0) @T @T @REFTO 0 @T @DT @RT(4)BOOL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(10)mpMoveData @RT(0) @T @T @REFTO 0 @F @DERIVED 0 @T @T @DT @RT(10)tsMoveData @RT(0) @T @T @UNKNOWN 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(11)sv_DeviceId @RT(0) @T @T @DERIVED 0 @T @T @DT @RT(10)tsDeviceId @RT(0) @T @T @UNKNOWN 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 8 @F @F @F @F 
+
+@Var @RT(9)EV_Task_3 @RT(0) @T @T @RENAMED 0 @T @T @DT @RT(4)TASK @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 7 @F @F @F @F 
+
+@Var @RT(10)abLockList @RT(0) @T @T @DERIVED 0 @T @T @DT @RT(10)ABLockList @RT(0) @T @T @UNKNOWN 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(12)fbDebugTrace @RT(0) @T @T @DERIVED 0 @T @T @DT @RT(12)FBDebugTrace @RT(0) @T @T @UNKNOWN 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(13)sv_TraceLevel @RT(0) @T @T @DERIVED 0 @F @RT(12)tsTraceLevel @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 8 @F @F @F @F 
+
+@Var @RT(15)evCheckLocklist @RT(0) @T @T @DERIVED 0 @T @T @DT @RT(16)tevCheckLocklist @RT(0) @T @T @UNKNOWN 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 7 @F @F @F @F 
+
+@Var @RT(22)erMovementNotAvailable @RT(0) @T @F @DT @RT(5)ALARM @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 7 @F @F @F @F 
+
+@Var @RT(14)erInitNotReady @RT(0) @T @F @DT @RT(5)ALARM @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 7 @F @F @F @F 
+
+@Var @RT(12)sv_bInitDone @RT(0) @T @F @DT @RT(4)BOOL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 8 @F @F @F @F 
+
+@Var @RT(16)sv_OperationMode @RT(0) @T @T @DERIVED 0 @T @T @DT @RT(15)tnOperationMode @RT(0) @T @T @UNKNOWN 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 8 @F @F @F @F 
+
+@Var @RT(24)evLockGroupEnableDisable @RT(0) @T @T @DERIVED 0 @T @T @DT @RT(25)tevLockGroupEnableDisable @RT(0) @T @T @UNKNOWN 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 7 @F @F @F @F 
+
+@Var @RT(19)mDisabledLockGroups @RT(0) @T @T @DERIVED 0 @T @T @DT @RT(20)tyDisabledLockGroups @RT(0) @T @T @UNKNOWN 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(64)array that contains which lockgroups of every sv_Move is ignored @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(15)mbReadyDetected @RT(0) @T @F @DT @RT(4)BOOL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(119)synchronise paMoveControl and paCheckReady because the active movement can be executed in a faster task than TaskAnalog @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(16)mbAlreadyStarted @RT(0) @T @F @DT @RT(4)BOOL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(49)TRUE: sv_bDeviceStart was already set in evaStart @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@END_Dcl 
+
+@END_Export 
+
+@BEG_Body 
+
+9 
+
+@BEG_Export 
+
+@BEG_Algo 
+@ALGORITHM @RT(19)aSaveLastActiveTime @STRUCTURED_TEXT 
+@RT(0) @RT(0) @RT(0) @F @F 
+@END_Algo 
+
+@BEG_Dcl 
+@RT(16)DclTreeContainer 
+2 
+@Var @RT(1)b @RT(0) @T @F @DT @RT(4)BOOL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(9)iInstance @RT(0) @T @F @DT @RT(4)DINT @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@END_Dcl 
+
+@END_Export 
+
+@BEG_Export 
+
+@BEG_Algo 
+@PROCESS_ALGORITHM @RT(13)paMoveControl @SEQUENTIAL_FLOW_CHART 
+@RT(0) @RT(0) @RT(13)TaskAnalog(3) @F @F 
+@END_Algo 
+
+@BEG_Dcl 
+@RT(16)DclTreeContainer 
+4 
+@Var @RT(20)evStartedStoppedData @RT(0) @T @T @DERIVED 0 @T @T @DT @RT(21)tevStartedStoppedData @RT(0) @T @T @UNKNOWN 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(6)dDelay @RT(0) @T @F @DT @RT(4)TIME @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(17)bStartDelayLinked @RT(0) @T @F @DT @RT(4)BOOL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(15)bActDelayLinked @RT(0) @T @F @DT @RT(4)BOOL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@END_Dcl 
+
+@END_Export 
+
+@BEG_Export 
+
+@BEG_Algo 
+@EVENT_ALGORITHM @RT(8)evaStart @STRUCTURED_TEXT 
+@RT(0) @RT(7)evStart @RT(9)EV_Task_3 @F @F 
+@END_Algo 
+
+@BEG_Dcl 
+@RT(16)DclTreeContainer 
+7 
+@Var @RT(11)evStartData @RT(0) @T @T @DERIVED 0 @T @T @DT @RT(12)tevStartData @RT(0) @T @T @UNKNOWN 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 1 @F @F @F @F 
+
+@Var @RT(17)fbGetMovementData @RT(0) @T @T @DERIVED 0 @T @T @DT @RT(17)FBGetMovementData @RT(0) @T @T @UNKNOWN 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(11)pbActivated @RT(0) @T @T @REFTO 0 @T @DT @RT(4)BOOL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(12)pTmpMoveData @RT(0) @T @T @REFTO 0 @F @DERIVED 0 @T @T @DT @RT(10)tsMoveData @RT(0) @T @T @UNKNOWN 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(20)evStartedStoppedData @RT(0) @T @T @DERIVED 0 @T @T @DT @RT(21)tevStartedStoppedData @RT(0) @T @T @UNKNOWN 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(5)dummy @RT(0) @T @F @DT @RT(4)DINT @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(10)bMoveDelay @RT(0) @T @F @DT @RT(4)BOOL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(33)TRUE: movement delay is necessary @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@END_Dcl 
+
+@END_Export 
+
+@BEG_Export 
+
+@BEG_Algo 
+@EVENT_ALGORITHM @RT(7)evaStop @STRUCTURED_TEXT 
+@RT(0) @RT(6)evStop @RT(9)EV_Task_3 @F @F 
+@END_Algo 
+
+@BEG_Dcl 
+@RT(16)DclTreeContainer 
+1 
+@Var @RT(10)evStopData @RT(0) @T @T @DERIVED 0 @T @T @DT @RT(11)tevStopData @RT(0) @T @T @UNKNOWN 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 1 @F @F @F @F 
+
+@END_Dcl 
+
+@END_Export 
+
+@BEG_Export 
+
+@BEG_Algo 
+@EVENT_ALGORITHM @RT(13)evaLockUnlock @STRUCTURED_TEXT 
+@RT(0) @RT(12)evLockUnlock @RT(9)EV_Task_3 @F @F 
+@END_Algo 
+
+@BEG_Dcl 
+@RT(16)DclTreeContainer 
+2 
+@Var @RT(16)evLockUnlockData @RT(0) @T @T @DERIVED 0 @T @T @DT @RT(17)tevLockUnlockData @RT(0) @T @T @UNKNOWN 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 1 @F @F @F @F 
+
+@Var @RT(17)fbGetMovementData @RT(0) @T @T @DERIVED 0 @T @T @DT @RT(17)FBGetMovementData @RT(0) @T @T @UNKNOWN 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@END_Dcl 
+
+@END_Export 
+
+@BEG_Export 
+
+@BEG_Algo 
+@EVENT_ALGORITHM @RT(18)evaLockUnlockGroup @STRUCTURED_TEXT 
+@RT(0) @RT(17)evLockUnlockGroup @RT(9)EV_Task_3 @F @F 
+@END_Algo 
+
+@BEG_Dcl 
+@RT(16)DclTreeContainer 
+3 
+@Var @RT(21)evLockUnlockGroupData @RT(0) @T @T @DERIVED 0 @T @T @DT @RT(22)tevLockUnlockGroupData @RT(0) @T @T @UNKNOWN 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 1 @F @F @F @F 
+
+@Var @RT(1)i @RT(0) @T @F @DT @RT(4)DINT @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 4 @F @F @F @F 
+
+@Var @RT(2)ii @RT(0) @T @F @DT @RT(4)DINT @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 4 @F @F @F @F 
+
+@END_Dcl 
+
+@END_Export 
+
+@BEG_Export 
+
+@BEG_Algo 
+@PROCESS_ALGORITHM @RT(12)paCheckReady @STRUCTURED_TEXT 
+@RT(0) @RT(0) @RT(22)TaskAnalog(4294967295) @F @F 
+@END_Algo 
+
+@BEG_Dcl 
+@RT(16)DclTreeContainer 
+1 
+@Var @RT(20)evStartedStoppedData @RT(0) @T @T @DERIVED 0 @T @T @DT @RT(21)tevStartedStoppedData @RT(0) @T @T @UNKNOWN 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@END_Dcl 
+
+@END_Export 
+
+@BEG_Export 
+
+@BEG_Algo 
+@EVENT_ALGORITHM @RT(16)evaCheckLocklist @STRUCTURED_TEXT 
+@RT(0) @RT(15)evCheckLocklist @RT(9)EV_Task_3 @F @F 
+@END_Algo 
+
+@BEG_Dcl 
+@RT(16)DclTreeContainer 
+3 
+@Var @RT(19)evCheckLocklistData @RT(0) @T @T @DERIVED 0 @T @T @DT @RT(20)tevCheckLocklistData @RT(0) @T @T @UNKNOWN 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 1 @F @F @F @F 
+
+@Var @RT(17)fbGetMovementData @RT(0) @T @T @DERIVED 0 @T @T @DT @RT(17)FBGetMovementData @RT(0) @T @T @UNKNOWN 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(9)pMoveData @RT(0) @T @T @REFTO 0 @F @DERIVED 0 @T @T @DT @RT(10)tsMoveData @RT(0) @T @T @UNKNOWN 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 4 @F @F @F @F 
+
+@END_Dcl 
+
+@END_Export 
+
+@BEG_Export 
+
+@BEG_Algo 
+@EVENT_ALGORITHM @RT(25)evaEnableDisableLockGroup @STRUCTURED_TEXT 
+@RT(0) @RT(24)evLockGroupEnableDisable @RT(9)EV_Task_3 @F @F 
+@END_Algo 
+
+@BEG_Dcl 
+@RT(16)DclTreeContainer 
+4 
+@Var @RT(28)evLockGroupEnableDisableData @RT(0) @T @T @DERIVED 0 @T @T @DT @RT(29)tevLockGroupEnableDisableData @RT(0) @T @T @UNKNOWN 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 1 @F @F @F @F 
+
+@Var @RT(1)i @RT(0) @T @F @DT @RT(4)DINT @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 4 @F @F @F @F 
+
+@Var @RT(1)j @RT(0) @T @F @DT @RT(4)DINT @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 4 @F @F @F @F 
+
+@Var @RT(5)sMode @RT(0) @T @F @DT @RT(10)STRING(20) @RT(0) @T @T @STRING 0 @F @RT(2)20 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@END_Dcl 
+
+@END_Export 
+
+@BEG_Body 
+@TL(20)
+(**************************************** WARNING ********************************************
+ *** The KEBA Kemro K2 System including software is not intended for safety control tasks! ***
+ ***                       For further information see Comment tab!                        ***
+ *********************************************************************************************)
+
+//save last movement time
+IF CHECK_REF(g_MoveCtrl.pData^.pdLastActiveTime^) AND CHECK_REF(g_MoveCtrl.pData^.pdActiveTimeAct^) THEN
+   b := WRITE_SV_DIRECT(g_MoveCtrl.pData^.pdLastActiveTime^, g_MoveCtrl.pData^.pdActiveTimeAct^);
+END_IF;
+
+//also consider instanceable movements
+IF g_MoveCtrl.pData^.bInstanceable THEN
+   iInstance := g_MoveCtrl.iCount;
+   IF CHECK_REF(g_MoveCtrl.pData^.InstanceData.pLastActiveTimeArray^[iInstance]) AND 
+      CHECK_REF(g_MoveCtrl.pData^.InstanceData.pActiveTimeArray^[iInstance]) THEN
+      b := WRITE_SV_DIRECT(g_MoveCtrl.pData^.InstanceData.pLastActiveTimeArray^[iInstance], g_MoveCtrl.pData^.InstanceData.pActiveTimeArray^[iInstance]);
+   END_IF;
+END_IF;
+
+
+@END_Body 
+
+@@@BEG_Comment@@@ 
+@TL(0)
+
+@@@END_Comment@@@ 
+
+@BEG_SfcBody 
+43 24 36 
+
+@BEG_SfcData 2 
+@StepSeq @RT(4)sseq @F 3 
+@Step @RT(5)START @F @T @F @F @RT(0) @F 
+@AcbCont @RT(7)unnamed @F 0 
+
+@Trans @RT(6)Trans5 @F @T @F @F @T @F @TL(2)
+TRUE
+
+@RT(6)Trans5 @F 
+@Loop @RT(4)loop @F 2 
+@StepSeq @RT(3)seq @F 7 
+@Step @RT(4)IDLE @F @F @T @F @RT(0) @F 
+@AcbCont @RT(7)unnamed @F 0 
+
+@Trans @RT(7)Trans12 @F @T @F @F @T @F @TL(3)
+(*wait for evStart*)
+TRUE
+
+@RT(7)Trans12 @F 
+@Step @RT(23)S_CHECK_ALREADY_STARTED @F @F @F @F @RT(0) @F 
+@AcbCont @RT(7)unnamed @F 0 
+
+@AltBranch @RT(3)alt @F 2 
+@TransSeq @RT(4)tseq @F 1 
+@Trans @RT(11)TNotStarted @F @T @F @F @T @F @TL(2)
+NOT mbAlreadyStarted
+
+@RT(7)Trans34 @F 
+
+@TransSeq @RT(4)tseq @F 2 
+@Trans @RT(15)TAlreadyStarted @F @T @F @F @T @F @TL(2)
+mbAlreadyStarted
+
+@RT(7)Trans35 @F 
+@Goto @RT(6)ACTIVE @F @F 
+
+
+@Step @RT(5)CHECK @F @F @T @F @RT(0) @F 
+@AcbCont @RT(7)unnamed @F 1 
+@Acb @RT(14)aCheckLockList @F @F @RT(1)N @RT(0) @F @F @T @F 
+
+@AltBranch @RT(3)alt @F 2 
+@TransSeq @RT(4)tseq @F 3 
+@Trans @RT(6)Trans1 @F @T @F @F @T @F @TL(5)
+mbStop OR
+mpbPosReached^ OR
+abLockList.aCheck.bAbort
+
+
+@RT(6)Trans1 @F 
+@Step @RT(6)Step21 @F @F @F @F @RT(0) @F 
+@AcbCont @RT(7)unnamed @F 1 
+@Acb @RT(8)Action38 @F @T @RT(1)N @RT(0) @F @F @T @TL(17)
+IF sv_TraceLevel.bDeviceState THEN
+   fbDebugTrace(CONCAT('ABControl: movement stopped because of mbStop ', BOOL_TO_STRING(mbStop),
+                       ' OR mpbPosReached^ ', BOOL_TO_STRING(mpbPosReached^),
+                       ' OR abLockList.aCheck.bAbort ', BOOL_TO_STRING(abLockList.aCheck.bAbort)));
+END_IF;
+
+sv_bDeviceReady := TRUE;
+mbDeviceActive := FALSE;
+
+// sending stopped-Message
+evStartedStoppedData.DeviceId := sv_DeviceId;
+evStartedStoppedData.MoveId := g_MoveCtrl.pData^.MoveId;
+evStartedStoppedData.MoveDir := g_MoveCtrl.pData^.MoveDir;
+evStartedStoppedData.State := nStopped;
+SET_EVENT(evStartedStopped,evStartedStoppedData);
+STOP_PROCESS_ALGORITHM();
+
+@F 
+
+@Trans @RT(7)Trans32 @F @T @F @F @T @T @TL(2)
+TRUE
+
+@RT(7)Trans32 @F 
+
+@TransSeq @RT(4)tseq @F 9 
+@Trans @RT(6)Trans3 @F @T @F @F @T @F @TL(2)
+NOT abLockList.aCheck.bLocked
+
+@RT(6)Trans3 @F 
+@Step @RT(5)DELAY @F @F @F @F @RT(0) @F 
+@AcbCont @RT(7)unnamed @F 4 
+@Acb @RT(9)aGetDelay @F @F @RT(1)P @RT(0) @F @F @T @F 
+@Acb @RT(11)aDelayReady @F @F @RT(2)P0 @RT(0) @F @F @T @F 
+@Acb @RT(14)aCheckLockList @F @F @RT(1)N @RT(0) @F @F @T @F 
+@Acb @RT(18)aWriteActDelayTime @F @F @RT(1)N @RT(0) @F @F @F @F 
+
+@AltBranch @RT(3)alt @F 3 
+@TransSeq @RT(4)tseq @F 1 
+@Trans @RT(7)Trans27 @F @T @F @F @T @F @TL(2)
+DELAY.T >= dDelay
+
+@RT(7)Trans27 @F 
+
+@TransSeq @RT(4)tseq @F 4 
+@Trans @RT(7)Trans29 @F @T @F @F @T @T @TL(3)
+mbStop OR
+abLockList.aCheck.bAbort
+
+@RT(7)Trans29 @F 
+@Step @RT(6)Step22 @F @F @F @F @RT(0) @F 
+@AcbCont @RT(7)unnamed @F 1 
+@Acb @RT(10)Action381a @F @T @RT(1)P @RT(0) @F @F @T @TL(3)
+mbReadyDetected := FALSE;
+START_PROCESS_ALGORITHM(paCheckReady);
+
+@F 
+
+@Trans @RT(7)Trans33 @F @T @F @F @T @T @TL(2)
+TRUE
+
+@RT(7)Trans33 @F 
+@Goto @RT(4)STOP @F @F 
+
+@TransSeq @RT(4)tseq @F 2 
+@Trans @RT(7)Trans30 @F @T @F @F @T @T @TL(2)
+abLockList.aCheck.bLocked
+
+@RT(7)Trans30 @F 
+@Goto @RT(5)CHECK @F @F 
+
+
+@Step @RT(10)START_MOVE @F @F @F @F @RT(0) @F 
+@AcbCont @RT(7)unnamed @F 1 
+@Acb @RT(6)aStart @F @T @RT(1)P @RT(0) @F @F @T @TL(12)
+IF sv_TraceLevel.bDeviceState THEN
+   fbDebugTrace(CONCAT('ABControl: setting sv_bDeviceStart to start ABMovementAdmin for movement ',
+                       DINT_TO_STRING(mpMoveData^.MoveId), '/', DINT_TO_STRING(mpMoveData^.MoveDir)));
+END_IF;
+
+//save last movement time
+aSaveLastActiveTime();
+
+g_MoveCtrl.bStop := FALSE;
+g_MoveCtrl.bReady := FALSE;
+sv_bDeviceStart := TRUE;
+
+@F 
+
+@Trans @RT(7)Trans24 @F @T @F @F @T @T @TL(2)
+TRUE
+
+@RT(7)Trans24 @F 
+@Step @RT(6)ACTIVE @F @F @T @F @RT(0) @F 
+@AcbCont @RT(7)unnamed @F 2 
+@Acb @RT(9)Action381 @F @T @RT(1)P @RT(0) @F @F @T @TL(4)
+mbReadyDetected := FALSE;
+mbAlreadyStarted := FALSE;
+START_PROCESS_ALGORITHM(paCheckReady);
+
+@F 
+@Acb @RT(14)aCheckLockList @F @F @RT(1)N @RT(0) @F @F @T @F 
+
+@AltBranch @RT(3)alt @F 3 
+@TransSeq @RT(4)tseq @F 1 
+@Trans @RT(6)Trans7 @F @T @F @F @T @F @TL(8)
+(*stopped by evStop*)
+mbStop OR
+(*position reached*)
+mpbPosReached^ OR
+(*locked by nLockAbort*)
+abLockList.aCheck.bAbort
+
+
+@RT(6)Trans7 @F 
+
+@TransSeq @RT(4)tseq @F 4 
+@Trans @RT(6)Trans8 @F @T @F @F @T @T @TL(3)
+(*locked by nLockResume*)
+abLockList.aCheck.bLocked
+
+@RT(6)Trans8 @F 
+@Step @RT(9)TO_RESUME @F @F @F @F @RT(0) @F 
+@AcbCont @RT(7)unnamed @F 1 
+@Acb @RT(5)aStop @F @F @RT(1)P @RT(0) @F @F @T @F 
+
+@Trans @RT(5)Ready @F @T @F @F @T @T @TL(2)
+g_MoveCtrl.bReady
+
+@RT(7)Trans13 @F 
+@Goto @RT(5)CHECK @F @F 
+
+@TransSeq @RT(4)tseq @F 2 
+@Trans @RT(7)Trans22 @F @T @F @F @T @F @TL(4)
+(*movement ready*)
+mbReadyDetected
+
+
+@RT(7)Trans22 @F 
+@Goto @RT(4)IDLE @F @F 
+
+
+@Step @RT(4)STOP @F @F @T @F @RT(0) @F 
+@AcbCont @RT(7)unnamed @F 1 
+@Acb @RT(5)aStop @F @F @RT(1)P @RT(0) @F @F @T @F 
+
+@Trans @RT(6)Trans4 @F @T @F @F @T @F @TL(2)
+mbReadyDetected
+
+@RT(6)Trans4 @F 
+
+
+@Step @RT(5)READY @F @F @F @F @RT(0) @F 
+@AcbCont @RT(7)unnamed @F 0 
+
+
+@Trans @RT(7)Trans10 @F @T @T @T @T @F @TL(2)
+TRUE
+
+@RT(7)Trans10 @F 
+
+@END_SfcData 
+@SaActions 5 
+@SaText @RT(5)aStop 1 @TL(6)
+IF NOT g_MoveCtrl.bReady THEN
+   // stop movement if its active
+   g_MoveCtrl.bStop := TRUE;
+END_IF;
+
+
+
+@SaText @RT(14)aCheckLockList 1 @TL(8)
+(**************************************** WARNING ********************************************
+ *** The KEBA Kemro K2 System including software is not intended for safety control tasks! ***
+ ***                       For further information see Comment tab!                        ***
+ *********************************************************************************************)
+
+// checking locklist if the actual movement is locked
+abLockList.aCheck(MoveDir := g_MoveCtrl.pData^.MoveDir, MoveId := g_MoveCtrl.pData^.MoveId);
+
+
+@SaText @RT(9)aGetDelay 1 @TL(20)
+(**************************************** WARNING ********************************************
+ *** The KEBA Kemro K2 System including software is not intended for safety control tasks! ***
+ ***                       For further information see Comment tab!                        ***
+ *********************************************************************************************)
+
+IF CHECK_REF(mpMoveData^.pdStartDelaySet^) AND sv_OperationMode <> nSetup AND sv_OperationMode <> nManual THEN
+   //not always linked
+   dDelay := mpMoveData^.pdStartDelaySet^;
+   bStartDelayLinked := TRUE;
+ELSE
+   dDelay := T#0s;
+   bStartDelayLinked := FALSE;
+END_IF;
+IF CHECK_REF(mpMoveData^.pbStartDelayActive^) AND dDelay > T#0s THEN
+   //setting active-flag
+   mpMoveData^.pbStartDelayActive^ := TRUE;
+END_IF;
+
+bActDelayLinked := CHECK_REF(mpMoveData^.pdStartDelayAct^);
+
+
+@SaText @RT(11)aDelayReady 1 @TL(11)
+(**************************************** WARNING ********************************************
+ *** The KEBA Kemro K2 System including software is not intended for safety control tasks! ***
+ ***                       For further information see Comment tab!                        ***
+ *********************************************************************************************)
+
+IF CHECK_REF(mpMoveData^.pbStartDelayActive^) THEN
+   //resetting active-flag
+   mpMoveData^.pbStartDelayActive^ := FALSE;
+END_IF;
+
+
+
+@SaText @RT(18)aWriteActDelayTime 1 @TL(9)
+(**************************************** WARNING ********************************************
+ *** The KEBA Kemro K2 System including software is not intended for safety control tasks! ***
+ ***                       For further information see Comment tab!                        ***
+ *********************************************************************************************)
+
+IF bStartDelayLinked AND bActDelayLinked THEN
+    mpMoveData^.pdStartDelayAct^ := DELAY.T;
+END_IF;
+
+
+@SaTrans 0 
+@SaExits 0 
+@END_SfcBody 
+
+@@@BEG_Comment@@@ 
+@TL(0)
+
+@@@END_Comment@@@ 
+
+@BEG_Body 
+@TL(159)
+(**************************************** WARNING ********************************************
+ *** The KEBA Kemro K2 System including software is not intended for safety control tasks! ***
+ ***                       For further information see Comment tab!                        ***
+ *********************************************************************************************)
+
+IF evStartData.DeviceId.CompId = sv_DeviceId.CompId AND
+   evStartData.DeviceId.IndexId = sv_DeviceId.IndexId  THEN
+   
+   IF sv_bInitDone THEN   
+       
+      IF CHECK_REF(evStartData.pMovementData^) THEN
+         //ref may not be linked if evStart is sent by customer engineer
+         pTmpMoveData := evStartData.pMovementData; 
+      ELSE
+         //getting sv_MoveXxx from sv_Movements
+         fbGetMovementData(MoveDir := evStartData.MoveDir, MoveId := evStartData.MoveId);
+         IF fbGetMovementData.bFound THEN
+            pTmpMoveData:= fbGetMovementData.pMoveData; 
+         ELSE
+            // movement does not exist
+            SET_ALARM(Name := erMovementNotAvailable,
+                      SubID1 := sv_DeviceId.CompId,
+                      SubID2 := sv_DeviceId.IndexId,
+                      SubID3 := evStartData.MoveId,
+                      SubID4 := evStartData.MoveDir);
+            RETURN;
+         END_IF;
+      END_IF;
+      
+      IF sv_TraceLevel.bDeviceState THEN
+         fbDebugTrace(CONCAT('ABControl: evStart received ',
+                             DINT_TO_STRING(pTmpMoveData^.MoveId), '/', DINT_TO_STRING(pTmpMoveData^.MoveDir)));
+      END_IF;
+      
+      IF pTmpMoveData^.bIgnoreByABControl THEN
+         //start event for this movement should be ignored by ABControl
+         IF sv_TraceLevel.bDeviceState THEN
+            fbDebugTrace('ABControl: bIgnoreByABControl TRUE -> not starting movement');
+         END_IF;
+         RETURN;
+      END_IF;
+                   
+     // RETURN and ignore start event if movement has linked activated flag and flag is false
+     // -> movement does not want to start
+     pbActivated := pTmpMoveData^.pbActivated;
+      IF (CHECK_REF(pbActivated^) AND (pbActivated^ = FALSE)) THEN
+         // movement was not started because it is deactivated
+         IF sv_TraceLevel.bDeviceState THEN
+            fbDebugTrace('ABControl: pbActivated^ FALSE -> not starting movement');
+         END_IF;
+
+         evStartedStoppedData.DeviceId := sv_DeviceId;
+         evStartedStoppedData.MoveId := pTmpMoveData^.MoveId;
+         evStartedStoppedData.MoveDir := pTmpMoveData^.MoveDir;
+         evStartedStoppedData.State := nStartNotAllowed;
+         SET_EVENT(evStartedStopped, evStartedStoppedData);
+         RETURN;
+      END_IF;
+       
+      IF NOT mbDeviceActive THEN
+         
+         IF CHECK_REF(evStartData.pbPosReached^) THEN
+            mpbPosReached := evStartData.pbPosReached;
+         ELSE
+            mpbPosReached := @sv_bFALSE;
+         END_IF;
+         
+         mpMoveData := pTmpMoveData;
+         g_MoveCtrl.pData := mpMoveData;
+         g_MoveCtrl.iCount := evStartData.IntermediateCond;
+          
+         abLockList.aCheck(MoveDir := g_MoveCtrl.pData^.MoveDir, MoveId := g_MoveCtrl.pData^.MoveId);
+         IF NOT abLockList.aCheck.bAbort THEN
+            //start paMoveControl if movement isn't locked by "nLockAbort"
+            IF sv_TraceLevel.bDeviceState THEN
+               fbDebugTrace('ABControl: all checks OK -> starting movement');
+            END_IF;
+            sv_bDeviceReady := FALSE;
+            mbDeviceActive := TRUE;
+            mbStop := FALSE;
+            
+            bMoveDelay := TRUE;
+            IF (sv_OperationMode < nHalfAutomatic) OR (NOT CHECK_REF(mpMoveData^.pdStartDelaySet^)) THEN
+               bMoveDelay := FALSE;
+            ELSIF (CHECK_REF(mpMoveData^.pdStartDelaySet^) AND (mpMoveData^.pdStartDelaySet^ = t#0s)) THEN
+               bMoveDelay := FALSE;               
+            END_IF;
+            
+            IF (NOT abLockList.aCheck.bLocked) AND (NOT bMoveDelay) THEN                                              
+               //movement is not locked and no delaytime should be executed
+               IF sv_TraceLevel.bDeviceState THEN
+                  fbDebugTrace('ABControl - evaStart: set sv_bDeviceStart');
+               END_IF;
+               
+               //save last movement time
+               aSaveLastActiveTime();
+               
+               g_MoveCtrl.bStop := FALSE;
+               g_MoveCtrl.bReady := FALSE;
+               mbAlreadyStarted := TRUE;
+               sv_bDeviceStart := TRUE;
+            ELSE
+               mbAlreadyStarted := FALSE;
+            END_IF;
+            
+            // sending started-Message
+            evStartedStoppedData.DeviceId := sv_DeviceId;
+            evStartedStoppedData.MoveId := g_MoveCtrl.pData^.MoveId;
+            evStartedStoppedData.MoveDir := g_MoveCtrl.pData^.MoveDir;
+            evStartedStoppedData.State := nStarted;
+            SET_EVENT(evStartedStopped,evStartedStoppedData);
+
+            START_PROCESS_ALGORITHM(paMoveControl);
+         ELSE
+            IF sv_TraceLevel.bDeviceState THEN
+               fbDebugTrace('ABControl: device is locked by at least 1 alarm with bAbort TRUE -> not starting movement');
+            END_IF;
+            // movement was not started because it is locked
+            evStartedStoppedData.DeviceId := sv_DeviceId;
+            evStartedStoppedData.MoveId := g_MoveCtrl.pData^.MoveId;
+            evStartedStoppedData.MoveDir := g_MoveCtrl.pData^.MoveDir;
+            evStartedStoppedData.State := nStartNotAllowed;
+            SET_EVENT(evStartedStopped, evStartedStoppedData);
+         END_IF;
+      ELSE
+         // Device already active
+         IF sv_TraceLevel.bDeviceState THEN
+            fbDebugTrace('ABControl: Device already active -> not starting movement');
+         END_IF;
+         
+         dummy := Print('set alarm erDeviceActive in ABControl.pu');
+         dummy := Print('active movement:     %d.%d %d/%d',
+                  sv_DeviceId.CompId, sv_DeviceId.IndexId,
+                  mpMoveData^.MoveId, mpMoveData^.MoveDir); 
+         dummy := Print('tried to start:      %d.%d %d/%d',
+                  sv_DeviceId.CompId, sv_DeviceId.IndexId,
+                  pTmpMoveData^.MoveId, pTmpMoveData^.MoveDir);
+         
+         SET_ALARM(Name := erDeviceActive,
+                   SubID1 :=sv_DeviceId.CompId,
+                   SubID2 := sv_DeviceId.IndexId);
+         
+         // movement was not started because device is alread active
+         evStartedStoppedData.DeviceId := sv_DeviceId;
+         evStartedStoppedData.MoveId := pTmpMoveData^.MoveId;
+         evStartedStoppedData.MoveDir := pTmpMoveData^.MoveDir;
+         evStartedStoppedData.State := nStartNotAllowed;
+         SET_EVENT(evStartedStopped, evStartedStoppedData);
+         
+      END_IF;
+   ELSE
+      // it was tried to start the device during initialisation
+      SET_ALARM(Name := erInitNotReady,
+                SubID1 := sv_DeviceId.CompId,
+                SubID2 := sv_DeviceId.IndexId);
+   END_IF;   
+END_IF;
+                                       
+
+@END_Body 
+
+@@@BEG_Comment@@@ 
+@TL(2)
+This Algo receives the evStart event, checks the startconditions and starts paMoveControl.
+
+@@@END_Comment@@@ 
+
+@BEG_Body 
+@TL(15)
+(**************************************** WARNING ********************************************
+ *** The KEBA Kemro K2 System including software is not intended for safety control tasks! ***
+ ***                       For further information see Comment tab!                        ***
+ *********************************************************************************************)
+
+IF evStopData.DeviceId = sv_DeviceId THEN
+   
+   IF sv_TraceLevel.bDeviceState THEN
+      fbDebugTrace('ABControl : evStop received');
+   END_IF;
+
+   //stopping movement
+   mbStop := TRUE;
+END_IF;
+
+@END_Body 
+
+@@@BEG_Comment@@@ 
+@TL(1)
+Receives the stopevent and signalls paMoveControl to stop the running movement.
+@@@END_Comment@@@ 
+
+@BEG_Body 
+@TL(75)
+(**************************************** WARNING ********************************************
+ *** The KEBA Kemro K2 System including software is not intended for safety control tasks! ***
+ ***                       For further information see Comment tab!                        ***
+ *********************************************************************************************)
+
+IF sv_NumberOfMovements = 0 THEN
+   // no movement registered
+   RETURN;
+END_IF;
+
+
+ IF (evLockUnlockData.DeviceId.CompId = sv_DeviceId.CompId   OR evLockUnlockData.DeviceId.CompId =  cCompAll    ) AND
+    (evLockUnlockData.DeviceId.IndexId = sv_DeviceId.IndexId OR evLockUnlockData.DeviceId.IndexId = cAllDevIndex) THEN
+   
+    //checking if the movement exists which should be locked/unlocked
+    fbGetMovementData(MoveDir := evLockUnlockData.MoveDir, MoveId := evLockUnlockData.MoveId);
+   
+    IF fbGetMovementData.bFound THEN
+       
+      IF evLockUnlockData.Mode = nUnlock THEN
+         // UNLOCK Movement
+         abLockList.aRemove.Entry.DeviceIdSender := evLockUnlockData.DeviceIdSender;
+         abLockList.aRemove.Entry.MoveDir        := evLockUnlockData.MoveDir;
+         abLockList.aRemove.Entry.MoveId         := evLockUnlockData.MoveId;
+         abLockList.aRemove.Entry.Alarm          := evLockUnlockData.Alarm; 
+         // remove movement from locklist
+         abLockList.aRemove();
+          
+         IF sv_TraceLevel.bLockUnlock THEN
+            fbDebugTrace(CONCAT("movement ",
+                                DINT_TO_STRING(evLockUnlockData.MoveDir), '/', DINT_TO_STRING(evLockUnlockData.MoveId),
+                                ' unlocked by Device: ',
+                                DINT_TO_STRING(evLockUnlockData.DeviceIdSender.CompId), '.', DINT_TO_STRING(evLockUnlockData.DeviceIdSender.IndexId),
+                                ' alarm ', GET_ALARM_NAME(evLockUnlockData.Alarm.AlarmId)));
+         END_IF;
+      ELSE
+         // LOCK Movement
+         abLockList.aAdd.Entry.DeviceIdSender   := evLockUnlockData.DeviceIdSender;
+         abLockList.aAdd.Entry.MoveDir          := evLockUnlockData.MoveDir;
+         abLockList.aAdd.Entry.MoveId           := evLockUnlockData.MoveId;
+         abLockList.aAdd.Entry.Alarm            := evLockUnlockData.Alarm;
+         abLockList.aAdd.bDisable               := FALSE;
+         
+         IF evLockUnlockData.Mode = nLockResume THEN
+         
+            abLockList.aAdd.Entry.bStopDevice := FALSE;
+            
+         ELSIF evLockUnlockData.Mode = nLockAbort THEN
+            
+            abLockList.aAdd.Entry.bStopDevice := TRUE;
+         END_IF;
+         
+         abLockList.aAdd.bSetAlarmImmediately := evLockUnlockData.bSetAlarmImmediately;
+         
+         // add movement to locklist
+         abLockList.aAdd();
+          
+         IF sv_TraceLevel.bLockUnlock THEN
+            fbDebugTrace(CONCAT("movement ",
+                                DINT_TO_STRING(evLockUnlockData.MoveDir), '/', DINT_TO_STRING(evLockUnlockData.MoveId),
+                                ' locked   by Device: ',
+                                DINT_TO_STRING(evLockUnlockData.DeviceIdSender.CompId), '.', DINT_TO_STRING(evLockUnlockData.DeviceIdSender.IndexId),
+                                ' alarm ', GET_ALARM_NAME(evLockUnlockData.Alarm.AlarmId)));
+         END_IF;
+      END_IF;
+   ELSE
+      //movement doesn't exist
+      SET_ALARM(Name := erMovementNotAvailable,
+               SubID1 := sv_DeviceId.CompId,
+               SubID2 := sv_DeviceId.IndexId,
+               SubID3 := evLockUnlockData.MoveId,
+               SubID4 := evLockUnlockData.MoveDir);
+   END_IF;       
+END_IF;
+
+@END_Body 
+
+@@@BEG_Comment@@@ 
+@TL(1)
+Receives the lockevent and makes an entry into the locklist.
+@@@END_Comment@@@ 
+
+@BEG_Body 
+@TL(67)
+(**************************************** WARNING ********************************************
+ *** The KEBA Kemro K2 System including software is not intended for safety control tasks! ***
+ ***                       For further information see Comment tab!                        ***
+ *********************************************************************************************)
+
+//checking all movements if they are member of the group that should be locked
+FOR i := 1 TO sv_NumberOfMovements DO
+   FOR ii := 1 TO cMaxGroupLocks DO        
+      IF sv_Movements[i]^.LockGroups[ii] = evLockUnlockGroupData.Group THEN
+      
+         IF evLockUnlockGroupData.Mode = nUnlock THEN
+            // UNLOCK Movement
+            abLockList.aRemove.Entry.DeviceIdSender := evLockUnlockGroupData.DeviceIdSender; 
+            abLockList.aRemove.Entry.MoveDir        := sv_Movements[i]^.MoveDir;
+            abLockList.aRemove.Entry.MoveId         := sv_Movements[i]^.MoveId;
+            abLockList.aRemove.Entry.Alarm          := evLockUnlockGroupData.Alarm;
+            // remove movement from locklist
+            abLockList.aRemove();
+             
+            IF sv_TraceLevel.bLockUnlock THEN
+                fbDebugTrace(CONCAT("movement ",
+                                    DINT_TO_STRING(sv_Movements[i]^.MoveDir), '/', DINT_TO_STRING(sv_Movements[i]^.MoveId),
+                                    ' unlocked (group) by Device: ',
+                                    DINT_TO_STRING(evLockUnlockGroupData.DeviceIdSender.CompId), '.', DINT_TO_STRING(evLockUnlockGroupData.DeviceIdSender.IndexId),
+                                    ' group ', DINT_TO_STRING(evLockUnlockGroupData.Group),
+                                    ' alarm ', GET_ALARM_NAME(evLockUnlockGroupData.Alarm.AlarmId)));
+            END_IF;
+         ELSE
+            // LOCK Movement
+            abLockList.aAdd.Entry.DeviceIdSender   := evLockUnlockGroupData.DeviceIdSender; 
+            abLockList.aAdd.Entry.MoveDir          := sv_Movements[i]^.MoveDir;
+            abLockList.aAdd.Entry.MoveId           := sv_Movements[i]^.MoveId;
+            abLockList.aAdd.Entry.Alarm            := evLockUnlockGroupData.Alarm;
+            abLockList.aAdd.bDisable               := mDisabledLockGroups[i][ii];
+            
+            IF evLockUnlockGroupData.Mode = nLockResume THEN
+            
+               abLockList.aAdd.Entry.bStopDevice := FALSE;
+               
+            ELSIF evLockUnlockGroupData.Mode = nLockAbort THEN
+               
+               abLockList.aAdd.Entry.bStopDevice := TRUE;
+            END_IF;
+            
+            abLockList.aAdd.bSetAlarmImmediately := evLockUnlockGroupData.bSetAlarmImmediately;
+            
+            // add movement to locklist
+            abLockList.aAdd();
+             
+            IF sv_TraceLevel.bLockUnlock THEN
+                fbDebugTrace(CONCAT("movement ",
+                                    DINT_TO_STRING(sv_Movements[i]^.MoveDir), '/', DINT_TO_STRING(sv_Movements[i]^.MoveId),
+                                    ' locked   (group) by Device: ',
+                                    DINT_TO_STRING(evLockUnlockGroupData.DeviceIdSender.CompId), '.', DINT_TO_STRING(evLockUnlockGroupData.DeviceIdSender.IndexId),
+                                    ' group ', DINT_TO_STRING(evLockUnlockGroupData.Group),
+                                    ' alarm ', GET_ALARM_NAME(evLockUnlockGroupData.Alarm.AlarmId)));
+            END_IF;
+         END_IF;
+             
+         EXIT;  //matching lockgroup found -> EXIT loop and check next movement
+               
+      END_IF;      
+   END_FOR;      
+END_FOR;
+
+
+
+@END_Body 
+
+@@@BEG_Comment@@@ 
+@TL(2)
+Receives the group-lockevent, checks if the running movement is member of the group that should be locked and 
+makes an entry into the locklist.
+@@@END_Comment@@@ 
+
+@BEG_Body 
+@TL(25)
+(**************************************** WARNING ********************************************
+ *** The KEBA Kemro K2 System including software is not intended for safety control tasks! ***
+ ***                       For further information see Comment tab!                        ***
+ *********************************************************************************************)
+
+IF abLockList.aCheck.bLocked AND NOT abLockList.aCheck.bAbort THEN
+   //movement resumed -> stop algo and don´t set ready flag!
+   STOP_PROCESS_ALGORITHM();
+ELSE
+   IF g_MoveCtrl.bReady THEN
+      STOP_PROCESS_ALGORITHM(paMoveControl);
+      sv_bDeviceReady := TRUE;
+      mbDeviceActive := FALSE;
+      mbReadyDetected := TRUE;
+      
+      // sending stopped-Message
+      evStartedStoppedData.DeviceId := sv_DeviceId;
+      evStartedStoppedData.MoveId := g_MoveCtrl.pData^.MoveId;
+      evStartedStoppedData.MoveDir := g_MoveCtrl.pData^.MoveDir;
+      evStartedStoppedData.State := nStopped;
+      SET_EVENT(evStartedStopped,evStartedStoppedData);
+      STOP_PROCESS_ALGORITHM();
+   END_IF;  
+END_IF;
+
+@END_Body 
+
+@@@BEG_Comment@@@ 
+@TL(0)
+
+@@@END_Comment@@@ 
+
+@BEG_Body 
+@TL(45)
+(**************************************** WARNING ********************************************
+ *** The KEBA Kemro K2 System including software is not intended for safety control tasks! ***
+ ***                       For further information see Comment tab!                        ***
+ *********************************************************************************************)
+
+IF evCheckLocklistData.DeviceId.CompId = sv_DeviceId.CompId AND
+   evCheckLocklistData.DeviceId.IndexId = sv_DeviceId.IndexId  THEN
+   
+   IF sv_TraceLevel.bDeviceState THEN
+      fbDebugTrace(sText := 'ABControl: evCheckLocklist received');
+   END_IF;
+   
+   IF sv_bInitDone THEN   
+         IF CHECK_REF(evCheckLocklistData.pMovementData^) THEN
+            //ref may not be linked if evStart is sent by customer engineer
+            pMoveData := evCheckLocklistData.pMovementData; 
+         ELSE
+            //getting sv_MoveXxx from sv_Movements
+            fbGetMovementData(MoveDir := evCheckLocklistData.MoveDir, MoveId := evCheckLocklistData.MoveId);
+            IF fbGetMovementData.bFound THEN
+               pMoveData:= fbGetMovementData.pMoveData; 
+            ELSE
+               // movement does not exist
+               SET_ALARM(Name := erMovementNotAvailable,
+                        SubID1 := sv_DeviceId.CompId,
+                        SubID2 := sv_DeviceId.IndexId,
+                        SubID3 := evCheckLocklistData.MoveId,
+                        SubID4 := evCheckLocklistData.MoveDir);
+               RETURN;
+            END_IF;
+         END_IF;
+        
+         // only check the locklist if the movement is allowed, to not try to start the movement
+         // this is neeeded to display ALL alarms in case when a movement is not allowed
+         // by safety checks
+         abLockList.aCheck(MoveDir := pMoveData^.MoveDir, MoveId := pMoveData^.MoveId);
+   ELSE
+      // it was tried to start the device during initialisation
+      SET_ALARM(Name := erInitNotReady,
+               SubID1 :=sv_DeviceId.CompId,
+               SubID2 := sv_DeviceId.IndexId);
+   END_IF;   
+END_IF;
+                                       
+
+@END_Body 
+
+@@@BEG_Comment@@@ 
+@TL(3)
+This Algo receives the evCheckLocklist event,
+checks the startconditions for the movement and outputs alarms if it is not allowed.
+The movement itself is not started.
+@@@END_Comment@@@ 
+
+@BEG_Body 
+@TL(57)
+(**************************************** WARNING ********************************************
+ *** The KEBA Kemro K2 System including software is not intended for safety control tasks! ***
+ ***                       For further information see Comment tab!                        ***
+ *********************************************************************************************)
+
+IF (evLockGroupEnableDisableData.DeviceIdReceiver.CompId = sv_DeviceId.CompId OR evLockGroupEnableDisableData.DeviceIdReceiver.CompId = cCompAll) AND
+   (evLockGroupEnableDisableData.DeviceIdReceiver.IndexId = sv_DeviceId.IndexId OR evLockGroupEnableDisableData.DeviceIdReceiver.IndexId = cAllDevIndex) THEN
+
+   //check all registered movements if the sent MoveDir and MoveId are equal
+   FOR i := 1 TO sv_NumberOfMovements DO
+      
+      IF ((sv_Movements[i]^.MoveDir = evLockGroupEnableDisableData.MoveDir) OR (evLockGroupEnableDisableData.MoveDir = cMoveAll)) AND
+         ((sv_Movements[i]^.MoveId = evLockGroupEnableDisableData.MoveId) OR (evLockGroupEnableDisableData.MoveId = cMoveAll)) THEN
+      
+         //check if this movement is a member of the sent lockgroup
+         FOR j := 1 TO cMaxGroupLocks DO
+            
+            IF sv_Movements[i]^.LockGroups[j] = evLockGroupEnableDisableData.LockGroup THEN                
+               IF evLockGroupEnableDisableData.Mode = nLockGroupDisable THEN         
+                  mDisabledLockGroups[i][j] := TRUE;                                
+               ELSE
+                  mDisabledLockGroups[i][j] := FALSE;
+               END_IF;
+               
+               IF sv_TraceLevel.bLockUnlock THEN
+                  IF mDisabledLockGroups[i][j] THEN
+                     sMode := ' disabled';    
+                  ELSE
+                     sMode := ' enabled';
+                  END_IF;
+                  
+                  fbDebugTrace(CONCAT('lockgroup ', DINT_TO_STRING(evLockGroupEnableDisableData.LockGroup), ' of movement ',
+                        DINT_TO_STRING(sv_Movements[i]^.MoveDir), '/', DINT_TO_STRING(sv_Movements[i]^.MoveId),
+                        sMode, ' by Device ', DINT_TO_STRING(evLockGroupEnableDisableData.DeviceIdSender.CompId),
+                        '.', DINT_TO_STRING(evLockGroupEnableDisableData.DeviceIdSender.IndexId)));
+               END_IF;
+               
+               //update locklist
+               abLockList.aUpdateLockDisable.Entry.DeviceIdSender := evLockGroupEnableDisableData.DeviceIdSender;
+               abLockList.aUpdateLockDisable.Entry.MoveDir := sv_Movements[i]^.MoveDir;
+               abLockList.aUpdateLockDisable.Entry.MoveId := sv_Movements[i]^.MoveId;
+               abLockList.aUpdateLockDisable.Entry.Alarm := evLockGroupEnableDisableData.Alarm;
+               abLockList.aUpdateLockDisable.bDisable := mDisabledLockGroups[i][j];
+               abLockList.aUpdateLockDisable();            
+               EXIT;
+            END_IF;
+            
+         END_FOR;  //end_for check lockgroups of the movement
+      END_IF;  //end_if MoveDir and MoveId fit to event data   
+   END_FOR; //end_for check all movements
+
+END_IF;
+
+
+
+
+
+@END_Body 
+
+@@@BEG_Comment@@@ 
+@TL(3)
+receives evLockGroupEnableDisable event and updates locklist
+if a registered movement of this function unit is a member of the
+specified lockgroup
+@@@END_Comment@@@ 
+@END_Body 
+
+@END_Contents 

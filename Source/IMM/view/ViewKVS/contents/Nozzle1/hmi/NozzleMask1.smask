@@ -1,0 +1,404 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<base:Mask xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xmlns:base="http://www.keba.at/viewedit.model.base" widgetId="kvs.mask" name="NozzleMask1">
+  <resolution width="714" height="476"/>
+  <position x="1" y="1"/>
+  <attributeValues key="Background" value="BG_Desktop:30,30,30"/>
+  <attributeValues key="Title" value="Nozzle"/>
+  <attributeValues key="Icon" value="Nozzle1/hmi/images/iconNozzle.gif"/>
+  <widgetInstances xsi:type="base:ContainerWidgetInstance" widgetId="kvs.panel" name="panelContentValues" layoutConstraint="NORTH">
+    <resolution width="714" height="401"/>
+    <position/>
+    <widgetInstances xsi:type="base:ContainerWidgetInstance" widgetId="keplast.kvs.borderpanelsmall" name="panelForward" layoutConstraint="NORTH">
+      <resolution width="714" height="240"/>
+      <position/>
+      <attributeValues key="Title" value="Nozzle forward"/>
+      <attributeValues key="Background" value="BG_Panel:220,220,220"/>
+      <widgetInstances xsi:type="base:ContainerWidgetInstance" widgetId="kvs.panel" name="panelForwardLeft" layoutConstraint="LEFT">
+        <resolution width="488" height="203"/>
+        <position x="6" y="33"/>
+        <widgetInstances xsi:type="base:ContainerWidgetInstance" widgetId="kvs.panel" name="panelHeadFwd" layoutConstraint="null">
+          <resolution width="488" height="29"/>
+          <position/>
+          <widgetInstances xsi:type="base:ContainerWidgetInstance" widgetId="kvs.panel" name="container2" layoutConstraint="null">
+            <resolution width="10" height="10"/>
+            <position x="1" y="9"/>
+            <layout layoutID="kvs.layout.PercentLayout" name="PercentLayout"/>
+          </widgetInstances>
+          <widgetInstances widgetId="keplast.kvs.klabeltip" name="labelHeadPressFwd" layoutConstraint="null">
+            <resolution width="62" height="29"/>
+            <position x="237"/>
+            <attributeValues key="Text" value="Force"/>
+            <attributeValues key="PreferredSize" value="62, 29"/>
+          </widgetInstances>
+          <widgetInstances widgetId="keplast.kvs.klabeltip" name="labelHeadVelFwd" layoutConstraint="null">
+            <resolution width="62" height="29"/>
+            <position x="300"/>
+            <attributeValues key="Text" value="Velocity"/>
+            <attributeValues key="PreferredSize" value="62, 29"/>
+          </widgetInstances>
+          <widgetInstances widgetId="keplast.kvs.klabeltip" name="labelHeadTimeFwd" layoutConstraint="null">
+            <resolution width="125" height="29"/>
+            <position x="363"/>
+            <attributeValues key="Text" value="Time"/>
+            <attributeValues key="PreferredSize" value="125, 29"/>
+          </widgetInstances>
+          <layout layoutID="keplast.kvs.layout.beanlayout" name="BeanLayout">
+            <attributeValues key="Hgap" value="1"/>
+          </layout>
+        </widgetInstances>
+        <widgetInstances xsi:type="base:ContainerWidgetInstance" widgetId="kvs.panel" name="panelUnitFwd" layoutConstraint="null">
+          <resolution width="488" height="29"/>
+          <position y="29"/>
+          <widgetInstances widgetId="keplast.kvs.varlabeltip" name="unitlabelPressFwd" layoutConstraint="null">
+            <resolution width="63" height="29"/>
+            <position x="236"/>
+            <attributeValues key="TextLabelType" value="Unit Variable Label"/>
+            <attributeValues key="Variable" value="Nozzle1.sv_ConstFwdStage1.Pressure.Output.rOutputValue"/>
+            <attributeValues key="PreferredSize" value="63, 29"/>
+          </widgetInstances>
+          <widgetInstances widgetId="keplast.kvs.varlabeltip" name="unitlabelVelocFwd" layoutConstraint="null">
+            <resolution width="63" height="29"/>
+            <position x="299"/>
+            <attributeValues key="TextLabelType" value="Unit Variable Label"/>
+            <attributeValues key="Variable" value="Nozzle1.sv_ConstFwdStage1.Velocity.Output.rOutputValue"/>
+            <attributeValues key="PreferredSize" value="63, 29"/>
+          </widgetInstances>
+          <widgetInstances xsi:type="base:ContainerWidgetInstance" widgetId="kvs.panel" name="container1" layoutConstraint="null">
+            <resolution width="125" height="29"/>
+            <position x="363"/>
+            <attributeValues key="PreferredSize" value="125, 29"/>
+            <widgetInstances widgetId="keplast.kvs.varlabeltip" name="unitlabelTimeFwd" layoutConstraint="CENTER">
+              <resolution width="125" height="29"/>
+              <position/>
+              <attributeValues key="TextLabelType" value="Unit Variable Label"/>
+              <attributeValues key="Variable" value="Nozzle1.sv_NozzleFwdTimesSet.dMaxMoveTime"/>
+            </widgetInstances>
+            <layout layoutID="kvs.layout.BorderLayout" name="BorderLayout"/>
+          </widgetInstances>
+          <layout layoutID="keplast.kvs.layout.beanlayout" name="BeanLayout">
+            <attributeValues key="Hgap" value="1"/>
+            <attributeValues key="UnitWidth" value="63"/>
+          </layout>
+        </widgetInstances>
+        <widgetInstances xsi:type="base:ContainerWidgetInstance" widgetId="kvs.panel" name="panelBefore" layoutConstraint="null">
+          <resolution width="488" height="29"/>
+          <position y="58"/>
+          <dynamicAttributes key="Visible">
+            <value function="n1_EQ_const : ViewEditFunctions" equal="false" unequal="true">
+              <parameter key="1" value="kvariable; Nozzle1.sv_NozzleMovementMode"/>
+              <parameter key="2" value="double; 1"/>
+            </value>
+          </dynamicAttributes>
+          <widgetInstances widgetId="keplast.kvs.klabeltip" name="labelBeforeLimit" layoutConstraint="null">
+            <resolution width="233" height="21"/>
+            <position x="3" y="4"/>
+            <attributeValues key="Text" value="Before limit switch"/>
+            <attributeValues key="Alignment" value="MIDDLE/CENTER"/>
+          </widgetInstances>
+          <widgetInstances widgetId="kvs.numfieldnew" name="numfieldPressBefore" layoutConstraint="null">
+            <resolution width="60" height="29"/>
+            <position x="239"/>
+            <attributeValues key="Variable" value="Nozzle1.sv_ConstFwdStage1.Pressure.Output.rOutputValue"/>
+            <dynamicAttributes key="Enabled">
+              <value function="n1_EQ_const : ViewEditFunctions" equal="true" unequal="false">
+                <parameter key="1" value="kvariable; Nozzle1.sv_MovementMode"/>
+                <parameter key="2" value="double; 1"/>
+              </value>
+            </dynamicAttributes>
+          </widgetInstances>
+          <widgetInstances widgetId="kvs.numfieldnew" name="numfieldVelocityBefore" layoutConstraint="null">
+            <resolution width="60" height="29"/>
+            <position x="302"/>
+            <attributeValues key="Variable" value="Nozzle1.sv_ConstFwdStage1.Velocity.Output.rOutputValue"/>
+            <dynamicAttributes key="Enabled">
+              <value function="n1_EQ_const : ViewEditFunctions" equal="true" unequal="false">
+                <parameter key="1" value="kvariable; Nozzle1.sv_MovementMode"/>
+                <parameter key="2" value="double; 1"/>
+              </value>
+            </dynamicAttributes>
+          </widgetInstances>
+          <widgetInstances xsi:type="base:ContainerWidgetInstance" widgetId="kvs.panel" name="panelEastDummy1" layoutConstraint="null">
+            <resolution width="123" height="29"/>
+            <position x="365"/>
+            <attributeValues key="PreferredSize" value="123, 29"/>
+            <layout layoutID="kvs.layout.BorderLayout" name="BorderLayout"/>
+          </widgetInstances>
+          <layout layoutID="keplast.kvs.layout.beanlayout" name="BeanLayout">
+            <attributeValues key="FieldWidth" value="60"/>
+            <attributeValues key="FieldHeight" value="29"/>
+          </layout>
+        </widgetInstances>
+        <widgetInstances xsi:type="base:ContainerWidgetInstance" widgetId="kvs.panel" name="panelAfter" layoutConstraint="null">
+          <resolution width="488" height="29"/>
+          <position y="87"/>
+          <widgetInstances widgetId="keplast.kvs.klabeltip" name="labelAfterLimit" layoutConstraint="null">
+            <resolution width="233" height="29"/>
+            <position x="3"/>
+            <attributeValues key="Text" value="After limit switch"/>
+            <attributeValues key="Alignment" value="MIDDLE/CENTER"/>
+            <attributeValues key="PreferredSize" value="233, 29"/>
+            <dynamicAttributes key="Text">
+              <value function="n1_EQ_const : ViewEditFunctions" equal="Forward" unequal="After limit switch">
+                <parameter key="1" value="kvariable; Nozzle1.sv_NozzleMovementMode"/>
+                <parameter key="2" value="double; 1"/>
+              </value>
+            </dynamicAttributes>
+          </widgetInstances>
+          <widgetInstances widgetId="kvs.numfieldnew" name="numfieldPressAfter" layoutConstraint="null">
+            <resolution width="60" height="29"/>
+            <position x="239"/>
+            <attributeValues key="Variable" value="Nozzle1.sv_ConstFwdStage2.Pressure.Output.rOutputValue"/>
+          </widgetInstances>
+          <widgetInstances widgetId="kvs.numfieldnew" name="numfieldVelocityAfter" layoutConstraint="null">
+            <resolution width="60" height="29"/>
+            <position x="302"/>
+            <attributeValues key="Variable" value="Nozzle1.sv_ConstFwdStage2.Velocity.Output.rOutputValue"/>
+          </widgetInstances>
+          <widgetInstances widgetId="keplast.kvs.actvaluenumfield" name="numfieldTimeActAfter" layoutConstraint="null">
+            <resolution width="60" height="29"/>
+            <position x="365"/>
+            <attributeValues key="Variable" value="Nozzle1.sv_dNozzleFwdStage2Act"/>
+            <attributeValues key="VariableMaximum" value="Nozzle1.sv_dNozzleFwdStage2Set"/>
+          </widgetInstances>
+          <widgetInstances widgetId="kvs.numfieldnew" name="numfieldTimeSetAfter" layoutConstraint="null">
+            <resolution width="60" height="29"/>
+            <position x="428"/>
+            <attributeValues key="Variable" value="Nozzle1.sv_dNozzleFwdStage2Set"/>
+          </widgetInstances>
+          <layout layoutID="keplast.kvs.layout.beanlayout" name="BeanLayout">
+            <attributeValues key="FieldWidth" value="60"/>
+            <attributeValues key="FieldHeight" value="29"/>
+          </layout>
+        </widgetInstances>
+        <widgetInstances xsi:type="base:ContainerWidgetInstance" widgetId="kvs.panel" name="containerGap" layoutConstraint="null">
+          <resolution width="488" height="29"/>
+          <position y="116"/>
+          <layout layoutID="kvs.layout.PercentLayout" name="PercentLayout"/>
+        </widgetInstances>
+        <widgetInstances xsi:type="base:ContainerWidgetInstance" widgetId="kvs.panel" name="containerContactForce" layoutConstraint="null">
+          <resolution width="488" height="29"/>
+          <position y="145"/>
+          <widgetInstances widgetId="keplast.kvs.twonumfieldtext" name="twoNumFieldContactParams" layoutConstraint="CENTER">
+            <resolution width="362" height="29"/>
+            <position/>
+            <attributeValues key="Text" value="Contact force"/>
+            <attributeValues key="_TextWidth" value="160"/>
+            <attributeValues key="RemoveUnitLeft" value="true"/>
+            <attributeValues key="RemoveUnitRight" value="true"/>
+            <dynamicAttributes key="VariableLeft">
+              <value function="isDeviceHydraulic : UserFunctions" equal="Nozzle1.sv_ConstFwdContactF.Pressure.Output.rOutputValue" unequal="Nozzle1.sv_NozzleContactFProfVis.Profile.Points[1].rPressure">
+                <parameter key="1" value="devicename;PlastFunctionUtils.createDeviceName(&quot;Nozzle1&quot;)"/>
+              </value>
+            </dynamicAttributes>
+            <dynamicAttributes key="VariableRight">
+              <value function="isDeviceHydraulic : UserFunctions" equal="Nozzle1.sv_ConstFwdContactF.Velocity.Output.rOutputValue" unequal="Nozzle1.sv_NozzleContactFProfVis.Profile.Points[1].rVelocity">
+                <parameter key="1" value="devicename;PlastFunctionUtils.createDeviceName(&quot;Nozzle1&quot;)"/>
+              </value>
+            </dynamicAttributes>
+          </widgetInstances>
+          <widgetInstances xsi:type="base:ContainerWidgetInstance" widgetId="kvs.panel" name="containerDummy1" layoutConstraint="EAST">
+            <resolution width="126" height="29"/>
+            <position x="362"/>
+            <attributeValues key="PreferredSize" value="126, 29"/>
+            <layout layoutID="kvs.layout.PercentLayout" name="PercentLayout"/>
+          </widgetInstances>
+          <layout layoutID="kvs.layout.BorderLayout" name="BorderLayout"/>
+        </widgetInstances>
+        <widgetInstances xsi:type="base:ContainerWidgetInstance" widgetId="kvs.panel" name="containerForceBuildUp" layoutConstraint="null">
+          <resolution width="488" height="29"/>
+          <position y="174"/>
+          <widgetInstances xsi:type="base:ContainerWidgetInstance" widgetId="kvs.panel" name="containerDummy2" layoutConstraint="EAST">
+            <resolution width="88" height="29"/>
+            <position x="400"/>
+            <attributeValues key="PreferredSize" value="88, 10"/>
+            <layout layoutID="kvs.layout.PercentLayout" name="PercentLayout"/>
+          </widgetInstances>
+          <widgetInstances widgetId="keplast.kvs.actsetnumfieldtext" name="actSetNumFieldForceBuildUp" layoutConstraint="CENTER">
+            <resolution width="400" height="29"/>
+            <position/>
+            <attributeValues key="VariableActual" value="Nozzle1.sv_dNozzleFwdContactFAct"/>
+            <attributeValues key="Variable" value="Nozzle1.sv_dNozzleFwdContactFSet"/>
+            <dynamicAttributes key="Create">
+              <value function="isDeviceHydraulic : UserFunctions" equal="true" unequal="false">
+                <parameter key="1" value="devicename; PlastFunctionUtils.createDeviceName(&quot;Nozzle1&quot;)"/>
+              </value>
+            </dynamicAttributes>
+          </widgetInstances>
+          <layout layoutID="kvs.layout.BorderLayout" name="BorderLayout"/>
+        </widgetInstances>
+        <layout layoutID="kvs.layout.GridLayout" name="GridLayout">
+          <attributeValues key="Rows" value="0"/>
+          <attributeValues key="Columns" value="1"/>
+        </layout>
+      </widgetInstances>
+      <widgetInstances widgetId="keplast.kvs.separator" name="separator1" layoutConstraint="SEPARATOR">
+        <resolution width="2" height="203"/>
+        <position x="497" y="33"/>
+      </widgetInstances>
+      <layout layoutID="keplast.kvs.layout.horizontalsplitlayout" name="HorizontalSplitLayout">
+        <attributeValues key="PercentLeft" value="70"/>
+        <attributeValues key="PercentRight" value="30"/>
+      </layout>
+    </widgetInstances>
+    <widgetInstances xsi:type="base:ContainerWidgetInstance" widgetId="keplast.kvs.borderpanelsmall" name="panelBackward" layoutConstraint="SOUTH">
+      <resolution width="714" height="153"/>
+      <position y="248"/>
+      <attributeValues key="Title" value="Nozzle backward"/>
+      <attributeValues key="Background" value="BG_Panel:220,220,220"/>
+      <widgetInstances xsi:type="base:ContainerWidgetInstance" widgetId="kvs.panel" name="panelBackwardLeft" layoutConstraint="LEFT">
+        <resolution width="488" height="116"/>
+        <position x="6" y="33"/>
+        <widgetInstances xsi:type="base:ContainerWidgetInstance" widgetId="kvs.panel" name="panelListBwdModeSwitch" layoutConstraint="null">
+          <resolution width="488" height="29"/>
+          <position/>
+          <widgetInstances xsi:type="base:ContainerWidgetInstance" widgetId="kvs.panel" name="container3" layoutConstraint="CENTER">
+            <resolution width="362" height="29"/>
+            <position/>
+            <widgetInstances widgetId="keplast.kvs.varlabeltip" name="varLabelTip1" layoutConstraint="null">
+              <resolution width="236" height="29"/>
+              <position x="3"/>
+              <attributeValues key="TextLabelType" value="Short Variable Label"/>
+              <attributeValues key="Variable" value="Nozzle1.sv_NozzleBwdMode"/>
+              <attributeValues key="PreferredSize" value="236, 29"/>
+            </widgetInstances>
+            <widgetInstances widgetId="keplast.kvs.sequencercontrolledselectlist" name="sequencerControlledselectList1" layoutConstraint="null">
+              <resolution width="123" height="29"/>
+              <position x="239"/>
+              <attributeValues key="PreferredSize" value="123, 29"/>
+              <attributeValues key="Variable" value="Nozzle1.sv_NozzleBwdMode"/>
+            </widgetInstances>
+            <layout layoutID="keplast.kvs.layout.beanlayout" name="BeanLayout"/>
+          </widgetInstances>
+          <widgetInstances xsi:type="base:ContainerWidgetInstance" widgetId="kvs.panel" name="panelEastDummy2" layoutConstraint="EAST">
+            <resolution width="126" height="29"/>
+            <position x="362"/>
+            <attributeValues key="PreferredSize" value="126, 29"/>
+            <layout layoutID="kvs.layout.BorderLayout" name="BorderLayout"/>
+          </widgetInstances>
+          <layout layoutID="kvs.layout.BorderLayout" name="BorderLayout"/>
+        </widgetInstances>
+        <widgetInstances xsi:type="base:ContainerWidgetInstance" widgetId="kvs.panel" name="panelHeadBwd" layoutConstraint="null">
+          <resolution width="488" height="29"/>
+          <position y="29"/>
+          <widgetInstances xsi:type="base:ContainerWidgetInstance" widgetId="kvs.panel" name="container4" layoutConstraint="null">
+            <resolution width="10" height="10"/>
+            <position x="1" y="9"/>
+            <layout layoutID="kvs.layout.FlowLayout" name="FlowLayout">
+              <attributeValues key="Hgap" value="2"/>
+              <attributeValues key="Vgap" value="0"/>
+            </layout>
+          </widgetInstances>
+          <widgetInstances widgetId="keplast.kvs.klabeltip" name="labelHeadPressBwd" layoutConstraint="null">
+            <resolution width="63" height="29"/>
+            <position x="237"/>
+            <attributeValues key="Text" value="Force"/>
+            <attributeValues key="PreferredSize" value="63, 29"/>
+          </widgetInstances>
+          <widgetInstances widgetId="keplast.kvs.klabeltip" name="labelHeadVelBwd" layoutConstraint="null">
+            <resolution width="63" height="29"/>
+            <position x="301"/>
+            <attributeValues key="Text" value="Velocity"/>
+            <attributeValues key="PreferredSize" value="63, 29"/>
+          </widgetInstances>
+          <widgetInstances widgetId="keplast.kvs.klabeltip" name="labelHeadTimeBwd" layoutConstraint="null">
+            <resolution width="123" height="29"/>
+            <position x="365"/>
+            <attributeValues key="Text" value="Time"/>
+            <attributeValues key="PreferredSize" value="123, 29"/>
+          </widgetInstances>
+          <layout layoutID="keplast.kvs.layout.beanlayout" name="BeanLayout">
+            <attributeValues key="Hgap" value="1"/>
+            <attributeValues key="UnitWidth" value="38"/>
+          </layout>
+        </widgetInstances>
+        <widgetInstances xsi:type="base:ContainerWidgetInstance" widgetId="kvs.panel" name="panelUnitBwd" layoutConstraint="null">
+          <resolution width="488" height="29"/>
+          <position y="58"/>
+          <widgetInstances widgetId="keplast.kvs.varlabeltip" name="unitlabelPressBwd" layoutConstraint="null">
+            <resolution width="63" height="29"/>
+            <position x="236"/>
+            <attributeValues key="TextLabelType" value="Unit Variable Label"/>
+            <attributeValues key="Variable" value="Nozzle1.sv_ConstBwd.Pressure.Output.rOutputValue"/>
+            <attributeValues key="PreferredSize" value="63, 29"/>
+          </widgetInstances>
+          <widgetInstances widgetId="keplast.kvs.varlabeltip" name="unitlabelVelocBwd" layoutConstraint="null">
+            <resolution width="63" height="29"/>
+            <position x="299"/>
+            <attributeValues key="TextLabelType" value="Unit Variable Label"/>
+            <attributeValues key="Variable" value="Nozzle1.sv_ConstBwd.Velocity.Output.rOutputValue"/>
+            <attributeValues key="PreferredSize" value="63, 29"/>
+          </widgetInstances>
+          <widgetInstances xsi:type="base:ContainerWidgetInstance" widgetId="kvs.panel" name="container5" layoutConstraint="null">
+            <resolution width="125" height="29"/>
+            <position x="363"/>
+            <attributeValues key="PreferredSize" value="125, 29"/>
+            <widgetInstances widgetId="keplast.kvs.varlabeltip" name="unitlabelTimeBwd" layoutConstraint="CENTER">
+              <resolution width="125" height="29"/>
+              <position/>
+              <attributeValues key="TextLabelType" value="Unit Variable Label"/>
+              <attributeValues key="Variable" value="Nozzle1.sv_dMoveBwdTimeSet"/>
+            </widgetInstances>
+            <layout layoutID="kvs.layout.BorderLayout" name="BorderLayout"/>
+          </widgetInstances>
+          <layout layoutID="keplast.kvs.layout.beanlayout" name="BeanLayout">
+            <attributeValues key="UnitWidth" value="63"/>
+            <attributeValues key="Hgap" value="1"/>
+          </layout>
+        </widgetInstances>
+        <widgetInstances xsi:type="base:ContainerWidgetInstance" widgetId="kvs.panel" name="panelBackwardLine" layoutConstraint="null">
+          <resolution width="488" height="29"/>
+          <position y="87"/>
+          <widgetInstances widgetId="keplast.kvs.klabeltip" name="labelBackward" layoutConstraint="null">
+            <resolution width="233" height="21"/>
+            <position x="3" y="4"/>
+            <attributeValues key="Text" value="Backward"/>
+            <attributeValues key="Alignment" value="MIDDLE/CENTER"/>
+          </widgetInstances>
+          <widgetInstances widgetId="kvs.numfieldnew" name="numfieldPressBwd" layoutConstraint="null">
+            <resolution width="60" height="29"/>
+            <position x="239"/>
+            <attributeValues key="Variable" value="Nozzle1.sv_ConstBwd.Pressure.Output.rOutputValue"/>
+          </widgetInstances>
+          <widgetInstances widgetId="kvs.numfieldnew" name="numfieldVelocityBwd" layoutConstraint="null">
+            <resolution width="60" height="29"/>
+            <position x="302"/>
+            <attributeValues key="Variable" value="Nozzle1.sv_ConstBwd.Velocity.Output.rOutputValue"/>
+          </widgetInstances>
+          <widgetInstances widgetId="keplast.kvs.actvaluenumfield" name="numfieldTimeActBwd" layoutConstraint="null">
+            <resolution width="60" height="29"/>
+            <position x="365"/>
+            <attributeValues key="Variable" value="Nozzle1.sv_NozzleBwdTimesAct.dActMoveTime"/>
+            <attributeValues key="VariableMaximum" value="Nozzle1.sv_dMoveBwdTimeSet"/>
+          </widgetInstances>
+          <widgetInstances widgetId="kvs.numfieldnew" name="numfieldTimeSetBwd" layoutConstraint="null">
+            <resolution width="60" height="29"/>
+            <position x="428"/>
+            <attributeValues key="Variable" value="Nozzle1.sv_dMoveBwdTimeSet"/>
+          </widgetInstances>
+          <layout layoutID="keplast.kvs.layout.beanlayout" name="BeanLayout">
+            <attributeValues key="FieldWidth" value="60"/>
+            <attributeValues key="FieldHeight" value="29"/>
+          </layout>
+        </widgetInstances>
+        <layout layoutID="kvs.layout.GridLayout" name="GridLayout">
+          <attributeValues key="Rows" value="0"/>
+          <attributeValues key="Columns" value="1"/>
+        </layout>
+      </widgetInstances>
+      <widgetInstances widgetId="keplast.kvs.separator" name="separator2" layoutConstraint="SEPARATOR">
+        <resolution width="2" height="116"/>
+        <position x="497" y="33"/>
+      </widgetInstances>
+      <layout layoutID="keplast.kvs.layout.horizontalsplitlayout" name="HorizontalSplitLayout">
+        <attributeValues key="PercentLeft" value="70"/>
+        <attributeValues key="PercentRight" value="30"/>
+      </layout>
+    </widgetInstances>
+    <layout layoutID="kvs.layout.BorderLayout" name="BorderLayout">
+      <attributeValues key="Vgap" value="4"/>
+    </layout>
+  </widgetInstances>
+  <layout layoutID="kvs.layout.BorderLayout" name="BorderLayout">
+    <attributeValues key="Vgap" value="8"/>
+  </layout>
+</base:Mask>

@@ -1,0 +1,656 @@
+(*
+@h    ! WARNING !
+@h    The Kemro K2 system (including software) only meets category B according to EN 954-1,
+@h    thus it is not intended for usage in safety-relevant control applications in the field 
+@h    of personal safety (e.g. emergency stop).
+@h    To implement potentially necessary safety-relevant control tasks, always use additional 
+@h    external safety devices that are intended for the particular purpose, and meet the necessary 
+@h    functional safety.
+@h    For further information see EN 954-1 (EN ISO 13849-1) and/or the K2-x00 user manual, chapter 
+@h    "CE conformity, directives and standards". 
+
+This algo sends the mold height to a specified position by controlling the
+Mold Height Movements.
+*)
+
+IMPORT_OVER_LISTFILE
+ SET_ALARM
+, cMoveFwd
+, cMoveMoldHeight
+, cMoveBwd
+, tsMoldHeightPositions
+, tsEndpointMonitor
+, tevStartRequest
+, tsDeviceId
+, tevStartRequestData
+, FBStop
+, FBCheckReady
+, tnMovementDirection
+
+END_IMPORT
+
+ALGORITHM_BLOCK ABAdjustPositionChange #DUMMY_EDIT_BLOCK
+
+SYSTEM_VAR
+ sv_MoldHeightPositions : tsMoldHeightPositions;
+ sv_MoldHeightEndpoints : tsEndpointMonitor;
+ sv_rActMoldHeightPosition : REAL;
+ sv_iThisStepsSetImpulses : UDINT;
+ sv_rDistancePerImpulse : REAL;
+END_VAR
+
+SYSTEM_OBJECT
+ evStartRequest : tevStartRequest;
+ erMoldHeightAdjustAborted : ALARM;
+ erMoldHeightAdjustFinished : ALARM;
+END_OBJECT
+
+(*
+This algo controls the mold height automatic position change:
+- A desired position is set on the hmi. By starting the automatic mold height adjustment this algo is called.
+- The desired position is translated into a number of increments and direction to move to.
+- The movement is started until the position reached flags are set by the movements of MoldHeight1.
+- The ready flag is set and the algo won't be called any more.
+*)
+
+ALGORITHM aRun
+
+
+VAR_INPUT
+ bStop : BOOL;
+END_VAR
+
+VAR_OUTPUT
+ bReady : BOOL;
+END_VAR
+
+VAR_INPUT
+ DeviceIdMoldHeight : tsDeviceId;
+END_VAR
+
+VAR
+ iTempImpulses : INT;
+ evStartRequestData : tevStartRequestData;
+ fbStop : FBStop;
+ fbCheckReady : FBCheckReady;
+ MovementDirection : tnMovementDirection;
+END_VAR
+
+(* IecGraph-Code *)
+
+(* init step *)
+INITIAL_STEP START:
+END_STEP
+
+
+(* steps *)
+STEP PREPARE_MOVEMENT:
+aPrepareMovement (P);
+END_STEP
+
+STEP MOVE:
+AReset (P);
+END_STEP
+
+ACTION AReset: #BEGIN_EDIT_BLOCK
+sv_MoldHeightEndpoints.bPositionForStepReached := FALSE;
+
+;#END_EDIT_BLOCK END_ACTION (*AReset*)
+STEP MOVE_FWD_TO_POS:
+aMoveFwdToPos (P);
+aCheckFwdReady (N);
+END_STEP
+
+STEP MOVE_BWD_TO_POS:
+aMoveBwdToPos (P);
+aCheckBwdReady (N);
+END_STEP
+
+STEP READY:
+ResetMovementFlags (P);
+END_STEP
+
+ACTION ResetMovementFlags: #BEGIN_EDIT_BLOCK
+IF bStop THEN
+    //stop active device
+    fbStop(DeviceId := DeviceIdMoldHeight);    
+END_IF;
+
+IF sv_MoldHeightEndpoints.bPositionForStepReached THEN
+    SET_ALARM(erMoldHeightAdjustFinished);
+ELSE
+    SET_ALARM(erMoldHeightAdjustAborted);
+END_IF;
+
+bReady := TRUE;
+
+;#END_EDIT_BLOCK END_ACTION (*ResetMovementFlags*)
+
+(* transitions *)
+GO_ON_TRANSITION StartTrans FROM START TO PREPARE_MOVEMENT :=  #BEGIN_EDIT_BLOCK
+TRUE
+;#END_EDIT_BLOCK
+END_TRANSITION
+
+GO_ON_TRANSITION TAdjust FROM PREPARE_MOVEMENT TO MOVE :=  #BEGIN_EDIT_BLOCK
+iTempImpulses <> 0
+;#END_EDIT_BLOCK
+END_TRANSITION
+
+GO_ON_TRANSITION TNoAdjustNeeded FROM PREPARE_MOVEMENT TO READY :=  #BEGIN_EDIT_BLOCK
+iTempImpulses = 0
+;#END_EDIT_BLOCK
+END_TRANSITION
+
+GO_ON_TRANSITION CheckMovementDirection1 FROM MOVE TO MOVE_FWD_TO_POS :=  #BEGIN_EDIT_BLOCK
+MovementDirection = nForward
+;#END_EDIT_BLOCK
+END_TRANSITION
+
+TRANSITION CheckMovementFinished1 FROM MOVE_FWD_TO_POS TO READY :=  #BEGIN_EDIT_BLOCK
+fbCheckReady.bReady OR bStop
+;#END_EDIT_BLOCK
+END_TRANSITION
+
+GO_ON_TRANSITION CheckMovementDirection2 FROM MOVE TO MOVE_BWD_TO_POS :=  #BEGIN_EDIT_BLOCK
+MovementDirection = nBackward
+;#END_EDIT_BLOCK
+END_TRANSITION
+
+TRANSITION CheckMovementFinished2 FROM MOVE_BWD_TO_POS TO READY :=  #BEGIN_EDIT_BLOCK
+fbCheckReady.bReady OR bStop
+;#END_EDIT_BLOCK
+END_TRANSITION
+
+TRANSITION TLoopBack FROM READY TO START :=  #BEGIN_EDIT_BLOCK
+TRUE
+;#END_EDIT_BLOCK
+END_TRANSITION
+
+(* end IecGraph-Code *)
+(* sfc-code *)
+
+(* stand alone actions *)
+ACTION aMoveFwdToPos: #BEGIN_EDIT_BLOCK
+(*@ MoldHeightAdjustN.ABAdjustPositionChange.aMoveFwdToPos.Start the mold height forward movement.*)
+evStartRequestData.DeviceId := DeviceIdMoldHeight;
+evStartRequestData.MoveDir := cMoveFwd; 
+evStartRequestData.MoveId := cMoveFwd;
+SET_EVENT(evStartRequest, evStartRequestData); 
+
+;#END_EDIT_BLOCK END_ACTION (*aMoveFwdToPos*)
+ACTION aMoveBwdToPos: #BEGIN_EDIT_BLOCK
+(*@ MoldHeightAdjustN.ABAdjustPositionChange.aMoveBwdToPos.Start the mold height backwar movement.*)
+evStartRequestData.DeviceId := DeviceIdMoldHeight;
+evStartRequestData.MoveDir := cMoveBwd; 
+evStartRequestData.MoveId := cMoveBwd;
+SET_EVENT(evStartRequest, evStartRequestData); 
+
+;#END_EDIT_BLOCK END_ACTION (*aMoveBwdToPos*)
+ACTION aPrepareMovement: #BEGIN_EDIT_BLOCK
+
+(*@ MoldHeightAdjustN.ABAdjustPositionChange.aPrepareMovement.Reset the CalcFinished and AutoAdjustFinished flag
+                                                for normal operation.*)
+bReady := FALSE;
+
+(*@ MoldHeightAdjustN.ABAdjustPositionChange.aPrepareMovement.Calculate the number of Impulses the mold height
+                                                should move like this:
+                                                Distance = Actual Position - MoveTo Position;
+                                                Impulses To Move = Distance / Distance per Impulse*)
+IF sv_rDistancePerImpulse > 0.0 THEN
+   //avoid division by zero
+   iTempImpulses := REAL_TO_INT((sv_rActMoldHeightPosition - sv_MoldHeightPositions.rMoveToMoldHeightPosition)/sv_rDistancePerImpulse);
+ELSE
+   iTempImpulses := 0;
+END_IF;
+
+(*@ MoldHeightAdjustN.ABAdjustPositionChange.aPrepareMovement.Check if the position as the same as the actual
+                                                position and stop the movement if it so.
+                                                Else check/set the direction. Negative number of Impulses to Move
+                                                means Move Backward (If so, remove the negative sign of Impulses
+                                                to Move.*)
+IF iTempImpulses = 0 THEN
+    bReady := TRUE;
+ELSIF iTempImpulses < 0 THEN
+    MovementDirection := nBackward;
+    iTempImpulses := ABS(iTempImpulses);
+ELSIF iTempImpulses > 0 THEN
+    MovementDirection := nForward;    
+END_IF;
+
+(*@ MoldHeightAdjustN.ABAdjustPositionChange.aPrepareMovement.Set the system variable for impulses to move*)
+sv_iThisStepsSetImpulses := INT_TO_UDINT(iTempImpulses);
+
+;#END_EDIT_BLOCK END_ACTION (*aPrepareMovement*)
+ACTION aCheckFwdReady: #BEGIN_EDIT_BLOCK
+(**************************************** WARNING ********************************************
+ *** The KEBA Kemro K2 System including software is not intended for safety control tasks! ***
+ ***                       For further information see Comment tab!                        ***
+ *********************************************************************************************)
+
+fbCheckReady(DeviceId := DeviceIdMoldHeight);
+
+;#END_EDIT_BLOCK END_ACTION (*aCheckFwdReady*)
+ACTION aCheckBwdReady: #BEGIN_EDIT_BLOCK
+(**************************************** WARNING ********************************************
+ *** The KEBA Kemro K2 System including software is not intended for safety control tasks! ***
+ ***                       For further information see Comment tab!                        ***
+ *********************************************************************************************)
+
+fbCheckReady(DeviceId := DeviceIdMoldHeight);
+
+;#END_EDIT_BLOCK END_ACTION (*aCheckBwdReady*)
+(* end sfc-code *)
+
+
+END_ALGORITHM
+
+
+
+END_ALGORITHM_BLOCK
+
+
+
+#END_OF_IEC_PART
+
+@Puma @IecEditor 6 68 @Pou 25 
+@@@BEG_Comment@@@
+@h    ! WARNING !
+@h    The Kemro K2 system (including software) only meets category B according to EN 954-1,
+@h    thus it is not intended for usage in safety-relevant control applications in the field 
+@h    of personal safety (e.g. emergency stop).
+@h    To implement potentially necessary safety-relevant control tasks, always use additional 
+@h    external safety devices that are intended for the particular purpose, and meet the necessary 
+@h    functional safety.
+@h    For further information see EN 954-1 (EN ISO 13849-1) and/or the K2-x00 user manual, chapter 
+@h    "CE conformity, directives and standards". 
+
+This algo sends the mold height to a specified position by controlling the
+Mold Height Movements.
+@@@END_Comment@@@
+
+@BEG_Contents 
+
+@BEG_Func 
+@RT(17)FuncTreeContainer 
+1 
+@Var @RT(9)SET_ALARM @RT(0) @T @T @DERIVED 0 @F @RT(23)KEBA_STANDARD_PROCEDURE @F 
+@T 
+@BEG_Attrib 
+0 @RT(0) @RT(0) 
+@END_Attrib 
+1 1 @F @F @F @F 
+
+@END_Func 
+
+@BEG_Const 
+@RT(18)ConstTreeContainer 
+3 
+@Var @RT(8)cMoveFwd @RT(0) @T @F @DT @RT(4)DINT @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+0 @RT(2)12 @RT(16)movement forward 
+@END_Attrib 
+1 1 @F @F @F @F 
+
+@Var @RT(15)cMoveMoldHeight @RT(0) @T @F @DT @RT(4)DINT @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+0 @RT(2)29 @RT(23)movement of mold height 
+@END_Attrib 
+1 1 @F @F @F @F 
+
+@Var @RT(8)cMoveBwd @RT(0) @T @F @DT @RT(4)DINT @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+0 @RT(2)11 @RT(17)movement backward 
+@END_Attrib 
+1 1 @F @F @F @F 
+
+@END_Const 
+
+@BEG_Export 
+
+@BEG_Kind 
+@ALGORITHM_BLOCK @RT(22)ABAdjustPositionChange @STRUCTURED_TEXT 
+@RT(0) @RT(0) @RT(0) 
+@END_Kind 
+
+@BEG_Dcl 
+@RT(16)DclTreeContainer 
+8 
+@Var @RT(22)sv_MoldHeightPositions @RT(0) @T @T @DERIVED 0 @T @T @DT @RT(21)tsMoldHeightPositions @RT(0) @T @T @UNKNOWN 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 8 @F @F @F @F 
+
+@Var @RT(22)sv_MoldHeightEndpoints @RT(0) @T @T @DERIVED 0 @T @T @DT @RT(17)tsEndpointMonitor @RT(0) @T @T @UNKNOWN 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 8 @F @F @F @F 
+
+@Var @RT(25)sv_rActMoldHeightPosition @RT(0) @T @F @DT @RT(4)REAL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 8 @F @F @F @F 
+
+@Var @RT(24)sv_iThisStepsSetImpulses @RT(0) @T @F @DT @RT(5)UDINT @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 8 @F @F @F @F 
+
+@Var @RT(22)sv_rDistancePerImpulse @RT(0) @T @F @DT @RT(4)REAL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 8 @F @F @F @F 
+
+@Var @RT(14)evStartRequest @RT(0) @T @T @DERIVED 0 @T @T @DT @RT(15)tevStartRequest @RT(0) @T @T @UNKNOWN 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 7 @F @F @F @F 
+
+@Var @RT(25)erMoldHeightAdjustAborted @RT(0) @T @F @DT @RT(5)ALARM @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 7 @F @F @F @F 
+
+@Var @RT(26)erMoldHeightAdjustFinished @RT(0) @T @F @DT @RT(5)ALARM @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 7 @F @F @F @F 
+
+@END_Dcl 
+
+@END_Export 
+
+@BEG_Body 
+
+1 
+
+@BEG_Export 
+
+@BEG_Algo 
+@ALGORITHM @RT(4)aRun @SEQUENTIAL_FLOW_CHART 
+@RT(0) @RT(0) @RT(0) @F @F 
+@END_Algo 
+
+@BEG_Dcl 
+@RT(16)DclTreeContainer 
+8 
+@Var @RT(5)bStop @RT(0) @T @F @DT @RT(4)BOOL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 1 @F @F @F @F 
+
+@Var @RT(6)bReady @RT(0) @T @F @DT @RT(4)BOOL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 3 @F @F @F @F 
+
+@Var @RT(18)DeviceIdMoldHeight @RT(0) @T @T @DERIVED 0 @T @T @DT @RT(10)tsDeviceId @RT(0) @T @T @UNKNOWN 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 1 @F @F @F @F 
+
+@Var @RT(13)iTempImpulses @RT(0) @T @F @DT @RT(3)INT @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(18)evStartRequestData @RT(0) @T @T @DERIVED 0 @T @T @DT @RT(19)tevStartRequestData @RT(0) @T @T @UNKNOWN 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(6)fbStop @RT(0) @T @T @DERIVED 0 @T @T @DT @RT(6)FBStop @RT(0) @T @T @UNKNOWN 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(12)fbCheckReady @RT(0) @T @T @DERIVED 0 @T @T @DT @RT(12)FBCheckReady @RT(0) @T @T @UNKNOWN 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(17)MovementDirection @RT(0) @T @T @DERIVED 0 @T @T @DT @RT(19)tnMovementDirection @RT(0) @T @T @UNKNOWN 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@END_Dcl 
+
+@END_Export 
+
+@BEG_SfcBody 
+17 12 14 
+
+@BEG_SfcData 2 
+@StepSeq @RT(4)sseq @F 1 
+@Loop @RT(4)loop @F 2 
+@StepSeq @RT(3)seq @F 7 
+@Step @RT(5)START @F @T @F @F @RT(0) @F 
+@AcbCont @RT(7)unnamed @F 0 
+
+@Trans @RT(10)StartTrans @F @T @F @F @T @F @TL(2)
+TRUE
+
+@RT(6)Trans1 @F 
+@Step @RT(16)PREPARE_MOVEMENT @F @F @F @F @RT(0) @F 
+@AcbCont @RT(7)unnamed @F 1 
+@Acb @RT(16)aPrepareMovement @F @F @RT(1)P @RT(0) @F @F @T @F 
+
+@AltBranch @RT(3)alt @F 2 
+@TransSeq @RT(4)tseq @F 1 
+@Trans @RT(7)TAdjust @F @T @F @F @T @F @TL(2)
+iTempImpulses <> 0
+
+@RT(6)Trans2 @F 
+
+@TransSeq @RT(4)tseq @F 2 
+@Trans @RT(15)TNoAdjustNeeded @F @T @F @F @T @F @TL(2)
+iTempImpulses = 0
+
+@RT(7)Trans13 @F 
+@Goto @RT(5)READY @F @F 
+
+
+@Step @RT(4)MOVE @F @F @F @F @RT(0) @F 
+@AcbCont @RT(7)unnamed @F 1 
+@Acb @RT(6)AReset @F @T @RT(1)P @RT(0) @F @F @T @TL(2)
+sv_MoldHeightEndpoints.bPositionForStepReached := FALSE;
+
+@F 
+
+@AltBranch @RT(3)alt @F 2 
+@TransSeq @RT(4)tseq @F 3 
+@Trans @RT(23)CheckMovementDirection1 @F @T @F @F @T @F @TL(2)
+MovementDirection = nForward
+
+@RT(6)Trans3 @F 
+@Step @RT(15)MOVE_FWD_TO_POS @F @F @F @F @RT(0) @F 
+@AcbCont @RT(7)unnamed @F 2 
+@Acb @RT(13)aMoveFwdToPos @F @F @RT(1)P @RT(0) @F @F @T @F 
+@Acb @RT(14)aCheckFwdReady @F @F @RT(1)N @RT(0) @F @F @F @F 
+
+@Trans @RT(22)CheckMovementFinished1 @F @T @F @F @T @T @TL(2)
+fbCheckReady.bReady OR bStop
+
+@RT(6)Trans5 @F 
+
+@TransSeq @RT(4)tseq @F 3 
+@Trans @RT(23)CheckMovementDirection2 @F @T @F @F @T @F @TL(2)
+MovementDirection = nBackward
+
+@RT(6)Trans4 @F 
+@Step @RT(15)MOVE_BWD_TO_POS @F @F @F @F @RT(0) @F 
+@AcbCont @RT(7)unnamed @F 2 
+@Acb @RT(13)aMoveBwdToPos @F @F @RT(1)P @RT(0) @F @F @F @F 
+@Acb @RT(14)aCheckBwdReady @F @F @RT(1)N @RT(0) @F @F @F @F 
+
+@Trans @RT(22)CheckMovementFinished2 @F @T @F @F @T @T @TL(2)
+fbCheckReady.bReady OR bStop
+
+@RT(6)Trans5 @F 
+
+
+@Step @RT(5)READY @F @F @T @F @RT(0) @F 
+@AcbCont @RT(7)unnamed @F 1 
+@Acb @RT(18)ResetMovementFlags @F @T @RT(1)P @RT(0) @F @F @T @TL(13)
+IF bStop THEN
+    //stop active device
+    fbStop(DeviceId := DeviceIdMoldHeight);    
+END_IF;
+
+IF sv_MoldHeightEndpoints.bPositionForStepReached THEN
+    SET_ALARM(erMoldHeightAdjustFinished);
+ELSE
+    SET_ALARM(erMoldHeightAdjustAborted);
+END_IF;
+
+bReady := TRUE;
+
+@F 
+
+
+@Trans @RT(9)TLoopBack @F @T @T @T @T @T @TL(2)
+TRUE
+
+@RT(6)Trans7 @F 
+
+@END_SfcData 
+@SaActions 5 
+@SaText @RT(13)aMoveFwdToPos 1 @TL(6)
+(*@ MoldHeightAdjustN.ABAdjustPositionChange.aMoveFwdToPos.Start the mold height forward movement.*)
+evStartRequestData.DeviceId := DeviceIdMoldHeight;
+evStartRequestData.MoveDir := cMoveFwd; 
+evStartRequestData.MoveId := cMoveFwd;
+SET_EVENT(evStartRequest, evStartRequestData); 
+
+
+@SaText @RT(13)aMoveBwdToPos 1 @TL(6)
+(*@ MoldHeightAdjustN.ABAdjustPositionChange.aMoveBwdToPos.Start the mold height backwar movement.*)
+evStartRequestData.DeviceId := DeviceIdMoldHeight;
+evStartRequestData.MoveDir := cMoveBwd; 
+evStartRequestData.MoveId := cMoveBwd;
+SET_EVENT(evStartRequest, evStartRequestData); 
+
+
+@SaText @RT(16)aPrepareMovement 1 @TL(33)
+
+(*@ MoldHeightAdjustN.ABAdjustPositionChange.aPrepareMovement.Reset the CalcFinished and AutoAdjustFinished flag
+                                                for normal operation.*)
+bReady := FALSE;
+
+(*@ MoldHeightAdjustN.ABAdjustPositionChange.aPrepareMovement.Calculate the number of Impulses the mold height
+                                                should move like this:
+                                                Distance = Actual Position - MoveTo Position;
+                                                Impulses To Move = Distance / Distance per Impulse*)
+IF sv_rDistancePerImpulse > 0.0 THEN
+   //avoid division by zero
+   iTempImpulses := REAL_TO_INT((sv_rActMoldHeightPosition - sv_MoldHeightPositions.rMoveToMoldHeightPosition)/sv_rDistancePerImpulse);
+ELSE
+   iTempImpulses := 0;
+END_IF;
+
+(*@ MoldHeightAdjustN.ABAdjustPositionChange.aPrepareMovement.Check if the position as the same as the actual
+                                                position and stop the movement if it so.
+                                                Else check/set the direction. Negative number of Impulses to Move
+                                                means Move Backward (If so, remove the negative sign of Impulses
+                                                to Move.*)
+IF iTempImpulses = 0 THEN
+    bReady := TRUE;
+ELSIF iTempImpulses < 0 THEN
+    MovementDirection := nBackward;
+    iTempImpulses := ABS(iTempImpulses);
+ELSIF iTempImpulses > 0 THEN
+    MovementDirection := nForward;    
+END_IF;
+
+(*@ MoldHeightAdjustN.ABAdjustPositionChange.aPrepareMovement.Set the system variable for impulses to move*)
+sv_iThisStepsSetImpulses := INT_TO_UDINT(iTempImpulses);
+
+
+@SaText @RT(14)aCheckFwdReady 1 @TL(7)
+(**************************************** WARNING ********************************************
+ *** The KEBA Kemro K2 System including software is not intended for safety control tasks! ***
+ ***                       For further information see Comment tab!                        ***
+ *********************************************************************************************)
+
+fbCheckReady(DeviceId := DeviceIdMoldHeight);
+
+
+@SaText @RT(14)aCheckBwdReady 1 @TL(7)
+(**************************************** WARNING ********************************************
+ *** The KEBA Kemro K2 System including software is not intended for safety control tasks! ***
+ ***                       For further information see Comment tab!                        ***
+ *********************************************************************************************)
+
+fbCheckReady(DeviceId := DeviceIdMoldHeight);
+
+
+@SaTrans 0 
+@SaExits 0 
+@END_SfcBody 
+
+@@@BEG_Comment@@@ 
+@TL(5)
+This algo controls the mold height automatic position change:
+- A desired position is set on the hmi. By starting the automatic mold height adjustment this algo is called.
+- The desired position is translated into a number of increments and direction to move to.
+- The movement is started until the position reached flags are set by the movements of MoldHeight1.
+- The ready flag is set and the algo won't be called any more.
+@@@END_Comment@@@ 
+@END_Body 
+
+@END_Contents 

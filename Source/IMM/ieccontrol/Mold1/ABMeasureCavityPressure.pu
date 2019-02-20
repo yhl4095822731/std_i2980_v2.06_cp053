@@ -1,0 +1,3658 @@
+IMPORT_OVER_LISTFILE
+ FGetHWPath
+, WRITE_SVREAL_DIRECT
+, cCompInjection
+, cMoveInject
+, tsDeviceId
+, KAPPL_LintabData_2P
+, tevStart
+, KAPPL_MeasureMonitoring
+, ABMeasureAnalog
+, tevStartData
+
+END_IMPORT
+
+ALGORITHM_BLOCK ABMeasureCavityPressure #DUMMY_EDIT_BLOCK
+
+SYSTEM_VAR
+ sv_DeviceId : tsDeviceId (* unique Device Identifier *);
+ sv_rCavityPressure1 : REAL;
+ sv_rCavityPressure2 : REAL;
+ sv_rCavityPressure3 : REAL;
+ sv_rCavityPressure4 : REAL;
+ sv_rCavityPressure5 : REAL;
+ sv_rCavityPressure6 : REAL;
+ sv_rCavityPressure7 : REAL;
+ sv_rCavityPressure8 : REAL;
+ sv_rMaxCavityPressure1 : REAL;
+ ai_CavityPressure1_stat : BOOL;
+ ai_CavityPressure2_stat : BOOL;
+ ai_CavityPressure3_stat : BOOL;
+ ai_CavityPressure4_stat : BOOL;
+ ai_CavityPressure5_stat : BOOL;
+ ai_CavityPressure6_stat : BOOL;
+ ai_CavityPressure7_stat : BOOL;
+ ai_CavityPressure8_stat : BOOL;
+ sv_rMaxPressureMoldCavity : REAL (* maximum specific pressure for injection *);
+ sv_rMaxCavityPressure2 : REAL;
+ sv_rMaxCavityPressure3 : REAL;
+ sv_rMaxCavityPressure4 : REAL;
+ sv_rMaxCavityPressure5 : REAL;
+ sv_rMaxCavityPressure6 : REAL;
+ sv_rMaxCavityPressure7 : REAL;
+ sv_rMaxCavityPressure8 : REAL;
+ ai_CavityPressure1 : REAL;
+ ai_CavityPressure2 : REAL;
+ ai_CavityPressure3 : REAL;
+ ai_CavityPressure4 : REAL;
+ ai_CavityPressure5 : REAL;
+ ai_CavityPressure6 : REAL;
+ ai_CavityPressure7 : REAL;
+ ai_CavityPressure8 : REAL;
+ sv_bCavityPressureError1 : BOOL;
+ sv_bCavityPressureError2 : BOOL;
+ sv_bCavityPressureError3 : BOOL;
+ sv_bCavityPressureError4 : BOOL;
+ sv_bCavityPressureError5 : BOOL;
+ sv_bCavityPressureError6 : BOOL;
+ sv_bCavityPressureError7 : BOOL;
+ sv_bCavityPressureError8 : BOOL;
+ sv_CavityPressLintab1 : KAPPL_LintabData_2P;
+ sv_CavityPressLintab2 : KAPPL_LintabData_2P;
+ sv_CavityPressLintab3 : KAPPL_LintabData_2P;
+ sv_CavityPressLintab4 : KAPPL_LintabData_2P;
+ sv_CavityPressLintab5 : KAPPL_LintabData_2P;
+ sv_CavityPressLintab6 : KAPPL_LintabData_2P;
+ sv_CavityPressLintab7 : KAPPL_LintabData_2P;
+ sv_CavityPressLintab8 : KAPPL_LintabData_2P;
+ sv_bActivateCavityPressMeas : BOOL (* cavity pressure measuring on/off *);
+ sv_bInitStart : BOOL;
+ sv_iSelCavityPressureSensor : DINT;
+ sv_bUseMoldPressureForCutOff : BOOL;
+ sv_CavityPresMonitorMeas1 : KAPPL_MeasureMonitoring;
+ sv_CavityPresMonitorMeas2 : KAPPL_MeasureMonitoring;
+ sv_CavityPresMonitorMeas3 : KAPPL_MeasureMonitoring;
+ sv_CavityPresMonitorMeas4 : KAPPL_MeasureMonitoring;
+ sv_CavityPresMonitorMeas5 : KAPPL_MeasureMonitoring;
+ sv_CavityPresMonitorMeas6 : KAPPL_MeasureMonitoring;
+ sv_CavityPresMonitorMeas7 : KAPPL_MeasureMonitoring;
+ sv_CavityPresMonitorMeas8 : KAPPL_MeasureMonitoring;
+END_VAR
+
+SYSTEM_OBJECT
+ erAnalogInput : ALARM;
+ TaskAnalog : TASK;
+ EV_Task_7 : TASK;
+ evStart : tevStart;
+ PU_Task_7 : TASK;
+END_OBJECT
+
+PROCESS_ALGORITHM paMeasure1 ON TaskAnalog(1000)
+
+
+VAR_TEMP
+ rMaxCavityPressure : REAL;
+ b : BOOL;
+END_VAR
+
+VAR
+ abMeasurePres : ABMeasureAnalog;
+END_VAR
+
+(* IecGraph-Code *)
+
+(* init step *)
+INITIAL_STEP S_Start:
+END_STEP
+
+
+(* steps *)
+STEP S_Stop:
+AStop (P);
+END_STEP
+
+ACTION AStop: #BEGIN_EDIT_BLOCK
+STOP_PROCESS_ALGORITHM();
+
+;#END_EDIT_BLOCK END_ACTION (*AStop*)
+STEP S_Init:
+AInitMeasureBlock (P);
+END_STEP
+
+STEP S_Measure:
+AMeasure (N);
+END_STEP
+
+
+(* transitions *)
+TRANSITION TLinked (* TLinked *) FROM S_Start TO S_Init :=  #BEGIN_EDIT_BLOCK
+IS_LINKED(ai_CavityPressure1)
+;#END_EDIT_BLOCK
+END_TRANSITION
+
+TRANSITION TNotLinked (* TNotLinked *) FROM S_Start TO S_Stop :=  #BEGIN_EDIT_BLOCK
+NOT IS_LINKED(ai_CavityPressure1)
+;#END_EDIT_BLOCK
+END_TRANSITION
+
+TRANSITION TStop (* TStop *) FROM S_Stop TO S_Start :=  #BEGIN_EDIT_BLOCK
+TRUE
+;#END_EDIT_BLOCK
+END_TRANSITION
+
+TRANSITION TInitDone (* TInitDone *) FROM S_Init TO S_Measure :=  #BEGIN_EDIT_BLOCK
+TRUE
+;#END_EDIT_BLOCK
+END_TRANSITION
+
+TRANSITION TMeasuringDeactivated (* Trans5 *) FROM S_Measure TO S_Stop :=  #BEGIN_EDIT_BLOCK
+NOT sv_bActivateCavityPressMeas
+;#END_EDIT_BLOCK
+END_TRANSITION
+
+(* end IecGraph-Code *)
+(* sfc-code *)
+
+(* stand alone actions *)
+ACTION AMeasure: #BEGIN_EDIT_BLOCK
+(**************************************** WARNING ********************************************
+ *** The KEBA Kemro K2 System including software is not intended for safety control tasks! ***
+ ***                       For further information see Comment tab!                        ***
+ *********************************************************************************************)
+
+abMeasurePres.aRunLight(rRawValue := ai_CavityPressure1);
+sv_bCavityPressureError1 := abMeasurePres.aRunLight.bError;
+b := WRITE_SVREAL_DIRECT(sv_rCavityPressure1, abMeasurePres.aRunLight.rValue);
+
+rMaxCavityPressure := MAX(sv_rCavityPressure1, sv_rMaxCavityPressure1);
+b := WRITE_SVREAL_DIRECT(sv_rMaxCavityPressure1, rMaxCavityPressure);
+
+;#END_EDIT_BLOCK END_ACTION (*AMeasure*)
+ACTION AInitMeasureBlock: #BEGIN_EDIT_BLOCK
+(**************************************** WARNING ********************************************
+ *** The KEBA Kemro K2 System including software is not intended for safety control tasks! ***
+ ***                       For further information see Comment tab!                        ***
+ *********************************************************************************************)
+
+
+abMeasurePres.aInit(pLintabPointArray := @sv_CavityPressLintab1.LintabPoints.Point,
+                    piUsedLintabPoints := @sv_CavityPressLintab1.LintabPoints.uNoOfPoints,
+                    sRawValue := 'ai_CavityPressure1');
+
+abMeasurePres.aInitMonitoring(bEnable := sv_CavityPresMonitorMeas1.EnableMonitoring,
+                              rLowLimit := sv_CavityPresMonitorMeas1.LowerLimit,
+                              bLimitation := sv_CavityPresMonitorMeas1.Limitation,
+                              rFailureFactor := sv_CavityPresMonitorMeas1.FailureFactor);
+
+
+;#END_EDIT_BLOCK END_ACTION (*AInitMeasureBlock*)
+(* end sfc-code *)
+
+
+END_ALGORITHM
+
+PROCESS_ALGORITHM paMeasure2 ON TaskAnalog(1000)
+
+
+VAR_TEMP
+ rMaxCavityPressure : REAL;
+ b : BOOL;
+END_VAR
+
+VAR
+ abMeasurePres : ABMeasureAnalog;
+END_VAR
+
+(* IecGraph-Code *)
+
+(* init step *)
+INITIAL_STEP S_Start:
+END_STEP
+
+
+(* steps *)
+STEP S_Stop:
+AStop (P);
+END_STEP
+
+ACTION AStop: #BEGIN_EDIT_BLOCK
+STOP_PROCESS_ALGORITHM();
+
+;#END_EDIT_BLOCK END_ACTION (*AStop*)
+STEP S_Init:
+AInitMeasureBlock (P);
+END_STEP
+
+STEP S_Measure:
+AMeasure (N);
+END_STEP
+
+
+(* transitions *)
+TRANSITION TLinked (* TLinked *) FROM S_Start TO S_Init :=  #BEGIN_EDIT_BLOCK
+IS_LINKED(ai_CavityPressure2)
+;#END_EDIT_BLOCK
+END_TRANSITION
+
+TRANSITION TNotLinked (* TNotLinked *) FROM S_Start TO S_Stop :=  #BEGIN_EDIT_BLOCK
+NOT IS_LINKED(ai_CavityPressure2)
+;#END_EDIT_BLOCK
+END_TRANSITION
+
+TRANSITION TStop (* TStop *) FROM S_Stop TO S_Start :=  #BEGIN_EDIT_BLOCK
+TRUE
+;#END_EDIT_BLOCK
+END_TRANSITION
+
+TRANSITION TInitDone (* TInitDone *) FROM S_Init TO S_Measure :=  #BEGIN_EDIT_BLOCK
+TRUE
+;#END_EDIT_BLOCK
+END_TRANSITION
+
+TRANSITION TMeasuringDeactivated (* Trans5 *) FROM S_Measure TO S_Stop :=  #BEGIN_EDIT_BLOCK
+NOT sv_bActivateCavityPressMeas
+;#END_EDIT_BLOCK
+END_TRANSITION
+
+(* end IecGraph-Code *)
+(* sfc-code *)
+
+(* stand alone actions *)
+ACTION AMeasure: #BEGIN_EDIT_BLOCK
+(**************************************** WARNING ********************************************
+ *** The KEBA Kemro K2 System including software is not intended for safety control tasks! ***
+ ***                       For further information see Comment tab!                        ***
+ *********************************************************************************************)
+
+
+abMeasurePres.aRunLight(rRawValue := ai_CavityPressure2);
+sv_bCavityPressureError2 := abMeasurePres.aRunLight.bError;
+b := WRITE_SVREAL_DIRECT(sv_rCavityPressure2, abMeasurePres.aRunLight.rValue);
+
+rMaxCavityPressure := MAX(sv_rCavityPressure2, sv_rMaxCavityPressure2);
+b := WRITE_SVREAL_DIRECT(sv_rMaxCavityPressure2, rMaxCavityPressure);
+
+;#END_EDIT_BLOCK END_ACTION (*AMeasure*)
+ACTION AInitMeasureBlock: #BEGIN_EDIT_BLOCK
+(**************************************** WARNING ********************************************
+ *** The KEBA Kemro K2 System including software is not intended for safety control tasks! ***
+ ***                       For further information see Comment tab!                        ***
+ *********************************************************************************************)
+
+abMeasurePres.aInit(pLintabPointArray := @sv_CavityPressLintab2.LintabPoints.Point,
+                    piUsedLintabPoints := @sv_CavityPressLintab2.LintabPoints.uNoOfPoints,
+                    sRawValue := 'ai_CavityPressure2');
+
+abMeasurePres.aInitMonitoring(bEnable := sv_CavityPresMonitorMeas2.EnableMonitoring,
+                              rLowLimit := sv_CavityPresMonitorMeas2.LowerLimit,
+                              bLimitation := sv_CavityPresMonitorMeas2.Limitation,
+                              rFailureFactor := sv_CavityPresMonitorMeas2.FailureFactor);
+
+
+;#END_EDIT_BLOCK END_ACTION (*AInitMeasureBlock*)
+(* end sfc-code *)
+
+
+END_ALGORITHM
+
+PROCESS_ALGORITHM paMeasure3 ON TaskAnalog(1000)
+
+
+VAR_TEMP
+ rMaxCavityPressure : REAL;
+ b : BOOL;
+END_VAR
+
+VAR
+ abMeasurePres : ABMeasureAnalog;
+END_VAR
+
+(* IecGraph-Code *)
+
+(* init step *)
+INITIAL_STEP S_Start:
+END_STEP
+
+
+(* steps *)
+STEP S_Stop:
+AStop (P);
+END_STEP
+
+ACTION AStop: #BEGIN_EDIT_BLOCK
+STOP_PROCESS_ALGORITHM();
+
+;#END_EDIT_BLOCK END_ACTION (*AStop*)
+STEP S_Init:
+AInitMeasureBlock (P);
+END_STEP
+
+STEP S_Measure:
+AMeasure (N);
+END_STEP
+
+
+(* transitions *)
+TRANSITION TLinked (* TLinked *) FROM S_Start TO S_Init :=  #BEGIN_EDIT_BLOCK
+IS_LINKED(ai_CavityPressure3)
+;#END_EDIT_BLOCK
+END_TRANSITION
+
+TRANSITION TNotLinked (* TNotLinked *) FROM S_Start TO S_Stop :=  #BEGIN_EDIT_BLOCK
+NOT IS_LINKED(ai_CavityPressure3)
+;#END_EDIT_BLOCK
+END_TRANSITION
+
+TRANSITION TStop (* TStop *) FROM S_Stop TO S_Start :=  #BEGIN_EDIT_BLOCK
+TRUE
+;#END_EDIT_BLOCK
+END_TRANSITION
+
+TRANSITION TInitDone (* TInitDone *) FROM S_Init TO S_Measure :=  #BEGIN_EDIT_BLOCK
+TRUE
+;#END_EDIT_BLOCK
+END_TRANSITION
+
+TRANSITION TMeasuringDeactivated (* Trans5 *) FROM S_Measure TO S_Stop :=  #BEGIN_EDIT_BLOCK
+NOT sv_bActivateCavityPressMeas
+;#END_EDIT_BLOCK
+END_TRANSITION
+
+(* end IecGraph-Code *)
+(* sfc-code *)
+
+(* stand alone actions *)
+ACTION AMeasure: #BEGIN_EDIT_BLOCK
+(**************************************** WARNING ********************************************
+ *** The KEBA Kemro K2 System including software is not intended for safety control tasks! ***
+ ***                       For further information see Comment tab!                        ***
+ *********************************************************************************************)
+
+abMeasurePres.aRunLight(rRawValue := ai_CavityPressure3);
+sv_bCavityPressureError3 := abMeasurePres.aRunLight.bError;
+b := WRITE_SVREAL_DIRECT(sv_rCavityPressure3, abMeasurePres.aRunLight.rValue);
+
+rMaxCavityPressure := MAX(sv_rCavityPressure3, sv_rMaxCavityPressure3);
+b := WRITE_SVREAL_DIRECT(sv_rMaxCavityPressure3, rMaxCavityPressure);
+
+;#END_EDIT_BLOCK END_ACTION (*AMeasure*)
+ACTION AInitMeasureBlock: #BEGIN_EDIT_BLOCK
+(**************************************** WARNING ********************************************
+ *** The KEBA Kemro K2 System including software is not intended for safety control tasks! ***
+ ***                       For further information see Comment tab!                        ***
+ *********************************************************************************************)
+
+abMeasurePres.aInit(pLintabPointArray := @sv_CavityPressLintab3.LintabPoints.Point,
+                    piUsedLintabPoints := @sv_CavityPressLintab3.LintabPoints.uNoOfPoints,
+                    sRawValue := 'ai_CavityPressur3');
+
+abMeasurePres.aInitMonitoring(bEnable := sv_CavityPresMonitorMeas3.EnableMonitoring,
+                              rLowLimit := sv_CavityPresMonitorMeas3.LowerLimit,
+                              bLimitation := sv_CavityPresMonitorMeas3.Limitation,
+                              rFailureFactor := sv_CavityPresMonitorMeas3.FailureFactor);
+
+
+;#END_EDIT_BLOCK END_ACTION (*AInitMeasureBlock*)
+(* end sfc-code *)
+
+
+END_ALGORITHM
+
+PROCESS_ALGORITHM paMeasure4 ON TaskAnalog(1000)
+
+
+VAR_TEMP
+ rMaxCavityPressure : REAL;
+ b : BOOL;
+END_VAR
+
+VAR
+ abMeasurePres : ABMeasureAnalog;
+END_VAR
+
+(* IecGraph-Code *)
+
+(* init step *)
+INITIAL_STEP S_Start:
+END_STEP
+
+
+(* steps *)
+STEP S_Stop:
+AStop (P);
+END_STEP
+
+ACTION AStop: #BEGIN_EDIT_BLOCK
+STOP_PROCESS_ALGORITHM();
+
+;#END_EDIT_BLOCK END_ACTION (*AStop*)
+STEP S_Init:
+AInitMeasureBlock (P);
+END_STEP
+
+STEP S_Measure:
+AMeasure (N);
+END_STEP
+
+
+(* transitions *)
+TRANSITION TLinked (* TLinked *) FROM S_Start TO S_Init :=  #BEGIN_EDIT_BLOCK
+IS_LINKED(ai_CavityPressure4)
+;#END_EDIT_BLOCK
+END_TRANSITION
+
+TRANSITION TNotLinked (* TNotLinked *) FROM S_Start TO S_Stop :=  #BEGIN_EDIT_BLOCK
+NOT IS_LINKED(ai_CavityPressure4)
+;#END_EDIT_BLOCK
+END_TRANSITION
+
+TRANSITION TStop (* TStop *) FROM S_Stop TO S_Start :=  #BEGIN_EDIT_BLOCK
+TRUE
+;#END_EDIT_BLOCK
+END_TRANSITION
+
+TRANSITION TInitDone (* TInitDone *) FROM S_Init TO S_Measure :=  #BEGIN_EDIT_BLOCK
+TRUE
+;#END_EDIT_BLOCK
+END_TRANSITION
+
+TRANSITION TMeasuringDeactivated (* Trans5 *) FROM S_Measure TO S_Stop :=  #BEGIN_EDIT_BLOCK
+NOT sv_bActivateCavityPressMeas
+;#END_EDIT_BLOCK
+END_TRANSITION
+
+(* end IecGraph-Code *)
+(* sfc-code *)
+
+(* stand alone actions *)
+ACTION AMeasure: #BEGIN_EDIT_BLOCK
+(**************************************** WARNING ********************************************
+ *** The KEBA Kemro K2 System including software is not intended for safety control tasks! ***
+ ***                       For further information see Comment tab!                        ***
+ *********************************************************************************************)
+
+abMeasurePres.aRunLight(rRawValue := ai_CavityPressure4);
+sv_bCavityPressureError4 := abMeasurePres.aRunLight.bError;
+b := WRITE_SVREAL_DIRECT(sv_rCavityPressure4, abMeasurePres.aRunLight.rValue);
+
+rMaxCavityPressure := MAX(sv_rCavityPressure4, sv_rMaxCavityPressure4);
+b := WRITE_SVREAL_DIRECT(sv_rMaxCavityPressure4, rMaxCavityPressure);
+
+;#END_EDIT_BLOCK END_ACTION (*AMeasure*)
+ACTION AInitMeasureBlock: #BEGIN_EDIT_BLOCK
+(**************************************** WARNING ********************************************
+ *** The KEBA Kemro K2 System including software is not intended for safety control tasks! ***
+ ***                       For further information see Comment tab!                        ***
+ *********************************************************************************************)
+
+abMeasurePres.aInit(pLintabPointArray := @sv_CavityPressLintab4.LintabPoints.Point,
+                    piUsedLintabPoints := @sv_CavityPressLintab4.LintabPoints.uNoOfPoints,
+                    sRawValue := 'ai_CavityPressure4');
+
+abMeasurePres.aInitMonitoring(bEnable := sv_CavityPresMonitorMeas4.EnableMonitoring,
+                              rLowLimit := sv_CavityPresMonitorMeas4.LowerLimit,
+                              bLimitation := sv_CavityPresMonitorMeas4.Limitation,
+                              rFailureFactor := sv_CavityPresMonitorMeas4.FailureFactor);
+
+
+;#END_EDIT_BLOCK END_ACTION (*AInitMeasureBlock*)
+(* end sfc-code *)
+
+
+END_ALGORITHM
+
+PROCESS_ALGORITHM paMeasure5 ON TaskAnalog(1000)
+
+
+VAR_TEMP
+ rMaxCavityPressure : REAL;
+ b : BOOL;
+END_VAR
+
+VAR
+ abMeasurePres : ABMeasureAnalog;
+END_VAR
+
+(* IecGraph-Code *)
+
+(* init step *)
+INITIAL_STEP S_Start:
+END_STEP
+
+
+(* steps *)
+STEP S_Stop:
+AStop (P);
+END_STEP
+
+ACTION AStop: #BEGIN_EDIT_BLOCK
+STOP_PROCESS_ALGORITHM();
+
+;#END_EDIT_BLOCK END_ACTION (*AStop*)
+STEP S_Init:
+AInitMeasureBlock (P);
+END_STEP
+
+STEP S_Measure:
+AMeasure (N);
+END_STEP
+
+
+(* transitions *)
+TRANSITION TLinked (* TLinked *) FROM S_Start TO S_Init :=  #BEGIN_EDIT_BLOCK
+IS_LINKED(ai_CavityPressure5)
+;#END_EDIT_BLOCK
+END_TRANSITION
+
+TRANSITION TNotLinked (* TNotLinked *) FROM S_Start TO S_Stop :=  #BEGIN_EDIT_BLOCK
+NOT IS_LINKED(ai_CavityPressure5)
+;#END_EDIT_BLOCK
+END_TRANSITION
+
+TRANSITION TStop (* TStop *) FROM S_Stop TO S_Start :=  #BEGIN_EDIT_BLOCK
+TRUE
+;#END_EDIT_BLOCK
+END_TRANSITION
+
+TRANSITION TInitDone (* TInitDone *) FROM S_Init TO S_Measure :=  #BEGIN_EDIT_BLOCK
+TRUE
+;#END_EDIT_BLOCK
+END_TRANSITION
+
+TRANSITION TMeasuringDeactivated (* Trans5 *) FROM S_Measure TO S_Stop :=  #BEGIN_EDIT_BLOCK
+NOT sv_bActivateCavityPressMeas
+;#END_EDIT_BLOCK
+END_TRANSITION
+
+(* end IecGraph-Code *)
+(* sfc-code *)
+
+(* stand alone actions *)
+ACTION AMeasure: #BEGIN_EDIT_BLOCK
+(**************************************** WARNING ********************************************
+ *** The KEBA Kemro K2 System including software is not intended for safety control tasks! ***
+ ***                       For further information see Comment tab!                        ***
+ *********************************************************************************************)
+
+abMeasurePres.aRunLight(rRawValue := ai_CavityPressure5);
+sv_bCavityPressureError5 := abMeasurePres.aRunLight.bError;
+b := WRITE_SVREAL_DIRECT(sv_rCavityPressure5, abMeasurePres.aRunLight.rValue);
+
+rMaxCavityPressure := MAX(sv_rCavityPressure5, sv_rMaxCavityPressure5);
+b := WRITE_SVREAL_DIRECT(sv_rMaxCavityPressure5, rMaxCavityPressure);
+
+;#END_EDIT_BLOCK END_ACTION (*AMeasure*)
+ACTION AInitMeasureBlock: #BEGIN_EDIT_BLOCK
+(**************************************** WARNING ********************************************
+ *** The KEBA Kemro K2 System including software is not intended for safety control tasks! ***
+ ***                       For further information see Comment tab!                        ***
+ *********************************************************************************************)
+
+abMeasurePres.aInit(pLintabPointArray := @sv_CavityPressLintab5.LintabPoints.Point,
+                    piUsedLintabPoints := @sv_CavityPressLintab5.LintabPoints.uNoOfPoints,
+                    sRawValue := 'ai_CavityPressure5');
+
+abMeasurePres.aInitMonitoring(bEnable := sv_CavityPresMonitorMeas5.EnableMonitoring,
+                              rLowLimit := sv_CavityPresMonitorMeas5.LowerLimit,
+                              bLimitation := sv_CavityPresMonitorMeas5.Limitation,
+                              rFailureFactor := sv_CavityPresMonitorMeas5.FailureFactor);
+
+
+;#END_EDIT_BLOCK END_ACTION (*AInitMeasureBlock*)
+(* end sfc-code *)
+
+
+END_ALGORITHM
+
+PROCESS_ALGORITHM paMeasure6 ON TaskAnalog(1000)
+
+
+VAR_TEMP
+ rMaxCavityPressure : REAL;
+ b : BOOL;
+END_VAR
+
+VAR
+ abMeasurePres : ABMeasureAnalog;
+END_VAR
+
+(* IecGraph-Code *)
+
+(* init step *)
+INITIAL_STEP S_Start:
+END_STEP
+
+
+(* steps *)
+STEP S_Stop:
+AStop (P);
+END_STEP
+
+ACTION AStop: #BEGIN_EDIT_BLOCK
+STOP_PROCESS_ALGORITHM();
+
+;#END_EDIT_BLOCK END_ACTION (*AStop*)
+STEP S_Init:
+AInitMeasureBlock (P);
+END_STEP
+
+STEP S_Measure:
+AMeasure (N);
+END_STEP
+
+
+(* transitions *)
+TRANSITION TLinked (* TLinked *) FROM S_Start TO S_Init :=  #BEGIN_EDIT_BLOCK
+IS_LINKED(ai_CavityPressure6)
+;#END_EDIT_BLOCK
+END_TRANSITION
+
+TRANSITION TNotLinked (* TNotLinked *) FROM S_Start TO S_Stop :=  #BEGIN_EDIT_BLOCK
+NOT IS_LINKED(ai_CavityPressure6)
+;#END_EDIT_BLOCK
+END_TRANSITION
+
+TRANSITION TStop (* TStop *) FROM S_Stop TO S_Start :=  #BEGIN_EDIT_BLOCK
+TRUE
+;#END_EDIT_BLOCK
+END_TRANSITION
+
+TRANSITION TInitDone (* TInitDone *) FROM S_Init TO S_Measure :=  #BEGIN_EDIT_BLOCK
+TRUE
+;#END_EDIT_BLOCK
+END_TRANSITION
+
+TRANSITION TMeasuringDeactivated (* Trans5 *) FROM S_Measure TO S_Stop :=  #BEGIN_EDIT_BLOCK
+NOT sv_bActivateCavityPressMeas
+;#END_EDIT_BLOCK
+END_TRANSITION
+
+(* end IecGraph-Code *)
+(* sfc-code *)
+
+(* stand alone actions *)
+ACTION AMeasure: #BEGIN_EDIT_BLOCK
+(**************************************** WARNING ********************************************
+ *** The KEBA Kemro K2 System including software is not intended for safety control tasks! ***
+ ***                       For further information see Comment tab!                        ***
+ *********************************************************************************************)
+
+abMeasurePres.aRunLight(rRawValue := ai_CavityPressure6);
+sv_bCavityPressureError6 := abMeasurePres.aRunLight.bError;
+b := WRITE_SVREAL_DIRECT(sv_rCavityPressure6, abMeasurePres.aRunLight.rValue);
+
+rMaxCavityPressure := MAX(sv_rCavityPressure6, sv_rMaxCavityPressure6);
+b := WRITE_SVREAL_DIRECT(sv_rMaxCavityPressure6, rMaxCavityPressure);
+
+;#END_EDIT_BLOCK END_ACTION (*AMeasure*)
+ACTION AInitMeasureBlock: #BEGIN_EDIT_BLOCK
+(**************************************** WARNING ********************************************
+ *** The KEBA Kemro K2 System including software is not intended for safety control tasks! ***
+ ***                       For further information see Comment tab!                        ***
+ *********************************************************************************************)
+
+abMeasurePres.aInit(pLintabPointArray := @sv_CavityPressLintab6.LintabPoints.Point,
+                    piUsedLintabPoints := @sv_CavityPressLintab6.LintabPoints.uNoOfPoints,
+                    sRawValue := 'ai_CavityPressure6');
+
+abMeasurePres.aInitMonitoring(bEnable := sv_CavityPresMonitorMeas6.EnableMonitoring,
+                              rLowLimit := sv_CavityPresMonitorMeas6.LowerLimit,
+                              bLimitation := sv_CavityPresMonitorMeas6.Limitation,
+                              rFailureFactor := sv_CavityPresMonitorMeas6.FailureFactor);
+
+
+;#END_EDIT_BLOCK END_ACTION (*AInitMeasureBlock*)
+(* end sfc-code *)
+
+
+END_ALGORITHM
+
+PROCESS_ALGORITHM paMeasure7 ON TaskAnalog(1000)
+
+
+VAR_TEMP
+ rMaxCavityPressure : REAL;
+ b : BOOL;
+END_VAR
+
+VAR
+ abMeasurePres : ABMeasureAnalog;
+END_VAR
+
+(* IecGraph-Code *)
+
+(* init step *)
+INITIAL_STEP S_Start:
+END_STEP
+
+
+(* steps *)
+STEP S_Stop:
+AStop (P);
+END_STEP
+
+ACTION AStop: #BEGIN_EDIT_BLOCK
+STOP_PROCESS_ALGORITHM();
+
+;#END_EDIT_BLOCK END_ACTION (*AStop*)
+STEP S_Init:
+AInitMeasureBlock (P);
+END_STEP
+
+STEP S_Measure:
+AMeasure (N);
+END_STEP
+
+
+(* transitions *)
+TRANSITION TLinked (* TLinked *) FROM S_Start TO S_Init :=  #BEGIN_EDIT_BLOCK
+IS_LINKED(ai_CavityPressure7)
+;#END_EDIT_BLOCK
+END_TRANSITION
+
+TRANSITION TNotLinked (* TNotLinked *) FROM S_Start TO S_Stop :=  #BEGIN_EDIT_BLOCK
+NOT IS_LINKED(ai_CavityPressure7)
+;#END_EDIT_BLOCK
+END_TRANSITION
+
+TRANSITION TStop (* TStop *) FROM S_Stop TO S_Start :=  #BEGIN_EDIT_BLOCK
+TRUE
+;#END_EDIT_BLOCK
+END_TRANSITION
+
+TRANSITION TInitDone (* TInitDone *) FROM S_Init TO S_Measure :=  #BEGIN_EDIT_BLOCK
+TRUE
+;#END_EDIT_BLOCK
+END_TRANSITION
+
+TRANSITION TMeasuringDeactivated (* Trans5 *) FROM S_Measure TO S_Stop :=  #BEGIN_EDIT_BLOCK
+NOT sv_bActivateCavityPressMeas
+;#END_EDIT_BLOCK
+END_TRANSITION
+
+(* end IecGraph-Code *)
+(* sfc-code *)
+
+(* stand alone actions *)
+ACTION AMeasure: #BEGIN_EDIT_BLOCK
+(**************************************** WARNING ********************************************
+ *** The KEBA Kemro K2 System including software is not intended for safety control tasks! ***
+ ***                       For further information see Comment tab!                        ***
+ *********************************************************************************************)
+
+abMeasurePres.aRunLight(rRawValue := ai_CavityPressure7);
+sv_bCavityPressureError7 := abMeasurePres.aRunLight.bError;
+b := WRITE_SVREAL_DIRECT(sv_rCavityPressure7, abMeasurePres.aRunLight.rValue);
+
+rMaxCavityPressure := MAX(sv_rCavityPressure7, sv_rMaxCavityPressure7);
+b := WRITE_SVREAL_DIRECT(sv_rMaxCavityPressure7, rMaxCavityPressure);
+
+;#END_EDIT_BLOCK END_ACTION (*AMeasure*)
+ACTION AInitMeasureBlock: #BEGIN_EDIT_BLOCK
+(**************************************** WARNING ********************************************
+ *** The KEBA Kemro K2 System including software is not intended for safety control tasks! ***
+ ***                       For further information see Comment tab!                        ***
+ *********************************************************************************************)
+
+abMeasurePres.aInit(pLintabPointArray := @sv_CavityPressLintab7.LintabPoints.Point,
+                    piUsedLintabPoints := @sv_CavityPressLintab7.LintabPoints.uNoOfPoints,
+                    sRawValue := 'ai_CavityPressure7');
+
+abMeasurePres.aInitMonitoring(bEnable := sv_CavityPresMonitorMeas7.EnableMonitoring,
+                              rLowLimit := sv_CavityPresMonitorMeas7.LowerLimit,
+                              bLimitation := sv_CavityPresMonitorMeas7.Limitation,
+                              rFailureFactor := sv_CavityPresMonitorMeas7.FailureFactor);
+
+
+;#END_EDIT_BLOCK END_ACTION (*AInitMeasureBlock*)
+(* end sfc-code *)
+
+
+END_ALGORITHM
+
+PROCESS_ALGORITHM paMeasure8 ON TaskAnalog(1000)
+
+
+VAR_TEMP
+ rMaxCavityPressure : REAL;
+ b : BOOL;
+END_VAR
+
+VAR
+ abMeasurePres : ABMeasureAnalog;
+END_VAR
+
+(* IecGraph-Code *)
+
+(* init step *)
+INITIAL_STEP S_Start:
+END_STEP
+
+
+(* steps *)
+STEP S_Stop:
+AStop (P);
+END_STEP
+
+ACTION AStop: #BEGIN_EDIT_BLOCK
+STOP_PROCESS_ALGORITHM();
+
+;#END_EDIT_BLOCK END_ACTION (*AStop*)
+STEP S_Init:
+AInitMeasureBlock (P);
+END_STEP
+
+STEP S_Measure:
+AMeasure (N);
+END_STEP
+
+
+(* transitions *)
+TRANSITION TLinked (* TLinked *) FROM S_Start TO S_Init :=  #BEGIN_EDIT_BLOCK
+IS_LINKED(ai_CavityPressure8)
+;#END_EDIT_BLOCK
+END_TRANSITION
+
+TRANSITION TNotLinked (* TNotLinked *) FROM S_Start TO S_Stop :=  #BEGIN_EDIT_BLOCK
+NOT IS_LINKED(ai_CavityPressure8)
+;#END_EDIT_BLOCK
+END_TRANSITION
+
+TRANSITION TStop (* TStop *) FROM S_Stop TO S_Start :=  #BEGIN_EDIT_BLOCK
+TRUE
+;#END_EDIT_BLOCK
+END_TRANSITION
+
+TRANSITION TInitDone (* TInitDone *) FROM S_Init TO S_Measure :=  #BEGIN_EDIT_BLOCK
+TRUE
+;#END_EDIT_BLOCK
+END_TRANSITION
+
+TRANSITION TMeasuringDeactivated (* Trans5 *) FROM S_Measure TO S_Stop :=  #BEGIN_EDIT_BLOCK
+NOT sv_bActivateCavityPressMeas
+;#END_EDIT_BLOCK
+END_TRANSITION
+
+(* end IecGraph-Code *)
+(* sfc-code *)
+
+(* stand alone actions *)
+ACTION AMeasure: #BEGIN_EDIT_BLOCK
+(**************************************** WARNING ********************************************
+ *** The KEBA Kemro K2 System including software is not intended for safety control tasks! ***
+ ***                       For further information see Comment tab!                        ***
+ *********************************************************************************************)
+
+abMeasurePres.aRunLight(rRawValue := ai_CavityPressure8);
+sv_bCavityPressureError8 := abMeasurePres.aRunLight.bError;
+b := WRITE_SVREAL_DIRECT(sv_rCavityPressure8, abMeasurePres.aRunLight.rValue);
+
+rMaxCavityPressure := MAX(sv_rCavityPressure8, sv_rMaxCavityPressure8);
+b := WRITE_SVREAL_DIRECT(sv_rMaxCavityPressure8, rMaxCavityPressure);
+
+;#END_EDIT_BLOCK END_ACTION (*AMeasure*)
+ACTION AInitMeasureBlock: #BEGIN_EDIT_BLOCK
+(**************************************** WARNING ********************************************
+ *** The KEBA Kemro K2 System including software is not intended for safety control tasks! ***
+ ***                       For further information see Comment tab!                        ***
+ *********************************************************************************************)
+
+abMeasurePres.aInit(pLintabPointArray := @sv_CavityPressLintab8.LintabPoints.Point,
+                    piUsedLintabPoints := @sv_CavityPressLintab8.LintabPoints.uNoOfPoints,
+                    sRawValue := 'ai_CavityPressure8');
+
+abMeasurePres.aInitMonitoring(bEnable := sv_CavityPresMonitorMeas8.EnableMonitoring,
+                              rLowLimit := sv_CavityPresMonitorMeas8.LowerLimit,
+                              bLimitation := sv_CavityPresMonitorMeas8.Limitation,
+                              rFailureFactor := sv_CavityPresMonitorMeas8.FailureFactor);
+
+
+;#END_EDIT_BLOCK END_ACTION (*AInitMeasureBlock*)
+(* end sfc-code *)
+
+
+END_ALGORITHM
+
+(*
+Reset maximum cavity pressure at begin of next injection
+*)
+
+EVENT_ALGORITHM evaResetMaxPressure ON EV_Task_7 WITH evStart
+
+
+VAR_INPUT
+ evStartData : tevStartData;
+END_VAR
+#BEGIN_EDIT_BLOCK
+IF evStartData.DeviceId.CompId = cCompInjection AND
+    evStartData.DeviceId.IndexId = 1 AND 
+    evStartData.MoveId = cMoveInject THEN
+    
+    (*start of injection --> reset max cavity pressure*)
+    sv_rMaxCavityPressure1 := 0.0;  
+    sv_rMaxCavityPressure2 := 0.0;
+    sv_rMaxCavityPressure3 := 0.0;
+    sv_rMaxCavityPressure4 := 0.0;
+    sv_rMaxCavityPressure5 := 0.0;
+    sv_rMaxCavityPressure6 := 0.0;
+    sv_rMaxCavityPressure7 := 0.0;
+    sv_rMaxCavityPressure8 := 0.0;
+END_IF;    
+
+
+;#END_EDIT_BLOCK END_ALGORITHM
+
+POSTUPDATE_ALGORITHM pStartStopMeasuring ON PU_Task_7 WITH sv_bActivateCavityPressMeas,sv_bUseMoldPressureForCutOff,sv_bInitStart
+
+#BEGIN_EDIT_BLOCK
+(**************************************** WARNING ********************************************
+ *** The KEBA Kemro K2 System including software is not intended for safety control tasks! ***
+ ***                       For further information see Comment tab!                        ***
+ *********************************************************************************************)
+
+IF NOT sv_bActivateCavityPressMeas THEN
+    //reset cut off parameter sv_CutOffParams.bUseMoldPressure
+    sv_bUseMoldPressureForCutOff := FALSE;
+ELSE
+    //cavity pressure measuring activated
+    START_PROCESS_ALGORITHM(paMeasure1);
+    START_PROCESS_ALGORITHM(paMeasure2);
+    START_PROCESS_ALGORITHM(paMeasure3);
+    START_PROCESS_ALGORITHM(paMeasure4);
+    START_PROCESS_ALGORITHM(paMeasure5);
+    START_PROCESS_ALGORITHM(paMeasure6);
+    START_PROCESS_ALGORITHM(paMeasure7);
+    START_PROCESS_ALGORITHM(paMeasure8);
+END_IF;
+
+
+
+;#END_EDIT_BLOCK END_ALGORITHM
+
+POSTUPDATE_ALGORITHM pStateChangedAI1 ON PU_Task_7 WITH ai_CavityPressure1_stat,sv_bActivateCavityPressMeas
+
+
+VAR
+ sHWPath : STRING(255);
+ bInitDone : BOOL;
+END_VAR
+#BEGIN_EDIT_BLOCK
+(**************************************** WARNING ********************************************
+ *** The KEBA Kemro K2 System including software is not intended for safety control tasks! ***
+ ***                       For further information see Comment tab!                        ***
+ *********************************************************************************************)
+
+IF NOT IS_LINKED(ai_CavityPressure1_stat) THEN
+   RETURN;
+END_IF;
+
+IF NOT bInitDone THEN
+   sHWPath := FGetHWPath('Mold1.ai_CavityPressure1', TRUE);
+   bInitDone := TRUE;
+END_IF;
+
+IF ai_CavityPressure1_stat AND sv_bActivateCavityPressMeas THEN
+   SET_ALARM(Name := erAnalogInput,
+            SubID1 := sv_DeviceId.CompId,
+            SubID2 := sv_DeviceId.IndexId,
+            SubID3 := 1,
+            Param1 := 'Mold1.ai_CavityPressure1',
+            Param2 := sHWPath);
+    
+ELSE
+   RESET_ALARM(Name := erAnalogInput,
+               SubID1 := sv_DeviceId.CompId,
+               SubID2 := sv_DeviceId.IndexId,
+               SubID3 := 1);
+END_IF;
+
+
+
+
+;#END_EDIT_BLOCK END_ALGORITHM
+
+POSTUPDATE_ALGORITHM pStateChangedAI2 ON PU_Task_7 WITH ai_CavityPressure2_stat,sv_bActivateCavityPressMeas
+
+
+VAR
+ sHWPath : STRING(255);
+ bInitDone : BOOL;
+END_VAR
+#BEGIN_EDIT_BLOCK
+(**************************************** WARNING ********************************************
+ *** The KEBA Kemro K2 System including software is not intended for safety control tasks! ***
+ ***                       For further information see Comment tab!                        ***
+ *********************************************************************************************)
+
+IF NOT IS_LINKED(ai_CavityPressure2_stat) THEN
+   RETURN;
+END_IF;
+
+IF NOT bInitDone THEN
+   sHWPath := FGetHWPath('Mold1.ai_CavityPressure2', TRUE);
+   bInitDone := TRUE;
+END_IF;
+
+IF ai_CavityPressure2_stat AND sv_bActivateCavityPressMeas THEN
+   SET_ALARM(Name := erAnalogInput,
+            SubID1 := sv_DeviceId.CompId,
+            SubID2 := sv_DeviceId.IndexId,
+            SubID3 := 2,
+            Param1 := 'Mold1.ai_CavityPressure2',
+            Param2 := sHWPath);
+    
+ELSE
+   RESET_ALARM(Name := erAnalogInput,
+               SubID1 := sv_DeviceId.CompId,
+               SubID2 := sv_DeviceId.IndexId,
+               SubID3 := 2);
+END_IF;
+
+
+
+
+;#END_EDIT_BLOCK END_ALGORITHM
+
+POSTUPDATE_ALGORITHM pStateChangedAI3 ON PU_Task_7 WITH ai_CavityPressure3_stat,sv_bActivateCavityPressMeas
+
+
+VAR
+ sHWPath : STRING(255);
+ bInitDone : BOOL;
+END_VAR
+#BEGIN_EDIT_BLOCK
+(**************************************** WARNING ********************************************
+ *** The KEBA Kemro K2 System including software is not intended for safety control tasks! ***
+ ***                       For further information see Comment tab!                        ***
+ *********************************************************************************************)
+
+IF NOT IS_LINKED(ai_CavityPressure3_stat) THEN
+   RETURN;
+END_IF;
+
+IF NOT bInitDone THEN
+   sHWPath := FGetHWPath('Mold1.ai_CavityPressure3', TRUE);
+   bInitDone := TRUE;
+END_IF;
+
+IF ai_CavityPressure3_stat AND sv_bActivateCavityPressMeas THEN
+   SET_ALARM(Name := erAnalogInput,
+            SubID1 := sv_DeviceId.CompId,
+            SubID2 := sv_DeviceId.IndexId,
+            SubID3 := 3,
+            Param1 := 'Mold1.ai_CavityPressure3',
+            Param2 := sHWPath);
+    
+ELSE
+   RESET_ALARM(Name := erAnalogInput,
+               SubID1 := sv_DeviceId.CompId,
+               SubID2 := sv_DeviceId.IndexId,
+               SubID3 := 3);
+END_IF;
+
+
+
+
+;#END_EDIT_BLOCK END_ALGORITHM
+
+POSTUPDATE_ALGORITHM pStateChangedAI4 ON PU_Task_7 WITH ai_CavityPressure4_stat,sv_bActivateCavityPressMeas
+
+
+VAR
+ sHWPath : STRING(255);
+ bInitDone : BOOL;
+END_VAR
+#BEGIN_EDIT_BLOCK
+(**************************************** WARNING ********************************************
+ *** The KEBA Kemro K2 System including software is not intended for safety control tasks! ***
+ ***                       For further information see Comment tab!                        ***
+ *********************************************************************************************)
+
+IF NOT IS_LINKED(ai_CavityPressure4_stat) THEN
+   RETURN;
+END_IF;
+
+IF NOT bInitDone THEN
+   sHWPath := FGetHWPath('Mold1.ai_CavityPressure4', TRUE);
+   bInitDone := TRUE;
+END_IF;
+
+IF ai_CavityPressure4_stat AND sv_bActivateCavityPressMeas THEN
+   SET_ALARM(Name := erAnalogInput,
+            SubID1 := sv_DeviceId.CompId,
+            SubID2 := sv_DeviceId.IndexId,
+            SubID3 := 4,
+            Param1 := 'Mold1.ai_CavityPressure4',
+            Param2 := sHWPath);
+    
+ELSE
+   RESET_ALARM(Name := erAnalogInput,
+               SubID1 := sv_DeviceId.CompId,
+               SubID2 := sv_DeviceId.IndexId,
+               SubID3 := 4);
+END_IF;
+
+
+
+
+;#END_EDIT_BLOCK END_ALGORITHM
+
+POSTUPDATE_ALGORITHM pStateChangedAI5 ON PU_Task_7 WITH ai_CavityPressure5_stat,sv_bActivateCavityPressMeas
+
+
+VAR
+ sHWPath : STRING(255);
+ bInitDone : BOOL;
+END_VAR
+#BEGIN_EDIT_BLOCK
+(**************************************** WARNING ********************************************
+ *** The KEBA Kemro K2 System including software is not intended for safety control tasks! ***
+ ***                       For further information see Comment tab!                        ***
+ *********************************************************************************************)
+
+IF NOT IS_LINKED(ai_CavityPressure5_stat) THEN
+   RETURN;
+END_IF;
+
+IF NOT bInitDone THEN
+   sHWPath := FGetHWPath('Mold1.ai_CavityPressure5', TRUE);
+   bInitDone := TRUE;
+END_IF;
+
+IF ai_CavityPressure5_stat AND sv_bActivateCavityPressMeas THEN
+   SET_ALARM(Name := erAnalogInput,
+            SubID1 := sv_DeviceId.CompId,
+            SubID2 := sv_DeviceId.IndexId,
+            SubID3 := 5,
+            Param1 := 'Mold1.ai_CavityPressure5',
+            Param2 := sHWPath);
+    
+ELSE
+   RESET_ALARM(Name := erAnalogInput,
+               SubID1 := sv_DeviceId.CompId,
+               SubID2 := sv_DeviceId.IndexId,
+               SubID3 := 5);
+END_IF;
+
+
+
+
+;#END_EDIT_BLOCK END_ALGORITHM
+
+POSTUPDATE_ALGORITHM pStateChangedAI6 ON PU_Task_7 WITH ai_CavityPressure6_stat,sv_bActivateCavityPressMeas
+
+
+VAR
+ sHWPath : STRING(255);
+ bInitDone : BOOL;
+END_VAR
+#BEGIN_EDIT_BLOCK
+(**************************************** WARNING ********************************************
+ *** The KEBA Kemro K2 System including software is not intended for safety control tasks! ***
+ ***                       For further information see Comment tab!                        ***
+ *********************************************************************************************)
+
+IF NOT IS_LINKED(ai_CavityPressure6_stat) THEN
+   RETURN;
+END_IF;
+
+IF NOT bInitDone THEN
+   sHWPath := FGetHWPath('Mold1.ai_CavityPressure6', TRUE);
+   bInitDone := TRUE;
+END_IF;
+
+IF ai_CavityPressure6_stat AND sv_bActivateCavityPressMeas THEN
+   SET_ALARM(Name := erAnalogInput,
+            SubID1 := sv_DeviceId.CompId,
+            SubID2 := sv_DeviceId.IndexId,
+            SubID3 := 6,
+            Param1 := 'Mold1.ai_CavityPressure6',
+            Param2 := sHWPath);
+    
+ELSE
+   RESET_ALARM(Name := erAnalogInput,
+               SubID1 := sv_DeviceId.CompId,
+               SubID2 := sv_DeviceId.IndexId,
+               SubID3 := 6);
+END_IF;
+
+
+
+
+;#END_EDIT_BLOCK END_ALGORITHM
+
+POSTUPDATE_ALGORITHM pStateChangedAI7 ON PU_Task_7 WITH ai_CavityPressure7_stat,sv_bActivateCavityPressMeas
+
+
+VAR
+ sHWPath : STRING(255);
+ bInitDone : BOOL;
+END_VAR
+#BEGIN_EDIT_BLOCK
+(**************************************** WARNING ********************************************
+ *** The KEBA Kemro K2 System including software is not intended for safety control tasks! ***
+ ***                       For further information see Comment tab!                        ***
+ *********************************************************************************************)
+
+IF NOT IS_LINKED(ai_CavityPressure7_stat) THEN
+   RETURN;
+END_IF;
+
+IF NOT bInitDone THEN
+   sHWPath := FGetHWPath('Mold1.ai_CavityPressure7', TRUE);
+   bInitDone := TRUE;
+END_IF;
+
+IF ai_CavityPressure7_stat AND sv_bActivateCavityPressMeas THEN
+   SET_ALARM(Name := erAnalogInput,
+            SubID1 := sv_DeviceId.CompId,
+            SubID2 := sv_DeviceId.IndexId,
+            SubID3 := 7,
+            Param1 := 'Mold1.ai_CavityPressure7',
+            Param2 := sHWPath);
+    
+ELSE
+   RESET_ALARM(Name := erAnalogInput,
+               SubID1 := sv_DeviceId.CompId,
+               SubID2 := sv_DeviceId.IndexId,
+               SubID3 := 7);
+END_IF;
+
+
+
+
+;#END_EDIT_BLOCK END_ALGORITHM
+
+POSTUPDATE_ALGORITHM pStateChangedAI8 ON PU_Task_7 WITH ai_CavityPressure8_stat,sv_bActivateCavityPressMeas
+
+
+VAR
+ sHWPath : STRING(255);
+ bInitDone : BOOL;
+END_VAR
+#BEGIN_EDIT_BLOCK
+(**************************************** WARNING ********************************************
+ *** The KEBA Kemro K2 System including software is not intended for safety control tasks! ***
+ ***                       For further information see Comment tab!                        ***
+ *********************************************************************************************)
+
+IF NOT IS_LINKED(ai_CavityPressure8_stat) THEN
+   RETURN;
+END_IF;
+
+IF NOT bInitDone THEN
+   sHWPath := FGetHWPath('Mold1.ai_CavityPressure8', TRUE);
+   bInitDone := TRUE;
+END_IF;
+
+IF ai_CavityPressure8_stat AND sv_bActivateCavityPressMeas THEN
+   SET_ALARM(Name := erAnalogInput,
+            SubID1 := sv_DeviceId.CompId,
+            SubID2 := sv_DeviceId.IndexId,
+            SubID3 := 8,
+            Param1 := 'Mold1.ai_CavityPressure8',
+            Param2 := sHWPath);
+    
+ELSE
+   RESET_ALARM(Name := erAnalogInput,
+               SubID1 := sv_DeviceId.CompId,
+               SubID2 := sv_DeviceId.IndexId,
+               SubID3 := 8);
+END_IF;
+
+
+
+
+;#END_EDIT_BLOCK END_ALGORITHM
+
+POSTUPDATE_ALGORITHM pSelCavityPressSensorChanged ON PU_Task_7 WITH sv_iSelCavityPressureSensor,sv_CavityPressLintab1,sv_CavityPressLintab2,sv_CavityPressLintab3,sv_CavityPressLintab4,sv_CavityPressLintab5,sv_CavityPressLintab6,sv_CavityPressLintab7,sv_CavityPressLintab8,sv_bInitStart
+
+#BEGIN_EDIT_BLOCK
+sv_rMaxPressureMoldCavity := MUX(sv_iSelCavityPressureSensor - 1,
+                                 sv_CavityPressLintab1.LintabPoints.Point[sv_CavityPressLintab1.LintabPoints.uNoOfPoints].rY,
+                                 sv_CavityPressLintab2.LintabPoints.Point[sv_CavityPressLintab2.LintabPoints.uNoOfPoints].rY,
+                                 sv_CavityPressLintab3.LintabPoints.Point[sv_CavityPressLintab3.LintabPoints.uNoOfPoints].rY,
+                                 sv_CavityPressLintab4.LintabPoints.Point[sv_CavityPressLintab4.LintabPoints.uNoOfPoints].rY,
+                                 sv_CavityPressLintab5.LintabPoints.Point[sv_CavityPressLintab5.LintabPoints.uNoOfPoints].rY,
+                                 sv_CavityPressLintab6.LintabPoints.Point[sv_CavityPressLintab6.LintabPoints.uNoOfPoints].rY,
+                                 sv_CavityPressLintab7.LintabPoints.Point[sv_CavityPressLintab7.LintabPoints.uNoOfPoints].rY,
+                                 sv_CavityPressLintab8.LintabPoints.Point[sv_CavityPressLintab8.LintabPoints.uNoOfPoints].rY);
+
+
+;#END_EDIT_BLOCK END_ALGORITHM
+
+
+
+END_ALGORITHM_BLOCK
+
+
+
+#END_OF_IEC_PART
+
+@Puma @IecEditor 6 80 @Pou 25 
+@@@BEG_Comment@@@
+
+@@@END_Comment@@@
+
+@BEG_Contents 
+
+@BEG_Func 
+@RT(17)FuncTreeContainer 
+2 
+@Var @RT(10)FGetHWPath @RT(0) @T @T @DERIVED 0 @F @RT(8)FUNCTION @F 
+@T 
+@BEG_Attrib 
+0 @RT(0) @RT(0) 
+@END_Attrib 
+1 1 @F @F @F @F 
+
+@Var @RT(19)WRITE_SVREAL_DIRECT @RT(0) @T @T @DERIVED 0 @F @RT(22)KEBA_STANDARD_FUNCTION @F 
+@T 
+@BEG_Attrib 
+0 @RT(0) @RT(0) 
+@END_Attrib 
+1 1 @F @F @F @F 
+
+@END_Func 
+
+@BEG_Const 
+@RT(18)ConstTreeContainer 
+2 
+@Var @RT(14)cCompInjection @RT(0) @T @F @DT @RT(4)DINT @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+0 @RT(3)104 @RT(19)Component Injection 
+@END_Attrib 
+1 1 @F @F @F @F 
+
+@Var @RT(11)cMoveInject @RT(0) @T @F @DT @RT(4)DINT @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+0 @RT(2)14 @RT(15)inject movement 
+@END_Attrib 
+1 1 @F @F @F @F 
+
+@END_Const 
+
+@BEG_Export 
+
+@BEG_Kind 
+@ALGORITHM_BLOCK @RT(23)ABMeasureCavityPressure @STRUCTURED_TEXT 
+@RT(0) @RT(0) @RT(0) 
+@END_Kind 
+
+@BEG_Dcl 
+@RT(16)DclTreeContainer 
+67 
+@Var @RT(11)sv_DeviceId @RT(0) @T @T @DERIVED 0 @T @T @DT @RT(10)tsDeviceId @RT(0) @T @T @UNKNOWN 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(24)unique Device Identifier @RT(0) 
+@END_Attrib 
+1 8 @F @F @F @F 
+
+@Var @RT(13)erAnalogInput @RT(0) @T @F @DT @RT(5)ALARM @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 7 @F @F @F @F 
+
+@Var @RT(19)sv_rCavityPressure1 @RT(0) @T @F @DT @RT(4)REAL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 8 @F @F @F @F 
+
+@Var @RT(19)sv_rCavityPressure2 @RT(0) @T @F @DT @RT(4)REAL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 8 @F @F @F @F 
+
+@Var @RT(19)sv_rCavityPressure3 @RT(0) @T @F @DT @RT(4)REAL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 8 @F @F @F @F 
+
+@Var @RT(19)sv_rCavityPressure4 @RT(0) @T @F @DT @RT(4)REAL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 8 @F @F @F @F 
+
+@Var @RT(19)sv_rCavityPressure5 @RT(0) @T @F @DT @RT(4)REAL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 8 @F @F @F @F 
+
+@Var @RT(19)sv_rCavityPressure6 @RT(0) @T @F @DT @RT(4)REAL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 8 @F @F @F @F 
+
+@Var @RT(19)sv_rCavityPressure7 @RT(0) @T @F @DT @RT(4)REAL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 8 @F @F @F @F 
+
+@Var @RT(19)sv_rCavityPressure8 @RT(0) @T @F @DT @RT(4)REAL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 8 @F @F @F @F 
+
+@Var @RT(22)sv_rMaxCavityPressure1 @RT(0) @T @F @DT @RT(4)REAL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 8 @F @F @F @F 
+
+@Var @RT(23)ai_CavityPressure1_stat @RT(0) @T @F @DT @RT(4)BOOL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 8 @F @F @F @F 
+
+@Var @RT(23)ai_CavityPressure2_stat @RT(0) @T @F @DT @RT(4)BOOL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 8 @F @F @F @F 
+
+@Var @RT(23)ai_CavityPressure3_stat @RT(0) @T @F @DT @RT(4)BOOL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 8 @F @F @F @F 
+
+@Var @RT(23)ai_CavityPressure4_stat @RT(0) @T @F @DT @RT(4)BOOL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 8 @F @F @F @F 
+
+@Var @RT(23)ai_CavityPressure5_stat @RT(0) @T @F @DT @RT(4)BOOL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 8 @F @F @F @F 
+
+@Var @RT(23)ai_CavityPressure6_stat @RT(0) @T @F @DT @RT(4)BOOL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 8 @F @F @F @F 
+
+@Var @RT(23)ai_CavityPressure7_stat @RT(0) @T @F @DT @RT(4)BOOL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 8 @F @F @F @F 
+
+@Var @RT(23)ai_CavityPressure8_stat @RT(0) @T @F @DT @RT(4)BOOL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 8 @F @F @F @F 
+
+@Var @RT(25)sv_rMaxPressureMoldCavity @RT(0) @T @F @DT @RT(4)REAL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(39)maximum specific pressure for injection @RT(0) 
+@END_Attrib 
+1 8 @F @F @F @F 
+
+@Var @RT(22)sv_rMaxCavityPressure2 @RT(0) @T @F @DT @RT(4)REAL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 8 @F @F @F @F 
+
+@Var @RT(22)sv_rMaxCavityPressure3 @RT(0) @T @F @DT @RT(4)REAL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 8 @F @F @F @F 
+
+@Var @RT(22)sv_rMaxCavityPressure4 @RT(0) @T @F @DT @RT(4)REAL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 8 @F @F @F @F 
+
+@Var @RT(22)sv_rMaxCavityPressure5 @RT(0) @T @F @DT @RT(4)REAL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 8 @F @F @F @F 
+
+@Var @RT(22)sv_rMaxCavityPressure6 @RT(0) @T @F @DT @RT(4)REAL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 8 @F @F @F @F 
+
+@Var @RT(22)sv_rMaxCavityPressure7 @RT(0) @T @F @DT @RT(4)REAL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 8 @F @F @F @F 
+
+@Var @RT(22)sv_rMaxCavityPressure8 @RT(0) @T @F @DT @RT(4)REAL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 8 @F @F @F @F 
+
+@Var @RT(18)ai_CavityPressure1 @RT(0) @T @F @DT @RT(4)REAL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 8 @F @F @F @F 
+
+@Var @RT(18)ai_CavityPressure2 @RT(0) @T @F @DT @RT(4)REAL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 8 @F @F @F @F 
+
+@Var @RT(18)ai_CavityPressure3 @RT(0) @T @F @DT @RT(4)REAL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 8 @F @F @F @F 
+
+@Var @RT(18)ai_CavityPressure4 @RT(0) @T @F @DT @RT(4)REAL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 8 @F @F @F @F 
+
+@Var @RT(18)ai_CavityPressure5 @RT(0) @T @F @DT @RT(4)REAL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 8 @F @F @F @F 
+
+@Var @RT(18)ai_CavityPressure6 @RT(0) @T @F @DT @RT(4)REAL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 8 @F @F @F @F 
+
+@Var @RT(18)ai_CavityPressure7 @RT(0) @T @F @DT @RT(4)REAL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 8 @F @F @F @F 
+
+@Var @RT(18)ai_CavityPressure8 @RT(0) @T @F @DT @RT(4)REAL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 8 @F @F @F @F 
+
+@Var @RT(24)sv_bCavityPressureError1 @RT(0) @T @F @DT @RT(4)BOOL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 8 @F @F @F @F 
+
+@Var @RT(24)sv_bCavityPressureError2 @RT(0) @T @F @DT @RT(4)BOOL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 8 @F @F @F @F 
+
+@Var @RT(24)sv_bCavityPressureError3 @RT(0) @T @F @DT @RT(4)BOOL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 8 @F @F @F @F 
+
+@Var @RT(24)sv_bCavityPressureError4 @RT(0) @T @F @DT @RT(4)BOOL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 8 @F @F @F @F 
+
+@Var @RT(24)sv_bCavityPressureError5 @RT(0) @T @F @DT @RT(4)BOOL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 8 @F @F @F @F 
+
+@Var @RT(24)sv_bCavityPressureError6 @RT(0) @T @F @DT @RT(4)BOOL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 8 @F @F @F @F 
+
+@Var @RT(24)sv_bCavityPressureError7 @RT(0) @T @F @DT @RT(4)BOOL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 8 @F @F @F @F 
+
+@Var @RT(24)sv_bCavityPressureError8 @RT(0) @T @F @DT @RT(4)BOOL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 8 @F @F @F @F 
+
+@Var @RT(21)sv_CavityPressLintab1 @RT(0) @T @T @DERIVED 0 @F @RT(19)KAPPL_LintabData_2P @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 8 @F @F @F @F 
+
+@Var @RT(21)sv_CavityPressLintab2 @RT(0) @T @T @DERIVED 0 @F @RT(19)KAPPL_LintabData_2P @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 8 @F @F @F @F 
+
+@Var @RT(21)sv_CavityPressLintab3 @RT(0) @T @T @DERIVED 0 @F @RT(19)KAPPL_LintabData_2P @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 8 @F @F @F @F 
+
+@Var @RT(21)sv_CavityPressLintab4 @RT(0) @T @T @DERIVED 0 @F @RT(19)KAPPL_LintabData_2P @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 8 @F @F @F @F 
+
+@Var @RT(21)sv_CavityPressLintab5 @RT(0) @T @T @DERIVED 0 @F @RT(19)KAPPL_LintabData_2P @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 8 @F @F @F @F 
+
+@Var @RT(21)sv_CavityPressLintab6 @RT(0) @T @T @DERIVED 0 @F @RT(19)KAPPL_LintabData_2P @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 8 @F @F @F @F 
+
+@Var @RT(21)sv_CavityPressLintab7 @RT(0) @T @T @DERIVED 0 @F @RT(19)KAPPL_LintabData_2P @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 8 @F @F @F @F 
+
+@Var @RT(21)sv_CavityPressLintab8 @RT(0) @T @T @DERIVED 0 @F @RT(19)KAPPL_LintabData_2P @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 8 @F @F @F @F 
+
+@Var @RT(27)sv_bActivateCavityPressMeas @RT(0) @T @F @DT @RT(4)BOOL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(32)cavity pressure measuring on/off @RT(0) 
+@END_Attrib 
+1 8 @F @F @F @F 
+
+@Var @RT(10)TaskAnalog @RT(0) @T @F @DT @RT(4)TASK @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 7 @F @F @F @F 
+
+@Var @RT(9)EV_Task_7 @RT(0) @T @F @DT @RT(4)TASK @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 7 @F @F @F @F 
+
+@Var @RT(7)evStart @RT(0) @T @T @DERIVED 0 @T @T @DT @RT(8)tevStart @RT(0) @T @T @UNKNOWN 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 7 @F @F @F @F 
+
+@Var @RT(9)PU_Task_7 @RT(0) @T @T @RENAMED 0 @T @T @DT @RT(4)TASK @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 7 @F @F @F @F 
+
+@Var @RT(13)sv_bInitStart @RT(0) @T @T @RENAMED 0 @T @T @DT @RT(4)BOOL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 8 @F @F @F @F 
+
+@Var @RT(27)sv_iSelCavityPressureSensor @RT(0) @T @F @DT @RT(4)DINT @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 8 @F @F @F @F 
+
+@Var @RT(28)sv_bUseMoldPressureForCutOff @RT(0) @T @T @RENAMED 0 @T @T @DT @RT(4)BOOL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 8 @F @F @F @F 
+
+@Var @RT(25)sv_CavityPresMonitorMeas1 @RT(0) @T @T @DERIVED 0 @T @T @DT @RT(23)KAPPL_MeasureMonitoring @RT(0) @T @T @UNKNOWN 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 8 @F @F @F @F 
+
+@Var @RT(25)sv_CavityPresMonitorMeas2 @RT(0) @T @T @DERIVED 0 @T @T @DT @RT(23)KAPPL_MeasureMonitoring @RT(0) @T @T @UNKNOWN 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 8 @F @F @F @F 
+
+@Var @RT(25)sv_CavityPresMonitorMeas3 @RT(0) @T @T @DERIVED 0 @T @T @DT @RT(23)KAPPL_MeasureMonitoring @RT(0) @T @T @UNKNOWN 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 8 @F @F @F @F 
+
+@Var @RT(25)sv_CavityPresMonitorMeas4 @RT(0) @T @T @DERIVED 0 @T @T @DT @RT(23)KAPPL_MeasureMonitoring @RT(0) @T @T @UNKNOWN 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 8 @F @F @F @F 
+
+@Var @RT(25)sv_CavityPresMonitorMeas5 @RT(0) @T @T @DERIVED 0 @T @T @DT @RT(23)KAPPL_MeasureMonitoring @RT(0) @T @T @UNKNOWN 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 8 @F @F @F @F 
+
+@Var @RT(25)sv_CavityPresMonitorMeas6 @RT(0) @T @T @DERIVED 0 @T @T @DT @RT(23)KAPPL_MeasureMonitoring @RT(0) @T @T @UNKNOWN 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 8 @F @F @F @F 
+
+@Var @RT(25)sv_CavityPresMonitorMeas7 @RT(0) @T @T @DERIVED 0 @T @T @DT @RT(23)KAPPL_MeasureMonitoring @RT(0) @T @T @UNKNOWN 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 8 @F @F @F @F 
+
+@Var @RT(25)sv_CavityPresMonitorMeas8 @RT(0) @T @T @DERIVED 0 @T @T @DT @RT(23)KAPPL_MeasureMonitoring @RT(0) @T @T @UNKNOWN 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 8 @F @F @F @F 
+
+@END_Dcl 
+
+@END_Export 
+
+@BEG_Body 
+
+19 
+
+@BEG_Export 
+
+@BEG_Algo 
+@PROCESS_ALGORITHM @RT(10)paMeasure1 @SEQUENTIAL_FLOW_CHART 
+@RT(0) @RT(0) @RT(16)TaskAnalog(1000) @F @F 
+@END_Algo 
+
+@BEG_Dcl 
+@RT(16)DclTreeContainer 
+3 
+@Var @RT(13)abMeasurePres @RT(0) @T @T @DERIVED 0 @T @T @DT @RT(15)ABMeasureAnalog @RT(0) @T @T @UNKNOWN 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(18)rMaxCavityPressure @RT(0) @T @F @DT @RT(4)REAL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 4 @F @F @F @F 
+
+@Var @RT(1)b @RT(0) @T @F @DT @RT(4)BOOL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 4 @F @F @F @F 
+
+@END_Dcl 
+
+@END_Export 
+
+@BEG_Export 
+
+@BEG_Algo 
+@PROCESS_ALGORITHM @RT(10)paMeasure2 @SEQUENTIAL_FLOW_CHART 
+@RT(0) @RT(0) @RT(16)TaskAnalog(1000) @F @F 
+@END_Algo 
+
+@BEG_Dcl 
+@RT(16)DclTreeContainer 
+3 
+@Var @RT(13)abMeasurePres @RT(0) @T @T @DERIVED 0 @F @RT(15)ABMeasureAnalog @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(18)rMaxCavityPressure @RT(0) @T @F @DT @RT(4)REAL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 4 @F @F @F @F 
+
+@Var @RT(1)b @RT(0) @T @F @DT @RT(4)BOOL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 4 @F @F @F @F 
+
+@END_Dcl 
+
+@END_Export 
+
+@BEG_Export 
+
+@BEG_Algo 
+@PROCESS_ALGORITHM @RT(10)paMeasure3 @SEQUENTIAL_FLOW_CHART 
+@RT(0) @RT(0) @RT(16)TaskAnalog(1000) @F @F 
+@END_Algo 
+
+@BEG_Dcl 
+@RT(16)DclTreeContainer 
+3 
+@Var @RT(13)abMeasurePres @RT(0) @T @T @DERIVED 0 @T @T @DT @RT(15)ABMeasureAnalog @RT(0) @T @T @UNKNOWN 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(18)rMaxCavityPressure @RT(0) @T @F @DT @RT(4)REAL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 4 @F @F @F @F 
+
+@Var @RT(1)b @RT(0) @T @F @DT @RT(4)BOOL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 4 @F @F @F @F 
+
+@END_Dcl 
+
+@END_Export 
+
+@BEG_Export 
+
+@BEG_Algo 
+@PROCESS_ALGORITHM @RT(10)paMeasure4 @SEQUENTIAL_FLOW_CHART 
+@RT(0) @RT(0) @RT(16)TaskAnalog(1000) @F @F 
+@END_Algo 
+
+@BEG_Dcl 
+@RT(16)DclTreeContainer 
+3 
+@Var @RT(13)abMeasurePres @RT(0) @T @T @DERIVED 0 @T @T @DT @RT(15)ABMeasureAnalog @RT(0) @T @T @UNKNOWN 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(18)rMaxCavityPressure @RT(0) @T @F @DT @RT(4)REAL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 4 @F @F @F @F 
+
+@Var @RT(1)b @RT(0) @T @F @DT @RT(4)BOOL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 4 @F @F @F @F 
+
+@END_Dcl 
+
+@END_Export 
+
+@BEG_Export 
+
+@BEG_Algo 
+@PROCESS_ALGORITHM @RT(10)paMeasure5 @SEQUENTIAL_FLOW_CHART 
+@RT(0) @RT(0) @RT(16)TaskAnalog(1000) @F @F 
+@END_Algo 
+
+@BEG_Dcl 
+@RT(16)DclTreeContainer 
+3 
+@Var @RT(13)abMeasurePres @RT(0) @T @T @DERIVED 0 @T @T @DT @RT(15)ABMeasureAnalog @RT(0) @T @T @UNKNOWN 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(18)rMaxCavityPressure @RT(0) @T @F @DT @RT(4)REAL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 4 @F @F @F @F 
+
+@Var @RT(1)b @RT(0) @T @F @DT @RT(4)BOOL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 4 @F @F @F @F 
+
+@END_Dcl 
+
+@END_Export 
+
+@BEG_Export 
+
+@BEG_Algo 
+@PROCESS_ALGORITHM @RT(10)paMeasure6 @SEQUENTIAL_FLOW_CHART 
+@RT(0) @RT(0) @RT(16)TaskAnalog(1000) @F @F 
+@END_Algo 
+
+@BEG_Dcl 
+@RT(16)DclTreeContainer 
+3 
+@Var @RT(13)abMeasurePres @RT(0) @T @T @DERIVED 0 @T @T @DT @RT(15)ABMeasureAnalog @RT(0) @T @T @UNKNOWN 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(18)rMaxCavityPressure @RT(0) @T @F @DT @RT(4)REAL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 4 @F @F @F @F 
+
+@Var @RT(1)b @RT(0) @T @F @DT @RT(4)BOOL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 4 @F @F @F @F 
+
+@END_Dcl 
+
+@END_Export 
+
+@BEG_Export 
+
+@BEG_Algo 
+@PROCESS_ALGORITHM @RT(10)paMeasure7 @SEQUENTIAL_FLOW_CHART 
+@RT(0) @RT(0) @RT(16)TaskAnalog(1000) @F @F 
+@END_Algo 
+
+@BEG_Dcl 
+@RT(16)DclTreeContainer 
+3 
+@Var @RT(13)abMeasurePres @RT(0) @T @T @DERIVED 0 @T @T @DT @RT(15)ABMeasureAnalog @RT(0) @T @T @UNKNOWN 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(18)rMaxCavityPressure @RT(0) @T @F @DT @RT(4)REAL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 4 @F @F @F @F 
+
+@Var @RT(1)b @RT(0) @T @F @DT @RT(4)BOOL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 4 @F @F @F @F 
+
+@END_Dcl 
+
+@END_Export 
+
+@BEG_Export 
+
+@BEG_Algo 
+@PROCESS_ALGORITHM @RT(10)paMeasure8 @SEQUENTIAL_FLOW_CHART 
+@RT(0) @RT(0) @RT(16)TaskAnalog(1000) @F @F 
+@END_Algo 
+
+@BEG_Dcl 
+@RT(16)DclTreeContainer 
+3 
+@Var @RT(13)abMeasurePres @RT(0) @T @T @DERIVED 0 @T @T @DT @RT(15)ABMeasureAnalog @RT(0) @T @T @UNKNOWN 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(18)rMaxCavityPressure @RT(0) @T @F @DT @RT(4)REAL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 4 @F @F @F @F 
+
+@Var @RT(1)b @RT(0) @T @F @DT @RT(4)BOOL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 4 @F @F @F @F 
+
+@END_Dcl 
+
+@END_Export 
+
+@BEG_Export 
+
+@BEG_Algo 
+@EVENT_ALGORITHM @RT(19)evaResetMaxPressure @STRUCTURED_TEXT 
+@RT(0) @RT(7)evStart @RT(9)EV_Task_7 @F @F 
+@END_Algo 
+
+@BEG_Dcl 
+@RT(16)DclTreeContainer 
+1 
+@Var @RT(11)evStartData @RT(0) @T @T @DERIVED 0 @T @T @DT @RT(12)tevStartData @RT(0) @T @T @UNKNOWN 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 1 @F @F @F @F 
+
+@END_Dcl 
+
+@END_Export 
+
+@BEG_Export 
+
+@BEG_Algo 
+@POSTUPDATE_ALGORITHM @RT(19)pStartStopMeasuring @STRUCTURED_TEXT 
+@RT(0) @RT(70)sv_bActivateCavityPressMeas,sv_bUseMoldPressureForCutOff,sv_bInitStart @RT(9)PU_Task_7 @F @F 
+@END_Algo 
+
+@BEG_Dcl 
+@RT(16)DclTreeContainer 
+0 
+@END_Dcl 
+
+@END_Export 
+
+@BEG_Export 
+
+@BEG_Algo 
+@POSTUPDATE_ALGORITHM @RT(16)pStateChangedAI1 @STRUCTURED_TEXT 
+@RT(0) @RT(51)ai_CavityPressure1_stat,sv_bActivateCavityPressMeas @RT(9)PU_Task_7 @F @F 
+@END_Algo 
+
+@BEG_Dcl 
+@RT(16)DclTreeContainer 
+2 
+@Var @RT(7)sHWPath @RT(0) @T @F @DT @RT(11)STRING(255) @RT(0) @T @T @STRING 0 @F @RT(3)255 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(9)bInitDone @RT(0) @T @F @DT @RT(4)BOOL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@END_Dcl 
+
+@END_Export 
+
+@BEG_Export 
+
+@BEG_Algo 
+@POSTUPDATE_ALGORITHM @RT(16)pStateChangedAI2 @STRUCTURED_TEXT 
+@RT(0) @RT(51)ai_CavityPressure2_stat,sv_bActivateCavityPressMeas @RT(9)PU_Task_7 @F @F 
+@END_Algo 
+
+@BEG_Dcl 
+@RT(16)DclTreeContainer 
+2 
+@Var @RT(7)sHWPath @RT(0) @T @F @DT @RT(11)STRING(255) @RT(0) @T @T @STRING 0 @F @RT(3)255 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(9)bInitDone @RT(0) @T @F @DT @RT(4)BOOL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@END_Dcl 
+
+@END_Export 
+
+@BEG_Export 
+
+@BEG_Algo 
+@POSTUPDATE_ALGORITHM @RT(16)pStateChangedAI3 @STRUCTURED_TEXT 
+@RT(0) @RT(51)ai_CavityPressure3_stat,sv_bActivateCavityPressMeas @RT(9)PU_Task_7 @F @F 
+@END_Algo 
+
+@BEG_Dcl 
+@RT(16)DclTreeContainer 
+2 
+@Var @RT(7)sHWPath @RT(0) @T @F @DT @RT(11)STRING(255) @RT(0) @T @T @STRING 0 @F @RT(3)255 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(9)bInitDone @RT(0) @T @F @DT @RT(4)BOOL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@END_Dcl 
+
+@END_Export 
+
+@BEG_Export 
+
+@BEG_Algo 
+@POSTUPDATE_ALGORITHM @RT(16)pStateChangedAI4 @STRUCTURED_TEXT 
+@RT(0) @RT(51)ai_CavityPressure4_stat,sv_bActivateCavityPressMeas @RT(9)PU_Task_7 @F @F 
+@END_Algo 
+
+@BEG_Dcl 
+@RT(16)DclTreeContainer 
+2 
+@Var @RT(7)sHWPath @RT(0) @T @F @DT @RT(11)STRING(255) @RT(0) @T @T @STRING 0 @F @RT(3)255 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(9)bInitDone @RT(0) @T @F @DT @RT(4)BOOL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@END_Dcl 
+
+@END_Export 
+
+@BEG_Export 
+
+@BEG_Algo 
+@POSTUPDATE_ALGORITHM @RT(16)pStateChangedAI5 @STRUCTURED_TEXT 
+@RT(0) @RT(51)ai_CavityPressure5_stat,sv_bActivateCavityPressMeas @RT(9)PU_Task_7 @F @F 
+@END_Algo 
+
+@BEG_Dcl 
+@RT(16)DclTreeContainer 
+2 
+@Var @RT(7)sHWPath @RT(0) @T @F @DT @RT(11)STRING(255) @RT(0) @T @T @STRING 0 @F @RT(3)255 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(9)bInitDone @RT(0) @T @F @DT @RT(4)BOOL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@END_Dcl 
+
+@END_Export 
+
+@BEG_Export 
+
+@BEG_Algo 
+@POSTUPDATE_ALGORITHM @RT(16)pStateChangedAI6 @STRUCTURED_TEXT 
+@RT(0) @RT(51)ai_CavityPressure6_stat,sv_bActivateCavityPressMeas @RT(9)PU_Task_7 @F @F 
+@END_Algo 
+
+@BEG_Dcl 
+@RT(16)DclTreeContainer 
+2 
+@Var @RT(7)sHWPath @RT(0) @T @F @DT @RT(11)STRING(255) @RT(0) @T @T @STRING 0 @F @RT(3)255 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(9)bInitDone @RT(0) @T @F @DT @RT(4)BOOL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@END_Dcl 
+
+@END_Export 
+
+@BEG_Export 
+
+@BEG_Algo 
+@POSTUPDATE_ALGORITHM @RT(16)pStateChangedAI7 @STRUCTURED_TEXT 
+@RT(0) @RT(51)ai_CavityPressure7_stat,sv_bActivateCavityPressMeas @RT(9)PU_Task_7 @F @F 
+@END_Algo 
+
+@BEG_Dcl 
+@RT(16)DclTreeContainer 
+2 
+@Var @RT(7)sHWPath @RT(0) @T @F @DT @RT(11)STRING(255) @RT(0) @T @T @STRING 0 @F @RT(3)255 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(9)bInitDone @RT(0) @T @F @DT @RT(4)BOOL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@END_Dcl 
+
+@END_Export 
+
+@BEG_Export 
+
+@BEG_Algo 
+@POSTUPDATE_ALGORITHM @RT(16)pStateChangedAI8 @STRUCTURED_TEXT 
+@RT(0) @RT(51)ai_CavityPressure8_stat,sv_bActivateCavityPressMeas @RT(9)PU_Task_7 @F @F 
+@END_Algo 
+
+@BEG_Dcl 
+@RT(16)DclTreeContainer 
+2 
+@Var @RT(7)sHWPath @RT(0) @T @F @DT @RT(11)STRING(255) @RT(0) @T @T @STRING 0 @F @RT(3)255 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(9)bInitDone @RT(0) @T @F @DT @RT(4)BOOL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@END_Dcl 
+
+@END_Export 
+
+@BEG_Export 
+
+@BEG_Algo 
+@POSTUPDATE_ALGORITHM @RT(28)pSelCavityPressSensorChanged @STRUCTURED_TEXT 
+@RT(0) @RT(217)sv_iSelCavityPressureSensor,sv_CavityPressLintab1,sv_CavityPressLintab2,sv_CavityPressLintab3,sv_CavityPressLintab4,sv_CavityPressLintab5,sv_CavityPressLintab6,sv_CavityPressLintab7,sv_CavityPressLintab8,sv_bInitStart @RT(9)PU_Task_7 @F @F 
+@END_Algo 
+
+@BEG_Dcl 
+@RT(16)DclTreeContainer 
+0 
+@END_Dcl 
+
+@END_Export 
+
+@BEG_SfcBody 
+6 7 7 
+
+@BEG_SfcData 2 
+@StepSeq @RT(4)sseq @F 7 
+@Step @RT(7)S_Start @F @T @T @F @RT(0) @F 
+@AcbCont @RT(7)unnamed @F 0 
+
+@AltBranch @RT(3)alt @F 2 
+@TransSeq @RT(4)tseq @F 1 
+@Trans @RT(7)TLinked @F @T @F @F @T @T @TL(2)
+IS_LINKED(ai_CavityPressure1)
+
+@RT(7)TLinked @F 
+
+@TransSeq @RT(4)tseq @F 4 
+@Trans @RT(10)TNotLinked @F @T @F @F @T @T @TL(2)
+NOT IS_LINKED(ai_CavityPressure1)
+
+@RT(10)TNotLinked @F 
+@Step @RT(6)S_Stop @F @F @T @F @RT(0) @F 
+@AcbCont @RT(7)unnamed @F 1 
+@Acb @RT(5)AStop @F @T @RT(1)P @RT(0) @F @F @T @TL(2)
+STOP_PROCESS_ALGORITHM();
+
+@F 
+
+@Trans @RT(5)TStop @F @T @F @F @T @T @TL(2)
+TRUE
+
+@RT(5)TStop @F 
+@Goto @RT(7)S_Start @F @F 
+
+
+@Step @RT(6)S_Init @F @F @F @F @RT(0) @F 
+@AcbCont @RT(7)unnamed @F 1 
+@Acb @RT(17)AInitMeasureBlock @F @F @RT(1)P @RT(0) @F @F @F @F 
+
+@Trans @RT(9)TInitDone @F @T @F @F @T @T @TL(2)
+TRUE
+
+@RT(9)TInitDone @F 
+@Step @RT(9)S_Measure @F @F @F @F @RT(0) @F 
+@AcbCont @RT(7)unnamed @F 1 
+@Acb @RT(8)AMeasure @F @F @RT(1)N @RT(0) @F @F @F @F 
+
+@Trans @RT(21)TMeasuringDeactivated @F @T @F @F @T @T @TL(2)
+NOT sv_bActivateCavityPressMeas
+
+@RT(6)Trans5 @F 
+@Goto @RT(6)S_Stop @F @F 
+@END_SfcData 
+@SaActions 2 
+@SaText @RT(8)AMeasure 1 @TL(12)
+(**************************************** WARNING ********************************************
+ *** The KEBA Kemro K2 System including software is not intended for safety control tasks! ***
+ ***                       For further information see Comment tab!                        ***
+ *********************************************************************************************)
+
+abMeasurePres.aRunLight(rRawValue := ai_CavityPressure1);
+sv_bCavityPressureError1 := abMeasurePres.aRunLight.bError;
+b := WRITE_SVREAL_DIRECT(sv_rCavityPressure1, abMeasurePres.aRunLight.rValue);
+
+rMaxCavityPressure := MAX(sv_rCavityPressure1, sv_rMaxCavityPressure1);
+b := WRITE_SVREAL_DIRECT(sv_rMaxCavityPressure1, rMaxCavityPressure);
+
+
+@SaText @RT(17)AInitMeasureBlock 1 @TL(16)
+(**************************************** WARNING ********************************************
+ *** The KEBA Kemro K2 System including software is not intended for safety control tasks! ***
+ ***                       For further information see Comment tab!                        ***
+ *********************************************************************************************)
+
+
+abMeasurePres.aInit(pLintabPointArray := @sv_CavityPressLintab1.LintabPoints.Point,
+                    piUsedLintabPoints := @sv_CavityPressLintab1.LintabPoints.uNoOfPoints,
+                    sRawValue := 'ai_CavityPressure1');
+
+abMeasurePres.aInitMonitoring(bEnable := sv_CavityPresMonitorMeas1.EnableMonitoring,
+                              rLowLimit := sv_CavityPresMonitorMeas1.LowerLimit,
+                              bLimitation := sv_CavityPresMonitorMeas1.Limitation,
+                              rFailureFactor := sv_CavityPresMonitorMeas1.FailureFactor);
+
+
+
+@SaTrans 0 
+@SaExits 0 
+@END_SfcBody 
+
+@@@BEG_Comment@@@ 
+@TL(0)
+
+@@@END_Comment@@@ 
+
+@BEG_SfcBody 
+4 6 5 
+
+@BEG_SfcData 2 
+@StepSeq @RT(4)sseq @F 7 
+@Step @RT(7)S_Start @F @T @T @F @RT(0) @F 
+@AcbCont @RT(7)unnamed @F 0 
+
+@AltBranch @RT(3)alt @F 2 
+@TransSeq @RT(4)tseq @F 1 
+@Trans @RT(7)TLinked @F @T @F @F @T @T @TL(2)
+IS_LINKED(ai_CavityPressure2)
+
+@RT(7)TLinked @F 
+
+@TransSeq @RT(4)tseq @F 4 
+@Trans @RT(10)TNotLinked @F @T @F @F @T @T @TL(2)
+NOT IS_LINKED(ai_CavityPressure2)
+
+@RT(10)TNotLinked @F 
+@Step @RT(6)S_Stop @F @F @T @F @RT(0) @F 
+@AcbCont @RT(7)unnamed @F 1 
+@Acb @RT(5)AStop @F @T @RT(1)P @RT(0) @F @F @T @TL(2)
+STOP_PROCESS_ALGORITHM();
+
+@F 
+
+@Trans @RT(5)TStop @F @T @F @F @T @T @TL(2)
+TRUE
+
+@RT(5)TStop @F 
+@Goto @RT(7)S_Start @F @F 
+
+
+@Step @RT(6)S_Init @F @F @F @F @RT(0) @F 
+@AcbCont @RT(7)unnamed @F 1 
+@Acb @RT(17)AInitMeasureBlock @F @F @RT(1)P @RT(0) @F @F @F @F 
+
+@Trans @RT(9)TInitDone @F @T @F @F @T @T @TL(2)
+TRUE
+
+@RT(9)TInitDone @F 
+@Step @RT(9)S_Measure @F @F @F @F @RT(0) @F 
+@AcbCont @RT(7)unnamed @F 1 
+@Acb @RT(8)AMeasure @F @F @RT(1)N @RT(0) @F @F @F @F 
+
+@Trans @RT(21)TMeasuringDeactivated @F @T @F @F @T @T @TL(2)
+NOT sv_bActivateCavityPressMeas
+
+@RT(6)Trans5 @F 
+@Goto @RT(6)S_Stop @F @F 
+@END_SfcData 
+@SaActions 2 
+@SaText @RT(8)AMeasure 1 @TL(13)
+(**************************************** WARNING ********************************************
+ *** The KEBA Kemro K2 System including software is not intended for safety control tasks! ***
+ ***                       For further information see Comment tab!                        ***
+ *********************************************************************************************)
+
+
+abMeasurePres.aRunLight(rRawValue := ai_CavityPressure2);
+sv_bCavityPressureError2 := abMeasurePres.aRunLight.bError;
+b := WRITE_SVREAL_DIRECT(sv_rCavityPressure2, abMeasurePres.aRunLight.rValue);
+
+rMaxCavityPressure := MAX(sv_rCavityPressure2, sv_rMaxCavityPressure2);
+b := WRITE_SVREAL_DIRECT(sv_rMaxCavityPressure2, rMaxCavityPressure);
+
+
+@SaText @RT(17)AInitMeasureBlock 1 @TL(15)
+(**************************************** WARNING ********************************************
+ *** The KEBA Kemro K2 System including software is not intended for safety control tasks! ***
+ ***                       For further information see Comment tab!                        ***
+ *********************************************************************************************)
+
+abMeasurePres.aInit(pLintabPointArray := @sv_CavityPressLintab2.LintabPoints.Point,
+                    piUsedLintabPoints := @sv_CavityPressLintab2.LintabPoints.uNoOfPoints,
+                    sRawValue := 'ai_CavityPressure2');
+
+abMeasurePres.aInitMonitoring(bEnable := sv_CavityPresMonitorMeas2.EnableMonitoring,
+                              rLowLimit := sv_CavityPresMonitorMeas2.LowerLimit,
+                              bLimitation := sv_CavityPresMonitorMeas2.Limitation,
+                              rFailureFactor := sv_CavityPresMonitorMeas2.FailureFactor);
+
+
+
+@SaTrans 0 
+@SaExits 0 
+@END_SfcBody 
+
+@@@BEG_Comment@@@ 
+@TL(0)
+
+@@@END_Comment@@@ 
+
+@BEG_SfcBody 
+4 6 5 
+
+@BEG_SfcData 2 
+@StepSeq @RT(4)sseq @F 7 
+@Step @RT(7)S_Start @F @T @T @F @RT(0) @F 
+@AcbCont @RT(7)unnamed @F 0 
+
+@AltBranch @RT(3)alt @F 2 
+@TransSeq @RT(4)tseq @F 1 
+@Trans @RT(7)TLinked @F @T @F @F @T @T @TL(2)
+IS_LINKED(ai_CavityPressure3)
+
+@RT(7)TLinked @F 
+
+@TransSeq @RT(4)tseq @F 4 
+@Trans @RT(10)TNotLinked @F @T @F @F @T @T @TL(2)
+NOT IS_LINKED(ai_CavityPressure3)
+
+@RT(10)TNotLinked @F 
+@Step @RT(6)S_Stop @F @F @T @F @RT(0) @F 
+@AcbCont @RT(7)unnamed @F 1 
+@Acb @RT(5)AStop @F @T @RT(1)P @RT(0) @F @F @T @TL(2)
+STOP_PROCESS_ALGORITHM();
+
+@F 
+
+@Trans @RT(5)TStop @F @T @F @F @T @T @TL(2)
+TRUE
+
+@RT(5)TStop @F 
+@Goto @RT(7)S_Start @F @F 
+
+
+@Step @RT(6)S_Init @F @F @F @F @RT(0) @F 
+@AcbCont @RT(7)unnamed @F 1 
+@Acb @RT(17)AInitMeasureBlock @F @F @RT(1)P @RT(0) @F @F @F @F 
+
+@Trans @RT(9)TInitDone @F @T @F @F @T @T @TL(2)
+TRUE
+
+@RT(9)TInitDone @F 
+@Step @RT(9)S_Measure @F @F @F @F @RT(0) @F 
+@AcbCont @RT(7)unnamed @F 1 
+@Acb @RT(8)AMeasure @F @F @RT(1)N @RT(0) @F @F @F @F 
+
+@Trans @RT(21)TMeasuringDeactivated @F @T @F @F @T @T @TL(2)
+NOT sv_bActivateCavityPressMeas
+
+@RT(6)Trans5 @F 
+@Goto @RT(6)S_Stop @F @F 
+@END_SfcData 
+@SaActions 2 
+@SaText @RT(8)AMeasure 1 @TL(12)
+(**************************************** WARNING ********************************************
+ *** The KEBA Kemro K2 System including software is not intended for safety control tasks! ***
+ ***                       For further information see Comment tab!                        ***
+ *********************************************************************************************)
+
+abMeasurePres.aRunLight(rRawValue := ai_CavityPressure3);
+sv_bCavityPressureError3 := abMeasurePres.aRunLight.bError;
+b := WRITE_SVREAL_DIRECT(sv_rCavityPressure3, abMeasurePres.aRunLight.rValue);
+
+rMaxCavityPressure := MAX(sv_rCavityPressure3, sv_rMaxCavityPressure3);
+b := WRITE_SVREAL_DIRECT(sv_rMaxCavityPressure3, rMaxCavityPressure);
+
+
+@SaText @RT(17)AInitMeasureBlock 1 @TL(15)
+(**************************************** WARNING ********************************************
+ *** The KEBA Kemro K2 System including software is not intended for safety control tasks! ***
+ ***                       For further information see Comment tab!                        ***
+ *********************************************************************************************)
+
+abMeasurePres.aInit(pLintabPointArray := @sv_CavityPressLintab3.LintabPoints.Point,
+                    piUsedLintabPoints := @sv_CavityPressLintab3.LintabPoints.uNoOfPoints,
+                    sRawValue := 'ai_CavityPressur3');
+
+abMeasurePres.aInitMonitoring(bEnable := sv_CavityPresMonitorMeas3.EnableMonitoring,
+                              rLowLimit := sv_CavityPresMonitorMeas3.LowerLimit,
+                              bLimitation := sv_CavityPresMonitorMeas3.Limitation,
+                              rFailureFactor := sv_CavityPresMonitorMeas3.FailureFactor);
+
+
+
+@SaTrans 0 
+@SaExits 0 
+@END_SfcBody 
+
+@@@BEG_Comment@@@ 
+@TL(0)
+
+@@@END_Comment@@@ 
+
+@BEG_SfcBody 
+4 6 5 
+
+@BEG_SfcData 2 
+@StepSeq @RT(4)sseq @F 7 
+@Step @RT(7)S_Start @F @T @T @F @RT(0) @F 
+@AcbCont @RT(7)unnamed @F 0 
+
+@AltBranch @RT(3)alt @F 2 
+@TransSeq @RT(4)tseq @F 1 
+@Trans @RT(7)TLinked @F @T @F @F @T @T @TL(2)
+IS_LINKED(ai_CavityPressure4)
+
+@RT(7)TLinked @F 
+
+@TransSeq @RT(4)tseq @F 4 
+@Trans @RT(10)TNotLinked @F @T @F @F @T @T @TL(2)
+NOT IS_LINKED(ai_CavityPressure4)
+
+@RT(10)TNotLinked @F 
+@Step @RT(6)S_Stop @F @F @T @F @RT(0) @F 
+@AcbCont @RT(7)unnamed @F 1 
+@Acb @RT(5)AStop @F @T @RT(1)P @RT(0) @F @F @T @TL(2)
+STOP_PROCESS_ALGORITHM();
+
+@F 
+
+@Trans @RT(5)TStop @F @T @F @F @T @T @TL(2)
+TRUE
+
+@RT(5)TStop @F 
+@Goto @RT(7)S_Start @F @F 
+
+
+@Step @RT(6)S_Init @F @F @F @F @RT(0) @F 
+@AcbCont @RT(7)unnamed @F 1 
+@Acb @RT(17)AInitMeasureBlock @F @F @RT(1)P @RT(0) @F @F @F @F 
+
+@Trans @RT(9)TInitDone @F @T @F @F @T @T @TL(2)
+TRUE
+
+@RT(9)TInitDone @F 
+@Step @RT(9)S_Measure @F @F @F @F @RT(0) @F 
+@AcbCont @RT(7)unnamed @F 1 
+@Acb @RT(8)AMeasure @F @F @RT(1)N @RT(0) @F @F @F @F 
+
+@Trans @RT(21)TMeasuringDeactivated @F @T @F @F @T @T @TL(2)
+NOT sv_bActivateCavityPressMeas
+
+@RT(6)Trans5 @F 
+@Goto @RT(6)S_Stop @F @F 
+@END_SfcData 
+@SaActions 2 
+@SaText @RT(8)AMeasure 1 @TL(12)
+(**************************************** WARNING ********************************************
+ *** The KEBA Kemro K2 System including software is not intended for safety control tasks! ***
+ ***                       For further information see Comment tab!                        ***
+ *********************************************************************************************)
+
+abMeasurePres.aRunLight(rRawValue := ai_CavityPressure4);
+sv_bCavityPressureError4 := abMeasurePres.aRunLight.bError;
+b := WRITE_SVREAL_DIRECT(sv_rCavityPressure4, abMeasurePres.aRunLight.rValue);
+
+rMaxCavityPressure := MAX(sv_rCavityPressure4, sv_rMaxCavityPressure4);
+b := WRITE_SVREAL_DIRECT(sv_rMaxCavityPressure4, rMaxCavityPressure);
+
+
+@SaText @RT(17)AInitMeasureBlock 1 @TL(15)
+(**************************************** WARNING ********************************************
+ *** The KEBA Kemro K2 System including software is not intended for safety control tasks! ***
+ ***                       For further information see Comment tab!                        ***
+ *********************************************************************************************)
+
+abMeasurePres.aInit(pLintabPointArray := @sv_CavityPressLintab4.LintabPoints.Point,
+                    piUsedLintabPoints := @sv_CavityPressLintab4.LintabPoints.uNoOfPoints,
+                    sRawValue := 'ai_CavityPressure4');
+
+abMeasurePres.aInitMonitoring(bEnable := sv_CavityPresMonitorMeas4.EnableMonitoring,
+                              rLowLimit := sv_CavityPresMonitorMeas4.LowerLimit,
+                              bLimitation := sv_CavityPresMonitorMeas4.Limitation,
+                              rFailureFactor := sv_CavityPresMonitorMeas4.FailureFactor);
+
+
+
+@SaTrans 0 
+@SaExits 0 
+@END_SfcBody 
+
+@@@BEG_Comment@@@ 
+@TL(0)
+
+@@@END_Comment@@@ 
+
+@BEG_SfcBody 
+4 6 5 
+
+@BEG_SfcData 2 
+@StepSeq @RT(4)sseq @F 7 
+@Step @RT(7)S_Start @F @T @T @F @RT(0) @F 
+@AcbCont @RT(7)unnamed @F 0 
+
+@AltBranch @RT(3)alt @F 2 
+@TransSeq @RT(4)tseq @F 1 
+@Trans @RT(7)TLinked @F @T @F @F @T @T @TL(2)
+IS_LINKED(ai_CavityPressure5)
+
+@RT(7)TLinked @F 
+
+@TransSeq @RT(4)tseq @F 4 
+@Trans @RT(10)TNotLinked @F @T @F @F @T @T @TL(2)
+NOT IS_LINKED(ai_CavityPressure5)
+
+@RT(10)TNotLinked @F 
+@Step @RT(6)S_Stop @F @F @T @F @RT(0) @F 
+@AcbCont @RT(7)unnamed @F 1 
+@Acb @RT(5)AStop @F @T @RT(1)P @RT(0) @F @F @T @TL(2)
+STOP_PROCESS_ALGORITHM();
+
+@F 
+
+@Trans @RT(5)TStop @F @T @F @F @T @T @TL(2)
+TRUE
+
+@RT(5)TStop @F 
+@Goto @RT(7)S_Start @F @F 
+
+
+@Step @RT(6)S_Init @F @F @F @F @RT(0) @F 
+@AcbCont @RT(7)unnamed @F 1 
+@Acb @RT(17)AInitMeasureBlock @F @F @RT(1)P @RT(0) @F @F @F @F 
+
+@Trans @RT(9)TInitDone @F @T @F @F @T @T @TL(2)
+TRUE
+
+@RT(9)TInitDone @F 
+@Step @RT(9)S_Measure @F @F @F @F @RT(0) @F 
+@AcbCont @RT(7)unnamed @F 1 
+@Acb @RT(8)AMeasure @F @F @RT(1)N @RT(0) @F @F @F @F 
+
+@Trans @RT(21)TMeasuringDeactivated @F @T @F @F @T @T @TL(2)
+NOT sv_bActivateCavityPressMeas
+
+@RT(6)Trans5 @F 
+@Goto @RT(6)S_Stop @F @F 
+@END_SfcData 
+@SaActions 2 
+@SaText @RT(8)AMeasure 1 @TL(12)
+(**************************************** WARNING ********************************************
+ *** The KEBA Kemro K2 System including software is not intended for safety control tasks! ***
+ ***                       For further information see Comment tab!                        ***
+ *********************************************************************************************)
+
+abMeasurePres.aRunLight(rRawValue := ai_CavityPressure5);
+sv_bCavityPressureError5 := abMeasurePres.aRunLight.bError;
+b := WRITE_SVREAL_DIRECT(sv_rCavityPressure5, abMeasurePres.aRunLight.rValue);
+
+rMaxCavityPressure := MAX(sv_rCavityPressure5, sv_rMaxCavityPressure5);
+b := WRITE_SVREAL_DIRECT(sv_rMaxCavityPressure5, rMaxCavityPressure);
+
+
+@SaText @RT(17)AInitMeasureBlock 1 @TL(15)
+(**************************************** WARNING ********************************************
+ *** The KEBA Kemro K2 System including software is not intended for safety control tasks! ***
+ ***                       For further information see Comment tab!                        ***
+ *********************************************************************************************)
+
+abMeasurePres.aInit(pLintabPointArray := @sv_CavityPressLintab5.LintabPoints.Point,
+                    piUsedLintabPoints := @sv_CavityPressLintab5.LintabPoints.uNoOfPoints,
+                    sRawValue := 'ai_CavityPressure5');
+
+abMeasurePres.aInitMonitoring(bEnable := sv_CavityPresMonitorMeas5.EnableMonitoring,
+                              rLowLimit := sv_CavityPresMonitorMeas5.LowerLimit,
+                              bLimitation := sv_CavityPresMonitorMeas5.Limitation,
+                              rFailureFactor := sv_CavityPresMonitorMeas5.FailureFactor);
+
+
+
+@SaTrans 0 
+@SaExits 0 
+@END_SfcBody 
+
+@@@BEG_Comment@@@ 
+@TL(0)
+
+@@@END_Comment@@@ 
+
+@BEG_SfcBody 
+4 6 5 
+
+@BEG_SfcData 2 
+@StepSeq @RT(4)sseq @F 7 
+@Step @RT(7)S_Start @F @T @T @F @RT(0) @F 
+@AcbCont @RT(7)unnamed @F 0 
+
+@AltBranch @RT(3)alt @F 2 
+@TransSeq @RT(4)tseq @F 1 
+@Trans @RT(7)TLinked @F @T @F @F @T @T @TL(2)
+IS_LINKED(ai_CavityPressure6)
+
+@RT(7)TLinked @F 
+
+@TransSeq @RT(4)tseq @F 4 
+@Trans @RT(10)TNotLinked @F @T @F @F @T @T @TL(2)
+NOT IS_LINKED(ai_CavityPressure6)
+
+@RT(10)TNotLinked @F 
+@Step @RT(6)S_Stop @F @F @T @F @RT(0) @F 
+@AcbCont @RT(7)unnamed @F 1 
+@Acb @RT(5)AStop @F @T @RT(1)P @RT(0) @F @F @T @TL(2)
+STOP_PROCESS_ALGORITHM();
+
+@F 
+
+@Trans @RT(5)TStop @F @T @F @F @T @T @TL(2)
+TRUE
+
+@RT(5)TStop @F 
+@Goto @RT(7)S_Start @F @F 
+
+
+@Step @RT(6)S_Init @F @F @F @F @RT(0) @F 
+@AcbCont @RT(7)unnamed @F 1 
+@Acb @RT(17)AInitMeasureBlock @F @F @RT(1)P @RT(0) @F @F @F @F 
+
+@Trans @RT(9)TInitDone @F @T @F @F @T @T @TL(2)
+TRUE
+
+@RT(9)TInitDone @F 
+@Step @RT(9)S_Measure @F @F @F @F @RT(0) @F 
+@AcbCont @RT(7)unnamed @F 1 
+@Acb @RT(8)AMeasure @F @F @RT(1)N @RT(0) @F @F @F @F 
+
+@Trans @RT(21)TMeasuringDeactivated @F @T @F @F @T @T @TL(2)
+NOT sv_bActivateCavityPressMeas
+
+@RT(6)Trans5 @F 
+@Goto @RT(6)S_Stop @F @F 
+@END_SfcData 
+@SaActions 2 
+@SaText @RT(8)AMeasure 1 @TL(12)
+(**************************************** WARNING ********************************************
+ *** The KEBA Kemro K2 System including software is not intended for safety control tasks! ***
+ ***                       For further information see Comment tab!                        ***
+ *********************************************************************************************)
+
+abMeasurePres.aRunLight(rRawValue := ai_CavityPressure6);
+sv_bCavityPressureError6 := abMeasurePres.aRunLight.bError;
+b := WRITE_SVREAL_DIRECT(sv_rCavityPressure6, abMeasurePres.aRunLight.rValue);
+
+rMaxCavityPressure := MAX(sv_rCavityPressure6, sv_rMaxCavityPressure6);
+b := WRITE_SVREAL_DIRECT(sv_rMaxCavityPressure6, rMaxCavityPressure);
+
+
+@SaText @RT(17)AInitMeasureBlock 1 @TL(15)
+(**************************************** WARNING ********************************************
+ *** The KEBA Kemro K2 System including software is not intended for safety control tasks! ***
+ ***                       For further information see Comment tab!                        ***
+ *********************************************************************************************)
+
+abMeasurePres.aInit(pLintabPointArray := @sv_CavityPressLintab6.LintabPoints.Point,
+                    piUsedLintabPoints := @sv_CavityPressLintab6.LintabPoints.uNoOfPoints,
+                    sRawValue := 'ai_CavityPressure6');
+
+abMeasurePres.aInitMonitoring(bEnable := sv_CavityPresMonitorMeas6.EnableMonitoring,
+                              rLowLimit := sv_CavityPresMonitorMeas6.LowerLimit,
+                              bLimitation := sv_CavityPresMonitorMeas6.Limitation,
+                              rFailureFactor := sv_CavityPresMonitorMeas6.FailureFactor);
+
+
+
+@SaTrans 0 
+@SaExits 0 
+@END_SfcBody 
+
+@@@BEG_Comment@@@ 
+@TL(0)
+
+@@@END_Comment@@@ 
+
+@BEG_SfcBody 
+4 6 5 
+
+@BEG_SfcData 2 
+@StepSeq @RT(4)sseq @F 7 
+@Step @RT(7)S_Start @F @T @T @F @RT(0) @F 
+@AcbCont @RT(7)unnamed @F 0 
+
+@AltBranch @RT(3)alt @F 2 
+@TransSeq @RT(4)tseq @F 1 
+@Trans @RT(7)TLinked @F @T @F @F @T @T @TL(2)
+IS_LINKED(ai_CavityPressure7)
+
+@RT(7)TLinked @F 
+
+@TransSeq @RT(4)tseq @F 4 
+@Trans @RT(10)TNotLinked @F @T @F @F @T @T @TL(2)
+NOT IS_LINKED(ai_CavityPressure7)
+
+@RT(10)TNotLinked @F 
+@Step @RT(6)S_Stop @F @F @T @F @RT(0) @F 
+@AcbCont @RT(7)unnamed @F 1 
+@Acb @RT(5)AStop @F @T @RT(1)P @RT(0) @F @F @T @TL(2)
+STOP_PROCESS_ALGORITHM();
+
+@F 
+
+@Trans @RT(5)TStop @F @T @F @F @T @T @TL(2)
+TRUE
+
+@RT(5)TStop @F 
+@Goto @RT(7)S_Start @F @F 
+
+
+@Step @RT(6)S_Init @F @F @F @F @RT(0) @F 
+@AcbCont @RT(7)unnamed @F 1 
+@Acb @RT(17)AInitMeasureBlock @F @F @RT(1)P @RT(0) @F @F @F @F 
+
+@Trans @RT(9)TInitDone @F @T @F @F @T @T @TL(2)
+TRUE
+
+@RT(9)TInitDone @F 
+@Step @RT(9)S_Measure @F @F @F @F @RT(0) @F 
+@AcbCont @RT(7)unnamed @F 1 
+@Acb @RT(8)AMeasure @F @F @RT(1)N @RT(0) @F @F @F @F 
+
+@Trans @RT(21)TMeasuringDeactivated @F @T @F @F @T @T @TL(2)
+NOT sv_bActivateCavityPressMeas
+
+@RT(6)Trans5 @F 
+@Goto @RT(6)S_Stop @F @F 
+@END_SfcData 
+@SaActions 2 
+@SaText @RT(8)AMeasure 1 @TL(12)
+(**************************************** WARNING ********************************************
+ *** The KEBA Kemro K2 System including software is not intended for safety control tasks! ***
+ ***                       For further information see Comment tab!                        ***
+ *********************************************************************************************)
+
+abMeasurePres.aRunLight(rRawValue := ai_CavityPressure7);
+sv_bCavityPressureError7 := abMeasurePres.aRunLight.bError;
+b := WRITE_SVREAL_DIRECT(sv_rCavityPressure7, abMeasurePres.aRunLight.rValue);
+
+rMaxCavityPressure := MAX(sv_rCavityPressure7, sv_rMaxCavityPressure7);
+b := WRITE_SVREAL_DIRECT(sv_rMaxCavityPressure7, rMaxCavityPressure);
+
+
+@SaText @RT(17)AInitMeasureBlock 1 @TL(15)
+(**************************************** WARNING ********************************************
+ *** The KEBA Kemro K2 System including software is not intended for safety control tasks! ***
+ ***                       For further information see Comment tab!                        ***
+ *********************************************************************************************)
+
+abMeasurePres.aInit(pLintabPointArray := @sv_CavityPressLintab7.LintabPoints.Point,
+                    piUsedLintabPoints := @sv_CavityPressLintab7.LintabPoints.uNoOfPoints,
+                    sRawValue := 'ai_CavityPressure7');
+
+abMeasurePres.aInitMonitoring(bEnable := sv_CavityPresMonitorMeas7.EnableMonitoring,
+                              rLowLimit := sv_CavityPresMonitorMeas7.LowerLimit,
+                              bLimitation := sv_CavityPresMonitorMeas7.Limitation,
+                              rFailureFactor := sv_CavityPresMonitorMeas7.FailureFactor);
+
+
+
+@SaTrans 0 
+@SaExits 0 
+@END_SfcBody 
+
+@@@BEG_Comment@@@ 
+@TL(0)
+
+@@@END_Comment@@@ 
+
+@BEG_SfcBody 
+4 6 5 
+
+@BEG_SfcData 2 
+@StepSeq @RT(4)sseq @F 7 
+@Step @RT(7)S_Start @F @T @T @F @RT(0) @F 
+@AcbCont @RT(7)unnamed @F 0 
+
+@AltBranch @RT(3)alt @F 2 
+@TransSeq @RT(4)tseq @F 1 
+@Trans @RT(7)TLinked @F @T @F @F @T @T @TL(2)
+IS_LINKED(ai_CavityPressure8)
+
+@RT(7)TLinked @F 
+
+@TransSeq @RT(4)tseq @F 4 
+@Trans @RT(10)TNotLinked @F @T @F @F @T @T @TL(2)
+NOT IS_LINKED(ai_CavityPressure8)
+
+@RT(10)TNotLinked @F 
+@Step @RT(6)S_Stop @F @F @T @F @RT(0) @F 
+@AcbCont @RT(7)unnamed @F 1 
+@Acb @RT(5)AStop @F @T @RT(1)P @RT(0) @F @F @T @TL(2)
+STOP_PROCESS_ALGORITHM();
+
+@F 
+
+@Trans @RT(5)TStop @F @T @F @F @T @T @TL(2)
+TRUE
+
+@RT(5)TStop @F 
+@Goto @RT(7)S_Start @F @F 
+
+
+@Step @RT(6)S_Init @F @F @F @F @RT(0) @F 
+@AcbCont @RT(7)unnamed @F 1 
+@Acb @RT(17)AInitMeasureBlock @F @F @RT(1)P @RT(0) @F @F @F @F 
+
+@Trans @RT(9)TInitDone @F @T @F @F @T @T @TL(2)
+TRUE
+
+@RT(9)TInitDone @F 
+@Step @RT(9)S_Measure @F @F @F @F @RT(0) @F 
+@AcbCont @RT(7)unnamed @F 1 
+@Acb @RT(8)AMeasure @F @F @RT(1)N @RT(0) @F @F @F @F 
+
+@Trans @RT(21)TMeasuringDeactivated @F @T @F @F @T @T @TL(2)
+NOT sv_bActivateCavityPressMeas
+
+@RT(6)Trans5 @F 
+@Goto @RT(6)S_Stop @F @F 
+@END_SfcData 
+@SaActions 2 
+@SaText @RT(8)AMeasure 1 @TL(12)
+(**************************************** WARNING ********************************************
+ *** The KEBA Kemro K2 System including software is not intended for safety control tasks! ***
+ ***                       For further information see Comment tab!                        ***
+ *********************************************************************************************)
+
+abMeasurePres.aRunLight(rRawValue := ai_CavityPressure8);
+sv_bCavityPressureError8 := abMeasurePres.aRunLight.bError;
+b := WRITE_SVREAL_DIRECT(sv_rCavityPressure8, abMeasurePres.aRunLight.rValue);
+
+rMaxCavityPressure := MAX(sv_rCavityPressure8, sv_rMaxCavityPressure8);
+b := WRITE_SVREAL_DIRECT(sv_rMaxCavityPressure8, rMaxCavityPressure);
+
+
+@SaText @RT(17)AInitMeasureBlock 1 @TL(15)
+(**************************************** WARNING ********************************************
+ *** The KEBA Kemro K2 System including software is not intended for safety control tasks! ***
+ ***                       For further information see Comment tab!                        ***
+ *********************************************************************************************)
+
+abMeasurePres.aInit(pLintabPointArray := @sv_CavityPressLintab8.LintabPoints.Point,
+                    piUsedLintabPoints := @sv_CavityPressLintab8.LintabPoints.uNoOfPoints,
+                    sRawValue := 'ai_CavityPressure8');
+
+abMeasurePres.aInitMonitoring(bEnable := sv_CavityPresMonitorMeas8.EnableMonitoring,
+                              rLowLimit := sv_CavityPresMonitorMeas8.LowerLimit,
+                              bLimitation := sv_CavityPresMonitorMeas8.Limitation,
+                              rFailureFactor := sv_CavityPresMonitorMeas8.FailureFactor);
+
+
+
+@SaTrans 0 
+@SaExits 0 
+@END_SfcBody 
+
+@@@BEG_Comment@@@ 
+@TL(0)
+
+@@@END_Comment@@@ 
+
+@BEG_Body 
+@TL(15)
+IF evStartData.DeviceId.CompId = cCompInjection AND
+    evStartData.DeviceId.IndexId = 1 AND 
+    evStartData.MoveId = cMoveInject THEN
+    
+    (*start of injection --> reset max cavity pressure*)
+    sv_rMaxCavityPressure1 := 0.0;  
+    sv_rMaxCavityPressure2 := 0.0;
+    sv_rMaxCavityPressure3 := 0.0;
+    sv_rMaxCavityPressure4 := 0.0;
+    sv_rMaxCavityPressure5 := 0.0;
+    sv_rMaxCavityPressure6 := 0.0;
+    sv_rMaxCavityPressure7 := 0.0;
+    sv_rMaxCavityPressure8 := 0.0;
+END_IF;    
+
+@END_Body 
+
+@@@BEG_Comment@@@ 
+@TL(1)
+Reset maximum cavity pressure at begin of next injection
+@@@END_Comment@@@ 
+
+@BEG_Body 
+@TL(21)
+(**************************************** WARNING ********************************************
+ *** The KEBA Kemro K2 System including software is not intended for safety control tasks! ***
+ ***                       For further information see Comment tab!                        ***
+ *********************************************************************************************)
+
+IF NOT sv_bActivateCavityPressMeas THEN
+    //reset cut off parameter sv_CutOffParams.bUseMoldPressure
+    sv_bUseMoldPressureForCutOff := FALSE;
+ELSE
+    //cavity pressure measuring activated
+    START_PROCESS_ALGORITHM(paMeasure1);
+    START_PROCESS_ALGORITHM(paMeasure2);
+    START_PROCESS_ALGORITHM(paMeasure3);
+    START_PROCESS_ALGORITHM(paMeasure4);
+    START_PROCESS_ALGORITHM(paMeasure5);
+    START_PROCESS_ALGORITHM(paMeasure6);
+    START_PROCESS_ALGORITHM(paMeasure7);
+    START_PROCESS_ALGORITHM(paMeasure8);
+END_IF;
+
+
+@END_Body 
+
+@@@BEG_Comment@@@ 
+@TL(0)
+
+@@@END_Comment@@@ 
+
+@BEG_Body 
+@TL(31)
+(**************************************** WARNING ********************************************
+ *** The KEBA Kemro K2 System including software is not intended for safety control tasks! ***
+ ***                       For further information see Comment tab!                        ***
+ *********************************************************************************************)
+
+IF NOT IS_LINKED(ai_CavityPressure1_stat) THEN
+   RETURN;
+END_IF;
+
+IF NOT bInitDone THEN
+   sHWPath := FGetHWPath('Mold1.ai_CavityPressure1', TRUE);
+   bInitDone := TRUE;
+END_IF;
+
+IF ai_CavityPressure1_stat AND sv_bActivateCavityPressMeas THEN
+   SET_ALARM(Name := erAnalogInput,
+            SubID1 := sv_DeviceId.CompId,
+            SubID2 := sv_DeviceId.IndexId,
+            SubID3 := 1,
+            Param1 := 'Mold1.ai_CavityPressure1',
+            Param2 := sHWPath);
+    
+ELSE
+   RESET_ALARM(Name := erAnalogInput,
+               SubID1 := sv_DeviceId.CompId,
+               SubID2 := sv_DeviceId.IndexId,
+               SubID3 := 1);
+END_IF;
+
+
+
+@END_Body 
+
+@@@BEG_Comment@@@ 
+@TL(0)
+
+@@@END_Comment@@@ 
+
+@BEG_Body 
+@TL(31)
+(**************************************** WARNING ********************************************
+ *** The KEBA Kemro K2 System including software is not intended for safety control tasks! ***
+ ***                       For further information see Comment tab!                        ***
+ *********************************************************************************************)
+
+IF NOT IS_LINKED(ai_CavityPressure2_stat) THEN
+   RETURN;
+END_IF;
+
+IF NOT bInitDone THEN
+   sHWPath := FGetHWPath('Mold1.ai_CavityPressure2', TRUE);
+   bInitDone := TRUE;
+END_IF;
+
+IF ai_CavityPressure2_stat AND sv_bActivateCavityPressMeas THEN
+   SET_ALARM(Name := erAnalogInput,
+            SubID1 := sv_DeviceId.CompId,
+            SubID2 := sv_DeviceId.IndexId,
+            SubID3 := 2,
+            Param1 := 'Mold1.ai_CavityPressure2',
+            Param2 := sHWPath);
+    
+ELSE
+   RESET_ALARM(Name := erAnalogInput,
+               SubID1 := sv_DeviceId.CompId,
+               SubID2 := sv_DeviceId.IndexId,
+               SubID3 := 2);
+END_IF;
+
+
+
+@END_Body 
+
+@@@BEG_Comment@@@ 
+@TL(0)
+
+@@@END_Comment@@@ 
+
+@BEG_Body 
+@TL(31)
+(**************************************** WARNING ********************************************
+ *** The KEBA Kemro K2 System including software is not intended for safety control tasks! ***
+ ***                       For further information see Comment tab!                        ***
+ *********************************************************************************************)
+
+IF NOT IS_LINKED(ai_CavityPressure3_stat) THEN
+   RETURN;
+END_IF;
+
+IF NOT bInitDone THEN
+   sHWPath := FGetHWPath('Mold1.ai_CavityPressure3', TRUE);
+   bInitDone := TRUE;
+END_IF;
+
+IF ai_CavityPressure3_stat AND sv_bActivateCavityPressMeas THEN
+   SET_ALARM(Name := erAnalogInput,
+            SubID1 := sv_DeviceId.CompId,
+            SubID2 := sv_DeviceId.IndexId,
+            SubID3 := 3,
+            Param1 := 'Mold1.ai_CavityPressure3',
+            Param2 := sHWPath);
+    
+ELSE
+   RESET_ALARM(Name := erAnalogInput,
+               SubID1 := sv_DeviceId.CompId,
+               SubID2 := sv_DeviceId.IndexId,
+               SubID3 := 3);
+END_IF;
+
+
+
+@END_Body 
+
+@@@BEG_Comment@@@ 
+@TL(0)
+
+@@@END_Comment@@@ 
+
+@BEG_Body 
+@TL(31)
+(**************************************** WARNING ********************************************
+ *** The KEBA Kemro K2 System including software is not intended for safety control tasks! ***
+ ***                       For further information see Comment tab!                        ***
+ *********************************************************************************************)
+
+IF NOT IS_LINKED(ai_CavityPressure4_stat) THEN
+   RETURN;
+END_IF;
+
+IF NOT bInitDone THEN
+   sHWPath := FGetHWPath('Mold1.ai_CavityPressure4', TRUE);
+   bInitDone := TRUE;
+END_IF;
+
+IF ai_CavityPressure4_stat AND sv_bActivateCavityPressMeas THEN
+   SET_ALARM(Name := erAnalogInput,
+            SubID1 := sv_DeviceId.CompId,
+            SubID2 := sv_DeviceId.IndexId,
+            SubID3 := 4,
+            Param1 := 'Mold1.ai_CavityPressure4',
+            Param2 := sHWPath);
+    
+ELSE
+   RESET_ALARM(Name := erAnalogInput,
+               SubID1 := sv_DeviceId.CompId,
+               SubID2 := sv_DeviceId.IndexId,
+               SubID3 := 4);
+END_IF;
+
+
+
+@END_Body 
+
+@@@BEG_Comment@@@ 
+@TL(0)
+
+@@@END_Comment@@@ 
+
+@BEG_Body 
+@TL(31)
+(**************************************** WARNING ********************************************
+ *** The KEBA Kemro K2 System including software is not intended for safety control tasks! ***
+ ***                       For further information see Comment tab!                        ***
+ *********************************************************************************************)
+
+IF NOT IS_LINKED(ai_CavityPressure5_stat) THEN
+   RETURN;
+END_IF;
+
+IF NOT bInitDone THEN
+   sHWPath := FGetHWPath('Mold1.ai_CavityPressure5', TRUE);
+   bInitDone := TRUE;
+END_IF;
+
+IF ai_CavityPressure5_stat AND sv_bActivateCavityPressMeas THEN
+   SET_ALARM(Name := erAnalogInput,
+            SubID1 := sv_DeviceId.CompId,
+            SubID2 := sv_DeviceId.IndexId,
+            SubID3 := 5,
+            Param1 := 'Mold1.ai_CavityPressure5',
+            Param2 := sHWPath);
+    
+ELSE
+   RESET_ALARM(Name := erAnalogInput,
+               SubID1 := sv_DeviceId.CompId,
+               SubID2 := sv_DeviceId.IndexId,
+               SubID3 := 5);
+END_IF;
+
+
+
+@END_Body 
+
+@@@BEG_Comment@@@ 
+@TL(0)
+
+@@@END_Comment@@@ 
+
+@BEG_Body 
+@TL(31)
+(**************************************** WARNING ********************************************
+ *** The KEBA Kemro K2 System including software is not intended for safety control tasks! ***
+ ***                       For further information see Comment tab!                        ***
+ *********************************************************************************************)
+
+IF NOT IS_LINKED(ai_CavityPressure6_stat) THEN
+   RETURN;
+END_IF;
+
+IF NOT bInitDone THEN
+   sHWPath := FGetHWPath('Mold1.ai_CavityPressure6', TRUE);
+   bInitDone := TRUE;
+END_IF;
+
+IF ai_CavityPressure6_stat AND sv_bActivateCavityPressMeas THEN
+   SET_ALARM(Name := erAnalogInput,
+            SubID1 := sv_DeviceId.CompId,
+            SubID2 := sv_DeviceId.IndexId,
+            SubID3 := 6,
+            Param1 := 'Mold1.ai_CavityPressure6',
+            Param2 := sHWPath);
+    
+ELSE
+   RESET_ALARM(Name := erAnalogInput,
+               SubID1 := sv_DeviceId.CompId,
+               SubID2 := sv_DeviceId.IndexId,
+               SubID3 := 6);
+END_IF;
+
+
+
+@END_Body 
+
+@@@BEG_Comment@@@ 
+@TL(0)
+
+@@@END_Comment@@@ 
+
+@BEG_Body 
+@TL(31)
+(**************************************** WARNING ********************************************
+ *** The KEBA Kemro K2 System including software is not intended for safety control tasks! ***
+ ***                       For further information see Comment tab!                        ***
+ *********************************************************************************************)
+
+IF NOT IS_LINKED(ai_CavityPressure7_stat) THEN
+   RETURN;
+END_IF;
+
+IF NOT bInitDone THEN
+   sHWPath := FGetHWPath('Mold1.ai_CavityPressure7', TRUE);
+   bInitDone := TRUE;
+END_IF;
+
+IF ai_CavityPressure7_stat AND sv_bActivateCavityPressMeas THEN
+   SET_ALARM(Name := erAnalogInput,
+            SubID1 := sv_DeviceId.CompId,
+            SubID2 := sv_DeviceId.IndexId,
+            SubID3 := 7,
+            Param1 := 'Mold1.ai_CavityPressure7',
+            Param2 := sHWPath);
+    
+ELSE
+   RESET_ALARM(Name := erAnalogInput,
+               SubID1 := sv_DeviceId.CompId,
+               SubID2 := sv_DeviceId.IndexId,
+               SubID3 := 7);
+END_IF;
+
+
+
+@END_Body 
+
+@@@BEG_Comment@@@ 
+@TL(0)
+
+@@@END_Comment@@@ 
+
+@BEG_Body 
+@TL(31)
+(**************************************** WARNING ********************************************
+ *** The KEBA Kemro K2 System including software is not intended for safety control tasks! ***
+ ***                       For further information see Comment tab!                        ***
+ *********************************************************************************************)
+
+IF NOT IS_LINKED(ai_CavityPressure8_stat) THEN
+   RETURN;
+END_IF;
+
+IF NOT bInitDone THEN
+   sHWPath := FGetHWPath('Mold1.ai_CavityPressure8', TRUE);
+   bInitDone := TRUE;
+END_IF;
+
+IF ai_CavityPressure8_stat AND sv_bActivateCavityPressMeas THEN
+   SET_ALARM(Name := erAnalogInput,
+            SubID1 := sv_DeviceId.CompId,
+            SubID2 := sv_DeviceId.IndexId,
+            SubID3 := 8,
+            Param1 := 'Mold1.ai_CavityPressure8',
+            Param2 := sHWPath);
+    
+ELSE
+   RESET_ALARM(Name := erAnalogInput,
+               SubID1 := sv_DeviceId.CompId,
+               SubID2 := sv_DeviceId.IndexId,
+               SubID3 := 8);
+END_IF;
+
+
+
+@END_Body 
+
+@@@BEG_Comment@@@ 
+@TL(0)
+
+@@@END_Comment@@@ 
+
+@BEG_Body 
+@TL(10)
+sv_rMaxPressureMoldCavity := MUX(sv_iSelCavityPressureSensor - 1,
+                                 sv_CavityPressLintab1.LintabPoints.Point[sv_CavityPressLintab1.LintabPoints.uNoOfPoints].rY,
+                                 sv_CavityPressLintab2.LintabPoints.Point[sv_CavityPressLintab2.LintabPoints.uNoOfPoints].rY,
+                                 sv_CavityPressLintab3.LintabPoints.Point[sv_CavityPressLintab3.LintabPoints.uNoOfPoints].rY,
+                                 sv_CavityPressLintab4.LintabPoints.Point[sv_CavityPressLintab4.LintabPoints.uNoOfPoints].rY,
+                                 sv_CavityPressLintab5.LintabPoints.Point[sv_CavityPressLintab5.LintabPoints.uNoOfPoints].rY,
+                                 sv_CavityPressLintab6.LintabPoints.Point[sv_CavityPressLintab6.LintabPoints.uNoOfPoints].rY,
+                                 sv_CavityPressLintab7.LintabPoints.Point[sv_CavityPressLintab7.LintabPoints.uNoOfPoints].rY,
+                                 sv_CavityPressLintab8.LintabPoints.Point[sv_CavityPressLintab8.LintabPoints.uNoOfPoints].rY);
+
+@END_Body 
+
+@@@BEG_Comment@@@ 
+@TL(0)
+
+@@@END_Comment@@@ 
+@END_Body 
+
+@END_Contents 

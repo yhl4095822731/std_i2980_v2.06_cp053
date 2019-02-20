@@ -1,0 +1,847 @@
+(*
+@h    ! WARNING !
+@h    The Kemro K2 system (including software) only meets category B according to EN 954-1,
+@h    thus it is not intended for usage in safety-relevant control applications in the field 
+@h    of personal safety (e.g. emergency stop).
+@h    To implement potentially necessary safety-relevant control tasks, always use additional 
+@h    external safety devices that are intended for the particular purpose, and meet the necessary 
+@h    functional safety.
+@h    For further information see EN 954-1 (EN ISO 13849-1) and/or the K2-x00 user manual, chapter 
+@h    "CE conformity, directives and standards".
+
+
+AB for additional ejector safety.
+- Lock mold close if monitor position is reached and ejector is not bwd
+- resume mold close movement if ejector is bwd
+- lock ejector fwd if mold position is lower or equal the ejector monitor position
+
+- check ejector safety plate digin (mounted in the mold) if activated and
+  lock all mold close movements if necessary.
+
+@FunctionID: S_FU_02
+*)
+
+IMPORT_OVER_LISTFILE
+ cCompMold
+, IS_LINKED
+, cMoveFwd
+, tsDeviceId
+, tnEjectorMode
+, tevMovementState
+, tnOperationMode
+, tevMovementStateData
+, FBLockUnlock
+, FBLockUnlockGroup
+
+END_IMPORT
+
+ALGORITHM_BLOCK ABAdditionalEjectorSafety #DUMMY_EDIT_BLOCK
+
+SYSTEM_VAR
+ sv_bEjectorMonitorPos : BOOL (* ejector monitor position reached *);
+ sv_rMoldPosition : REAL;
+ sv_rEjectorMonitorPos : REAL (* ejector monitor position *);
+ sv_bEjectorBwd : BOOL (* ejector is in bwd endposition *);
+ sv_bEjectorFwd : BOOL (* ejector is in bwd endposition *);
+ sv_DeviceId : tsDeviceId (* unique Device Identifier *);
+ sv_bInitDone : BOOL;
+ sv_EjectorMode : tnEjectorMode;
+ sv_bOutputActive : BOOL (* Output is active *);
+ sv_OperationMode : tnOperationMode;
+ di_SafetyPlate : BOOL;
+ sv_bCheckSafetyPlateDI : BOOL (* activates/deactivates the monitoring of di_SafetyPlate *);
+ sv_bUseProgramSwitches : BOOL;
+ sv_bOverrideEjectorSafety : BOOL;
+END_VAR
+
+SYSTEM_OBJECT
+ TaskAnalog : TASK;
+ EV_Task_3 : TASK;
+ PU_Task_3 : TASK;
+ evMovementState : tevMovementState;
+ erEndPosChangedWithoutMove : ALARM;
+ EV_Task_1 : TASK;
+ erEjectorSafetyPlate : ALARM;
+ erEjectorNotBackward : ALARM;
+ erCompNotInCorrectPosition : ALARM;
+END_OBJECT
+
+VAR
+ mevMovementState : tevMovementState;
+END_VAR
+
+PROCESS_ALGORITHM paCheckPosition ON TaskAnalog
+
+#BEGIN_EDIT_BLOCK
+(**************************************** WARNING ********************************************
+ *** The KEBA Kemro K2 System including software is not intended for safety control tasks! ***
+ ***                       For further information see Comment tab!                        ***
+ *********************************************************************************************)
+
+sv_bEjectorMonitorPos := (sv_rMoldPosition <= sv_rEjectorMonitorPos);
+
+
+;#END_EDIT_BLOCK END_ALGORITHM
+
+EVENT_ALGORITHM evaMovementState ON EV_Task_3 WITH mevMovementState
+
+
+VAR_INPUT
+ evMovementStateData : tevMovementStateData;
+END_VAR
+#BEGIN_EDIT_BLOCK
+(**************************************** WARNING ********************************************
+ *** The KEBA Kemro K2 System including software is not intended for safety control tasks! ***
+ ***                       For further information see Comment tab!                        ***
+ *********************************************************************************************)
+
+//start/stop paCheckPosition
+IF evMovementStateData.DeviceId.CompId <> cCompMold THEN
+   RETURN;
+END_IF;
+
+IF evMovementStateData.State = nActive THEN
+   IF sv_EjectorMode <> nNoUse AND sv_rEjectorMonitorPos <> 0.0 THEN
+      //mold movement started and monitoring activated
+      START_PROCESS_ALGORITHM(paCheckPosition);
+   END_IF;   
+ELSE
+   //mold movement stopped
+   STOP_PROCESS_ALGORITHM(paCheckPosition);
+END_IF;
+
+
+;#END_EDIT_BLOCK END_ALGORITHM
+
+POSTUPDATE_ALGORITHM pLockUnlockMoldAndEjector ON PU_Task_3 WITH sv_bEjectorMonitorPos,sv_bInitDone,sv_bEjectorBwd,sv_rEjectorMonitorPos,sv_EjectorMode,sv_bOverrideEjectorSafety,sv_bUseProgramSwitches
+
+
+VAR
+ fbLockUnlockMold : FBLockUnlock := (DeviceId:=(CompId:=cCompMold,IndexId:=1),MoveDir:=cMoveFwd,MoveId:=cMoveAll);
+ fbLockUnlockEjector : FBLockUnlock := (DeviceId:=(CompId:=cCompEjector,IndexId:=1),MoveDir:=cMoveFwd,MoveId:=cMoveAll);
+ fbLockUnlockGroup : FBLockUnlockGroup := (Group:=cLockGroupEjectorBwd);
+ bInitDone : BOOL;
+END_VAR
+#BEGIN_EDIT_BLOCK
+(**************************************** WARNING ********************************************
+ *** The KEBA Kemro K2 System including software is not intended for safety control tasks! ***
+ ***                       For further information see Comment tab!                        ***
+ *********************************************************************************************)
+
+IF sv_bUseProgramSwitches THEN
+   mevMovementState := evMovementState;
+ELSE
+   mevMovementState := EMPTY;
+END_IF;
+
+IF NOT sv_bInitDone THEN
+   //no lock/unlock events before init is done
+   RETURN;
+END_IF;
+
+IF NOT bInitDone THEN
+   fbLockUnlockMold.Alarm.AlarmId := erEjectorNotBackward;
+   fbLockUnlockMold.Alarm.SubId[1] := 1; //only used to unify the alarm
+   fbLockUnlockEjector.Alarm.AlarmId := erCompNotInCorrectPosition;
+   fbLockUnlockEjector.Alarm.SubId[1] := cCompMold;
+   fbLockUnlockEjector.Alarm.SubId[2] := 1;
+   fbLockUnlockGroup.Alarm.AlarmId := erEjectorNotBackward;
+   bInitDone := TRUE;
+END_IF;
+
+IF (sv_rEjectorMonitorPos = 0.0) OR NOT (sv_rMoldPosition <= sv_rEjectorMonitorPos) OR sv_bOverrideEjectorSafety OR NOT sv_bUseProgramSwitches THEN
+   //unlock ejector fwd 
+   fbLockUnlockEjector.Mode := nUnlock;
+ELSE
+   //lock ejector fwd
+   fbLockUnlockEjector.Mode := nLockResume;
+END_IF;
+
+
+IF (sv_EjectorMode = nNoUse) OR (sv_rEjectorMonitorPos = 0.0) OR NOT sv_bUseProgramSwitches THEN
+   //ejector switched off or monitor position deactivated
+   fbLockUnlockMold.Mode := nUnlock;
+ELSIF (sv_rMoldPosition <= sv_rEjectorMonitorPos) AND NOT sv_bEjectorBwd THEN
+   //monitor position reached and ejector not bwd -> lock mold fwd movement
+   fbLockUnlockMold.Mode := nLockResume;
+ELSIF sv_bEjectorBwd OR NOT (sv_rMoldPosition <= sv_rEjectorMonitorPos) THEN
+   //ejector is bwd or monitor pos not reached -> unlock mold fwd movements
+   fbLockUnlockMold.Mode := nUnlock;
+END_IF;
+
+//some movements are not allowed when ejector is not fully backward
+IF sv_bEjectorBwd THEN
+   fbLockUnlockGroup.Mode := nUnlock;
+ELSE
+   fbLockUnlockGroup.Mode := nLockAbort;
+END_IF;
+
+fbLockUnlockMold();
+fbLockUnlockEjector();
+fbLockUnlockGroup();
+
+
+;#END_EDIT_BLOCK END_ALGORITHM
+
+POSTUPDATE_ALGORITHM pEndPosChanged ON EV_Task_1 WITH sv_bEjectorBwd,sv_bEjectorFwd
+
+#BEGIN_EDIT_BLOCK
+(**************************************** WARNING ********************************************
+ *** The KEBA Kemro K2 System including software is not intended for safety control tasks! ***
+ ***                       For further information see Comment tab!                        ***
+ *********************************************************************************************)
+
+IF NOT sv_bInitDone OR (sv_OperationMode < nHalfAutomatic) THEN
+   RETURN;
+END_IF;
+
+IF NOT sv_bOutputActive THEN
+    SET_ALARM(Name := erEndPosChangedWithoutMove,
+              SubID1 := sv_DeviceId.CompId,
+              SubID2 := sv_DeviceId.IndexId);
+END_IF;
+
+
+;#END_EDIT_BLOCK END_ALGORITHM
+
+POSTUPDATE_ALGORITHM pSafetyPlate ON PU_Task_3 WITH sv_bInitDone,sv_bCheckSafetyPlateDI,di_SafetyPlate
+
+
+VAR
+ bInitDone : BOOL;
+ bSafetyPlateLinked : BOOL;
+ fbLockUnlock : FBLockUnlock := (DeviceId:=(CompId:=cCompMold,IndexId:=1),MoveDir:=cMoveFwd,MoveId:=cMoveAll);
+END_VAR
+#BEGIN_EDIT_BLOCK
+(**************************************** WARNING ********************************************
+ *** The KEBA Kemro K2 System including software is not intended for safety control tasks! ***
+ ***                       For further information see Comment tab!                        ***
+ *********************************************************************************************)
+
+IF NOT bInitDone THEN
+   bSafetyPlateLinked := IS_LINKED(di_SafetyPlate);
+   fbLockUnlock.DeviceId.CompId := cCompMold;
+   fbLockUnlock.DeviceId.IndexId := 1;
+   fbLockUnlock.MoveDir := cMoveFwd;
+   fbLockUnlock.MoveId := cMoveAll;
+   fbLockUnlock.Alarm.AlarmId := erEjectorSafetyPlate;
+   fbLockUnlock.Alarm.SubId[1] := sv_DeviceId.IndexId;   
+   bInitDone := TRUE;
+END_IF;
+
+IF NOT sv_bInitDone OR NOT bSafetyPlateLinked THEN
+   //init not done or no safety plate available
+   RETURN;
+END_IF;
+
+IF sv_bCheckSafetyPlateDI THEN
+   IF di_SafetyPlate THEN
+      fbLockUnlock.Mode := nUnlock;   
+   ELSE
+      fbLockUnlock.Mode := nLockAbort;
+   END_IF;
+ELSE
+   //check deactivated -> unlock
+   fbLockUnlock.Mode := nUnlock;
+END_IF;
+
+fbLockUnlock();
+
+
+
+
+;#END_EDIT_BLOCK END_ALGORITHM
+
+
+
+END_ALGORITHM_BLOCK
+
+
+
+#END_OF_IEC_PART
+
+@Puma @IecEditor 6 97 @Pou 25 
+@@@BEG_Comment@@@
+@h    ! WARNING !
+@h    The Kemro K2 system (including software) only meets category B according to EN 954-1,
+@h    thus it is not intended for usage in safety-relevant control applications in the field 
+@h    of personal safety (e.g. emergency stop).
+@h    To implement potentially necessary safety-relevant control tasks, always use additional 
+@h    external safety devices that are intended for the particular purpose, and meet the necessary 
+@h    functional safety.
+@h    For further information see EN 954-1 (EN ISO 13849-1) and/or the K2-x00 user manual, chapter 
+@h    "CE conformity, directives and standards".
+
+
+AB for additional ejector safety.
+- Lock mold close if monitor position is reached and ejector is not bwd
+- resume mold close movement if ejector is bwd
+- lock ejector fwd if mold position is lower or equal the ejector monitor position
+
+- check ejector safety plate digin (mounted in the mold) if activated and
+  lock all mold close movements if necessary.
+
+@FunctionID: S_FU_02
+@@@END_Comment@@@
+
+@BEG_Contents 
+
+@BEG_Func 
+@RT(17)FuncTreeContainer 
+2 
+@Var @RT(9)cCompMold @RT(0) @T @F @DT @RT(4)DINT @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+0 @RT(3)101 @RT(0) 
+@END_Attrib 
+1 1 @F @F @F @F 
+
+@Var @RT(9)IS_LINKED @RT(0) @T @T @DERIVED 0 @F @RT(22)KEBA_STANDARD_FUNCTION @F 
+@T 
+@BEG_Attrib 
+0 @RT(0) @RT(0) 
+@END_Attrib 
+1 1 @F @F @F @F 
+
+@END_Func 
+
+@BEG_Const 
+@RT(18)ConstTreeContainer 
+1 
+@Var @RT(8)cMoveFwd @RT(0) @T @F @DT @RT(4)DINT @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+0 @RT(2)12 @RT(16)movement forward 
+@END_Attrib 
+1 1 @F @F @F @F 
+
+@END_Const 
+
+@BEG_Export 
+
+@BEG_Kind 
+@ALGORITHM_BLOCK @RT(25)ABAdditionalEjectorSafety @STRUCTURED_TEXT 
+@RT(0) @RT(0) @RT(0) 
+@END_Kind 
+
+@BEG_Dcl 
+@RT(16)DclTreeContainer 
+24 
+@Var @RT(21)sv_bEjectorMonitorPos @RT(0) @T @F @DT @RT(4)BOOL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(32)ejector monitor position reached @RT(0) 
+@END_Attrib 
+1 8 @F @F @F @F 
+
+@Var @RT(16)sv_rMoldPosition @RT(0) @T @F @DT @RT(4)REAL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 8 @F @F @F @F 
+
+@Var @RT(21)sv_rEjectorMonitorPos @RT(0) @T @F @DT @RT(4)REAL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(24)ejector monitor position @RT(0) 
+@END_Attrib 
+1 8 @F @F @F @F 
+
+@Var @RT(14)sv_bEjectorBwd @RT(0) @T @F @DT @RT(4)BOOL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(29)ejector is in bwd endposition @RT(0) 
+@END_Attrib 
+1 8 @F @F @F @F 
+
+@Var @RT(14)sv_bEjectorFwd @RT(0) @T @F @DT @RT(4)BOOL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(29)ejector is in bwd endposition @RT(0) 
+@END_Attrib 
+1 8 @F @F @F @F 
+
+@Var @RT(11)sv_DeviceId @RT(0) @T @T @DERIVED 0 @T @T @DT @RT(10)tsDeviceId @RT(0) @T @T @UNKNOWN 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(24)unique Device Identifier @RT(0) 
+@END_Attrib 
+1 8 @F @F @F @F 
+
+@Var @RT(12)sv_bInitDone @RT(0) @T @T @RENAMED 0 @T @T @DT @RT(4)BOOL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 8 @F @F @F @F 
+
+@Var @RT(14)sv_EjectorMode @RT(0) @T @T @DERIVED 0 @T @T @DT @RT(13)tnEjectorMode @RT(0) @T @T @UNKNOWN 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 8 @F @F @F @F 
+
+@Var @RT(16)sv_bOutputActive @RT(0) @T @F @DT @RT(4)BOOL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(16)Output is active @RT(0) 
+@END_Attrib 
+1 8 @F @F @F @F 
+
+@Var @RT(10)TaskAnalog @RT(0) @T @F @DT @RT(4)TASK @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 7 @F @F @F @F 
+
+@Var @RT(9)EV_Task_3 @RT(0) @T @F @DT @RT(4)TASK @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 7 @F @F @F @F 
+
+@Var @RT(9)PU_Task_3 @RT(0) @T @F @DT @RT(4)TASK @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 7 @F @F @F @F 
+
+@Var @RT(15)evMovementState @RT(0) @T @T @DERIVED 0 @T @T @DT @RT(16)tevMovementState @RT(0) @T @T @UNKNOWN 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 7 @F @F @F @F 
+
+@Var @RT(26)erEndPosChangedWithoutMove @RT(0) @T @F @DT @RT(5)ALARM @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 7 @F @F @F @F 
+
+@Var @RT(9)EV_Task_1 @RT(0) @T @T @RENAMED 0 @T @T @DT @RT(4)TASK @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 7 @F @F @F @F 
+
+@Var @RT(16)sv_OperationMode @RT(0) @T @T @DERIVED 0 @T @T @DT @RT(15)tnOperationMode @RT(0) @T @T @UNKNOWN 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 8 @F @F @F @F 
+
+@Var @RT(14)di_SafetyPlate @RT(0) @T @F @DT @RT(4)BOOL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 8 @F @F @F @F 
+
+@Var @RT(22)sv_bCheckSafetyPlateDI @RT(0) @T @F @DT @RT(4)BOOL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(54)activates/deactivates the monitoring of di_SafetyPlate @RT(0) 
+@END_Attrib 
+1 8 @F @F @F @F 
+
+@Var @RT(20)erEjectorSafetyPlate @RT(0) @T @F @DT @RT(5)ALARM @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 7 @F @F @F @F 
+
+@Var @RT(20)erEjectorNotBackward @RT(0) @T @T @RENAMED 0 @T @T @DT @RT(5)ALARM @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 7 @F @F @F @F 
+
+@Var @RT(16)mevMovementState @RT(0) @T @T @RENAMED 0 @T @T @DT @RT(16)tevMovementState @RT(0) @T @T @UNKNOWN 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(22)sv_bUseProgramSwitches @RT(0) @T @F @DT @RT(4)BOOL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 8 @F @F @F @F 
+
+@Var @RT(25)sv_bOverrideEjectorSafety @RT(0) @T @F @DT @RT(4)BOOL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 8 @F @F @F @F 
+
+@Var @RT(26)erCompNotInCorrectPosition @RT(0) @T @F @DT @RT(5)ALARM @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 7 @F @F @F @F 
+
+@END_Dcl 
+
+@END_Export 
+
+@BEG_Body 
+
+5 
+
+@BEG_Export 
+
+@BEG_Algo 
+@PROCESS_ALGORITHM @RT(15)paCheckPosition @STRUCTURED_TEXT 
+@RT(0) @RT(0) @RT(10)TaskAnalog @F @F 
+@END_Algo 
+
+@BEG_Dcl 
+@RT(16)DclTreeContainer 
+0 
+@END_Dcl 
+
+@END_Export 
+
+@BEG_Export 
+
+@BEG_Algo 
+@EVENT_ALGORITHM @RT(16)evaMovementState @STRUCTURED_TEXT 
+@RT(0) @RT(16)mevMovementState @RT(9)EV_Task_3 @F @F 
+@END_Algo 
+
+@BEG_Dcl 
+@RT(16)DclTreeContainer 
+1 
+@Var @RT(19)evMovementStateData @RT(0) @T @T @DERIVED 0 @T @T @DT @RT(20)tevMovementStateData @RT(0) @T @T @UNKNOWN 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 1 @F @F @F @F 
+
+@END_Dcl 
+
+@END_Export 
+
+@BEG_Export 
+
+@BEG_Algo 
+@POSTUPDATE_ALGORITHM @RT(25)pLockUnlockMoldAndEjector @STRUCTURED_TEXT 
+@RT(0) @RT(135)sv_bEjectorMonitorPos,sv_bInitDone,sv_bEjectorBwd,sv_rEjectorMonitorPos,sv_EjectorMode,sv_bOverrideEjectorSafety,sv_bUseProgramSwitches @RT(9)PU_Task_3 @F @F 
+@END_Algo 
+
+@BEG_Dcl 
+@RT(16)DclTreeContainer 
+4 
+@Var @RT(16)fbLockUnlockMold @RT(0) @T @T @DERIVED 0 @T @T @DT @RT(12)FBLockUnlock @RT(0) @T @T @UNKNOWN 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(77)(DeviceId:=(CompId:=cCompMold,IndexId:=1),MoveDir:=cMoveFwd,MoveId:=cMoveAll) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(19)fbLockUnlockEjector @RT(0) @T @T @DERIVED 0 @T @T @DT @RT(12)FBLockUnlock @RT(0) @T @T @UNKNOWN 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(80)(DeviceId:=(CompId:=cCompEjector,IndexId:=1),MoveDir:=cMoveFwd,MoveId:=cMoveAll) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(17)fbLockUnlockGroup @RT(0) @T @T @DERIVED 0 @T @T @DT @RT(17)FBLockUnlockGroup @RT(0) @T @T @UNKNOWN 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(29)(Group:=cLockGroupEjectorBwd) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(9)bInitDone @RT(0) @T @F @DT @RT(4)BOOL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@END_Dcl 
+
+@END_Export 
+
+@BEG_Export 
+
+@BEG_Algo 
+@POSTUPDATE_ALGORITHM @RT(14)pEndPosChanged @STRUCTURED_TEXT 
+@RT(0) @RT(29)sv_bEjectorBwd,sv_bEjectorFwd @RT(9)EV_Task_1 @F @F 
+@END_Algo 
+
+@BEG_Dcl 
+@RT(16)DclTreeContainer 
+0 
+@END_Dcl 
+
+@END_Export 
+
+@BEG_Export 
+
+@BEG_Algo 
+@POSTUPDATE_ALGORITHM @RT(12)pSafetyPlate @STRUCTURED_TEXT 
+@RT(0) @RT(50)sv_bInitDone,sv_bCheckSafetyPlateDI,di_SafetyPlate @RT(9)PU_Task_3 @F @F 
+@END_Algo 
+
+@BEG_Dcl 
+@RT(16)DclTreeContainer 
+3 
+@Var @RT(9)bInitDone @RT(0) @T @F @DT @RT(4)BOOL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(18)bSafetyPlateLinked @RT(0) @T @F @DT @RT(4)BOOL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(12)fbLockUnlock @RT(0) @T @T @DERIVED 0 @T @T @DT @RT(12)FBLockUnlock @RT(0) @T @T @UNKNOWN 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(77)(DeviceId:=(CompId:=cCompMold,IndexId:=1),MoveDir:=cMoveFwd,MoveId:=cMoveAll) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@END_Dcl 
+
+@END_Export 
+
+@BEG_Body 
+@TL(7)
+(**************************************** WARNING ********************************************
+ *** The KEBA Kemro K2 System including software is not intended for safety control tasks! ***
+ ***                       For further information see Comment tab!                        ***
+ *********************************************************************************************)
+
+sv_bEjectorMonitorPos := (sv_rMoldPosition <= sv_rEjectorMonitorPos);
+
+@END_Body 
+
+@@@BEG_Comment@@@ 
+@TL(0)
+
+@@@END_Comment@@@ 
+
+@BEG_Body 
+@TL(20)
+(**************************************** WARNING ********************************************
+ *** The KEBA Kemro K2 System including software is not intended for safety control tasks! ***
+ ***                       For further information see Comment tab!                        ***
+ *********************************************************************************************)
+
+//start/stop paCheckPosition
+IF evMovementStateData.DeviceId.CompId <> cCompMold THEN
+   RETURN;
+END_IF;
+
+IF evMovementStateData.State = nActive THEN
+   IF sv_EjectorMode <> nNoUse AND sv_rEjectorMonitorPos <> 0.0 THEN
+      //mold movement started and monitoring activated
+      START_PROCESS_ALGORITHM(paCheckPosition);
+   END_IF;   
+ELSE
+   //mold movement stopped
+   STOP_PROCESS_ALGORITHM(paCheckPosition);
+END_IF;
+
+@END_Body 
+
+@@@BEG_Comment@@@ 
+@TL(0)
+
+@@@END_Comment@@@ 
+
+@BEG_Body 
+@TL(57)
+(**************************************** WARNING ********************************************
+ *** The KEBA Kemro K2 System including software is not intended for safety control tasks! ***
+ ***                       For further information see Comment tab!                        ***
+ *********************************************************************************************)
+
+IF sv_bUseProgramSwitches THEN
+   mevMovementState := evMovementState;
+ELSE
+   mevMovementState := EMPTY;
+END_IF;
+
+IF NOT sv_bInitDone THEN
+   //no lock/unlock events before init is done
+   RETURN;
+END_IF;
+
+IF NOT bInitDone THEN
+   fbLockUnlockMold.Alarm.AlarmId := erEjectorNotBackward;
+   fbLockUnlockMold.Alarm.SubId[1] := 1; //only used to unify the alarm
+   fbLockUnlockEjector.Alarm.AlarmId := erCompNotInCorrectPosition;
+   fbLockUnlockEjector.Alarm.SubId[1] := cCompMold;
+   fbLockUnlockEjector.Alarm.SubId[2] := 1;
+   fbLockUnlockGroup.Alarm.AlarmId := erEjectorNotBackward;
+   bInitDone := TRUE;
+END_IF;
+
+IF (sv_rEjectorMonitorPos = 0.0) OR NOT (sv_rMoldPosition <= sv_rEjectorMonitorPos) OR sv_bOverrideEjectorSafety OR NOT sv_bUseProgramSwitches THEN
+   //unlock ejector fwd 
+   fbLockUnlockEjector.Mode := nUnlock;
+ELSE
+   //lock ejector fwd
+   fbLockUnlockEjector.Mode := nLockResume;
+END_IF;
+
+
+IF (sv_EjectorMode = nNoUse) OR (sv_rEjectorMonitorPos = 0.0) OR NOT sv_bUseProgramSwitches THEN
+   //ejector switched off or monitor position deactivated
+   fbLockUnlockMold.Mode := nUnlock;
+ELSIF (sv_rMoldPosition <= sv_rEjectorMonitorPos) AND NOT sv_bEjectorBwd THEN
+   //monitor position reached and ejector not bwd -> lock mold fwd movement
+   fbLockUnlockMold.Mode := nLockResume;
+ELSIF sv_bEjectorBwd OR NOT (sv_rMoldPosition <= sv_rEjectorMonitorPos) THEN
+   //ejector is bwd or monitor pos not reached -> unlock mold fwd movements
+   fbLockUnlockMold.Mode := nUnlock;
+END_IF;
+
+//some movements are not allowed when ejector is not fully backward
+IF sv_bEjectorBwd THEN
+   fbLockUnlockGroup.Mode := nUnlock;
+ELSE
+   fbLockUnlockGroup.Mode := nLockAbort;
+END_IF;
+
+fbLockUnlockMold();
+fbLockUnlockEjector();
+fbLockUnlockGroup();
+
+@END_Body 
+
+@@@BEG_Comment@@@ 
+@TL(0)
+
+@@@END_Comment@@@ 
+
+@BEG_Body 
+@TL(15)
+(**************************************** WARNING ********************************************
+ *** The KEBA Kemro K2 System including software is not intended for safety control tasks! ***
+ ***                       For further information see Comment tab!                        ***
+ *********************************************************************************************)
+
+IF NOT sv_bInitDone OR (sv_OperationMode < nHalfAutomatic) THEN
+   RETURN;
+END_IF;
+
+IF NOT sv_bOutputActive THEN
+    SET_ALARM(Name := erEndPosChangedWithoutMove,
+              SubID1 := sv_DeviceId.CompId,
+              SubID2 := sv_DeviceId.IndexId);
+END_IF;
+
+@END_Body 
+
+@@@BEG_Comment@@@ 
+@TL(0)
+
+@@@END_Comment@@@ 
+
+@BEG_Body 
+@TL(36)
+(**************************************** WARNING ********************************************
+ *** The KEBA Kemro K2 System including software is not intended for safety control tasks! ***
+ ***                       For further information see Comment tab!                        ***
+ *********************************************************************************************)
+
+IF NOT bInitDone THEN
+   bSafetyPlateLinked := IS_LINKED(di_SafetyPlate);
+   fbLockUnlock.DeviceId.CompId := cCompMold;
+   fbLockUnlock.DeviceId.IndexId := 1;
+   fbLockUnlock.MoveDir := cMoveFwd;
+   fbLockUnlock.MoveId := cMoveAll;
+   fbLockUnlock.Alarm.AlarmId := erEjectorSafetyPlate;
+   fbLockUnlock.Alarm.SubId[1] := sv_DeviceId.IndexId;   
+   bInitDone := TRUE;
+END_IF;
+
+IF NOT sv_bInitDone OR NOT bSafetyPlateLinked THEN
+   //init not done or no safety plate available
+   RETURN;
+END_IF;
+
+IF sv_bCheckSafetyPlateDI THEN
+   IF di_SafetyPlate THEN
+      fbLockUnlock.Mode := nUnlock;   
+   ELSE
+      fbLockUnlock.Mode := nLockAbort;
+   END_IF;
+ELSE
+   //check deactivated -> unlock
+   fbLockUnlock.Mode := nUnlock;
+END_IF;
+
+fbLockUnlock();
+
+
+
+@END_Body 
+
+@@@BEG_Comment@@@ 
+@TL(0)
+
+@@@END_Comment@@@ 
+@END_Body 
+
+@END_Contents 

@@ -1,0 +1,234 @@
+(*
+@h    ! WARNING !
+@h    The Kemro K2 system (including software) only meets category B according to EN 954-1,
+@h    thus it is not intended for usage in safety-relevant control applications in the field 
+@h    of personal safety (e.g. emergency stop).
+@h    To implement potentially necessary safety-relevant control tasks, always use additional 
+@h    external safety devices that are intended for the particular purpose, and meet the necessary 
+@h    functional safety.
+@h    For further information see EN 954-1 (EN ISO 13849-1) and/or the K2-x00 user manual, chapter 
+@h    "CE conformity, directives and standards".
+
+Plausibility function for SPC error / warn action
+*)
+
+IMPORT_OVER_LISTFILE
+ GET_SYNC_REFTO
+, cCompEcoRobot
+, tsLimitDataINT
+, tyNumberOfDevices
+, KSYS_Status
+, tnRobotInterface
+
+END_IMPORT
+
+PLAUSIBILITY_FUNCTION FPlausSPCAction : tsLimitDataINT
+
+VAR_INPUT
+ DeviceClass : INT;
+ Userlevel : INT;
+END_VAR
+
+SYSTEM_VAR_IN
+ sv_NumberOfDevices : tyNumberOfDevices;
+END_VAR
+
+VAR
+ s : KSYS_Status;
+ pbBool : REFTO BOOL;
+ pInterfaceType : REFTO tnRobotInterface;
+ bScrapModeAllowed : BOOL;
+END_VAR
+#BEGIN_EDIT_BLOCK
+(**************************************** WARNING ********************************************
+ *** The KEBA Kemro K2 System including software is not intended for safety control tasks! ***
+ ***                       For further information see Comment tab!                        ***
+ *********************************************************************************************)
+
+//"hold scrap" mode not allowed if Reject gate is available or
+//robot switched on
+
+FPlausSPCAction.iLowerLimit := 0;
+
+bScrapModeAllowed := TRUE;
+pbBool := GET_SYNC_REFTO("RejectGate1.do_RejectGate", T#0s, s);
+IF s = KSYS_Status_OK THEN
+   //reject gate available
+   bScrapModeAllowed := FALSE;
+ELSIF sv_NumberOfDevices[cCompEcoRobot] >= 1 THEN
+   pbBool := GET_SYNC_REFTO("EcoRobot.sv_bUseEcoRobot", T#0s, s);
+   IF pbBool^ THEN
+      //eco robot switched on 
+      bScrapModeAllowed := FALSE;
+   END_IF;  
+ELSIF sv_NumberOfDevices[cCompEuromap] >= 1 THEN
+   pInterfaceType := GET_SYNC_REFTO("Euromap.sv_InterfaceType", T#0s, s);
+   IF pInterfaceType^ <> nSwitchedOff THEN
+      //euromap inerface switched on
+      bScrapModeAllowed := FALSE;
+   END_IF;
+END_IF;
+
+IF bScrapModeAllowed THEN
+   FPlausSPCAction.iUpperLimit := 5;
+ELSE
+   FPlausSPCAction.iUpperLimit := 4;
+END_IF;
+
+
+;#END_EDIT_BLOCK END_FUNCTION
+
+
+
+#END_OF_IEC_PART
+
+@Puma @IecEditor 6 145 @Pou 25 
+@@@BEG_Comment@@@
+@h    ! WARNING !
+@h    The Kemro K2 system (including software) only meets category B according to EN 954-1,
+@h    thus it is not intended for usage in safety-relevant control applications in the field 
+@h    of personal safety (e.g. emergency stop).
+@h    To implement potentially necessary safety-relevant control tasks, always use additional 
+@h    external safety devices that are intended for the particular purpose, and meet the necessary 
+@h    functional safety.
+@h    For further information see EN 954-1 (EN ISO 13849-1) and/or the K2-x00 user manual, chapter 
+@h    "CE conformity, directives and standards".
+
+Plausibility function for SPC error / warn action
+@@@END_Comment@@@
+
+@BEG_Contents 
+
+@BEG_Func 
+@RT(17)FuncTreeContainer 
+1 
+@Var @RT(14)GET_SYNC_REFTO @RT(0) @T @T @DERIVED 0 @F @RT(34)KEBA_STANDARD_FUNCTION : ANY_REFTO @F 
+@T 
+@BEG_Attrib 
+0 @RT(0) @RT(0) 
+@END_Attrib 
+1 1 @F @F @F @F 
+
+@END_Func 
+
+@BEG_Const 
+@RT(18)ConstTreeContainer 
+1 
+@Var @RT(13)cCompEcoRobot @RT(0) @T @F @DT @RT(4)DINT @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+0 @RT(3)146 @RT(19)Component Eco Robot 
+@END_Attrib 
+1 1 @F @F @F @F 
+
+@END_Const 
+
+@BEG_Export 
+
+@BEG_Kind 
+@PLAUSIBILITY_FUNCTION @RT(15)FPlausSPCAction @STRUCTURED_TEXT 
+@RT(14)tsLimitDataINT @RT(0) @RT(0) 
+@END_Kind 
+
+@BEG_Dcl 
+@RT(16)DclTreeContainer 
+7 
+@Var @RT(11)DeviceClass @RT(0) @T @F @DT @RT(3)INT @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+0 1 @F @F @F @F 
+
+@Var @RT(9)Userlevel @RT(0) @T @F @DT @RT(3)INT @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+0 1 @F @F @F @F 
+
+@Var @RT(18)sv_NumberOfDevices @RT(0) @T @T @DERIVED 0 @T @T @DT @RT(17)tyNumberOfDevices @RT(0) @T @T @UNKNOWN 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 9 @F @F @F @F 
+
+@Var @RT(1)s @RT(0) @T @T @DERIVED 0 @F @RT(11)KSYS_Status @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(6)pbBool @RT(0) @T @T @REFTO 0 @T @DT @RT(4)BOOL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(14)pInterfaceType @RT(0) @T @T @REFTO 0 @F @DERIVED 0 @F @RT(16)tnRobotInterface @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(17)bScrapModeAllowed @RT(0) @T @F @DT @RT(4)BOOL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@END_Dcl 
+
+@END_Export 
+
+@BEG_Body 
+@TL(35)
+(**************************************** WARNING ********************************************
+ *** The KEBA Kemro K2 System including software is not intended for safety control tasks! ***
+ ***                       For further information see Comment tab!                        ***
+ *********************************************************************************************)
+
+//"hold scrap" mode not allowed if Reject gate is available or
+//robot switched on
+
+FPlausSPCAction.iLowerLimit := 0;
+
+bScrapModeAllowed := TRUE;
+pbBool := GET_SYNC_REFTO("RejectGate1.do_RejectGate", T#0s, s);
+IF s = KSYS_Status_OK THEN
+   //reject gate available
+   bScrapModeAllowed := FALSE;
+ELSIF sv_NumberOfDevices[cCompEcoRobot] >= 1 THEN
+   pbBool := GET_SYNC_REFTO("EcoRobot.sv_bUseEcoRobot", T#0s, s);
+   IF pbBool^ THEN
+      //eco robot switched on 
+      bScrapModeAllowed := FALSE;
+   END_IF;  
+ELSIF sv_NumberOfDevices[cCompEuromap] >= 1 THEN
+   pInterfaceType := GET_SYNC_REFTO("Euromap.sv_InterfaceType", T#0s, s);
+   IF pInterfaceType^ <> nSwitchedOff THEN
+      //euromap inerface switched on
+      bScrapModeAllowed := FALSE;
+   END_IF;
+END_IF;
+
+IF bScrapModeAllowed THEN
+   FPlausSPCAction.iUpperLimit := 5;
+ELSE
+   FPlausSPCAction.iUpperLimit := 4;
+END_IF;
+
+@END_Body 
+
+@END_Contents 

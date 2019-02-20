@@ -1,0 +1,3086 @@
+IMPORT_OVER_LISTFILE
+ GET_MY_FU_NAME
+, KSWO_AddVariable
+, SET_ALARM
+, GET_TASK_INTERVAL
+, RESET_ALARM
+, enOPOState_StableFirst
+, KHW_TempSensor_none
+, KAPPL_TempOpMode_Cooling
+, enZoneModeDisabled
+, enZoneModeConstant
+, enOPOState_StableSecond
+, KCTRL_Stable_OK
+, enOPOState_RunFirst
+, enOPOState_None
+, nHalfAutomatic
+, enZoneTypeBlock
+, tsDeviceId
+, tnOperationMode
+, tyZoneArray
+, KAPPL_Plastics_TempGroup
+, KSWO_Status
+, tenOperatingPointOptState
+, R_TRIG
+, F_TRIG
+, TON
+, tyZoneBoolArray
+
+END_IMPORT
+
+ALGORITHM_BLOCK ABGroupControl #DUMMY_EDIT_BLOCK
+
+SYSTEM_VAR
+ sv_bRunOptimization : BOOL (* Run Optimization *);
+ sv_rTempOkTimeSet : REAL;
+ sv_rTempOkTimeAct : REAL;
+ sv_dTempOkTimeSet : TIME;
+ sv_dTempOkTimeAct : TIME;
+ sv_iMaxNumberOfZones : DINT;
+ sv_rMaxTemperature : REAL;
+ sv_DeviceId : tsDeviceId (* unique Device Identifier *);
+ sv_bReParamGroup : BOOL (* By this var each zone can reparam the groupblock *);
+ sv_OperationMode : tnOperationMode;
+ sv_ZoneArray : tyZoneArray;
+ sv_bOptimizationActive : BOOL (* Optimization is running *);
+ sv_iNumberOfZones : DINT;
+ sv_iZonesAvailable : DINT;
+ sv_bGroupHeating : BOOL;
+ sv_rTolBetweenZones : REAL;
+ sv_bKeepWarmActive : BOOL;
+ sv_rIncTemperature : REAL;
+ sv_bUndoChangeHeatingParams : BOOL;
+ sv_bUsePidOP : BOOL;
+ sv_iZonesAboveMaxTemp : DINT (* number of heating zones which exceeded the maximum temperature *);
+ sv_rMaxTempHeatUpOpt : REAL;
+END_VAR
+
+SYSTEM_OBJECT
+ PU_Task_7 : TASK;
+ erHeatupActive : ALARM;
+ erOutOfTol : ALARM;
+ erZoneOutOfTol : ALARM;
+ erOptimizationActive : ALARM;
+ erZoneNotAvailable : ALARM;
+ erMaxTempExeeded : ALARM (* Error for indicating that act. temperature is over  allowed machin limit *);
+ TaskHeating : TASK;
+ erKeepWarmActive : ALARM (* Keep Warm active alarm *);
+ erCoolingPrevent : ALARM (* Cool prevent time alarm *);
+ erTempTooHighForOpt : ALARM;
+ erTempDiffTooLow : ALARM;
+END_OBJECT
+
+VAR
+ fbHeatingGroup : KAPPL_Plastics_TempGroup (* Most things for group heating control *);
+ miLeadingZone : DINT := 1 (* index of hottest zone *);
+ miNumberOfZones : DINT (* number of zones *);
+ mbInit : BOOL;
+ mbHeatUp : BOOL (* Heat up active, becomes FALSE at cool prevent time *);
+ mbInitDone : BOOL;
+ SetStartTemperatureGroupHeating : REAL (* Start temperature for group heating if zones not in tolerance area at start *);
+END_VAR
+
+ALGORITHM aInit
+
+
+VAR_TEMP
+ i : DINT;
+END_VAR
+
+VAR
+ swoState : KSWO_Status;
+ fuName : STRING(255);
+ variableName : STRING(255);
+END_VAR
+#BEGIN_EDIT_BLOCK
+(**************************************** WARNING ********************************************
+ *** The KEBA Kemro K2 System including software is not intended for safety control tasks! ***
+ ***                       For further information see Comment tab!                        ***
+ *********************************************************************************************)
+
+FOR i := 1 TO sv_iMaxNumberOfZones DO
+
+   //checking the number of available zones
+   IF sv_ZoneArray[i].bLinked AND sv_ZoneArray[i].Data^.bHWOK THEN
+      sv_iZonesAvailable := sv_iZonesAvailable + 1;
+      
+   ELSE
+      EXIT;        
+   END_IF;  
+END_FOR;
+
+fuName := GET_MY_FU_NAME();
+variableName := CONCAT(fuName,'.Run_Optimization');
+swoState := KSWO_AddVariable( Task := TaskHeating,
+                             Name := variableName,
+                             Variable := sv_bOptimizationActive );
+variableName := CONCAT(fuName,'.KeepWarm');
+swoState := KSWO_AddVariable( Task := TaskHeating,
+                             Name := variableName,
+                             Variable := sv_bKeepWarmActive );
+mbInitDone := TRUE;
+START_PROCESS_ALGORITHM(paCheckNumberOfZones);
+
+
+;#END_EDIT_BLOCK END_ALGORITHM
+
+ALGORITHM aCheckNonGroupHeatingZones
+
+
+VAR_OUTPUT
+ bAllZonesInTolerance : BOOL;
+END_VAR
+
+VAR_TEMP
+ i : DINT;
+END_VAR
+#BEGIN_EDIT_BLOCK
+(**************************************** WARNING ********************************************
+ *** The KEBA Kemro K2 System including software is not intended for safety control tasks! ***
+ ***                       For further information see Comment tab!                        ***
+ *********************************************************************************************)
+
+bAllZonesInTolerance := TRUE;
+FOR i := 1 TO sv_iNumberOfZones DO
+   IF (NOT sv_ZoneArray[i].DataRetain^.Param.bZoneUsedForGroupHeating) AND (sv_ZoneArray[i].DataRetain^.bUsed) THEN
+      bAllZonesInTolerance := bAllZonesInTolerance AND (NOT sv_ZoneArray[i].Data^.bToleranceError);
+   END_IF;
+END_FOR;
+
+
+;#END_EDIT_BLOCK END_ALGORITHM
+
+ALGORITHM aCheckOptimizeStartConditions
+
+
+VAR_IN_OUT
+ nOptState : tenOperatingPointOptState;
+END_VAR
+
+VAR_TEMP
+ i : DINT;
+END_VAR
+
+VAR
+ rActTemp : REAL;
+END_VAR
+#BEGIN_EDIT_BLOCK
+(**************************************** WARNING ********************************************
+ *** The KEBA Kemro K2 System including software is not intended for safety control tasks! ***
+ ***                       For further information see Comment tab!                        ***
+ *********************************************************************************************)
+
+// Do not allow groupheating by optimizing  
+fbHeatingGroup.GroupHeating := FALSE;
+
+// start operating point optimization if hottest zone > 80°
+// In this case, the temperature has to become stable first  
+IF NOT sv_bOptimizationActive THEN
+   // Operating point optimization should not done for every zone at same time 
+   // Divide optimization in two parts: odd and even numbered zones
+   IF sv_ZoneArray[miLeadingZone].Data^.bSensorOK THEN
+      rActTemp := sv_ZoneArray[miLeadingZone].Data^.prActTemp^;
+   ELSE
+      rActTemp := 0.0;
+   END_IF; 
+      
+   IF rActTemp > sv_rMaxTempHeatUpOpt THEN
+      // Check if temperature is near set value
+      FOR i := 1 TO miNumberOfZones DO
+         IF sv_ZoneArray[i].DataRetain^.bUsed AND sv_ZoneArray[i].Data^.bSensorOK THEN
+            IF ABS(sv_ZoneArray[i].Data^.prActTemp^ - sv_ZoneArray[i].DataRetain^.rSetValVis) >= 50.0 THEN
+               SET_ALARM(Name := erTempTooHighForOpt,
+                        SubID1 := sv_DeviceId.CompId,
+                        SubID2 := sv_DeviceId.IndexId,
+                        SubID3 := i);
+               sv_bRunOptimization := FALSE;
+            END_IF;
+         END_IF;    
+      END_FOR;
+      // Optimize if near setvalue 
+      IF sv_bRunOptimization THEN
+         nOptState := enOPOState_StableFirst;
+      END_IF;
+   ELSE
+      FOR i := 1 TO miNumberOfZones DO
+         IF sv_ZoneArray[i].DataRetain^.bUsed AND sv_ZoneArray[i].Data^.bSensorOK AND
+            sv_ZoneArray[i].Data^.bOutputOK AND 
+            (sv_ZoneArray[i].DataRetain^.SensorTypeVis <> KHW_TempSensor_none) AND
+            (sv_ZoneArray[i].DataRetain^.Param.opMode <> KAPPL_TempOpMode_Cooling) THEN
+            IF ABS(sv_ZoneArray[i].Data^.prActTemp^ - sv_ZoneArray[i].DataRetain^.rSetValVis) >= 50.0 THEN
+               //only optimize zone if an output and a sensor is mounted and activated and zone is no cooling
+               sv_ZoneArray[i].Data^.bOptimize := TRUE;     
+               sv_ZoneArray[i].Data^.bOptiOperatingPoint := FALSE;
+            ELSE
+               SET_ALARM(Name := erTempDiffTooLow,
+                           SubID1 := sv_DeviceId.CompId,
+                           SubID2 := sv_DeviceId.IndexId,
+                           SubID3 := i);
+            END_IF;
+         END_IF;
+      END_FOR;     
+   END_IF;
+END_IF;
+
+
+;#END_EDIT_BLOCK END_ALGORITHM
+
+ALGORITHM aCheckPIDParameter
+
+
+VAR_INPUT
+ iIndex2Check : DINT (* check parameters of zone with inputed index *);
+ iMaxNoZones : DINT (* maximum no of  available zones *);
+ rMinGainCtrlLimit : REAL (* lower limit of controller gain *);
+END_VAR
+
+VAR_OUTPUT
+ bError : BOOL (* error during validity check *);
+ iErrorInfo : DINT (* additional error info *);
+END_VAR
+
+VAR_TEMP
+ i : DINT;
+END_VAR
+
+VAR
+ iIndexMin : DINT;
+ rMinGainCtrl : REAL;
+ rGainCtrlAct : REAL;
+ rGainCtrlZone : REAL;
+ rGainCtrlMinLimit : REAL;
+ rGaintCtrlMinLimit : REAL := 0.1;
+END_VAR
+#BEGIN_EDIT_BLOCK
+IF mbInitDone THEN
+   rMinGainCtrl := 1.0e37;
+   iIndexMin := 0;
+   bError := FALSE;
+   iErrorInfo := 0;
+   
+   IF rMinGainCtrlLimit > 0.0 THEN
+      rGainCtrlMinLimit := rMinGainCtrlLimit;
+   ELSE
+      // use dafault value
+      rGainCtrlMinLimit := rGaintCtrlMinLimit;
+   END_IF;
+   
+   // check actual gain of controller parameters
+   IF sv_ZoneArray[iIndex2Check].DataRetain^.Param.bPidOPAvailable THEN
+      rGainCtrlAct := sv_ZoneArray[iIndex2Check].DataRetain^.Param.pidParamOP.rKR;
+   ELSE
+      rGainCtrlAct := sv_ZoneArray[iIndex2Check].DataRetain^.Param.pidParam.rKR;
+   END_IF;
+   IF (rGainCtrlAct < rGainCtrlMinLimit) THEN
+      // check if valid old parameters available
+      IF (sv_ZoneArray[iIndex2Check].DataRetain^.Param.bOldPIDAvailable) AND
+         (sv_ZoneArray[iIndex2Check].DataRetain^.Param.pidParamLastOpt.rKR >= rGainCtrlMinLimit) THEN
+         // use values from last optimization if data valid
+         IF sv_ZoneArray[iIndex2Check].DataRetain^.Param.bPidOPAvailable THEN
+            sv_ZoneArray[iIndex2Check].DataRetain^.Param.pidParamOP := sv_ZoneArray[iIndex2Check].DataRetain^.Param.pidParamLastOpt;
+         ELSE
+            sv_ZoneArray[iIndex2Check].DataRetain^.Param.pidParam := sv_ZoneArray[iIndex2Check].DataRetain^.Param.pidParamLastOpt;
+         END_IF;
+         RETURN;
+      END_IF;
+      
+      // check other zones, find valid parameters
+      // search minimum gain of all valid zones, use for actual zone
+      FOR i:=1 TO iMaxNoZones DO
+         IF ((i<> iIndex2Check) AND (sv_ZoneArray[i].DataRetain^.bUsed)) THEN 
+            IF(sv_ZoneArray[i].DataRetain^.Param.bPidOPAvailable) THEN
+               rGainCtrlZone := sv_ZoneArray[i].DataRetain^.Param.pidParamOP.rKR;
+            ELSE
+               rGainCtrlZone := sv_ZoneArray[i].DataRetain^.Param.pidParam.rKR;
+            END_IF;
+            IF (rMinGainCtrl > rGainCtrlZone) AND (rGainCtrlZone >= rGainCtrlMinLimit) THEN
+               rMinGainCtrl := rGainCtrlZone;
+               iIndexMin := i;
+            END_IF;            
+         END_IF;
+      END_FOR;
+      // reset parameters
+      IF (iIndexMin > 0) THEN
+         // at least one zone with valid data found
+         IF sv_ZoneArray[iIndexMin].DataRetain^.Param.bPidOPAvailable THEN
+            sv_ZoneArray[iIndex2Check].DataRetain^.Param.pidParam := sv_ZoneArray[iIndexMin].DataRetain^.Param.pidParamOP;
+         ELSE
+            sv_ZoneArray[iIndex2Check].DataRetain^.Param.pidParam := sv_ZoneArray[iIndexMin].DataRetain^.Param.pidParam;                  
+         END_IF;
+         sv_ZoneArray[iIndex2Check].DataRetain^.Param.bPidOPAvailable := FALSE;
+      END_IF;
+   END_IF;   
+END_IF;
+
+
+;#END_EDIT_BLOCK END_ALGORITHM
+
+ALGORITHM aRun
+
+
+VAR_INPUT
+ bHeatingOn : BOOL (* heating switched on *);
+END_VAR
+
+VAR_OUTPUT
+ bGroupOn : BOOL (* group heating on *);
+ bGroupTempOK : BOOL (* no error at group heating *);
+ bGroupActive : BOOL (* group heating active *);
+END_VAR
+
+VAR_TEMP
+ i : DINT;
+ tmp : REAL;
+ bReadyGroupHeating : BOOL;
+ iIndexMinZone : DINT;
+END_VAR
+
+VAR
+ MinActValues : REAL;
+ fbRTrigRunOptimization : R_TRIG;
+ fbFTrigOptimizationInterrupt : F_TRIG;
+ fbFTrigOptimizationActive : F_TRIG;
+ MaxActValues : REAL;
+ fbFTrigGroupTempOK : F_TRIG;
+ fbRTrigGroupTempOK : R_TRIG;
+ fbRTrigOptimizationActive : R_TRIG;
+ fbRTrigHeatingOn : R_TRIG;
+ fbFTrigHeatingOn : F_TRIG;
+ fbTonTempOkTime : TON;
+ iZoneExeededMax : DINT;
+ bOptimizinActive : BOOL;
+ ToleranceAlarm : tyZoneBoolArray;
+ bOutOfTolerance : BOOL;
+ fbRTrigSetValChanged : R_TRIG;
+ GroupHeatingStatus : DINT := 0;
+ fbFTrigGroupHeating : F_TRIG;
+ fbRTrigGroupHeating : R_TRIG;
+ MinSetValues : REAL (* Smallest SetValues = SetValue for GroupHeating *);
+ dCycleTime : TIME;
+ ObservationFactor : LINT;
+ ObservationTime : TIME := T#3m (* Start GroupHeating after that Time *);
+ CountStartGroupHeating : LINT (* TimeCounter *);
+ bOutOfTol : BOOL;
+ fbRTrigOutOfTol : R_TRIG;
+ bCoolPrevent : BOOL;
+ bKeepWarmActive : BOOL;
+ bGroupStable : BOOL;
+ rActTemp : REAL;
+ enOPOState : tenOperatingPointOptState;
+ bOtherZonesReady : BOOL;
+END_VAR
+#BEGIN_EDIT_BLOCK
+(**************************************** WARNING ********************************************
+ *** The KEBA Kemro K2 System including software is not intended for safety control tasks! ***
+ ***                       For further information see Comment tab!                        ***
+ *********************************************************************************************)
+
+IF NOT mbInit THEN
+   FOR i := 1 TO miNumberOfZones DO
+      fbHeatingGroup.UpperTolerances[i] := sv_ZoneArray[i].DataRetain^.rUpperTolVis;
+      fbHeatingGroup.LowerTolerances[i] := sv_ZoneArray[i].DataRetain^.rLowerTolVis;
+      fbHeatingGroup.sysParam_dT[i] := sv_ZoneArray[i].DataRetain^.Param.sysParam.dT;
+      fbHeatingGroup.sysParam_rK[i] := sv_ZoneArray[i].DataRetain^.Param.sysParam.rK;
+      IF NOT sv_bKeepWarmActive THEN
+         IF sv_ZoneArray[i].Data^.bUseIncTemperature THEN
+            fbHeatingGroup.SetValues[i] := sv_ZoneArray[i].DataRetain^.rSetValVis + sv_rIncTemperature; 
+         ELSE
+            fbHeatingGroup.SetValues[i] := sv_ZoneArray[i].DataRetain^.rSetValVis; 
+         END_IF; 
+         
+      ELSE
+         fbHeatingGroup.SetValues[i] := sv_ZoneArray[i].DataRetain^.rStandbyTempVis;
+      END_IF;
+   END_FOR;
+   fbHeatingGroup(ReParam := TRUE,
+                  NoOfZones := miNumberOfZones,                 
+                  GroupHeating := sv_bGroupHeating,
+                  TempToleranceBetweenZones := sv_rTolBetweenZones,
+                  bHeatingOn := bHeatingOn );
+   mbInit := TRUE;
+   dCycleTime := GET_TASK_INTERVAL();
+   ObservationFactor := TIME_TO_LINT(ObservationTime)/TIME_TO_LINT(dCycleTime);
+END_IF;
+
+FOR i := 1 TO miNumberOfZones DO
+    IF sv_ZoneArray[i].Data^.bSensorOK AND
+       sv_ZoneArray[i].DataRetain^.ModeVis <> enZoneModeDisabled AND
+       sv_ZoneArray[i].DataRetain^.ModeVis <> enZoneModeConstant THEN
+       // evaluating the leading Tempzone
+       IF sv_ZoneArray[miLeadingZone].Data^.bSensorOK THEN
+           rActTemp := sv_ZoneArray[miLeadingZone].Data^.prActTemp^;
+       ELSE
+           rActTemp := 0.0;
+       END_IF; 
+        
+       IF sv_ZoneArray[i].Data^.prActTemp^ > rActTemp THEN
+         miLeadingZone := i;    
+       END_IF;       
+       // checking maxtemp, show ever
+       IF sv_ZoneArray[i].Data^.prActTemp^ > sv_rMaxTemperature AND sv_ZoneArray[i].Data^.bOutputNotAllowed = FALSE THEN
+          iZoneExeededMax := i;
+          sv_ZoneArray[i].Data^.bOutputNotAllowed := TRUE;
+          sv_iZonesAboveMaxTemp := sv_iZonesAboveMaxTemp + 1;
+          SET_ALARM(Name := erMaxTempExeeded,
+                    SubID1 := sv_DeviceId.CompId,
+                    SubID2 := sv_DeviceId.IndexId,
+                    SubID3 := iZoneExeededMax);
+       ELSIF sv_ZoneArray[i].Data^.bOutputNotAllowed = TRUE AND sv_ZoneArray[i].Data^.prActTemp^ < sv_rMaxTemperature THEN
+          //resetting Error MaxTempExeeded
+          iZoneExeededMax := i;
+          sv_ZoneArray[i].Data^.bOutputNotAllowed := FALSE; 
+          RESET_ALARM(Name := erMaxTempExeeded,
+                      SubID1 := sv_DeviceId.CompId,
+                      SubID2 := sv_DeviceId.IndexId,
+                      SubID3 := iZoneExeededMax);
+          sv_iZonesAboveMaxTemp := sv_iZonesAboveMaxTemp - 1;          
+       END_IF;
+    END_IF;
+END_FOR;
+
+fbRTrigHeatingOn(CLK := bHeatingOn);
+fbFTrigHeatingOn(CLK := bHeatingOn);
+fbRTrigGroupHeating(CLK := sv_bGroupHeating);
+fbFTrigGroupHeating(CLK := sv_bGroupHeating);
+fbRTrigSetValChanged(CLK:= fbHeatingGroup.bAnyValueChanged);
+IF fbRTrigHeatingOn.Q THEN 
+   FOR i := 1 TO miNumberOfZones DO 
+      fbHeatingGroup.ZoneUsed[i] := sv_ZoneArray[i].DataRetain^.Param.bZoneUsedForGroupHeating;
+      IF sv_ZoneArray[i].Data^.bSensorOK THEN 
+        fbHeatingGroup.ActValues[i] := sv_ZoneArray[i].Data^.prActTemp^;
+      END_IF;    
+      IF NOT sv_bKeepWarmActive THEN
+         IF sv_ZoneArray[i].Data^.bUseIncTemperature THEN
+            fbHeatingGroup.SetValues[i] := sv_ZoneArray[i].DataRetain^.rSetValVis + sv_rIncTemperature; 
+         ELSE
+            fbHeatingGroup.SetValues[i] := sv_ZoneArray[i].DataRetain^.rSetValVis; 
+         END_IF; 
+      ELSE
+        fbHeatingGroup.SetValues[i] := sv_ZoneArray[i].DataRetain^.rStandbyTempVis;
+      END_IF;
+   END_FOR;     
+   fbHeatingGroup(ReParam := TRUE,
+                  bHeatingOn := bHeatingOn);
+END_IF;
+// Start GroupHeating after heating on, group heating activated or value changed
+IF ((sv_bGroupHeating AND fbRTrigHeatingOn.Q) OR 
+    (fbRTrigGroupHeating.Q AND bHeatingOn) OR
+    (bHeatingOn AND sv_bGroupHeating AND fbRTrigSetValChanged.Q )) THEN
+   IF sv_bRunOptimization THEN
+      fbHeatingGroup.GroupHeating := FALSE;
+   ELSE   
+      fbHeatingGroup.GroupHeating := TRUE;
+   END_IF;
+   bOutOfTol := FALSE;
+   GroupHeatingStatus := 2;
+   // Searching for minimal set value 
+   MinSetValues := 9999.0;
+   FOR i := 1 TO miNumberOfZones DO
+      fbHeatingGroup.sysParam_dT[i] := sv_ZoneArray[i].DataRetain^.Param.sysParam.dT;
+      fbHeatingGroup.sysParam_rK[i] := sv_ZoneArray[i].DataRetain^.Param.sysParam.rK;
+      IF NOT sv_bKeepWarmActive THEN
+         tmp := sv_ZoneArray[i].DataRetain^.rSetValVis; 
+      ELSE
+         tmp := sv_ZoneArray[i].DataRetain^.rStandbyTempVis;
+      END_IF;
+      IF tmp < MinSetValues AND sv_ZoneArray[i].DataRetain^.Param.bZoneUsedForGroupHeating THEN
+         MinSetValues := tmp;
+      END_IF;
+   END_FOR; 
+   MinActValues := 1000.0;
+   MaxActValues := 0.0;
+   // Searching for actual difference 
+   // Missing: ZoneUsed contol 
+   FOR i := 1 TO miNumberOfZones DO
+      IF sv_ZoneArray[i].Data^.bSensorOK THEN 
+        IF sv_ZoneArray[i].Data^.prActTemp^ < MinActValues 
+            AND sv_ZoneArray[i].DataRetain^.Param.bZoneUsedForGroupHeating THEN
+            MinActValues := sv_ZoneArray[i].Data^.prActTemp^;
+            iIndexMinZone := i;
+        END_IF;
+        IF sv_ZoneArray[i].Data^.prActTemp^ > MaxActValues 
+            AND sv_ZoneArray[i].DataRetain^.Param.bZoneUsedForGroupHeating THEN
+            MaxActValues := sv_ZoneArray[i].Data^.prActTemp^;
+        END_IF;
+      END_IF;    
+   END_FOR;
+   // Start heating to same temperature 
+   IF (MaxActValues - MinActValues)> sv_rTolBetweenZones * 0.5  THEN
+      GroupHeatingStatus := 1;
+      SetStartTemperatureGroupHeating := MaxActValues;
+      CountStartGroupHeating := 1;
+   END_IF;
+   // If Cooling => GroupHeating := FALSE  
+   IF MinSetValues < MaxActValues THEN
+      fbHeatingGroup.GroupHeating := FALSE;
+      GroupHeatingStatus := 0;
+   END_IF;
+END_IF; //END ((sv_bGroupHeating AND fbRTrigHeatingOn.Q) OR ...
+IF fbFTrigGroupHeating.Q THEN
+   GroupHeatingStatus := 0;
+   FOR i := 1 TO miNumberOfZones DO 
+      fbHeatingGroup.ZoneUsed[i] :=  sv_ZoneArray[i].DataRetain^.Param.bZoneUsedForGroupHeating;
+      IF NOT sv_bKeepWarmActive THEN
+         IF sv_ZoneArray[i].Data^.bUseIncTemperature THEN
+            fbHeatingGroup.SetValues[i] := sv_ZoneArray[i].DataRetain^.rSetValVis + sv_rIncTemperature; 
+         ELSE 
+            fbHeatingGroup.SetValues[i] := sv_ZoneArray[i].DataRetain^.rSetValVis; 
+         END_IF;    
+      ELSE
+         fbHeatingGroup.SetValues[i] := sv_ZoneArray[i].DataRetain^.rStandbyTempVis;
+      END_IF;
+      IF sv_ZoneArray[i].Data^.bSensorOK THEN 
+        fbHeatingGroup.ActValues[i] := sv_ZoneArray[i].Data^.prActTemp^;
+      END_IF;    
+   END_FOR;
+END_IF;
+
+//*********************************************************************************************
+// Temperature optimization
+//*********************************************************************************************
+//checking startconditions for temp optimization
+fbRTrigRunOptimization(CLK := sv_bRunOptimization);
+IF (fbRTrigRunOptimization.Q) THEN
+   aCheckOptimizeStartConditions(nOptState := enOPOState);
+END_IF;
+
+IF enOPOState = enOPOState_StableFirst OR enOPOState = enOPOState_StableSecond THEN
+   bGroupStable := TRUE;
+   FOR i := 1 TO miNumberOfZones DO
+      IF sv_ZoneArray[i].DataRetain^.bUsed THEN
+         //ignore zones which are not used
+         bGroupStable := bGroupStable AND (sv_ZoneArray[i].Data^.Stable = KCTRL_Stable_OK);
+      END_IF;      
+   END_FOR; 
+   
+   IF bGroupStable AND enOPOState = enOPOState_StableFirst THEN
+      i := 0;
+      WHILE 2*i + 1 <= miNumberOfZones DO
+         IF sv_ZoneArray[2*i + 1].Data^.bSensorOK AND 
+            sv_ZoneArray[2*i + 1].Data^.bOutputOK AND 
+            sv_ZoneArray[2*i + 1].DataRetain^.SensorTypeVis <> KHW_TempSensor_none AND
+            sv_ZoneArray[2*i + 1].DataRetain^.Param.opMode <> KAPPL_TempOpMode_Cooling THEN
+            sv_ZoneArray[2*i + 1].Data^.bOptimize := TRUE;
+            sv_ZoneArray[2*i + 1].Data^.bOptiOperatingPoint := TRUE;
+         END_IF;
+      i := i + 1; 
+      END_WHILE;
+      enOPOState := enOPOState_RunFirst;
+   ELSIF bGroupStable AND enOPOState = enOPOState_StableSecond THEN
+      // second part of operation point calibration has to be used
+      i := 1;
+      WHILE 2*i <= miNumberOfZones DO
+         IF sv_ZoneArray[2*i].Data^.bSensorOK AND 
+            sv_ZoneArray[2*i].Data^.bOutputOK AND 
+            sv_ZoneArray[2*i].DataRetain^.SensorTypeVis <> KHW_TempSensor_none AND
+            sv_ZoneArray[2*i].DataRetain^.Param.opMode <> KAPPL_TempOpMode_Cooling THEN
+            sv_ZoneArray[2*i].Data^.bOptimize := TRUE;
+            sv_ZoneArray[2*i].Data^.bOptiOperatingPoint := TRUE;
+         END_IF;
+      i := i + 1; 
+      END_WHILE;
+      enOPOState := enOPOState_None;
+   END_IF; 
+
+END_IF;
+   
+
+
+fbRTrigOptimizationActive(CLK := sv_bOptimizationActive);//optimization started detection
+fbFTrigOptimizationActive(CLK := sv_bOptimizationActive);//optimization ready detection
+fbFTrigOptimizationInterrupt(CLK:= sv_bRunOptimization);//optimization stopped manually
+bGroupOn := bHeatingOn;
+IF fbFTrigOptimizationActive.Q THEN
+   FOR i := 1 TO miNumberOfZones DO
+      sv_ZoneArray[i].Data^.bOptimize := FALSE;
+      // check parameters valid
+      aCheckPIDParameter(iIndex2Check := i,
+                         iMaxNoZones := miNumberOfZones);      
+   END_FOR; 
+   IF enOPOState = enOPOState_None THEN
+      // optimization ready   
+      sv_bRunOptimization := FALSE;
+   ELSE
+      IF miNumberOfZones > 1 THEN
+         enOPOState := enOPOState_StableSecond;
+      ELSE  // only 1 zone optimization ready
+         enOPOState := enOPOState_None; 
+         sv_bRunOptimization := FALSE;
+      END_IF; 
+   END_IF;
+END_IF;
+
+//*********************************************************************************************
+// Calculate set value for normal and group heating
+//*********************************************************************************************
+IF bHeatingOn THEN
+   //call group block
+      
+   // Find Min/Max from ActValues for starting with temperatures 
+   // in toleranceband, checking whether the temperatures are 
+   // stabil relatively to each other
+   MinActValues := 1000.0;
+   MaxActValues := 0.0;
+   FOR i := 1 TO miNumberOfZones DO
+      IF sv_ZoneArray[i].Data^.bSensorOK THEN 
+        IF sv_ZoneArray[i].Data^.prActTemp^ < MinActValues 
+            AND sv_ZoneArray[i].DataRetain^.Param.bZoneUsedForGroupHeating THEN
+            MinActValues := sv_ZoneArray[i].Data^.prActTemp^;
+            iIndexMinZone := i;
+        END_IF;
+        IF sv_ZoneArray[i].Data^.prActTemp^ > MaxActValues 
+            AND sv_ZoneArray[i].DataRetain^.Param.bZoneUsedForGroupHeating THEN
+            MaxActValues := sv_ZoneArray[i].Data^.prActTemp^;
+        END_IF;
+      END_IF;    
+   END_FOR; 
+   
+   // Heating up to same temperature 
+   // StartGroupHeating 
+   IF GroupHeatingStatus = 1 THEN             
+      IF (((MaxActValues - MinActValues)> sv_rTolBetweenZones * 0.5) OR 
+          (CountStartGroupHeating < ObservationFactor)) THEN
+         // Checking stability
+         IF (MaxActValues - MinActValues) <= sv_rTolBetweenZones * 0.5 THEN
+            CountStartGroupHeating := CountStartGroupHeating + 1;
+            iIndexMinZone := 0; // no zone has set value from vis 
+         ELSE
+            CountStartGroupHeating := 1;
+         END_IF; 
+         IF (SetStartTemperatureGroupHeating < MinActValues) THEN
+            SetStartTemperatureGroupHeating := MinActValues;
+         END_IF; 
+         // Set the SetValues and switching of the GroupHeating temporary
+         fbHeatingGroup.GroupHeating := FALSE;
+          FOR i := 1 TO miNumberOfZones DO 
+             fbHeatingGroup.ZoneUsed[i] := sv_ZoneArray[i].DataRetain^.Param.bZoneUsedForGroupHeating;
+             IF NOT sv_bKeepWarmActive THEN
+                // Heating to the hotest Zonetemperature
+                fbHeatingGroup.SetValues[i] := SetStartTemperatureGroupHeating; 
+             ELSE
+                fbHeatingGroup.SetValues[i] := sv_ZoneArray[i].DataRetain^.rStandbyTempVis;
+             END_IF; 
+             IF sv_ZoneArray[i].Data^.bSensorOK THEN 
+                fbHeatingGroup.ActValues[i] := sv_ZoneArray[i].Data^.prActTemp^;                    
+             END_IF;    
+          END_FOR;
+      ELSE
+      fbHeatingGroup.GroupHeating := TRUE;
+      GroupHeatingStatus := 2;           
+      END_IF;
+   END_IF; // END GroupHeatingStatus = 1
+   IF NOT (GroupHeatingStatus = 1) THEN
+      FOR i := 1 TO miNumberOfZones DO
+         fbHeatingGroup.ZoneUsed[i] := sv_ZoneArray[i].DataRetain^.Param.bZoneUsedForGroupHeating;
+         IF NOT sv_bKeepWarmActive THEN
+            IF sv_ZoneArray[i].Data^.bUseIncTemperature THEN
+               fbHeatingGroup.SetValues[i] := sv_ZoneArray[i].DataRetain^.rSetValVis + sv_rIncTemperature; 
+            ELSE
+               fbHeatingGroup.SetValues[i] := sv_ZoneArray[i].DataRetain^.rSetValVis; 
+            END_IF;
+         ELSE
+            fbHeatingGroup.SetValues[i] := sv_ZoneArray[i].DataRetain^.rStandbyTempVis;
+         END_IF;
+         IF sv_ZoneArray[i].Data^.bSensorOK THEN 
+            fbHeatingGroup.ActValues[i] := sv_ZoneArray[i].Data^.prActTemp^;
+         END_IF;    
+      END_FOR;
+      IF GroupHeatingStatus = 2 THEN
+         IF (MaxActValues - MinActValues) > sv_rTolBetweenZones THEN
+            bOutOfTol := TRUE;
+         END_IF;
+         bReadyGroupHeating := TRUE;
+         FOR i := 1 TO miNumberOfZones DO
+            //groupheating ignored for zones where no TI-sensor or zone not useful for GH (setter, measure mode)  
+            IF sv_ZoneArray[i].Data^.bSensorOK AND sv_ZoneArray[i].DataRetain^.Param.bZoneUsedForGroupHeating THEN 
+                IF ABS(sv_ZoneArray[i].Data^.prActTemp^-MinSetValues) > sv_rTolBetweenZones * 0.5 THEN
+                    bReadyGroupHeating := FALSE;
+                    EXIT;
+                END_IF;
+            END_IF;    
+         END_FOR;
+         IF bReadyGroupHeating THEN
+            GroupHeatingStatus := 0;
+            fbHeatingGroup.GroupHeating := FALSE;             
+         END_IF;
+      END_IF;
+   END_IF;
+   fbHeatingGroup(ReParam := FALSE,
+                  bHeatingOn := bHeatingOn);
+END_IF; //END bHeatingOn (call group block)
+
+//*********************************************************************************************
+// Set calculated set value for each zone
+//*********************************************************************************************
+fbRTrigSetValChanged(CLK:= fbHeatingGroup.bAnyValueChanged);
+IF NOT sv_bOptimizationActive THEN
+   //normal operation, copy values from group - block
+   FOR i := 1 TO miNumberOfZones DO
+      IF ((NOT bHeatingOn) AND (sv_ZoneArray[i].DataRetain^.Param.opMode = KAPPL_TempOpMode_Cooling)) THEN
+         sv_ZoneArray[i].Data^.PWMFactor := 1.0; 
+         sv_ZoneArray[i].Data^.rSetVal   := sv_ZoneArray[i].DataRetain^.rSetValVis;   
+      ELSE
+         sv_ZoneArray[i].Data^.PWMFactor := fbHeatingGroup.PWMFactor[i]; 
+         sv_ZoneArray[i].Data^.rSetVal   := fbHeatingGroup.OutputValues[i];  
+      END_IF;     
+   END_FOR;
+ELSE // optimization, use value from visualisation
+    FOR i := 1 TO miNumberOfZones DO
+      sv_ZoneArray[i].Data^.PWMFactor := 1.0; 
+      sv_ZoneArray[i].Data^.rSetVal :=  sv_ZoneArray[i].DataRetain^.rSetValVis;     
+   END_FOR;  
+END_IF;
+
+//*********************************************************************************************
+// Check state of optimization
+//*********************************************************************************************
+//optimization interrupted manually
+IF (((fbFTrigOptimizationInterrupt.Q OR fbFTrigHeatingOn.Q) AND 
+     (sv_bOptimizationActive OR (enOPOState <> enOPOState_None))) OR
+    (fbFTrigOptimizationInterrupt.Q AND NOT bHeatingOn AND NOT 
+     (sv_bOptimizationActive OR (enOPOState <> enOPOState_None)))) THEN
+   FOR i := 1 TO miNumberOfZones DO
+      sv_ZoneArray[i].Data^.bOptimize := FALSE;
+   END_FOR; 
+   sv_bRunOptimization := FALSE;
+END_IF;
+
+bOptimizinActive := FALSE;
+FOR i := 1 TO miNumberOfZones DO
+   //check if any zone is optimizing
+   IF sv_ZoneArray[i].Data^.bIsOptimizing THEN
+      bOptimizinActive := TRUE;
+      EXIT;
+   END_IF;
+END_FOR;
+   
+sv_bOptimizationActive := bOptimizinActive;
+
+//*********************************************************************************************
+// Failure control and Output
+//*********************************************************************************************
+
+//also consider zones which are not handled in groupheating 
+aCheckNonGroupHeatingZones();
+bOtherZonesReady := aCheckNonGroupHeatingZones.bAllZonesInTolerance;
+
+//Minutes to seconds
+sv_dTempOkTimeSet :=  LINT_TO_TIME(REAL_TO_LINT(sv_rTempOkTimeSet * 60.0 * 1000.0 * 1000.0));
+fbTonTempOkTime(IN := (fbHeatingGroup.AllZonesReady AND bHeatingOn AND bOtherZonesReady),
+                PT := sv_dTempOkTimeSet);
+sv_dTempOkTimeAct := fbTonTempOkTime.ET; 
+sv_rTempOkTimeAct := LINT_TO_REAL(TIME_TO_LINT(sv_dTempOkTimeAct))/(60.0 * 1000.0 * 1000.0);
+bGroupTempOK := fbTonTempOkTime.Q;
+fbFTrigGroupTempOK(CLK := bGroupTempOK);
+fbRTrigGroupTempOK(CLK := bGroupTempOK);
+
+// Check state of heating and set/reset alarm
+// Folowing states are possible
+// Heat Up Active
+// Keep Warm Active
+// Cool Prevent Time is running (Temperature first time in tolerance)
+// None: Heating off, heating stable in operating point
+IF sv_bKeepWarmActive AND NOT bKeepWarmActive THEN
+    bKeepWarmActive := TRUE;
+    SET_ALARM (Name := erKeepWarmActive,
+                SubID1 := sv_DeviceId.CompId,
+                SubID2 := sv_DeviceId.IndexId);
+END_IF;    
+IF bKeepWarmActive AND NOT sv_bKeepWarmActive THEN
+    bKeepWarmActive := FALSE;
+    RESET_ALARM (Name := erKeepWarmActive,
+                SubID1 := sv_DeviceId.CompId,
+                SubID2 := sv_DeviceId.IndexId); 
+END_IF;
+
+IF bCoolPrevent AND (bKeepWarmActive OR NOT bHeatingOn OR bGroupTempOK OR fbRTrigSetValChanged.Q) THEN
+    bCoolPrevent := FALSE;
+    RESET_ALARM (Name := erCoolingPrevent,
+                SubID1 := sv_DeviceId.CompId,
+                SubID2 := sv_DeviceId.IndexId); 
+END_IF;
+IF NOT bCoolPrevent AND NOT bKeepWarmActive AND bHeatingOn AND NOT bGroupTempOK AND fbHeatingGroup.AllZonesReady AND bOtherZonesReady THEN
+    bCoolPrevent := TRUE;
+    SET_ALARM (Name := erCoolingPrevent,
+                SubID1 := sv_DeviceId.CompId,
+                SubID2 := sv_DeviceId.IndexId);
+END_IF;
+
+IF NOT bKeepWarmActive AND NOT mbHeatUp AND NOT bCoolPrevent AND(
+    (fbRTrigHeatingOn.Q AND NOT bGroupTempOK) OR 
+    (bHeatingOn AND fbRTrigSetValChanged.Q AND NOT bGroupTempOK) OR
+    ((sv_bGroupHeating AND fbRTrigHeatingOn.Q) OR (fbRTrigGroupHeating.Q AND bHeatingOn)) OR
+    (fbFTrigOptimizationActive.Q AND NOT fbHeatingGroup.AllZonesReady)                                                                  
+    )THEN
+    mbHeatUp := TRUE;
+    SET_ALARM (Name := erHeatupActive,
+                SubID1 := sv_DeviceId.CompId,
+                SubID2 := sv_DeviceId.IndexId);
+END_IF;
+IF mbHeatUp AND (bKeepWarmActive OR bCoolPrevent OR NOT bHeatingOn OR bGroupTempOK OR fbHeatingGroup.AllZonesReady) THEN
+   mbHeatUp := FALSE; 
+   RESET_ALARM (Name := erHeatupActive,
+                SubID1 := sv_DeviceId.CompId,
+                SubID2 := sv_DeviceId.IndexId); 
+END_IF;
+
+
+(*      tolerance supervision       *)
+IF fbFTrigGroupTempOK.Q THEN
+    bOutOfTolerance := TRUE; 
+END_IF;
+IF fbRTrigGroupTempOK.Q THEN
+    bOutOfTolerance := FALSE;        
+END_IF;
+IF ((bOutOfTolerance OR fbRTrigGroupTempOK.Q) AND 
+    (NOT (mbHeatUp OR bCoolPrevent OR sv_bRunOptimization)) OR (NOT bHeatingOn)) THEN
+    
+    FOR i := 1 TO miNumberOfZones DO
+        (* searching for the zones which are out ouf tol *)
+        IF (sv_ZoneArray[i].Data^.bToleranceError AND (NOT ToleranceAlarm[i])) AND 
+           (bHeatingOn AND (NOT (mbHeatUp OR bCoolPrevent))) THEN
+            (* setting tolerance error *)
+            IF ((sv_ZoneArray[i].Data^.bEmgOperation AND sv_OperationMode >= nHalfAutomatic)) OR 
+                bKeepWarmActive OR bGroupActive THEN
+               ; // no Alarm Emergency operation mode
+            ELSE
+               ToleranceAlarm[i] := TRUE;
+               SET_ALARM (Name := erZoneOutOfTol,
+                        SubID1 := sv_DeviceId.CompId,
+                        SubID2 := sv_DeviceId.IndexId,
+                        SubID3 := i);
+           END_IF;        
+        END_IF;
+        
+        IF  (NOT sv_ZoneArray[i].Data^.bToleranceError AND ToleranceAlarm[i]) OR  
+            (NOT bHeatingOn AND ToleranceAlarm[i]) OR (NOT sv_ZoneArray[i].DataRetain^.bUsed)  THEN
+        
+            ToleranceAlarm[i] := FALSE;
+            RESET_ALARM (Name := erZoneOutOfTol,
+                    SubID1 := sv_DeviceId.CompId,
+                    SubID2 := sv_DeviceId.IndexId,
+                    SubID3 := i);
+        END_IF;
+    END_FOR;
+END_IF;
+
+// set/reset status message during temp.optimization
+IF fbRTrigOptimizationActive.Q THEN
+    SET_ALARM (Name := erOptimizationActive,
+              SubID1 := sv_DeviceId.CompId,
+              SubID2 := sv_DeviceId.IndexId);
+END_IF;
+
+IF fbFTrigOptimizationActive.Q THEN
+    RESET_ALARM (Name := erOptimizationActive,  
+                SubID1 := sv_DeviceId.CompId,
+                SubID2 := sv_DeviceId.IndexId);
+END_IF;
+
+fbRTrigOutOfTol(CLK:=bOutOfTol);
+IF fbRTrigOutOfTol.Q THEN
+   SET_ALARM (Name := erOutOfTol,
+              SubID1 := sv_DeviceId.CompId,
+              SubID2 := sv_DeviceId.IndexId);
+END_IF;
+
+bGroupActive := (GroupHeatingStatus > 0);
+
+
+;#END_EDIT_BLOCK END_ALGORITHM
+
+POSTUPDATE_ALGORITHM pReparam ON PU_Task_7 WITH sv_bGroupHeating,sv_iNumberOfZones,sv_rTolBetweenZones,sv_bReParamGroup
+
+#BEGIN_EDIT_BLOCK
+(**************************************** WARNING ********************************************
+ *** The KEBA Kemro K2 System including software is not intended for safety control tasks! ***
+ ***                       For further information see Comment tab!                        ***
+ *********************************************************************************************)
+
+//reparam Group
+mbInit := FALSE;
+sv_bReParamGroup := FALSE;
+
+
+;#END_EDIT_BLOCK END_ALGORITHM
+
+POSTUPDATE_ALGORITHM pCheckNumberOfZones ON PU_Task_7 WITH sv_iNumberOfZones
+
+#BEGIN_EDIT_BLOCK
+(**************************************** WARNING ********************************************
+ *** The KEBA Kemro K2 System including software is not intended for safety control tasks! ***
+ ***                       For further information see Comment tab!                        ***
+ *********************************************************************************************)
+     
+START_PROCESS_ALGORITHM(paCheckNumberOfZones);
+
+
+;#END_EDIT_BLOCK END_ALGORITHM
+
+PROCESS_ALGORITHM paCheckNumberOfZones ON TaskHeating
+
+
+VAR_TEMP
+ i : DINT;
+END_VAR
+
+VAR
+ iNumberOfZonesOld : DINT;
+END_VAR
+#BEGIN_EDIT_BLOCK
+(**************************************** WARNING ********************************************
+ *** The KEBA Kemro K2 System including software is not intended for safety control tasks! ***
+ ***                       For further information see Comment tab!                        ***
+ *********************************************************************************************)
+
+IF mbInitDone THEN
+
+   FOR i := 1 TO sv_iMaxNumberOfZones DO
+     
+      IF i <= sv_iZonesAvailable AND i <= sv_iNumberOfZones AND sv_ZoneArray[i].bLinked THEN
+            //tell the zone that it will be used
+            //set counter for aRun to prevent from nullpointerexception if wrong mold data was loaded (sv_iNumberOfZones > sv_iZonesAvailable)
+            miNumberOfZones := i;
+            // Dont set value higher than max allowed temperature
+            sv_ZoneArray[i].Data^.bOutputNotAllowed := FALSE;
+            sv_ZoneArray[i].DataRetain^.rSetValVis := MIN(sv_rMaxTemperature, sv_ZoneArray[i].DataRetain^.rSetValVis);
+            // heating nozzle zone is always used
+            IF NOT (sv_ZoneArray[i].DataRetain^.bIsHotrunner OR sv_ZoneArray[i].DataRetain^.ZoneType = enZoneTypeBlock) THEN
+               sv_ZoneArray[i].DataRetain^.bUsed := TRUE;
+            END_IF;
+      ELSIF sv_ZoneArray[i].bLinked THEN         
+            sv_ZoneArray[i].DataRetain^.bUsed := FALSE;
+      END_IF;
+      
+      IF i > sv_iZonesAvailable AND i <= sv_iNumberOfZones THEN
+         //zone is used but Hardware is not OK -> error
+            SET_ALARM(Name := erZoneNotAvailable,
+                      SubID1 := sv_DeviceId.CompId,
+                      SubID2 := sv_DeviceId.IndexId,
+                      SubID3 := i);
+      END_IF;
+      
+      IF  i > sv_iNumberOfZones AND i <= iNumberOfZonesOld AND i > sv_iZonesAvailable THEN
+         //reset alarm if sv_iNumberOfZones has been reduced
+         RESET_ALARM(Name := erZoneNotAvailable,
+                     SubID1 := sv_DeviceId.CompId,
+                     SubID2 := sv_DeviceId.IndexId,
+                     SubID3 := i);
+         IF (sv_ZoneArray[i].bLinked) AND 
+            NOT (sv_ZoneArray[i].DataRetain^.bIsHotrunner OR sv_ZoneArray[i].DataRetain^.ZoneType = enZoneTypeBlock) THEN
+            sv_ZoneArray[i].DataRetain^.bUsed := TRUE; 
+         END_IF;
+         
+      END_IF;
+   END_FOR;
+   STOP_PROCESS_ALGORITHM();
+END_IF;
+
+iNumberOfZonesOld := sv_iNumberOfZones;
+
+
+
+
+;#END_EDIT_BLOCK END_ALGORITHM
+
+POSTUPDATE_ALGORITHM pCheckMaxTemperature ON PU_Task_7 WITH sv_rMaxTemperature
+
+
+VAR_TEMP
+ i : DINT;
+END_VAR
+#BEGIN_EDIT_BLOCK
+// After max temperature changed, dont allow higher set values
+FOR i := 1 TO miNumberOfZones DO
+    IF sv_ZoneArray[i].DataRetain^.rSetValVis > sv_rMaxTemperature THEN
+       sv_ZoneArray[i].DataRetain^.rSetValVis := sv_rMaxTemperature;
+    END_IF;
+END_FOR;
+
+
+;#END_EDIT_BLOCK END_ALGORITHM
+
+POSTUPDATE_ALGORITHM pReparamPID ON PU_Task_7 WITH sv_bUndoChangeHeatingParams
+
+
+VAR_TEMP
+ i : DINT;
+END_VAR
+#BEGIN_EDIT_BLOCK
+IF sv_bUndoChangeHeatingParams THEN
+   IF NOT mbInitDone THEN 
+      sv_bUndoChangeHeatingParams := FALSE;
+      RETURN;
+   END_IF;
+   FOR i := 1 TO miNumberOfZones DO
+      IF sv_ZoneArray[i].DataRetain^.Param.bOldPIDAvailable THEN
+         sv_ZoneArray[i].DataRetain^.Param.pidParam := sv_ZoneArray[i].DataRetain^.Param.pidParamLastOpt;
+         sv_bUsePidOP := FALSE; 
+         sv_bReParamGroup := TRUE;
+         sv_ZoneArray[i].DataRetain^.Param.bOldPIDAvailable := FALSE; 
+      END_IF;
+   END_FOR;
+   //reparam tempgroup
+   // reset sv
+   sv_bUndoChangeHeatingParams := FALSE;
+END_IF;
+
+
+;#END_EDIT_BLOCK END_ALGORITHM
+
+ALGORITHM aGetActMaxTempGroup
+
+
+VAR_OUTPUT
+ rActTemp : REAL;
+END_VAR
+#BEGIN_EDIT_BLOCK
+(**************************************** WARNING ********************************************
+ *** The KEBA Kemro K2 System including software is not intended for safety control tasks! ***
+ ***                       For further information see Comment tab!                        ***
+ *********************************************************************************************)
+
+rActTemp := sv_ZoneArray[miLeadingZone].Data^.prActTemp^;
+
+
+;#END_EDIT_BLOCK END_ALGORITHM
+
+
+
+END_ALGORITHM_BLOCK
+
+
+
+#END_OF_IEC_PART
+
+@Puma @IecEditor 6 159 @Pou 25 
+@@@BEG_Comment@@@
+
+@@@END_Comment@@@
+
+@BEG_Contents 
+
+@BEG_Func 
+@RT(17)FuncTreeContainer 
+5 
+@Var @RT(14)GET_MY_FU_NAME @RT(0) @T @T @DERIVED 0 @F @RT(22)KEBA_STANDARD_FUNCTION @F 
+@T 
+@BEG_Attrib 
+0 @RT(0) @RT(0) 
+@END_Attrib 
+1 1 @F @F @F @F 
+
+@Var @RT(16)KSWO_AddVariable @RT(0) @T @T @DERIVED 0 @F @RT(22)KEBA_STANDARD_FUNCTION @F 
+@T 
+@BEG_Attrib 
+0 @RT(0) @RT(0) 
+@END_Attrib 
+1 1 @F @F @F @F 
+
+@Var @RT(9)SET_ALARM @RT(0) @T @T @DERIVED 0 @F @RT(23)KEBA_STANDARD_PROCEDURE @F 
+@T 
+@BEG_Attrib 
+0 @RT(0) @RT(0) 
+@END_Attrib 
+1 1 @F @F @F @F 
+
+@Var @RT(17)GET_TASK_INTERVAL @RT(0) @T @T @DERIVED 0 @F @RT(22)KEBA_STANDARD_FUNCTION @F 
+@T 
+@BEG_Attrib 
+0 @RT(0) @RT(0) 
+@END_Attrib 
+1 1 @F @F @F @F 
+
+@Var @RT(11)RESET_ALARM @RT(0) @T @T @DERIVED 0 @F @RT(23)KEBA_STANDARD_PROCEDURE @F 
+@T 
+@BEG_Attrib 
+0 @RT(0) @RT(0) 
+@END_Attrib 
+1 1 @F @F @F @F 
+
+@END_Func 
+
+@BEG_Const 
+@RT(18)ConstTreeContainer 
+11 
+@Var @RT(22)enOPOState_StableFirst @RT(0) @T @T @DERIVED 0 @F @RT(25)tenOperatingPointOptState @F 
+@T 
+@BEG_Attrib 
+0 @RT(1)1 @RT(0) 
+@END_Attrib 
+1 1 @F @F @F @F 
+
+@Var @RT(19)KHW_TempSensor_none @RT(0) @T @T @DERIVED 0 @F @RT(14)KHW_TempSensor @F 
+@T 
+@BEG_Attrib 
+0 @RT(1)0 @RT(50)kein Sensor vorhanden (keine Berechnung notwendig) 
+@END_Attrib 
+1 1 @F @F @F @F 
+
+@Var @RT(24)KAPPL_TempOpMode_Cooling @RT(0) @T @T @DERIVED 0 @F @RT(16)KAPPL_TempOpMode @F 
+@T 
+@BEG_Attrib 
+0 @RT(1)1 @RT(0) 
+@END_Attrib 
+1 1 @F @F @F @F 
+
+@Var @RT(18)enZoneModeDisabled @RT(0) @T @T @DERIVED 0 @F @RT(11)tenZoneMode @F 
+@T 
+@BEG_Attrib 
+0 @RT(1)0 @RT(0) 
+@END_Attrib 
+1 1 @F @F @F @F 
+
+@Var @RT(18)enZoneModeConstant @RT(0) @T @T @DERIVED 0 @F @RT(11)tenZoneMode @F 
+@T 
+@BEG_Attrib 
+0 @RT(1)2 @RT(0) 
+@END_Attrib 
+1 1 @F @F @F @F 
+
+@Var @RT(23)enOPOState_StableSecond @RT(0) @T @T @DERIVED 0 @F @RT(25)tenOperatingPointOptState @F 
+@T 
+@BEG_Attrib 
+0 @RT(1)3 @RT(0) 
+@END_Attrib 
+1 1 @F @F @F @F 
+
+@Var @RT(15)KCTRL_Stable_OK @RT(0) @T @T @DERIVED 0 @F @RT(18)KCTRL_Stable_State @F 
+@T 
+@BEG_Attrib 
+0 @RT(1)1 @RT(0) 
+@END_Attrib 
+1 1 @F @F @F @F 
+
+@Var @RT(19)enOPOState_RunFirst @RT(0) @T @T @DERIVED 0 @F @RT(25)tenOperatingPointOptState @F 
+@T 
+@BEG_Attrib 
+0 @RT(1)2 @RT(0) 
+@END_Attrib 
+1 1 @F @F @F @F 
+
+@Var @RT(15)enOPOState_None @RT(0) @T @T @DERIVED 0 @F @RT(25)tenOperatingPointOptState @F 
+@T 
+@BEG_Attrib 
+0 @RT(1)0 @RT(0) 
+@END_Attrib 
+1 1 @F @F @F @F 
+
+@Var @RT(14)nHalfAutomatic @RT(0) @T @T @DERIVED 0 @F @RT(15)tnOperationMode @F 
+@T 
+@BEG_Attrib 
+0 @RT(1)2 @RT(34)confirmation every cycle necessary 
+@END_Attrib 
+1 1 @F @F @F @F 
+
+@Var @RT(15)enZoneTypeBlock @RT(0) @T @T @DERIVED 0 @F @RT(11)tenZoneType @F 
+@T 
+@BEG_Attrib 
+0 @RT(1)1 @RT(0) 
+@END_Attrib 
+1 1 @F @F @F @F 
+
+@END_Const 
+
+@BEG_Export 
+
+@BEG_Kind 
+@ALGORITHM_BLOCK @RT(14)ABGroupControl @STRUCTURED_TEXT 
+@RT(0) @RT(0) @RT(0) 
+@END_Kind 
+
+@BEG_Dcl 
+@RT(16)DclTreeContainer 
+41 
+@Var @RT(19)sv_bRunOptimization @RT(0) @T @F @DT @RT(4)BOOL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(16)Run Optimization @RT(0) 
+@END_Attrib 
+1 8 @F @F @F @F 
+
+@Var @RT(17)sv_rTempOkTimeSet @RT(0) @T @F @DT @RT(4)REAL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 8 @F @F @F @F 
+
+@Var @RT(17)sv_rTempOkTimeAct @RT(0) @T @F @DT @RT(4)REAL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 8 @F @F @F @F 
+
+@Var @RT(17)sv_dTempOkTimeSet @RT(0) @T @F @DT @RT(4)TIME @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 8 @F @F @F @F 
+
+@Var @RT(17)sv_dTempOkTimeAct @RT(0) @T @F @DT @RT(4)TIME @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 8 @F @F @F @F 
+
+@Var @RT(20)sv_iMaxNumberOfZones @RT(0) @T @F @DT @RT(4)DINT @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 8 @F @F @F @F 
+
+@Var @RT(18)sv_rMaxTemperature @RT(0) @T @F @DT @RT(4)REAL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 8 @F @F @F @F 
+
+@Var @RT(11)sv_DeviceId @RT(0) @T @T @DERIVED 0 @T @T @DT @RT(10)tsDeviceId @RT(0) @T @T @UNKNOWN 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(24)unique Device Identifier @RT(0) 
+@END_Attrib 
+1 8 @F @F @F @F 
+
+@Var @RT(16)sv_bReParamGroup @RT(0) @T @F @DT @RT(4)BOOL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(48)By this var each zone can reparam the groupblock @RT(0) 
+@END_Attrib 
+1 8 @F @F @F @F 
+
+@Var @RT(16)sv_OperationMode @RT(0) @T @T @DERIVED 0 @T @T @DT @RT(15)tnOperationMode @RT(0) @T @T @UNKNOWN 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 8 @F @F @F @F 
+
+@Var @RT(12)sv_ZoneArray @RT(0) @T @T @DERIVED 0 @T @T @DT @RT(11)tyZoneArray @RT(0) @T @T @UNKNOWN 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 8 @F @F @F @F 
+
+@Var @RT(22)sv_bOptimizationActive @RT(0) @T @F @DT @RT(4)BOOL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(23)Optimization is running @RT(0) 
+@END_Attrib 
+1 8 @F @F @F @F 
+
+@Var @RT(17)sv_iNumberOfZones @RT(0) @T @F @DT @RT(4)DINT @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 8 @F @F @F @F 
+
+@Var @RT(18)sv_iZonesAvailable @RT(0) @T @F @DT @RT(4)DINT @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 8 @F @F @F @F 
+
+@Var @RT(16)sv_bGroupHeating @RT(0) @T @F @DT @RT(4)BOOL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 8 @F @F @F @F 
+
+@Var @RT(19)sv_rTolBetweenZones @RT(0) @T @F @DT @RT(4)REAL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 8 @F @F @F @F 
+
+@Var @RT(18)sv_bKeepWarmActive @RT(0) @T @F @DT @RT(4)BOOL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 8 @F @F @F @F 
+
+@Var @RT(18)sv_rIncTemperature @RT(0) @T @F @DT @RT(4)REAL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 8 @F @F @F @F 
+
+@Var @RT(27)sv_bUndoChangeHeatingParams @RT(0) @T @F @DT @RT(4)BOOL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 8 @F @F @F @F 
+
+@Var @RT(12)sv_bUsePidOP @RT(0) @T @F @DT @RT(4)BOOL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 8 @F @F @F @F 
+
+@Var @RT(21)sv_iZonesAboveMaxTemp @RT(0) @T @F @DT @RT(4)DINT @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(62)number of heating zones which exceeded the maximum temperature @RT(0) 
+@END_Attrib 
+1 8 @F @F @F @F 
+
+@Var @RT(20)sv_rMaxTempHeatUpOpt @RT(0) @T @F @DT @RT(4)REAL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 8 @F @F @F @F 
+
+@Var @RT(9)PU_Task_7 @RT(0) @T @F @DT @RT(4)TASK @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 7 @F @F @F @F 
+
+@Var @RT(14)erHeatupActive @RT(0) @T @F @DT @RT(5)ALARM @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 7 @F @F @F @F 
+
+@Var @RT(10)erOutOfTol @RT(0) @T @F @DT @RT(5)ALARM @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 7 @F @F @F @F 
+
+@Var @RT(14)erZoneOutOfTol @RT(0) @T @F @DT @RT(5)ALARM @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 7 @F @F @F @F 
+
+@Var @RT(20)erOptimizationActive @RT(0) @T @F @DT @RT(5)ALARM @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 7 @F @F @F @F 
+
+@Var @RT(18)erZoneNotAvailable @RT(0) @T @F @DT @RT(5)ALARM @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 7 @F @F @F @F 
+
+@Var @RT(16)erMaxTempExeeded @RT(0) @T @F @DT @RT(5)ALARM @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(72)Error for indicating that act. temperature is over  allowed machin limit @RT(0) 
+@END_Attrib 
+1 7 @F @F @F @F 
+
+@Var @RT(11)TaskHeating @RT(0) @T @F @DT @RT(4)TASK @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 7 @F @F @F @F 
+
+@Var @RT(16)erKeepWarmActive @RT(0) @T @F @DT @RT(5)ALARM @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(22)Keep Warm active alarm @RT(0) 
+@END_Attrib 
+1 7 @F @F @F @F 
+
+@Var @RT(16)erCoolingPrevent @RT(0) @T @F @DT @RT(5)ALARM @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(23)Cool prevent time alarm @RT(0) 
+@END_Attrib 
+1 7 @F @F @F @F 
+
+@Var @RT(19)erTempTooHighForOpt @RT(0) @T @F @DT @RT(5)ALARM @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 7 @F @F @F @F 
+
+@Var @RT(16)erTempDiffTooLow @RT(0) @T @F @DT @RT(5)ALARM @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 7 @F @F @F @F 
+
+@Var @RT(14)fbHeatingGroup @RT(0) @T @T @DERIVED 0 @T @T @DT @RT(24)KAPPL_Plastics_TempGroup @RT(0) @T @T @UNKNOWN 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(37)Most things for group heating control @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(13)miLeadingZone @RT(0) @T @F @DT @RT(4)DINT @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(1)1 @RT(21)index of hottest zone @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(15)miNumberOfZones @RT(0) @T @F @DT @RT(4)DINT @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(15)number of zones @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(6)mbInit @RT(0) @T @F @DT @RT(4)BOOL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(8)mbHeatUp @RT(0) @T @F @DT @RT(4)BOOL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(50)Heat up active, becomes FALSE at cool prevent time @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(10)mbInitDone @RT(0) @T @F @DT @RT(4)BOOL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(31)SetStartTemperatureGroupHeating @RT(0) @T @F @DT @RT(4)REAL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(75)Start temperature for group heating if zones not in tolerance area at start @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@END_Dcl 
+
+@END_Export 
+
+@BEG_Body 
+
+11 
+
+@BEG_Export 
+
+@BEG_Algo 
+@ALGORITHM @RT(5)aInit @STRUCTURED_TEXT 
+@RT(0) @RT(0) @RT(0) @F @F 
+@END_Algo 
+
+@BEG_Dcl 
+@RT(16)DclTreeContainer 
+4 
+@Var @RT(1)i @RT(0) @T @F @DT @RT(4)DINT @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 4 @F @F @F @F 
+
+@Var @RT(8)swoState @RT(0) @T @T @DERIVED 0 @T @T @DT @RT(11)KSWO_Status @RT(0) @T @T @UNKNOWN 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(6)fuName @RT(0) @T @F @DT @RT(11)STRING(255) @RT(0) @T @T @STRING 0 @F @RT(3)255 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(12)variableName @RT(0) @T @F @DT @RT(11)STRING(255) @RT(0) @T @T @STRING 0 @F @RT(3)255 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@END_Dcl 
+
+@END_Export 
+
+@BEG_Export 
+
+@BEG_Algo 
+@ALGORITHM @RT(26)aCheckNonGroupHeatingZones @STRUCTURED_TEXT 
+@RT(0) @RT(0) @RT(0) @F @F 
+@END_Algo 
+
+@BEG_Dcl 
+@RT(16)DclTreeContainer 
+2 
+@Var @RT(20)bAllZonesInTolerance @RT(0) @T @F @DT @RT(4)BOOL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 3 @F @F @F @F 
+
+@Var @RT(1)i @RT(0) @T @F @DT @RT(4)DINT @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 4 @F @F @F @F 
+
+@END_Dcl 
+
+@END_Export 
+
+@BEG_Export 
+
+@BEG_Algo 
+@ALGORITHM @RT(29)aCheckOptimizeStartConditions @STRUCTURED_TEXT 
+@RT(0) @RT(0) @RT(0) @F @F 
+@END_Algo 
+
+@BEG_Dcl 
+@RT(16)DclTreeContainer 
+3 
+@Var @RT(9)nOptState @RT(0) @T @T @DERIVED 0 @T @T @DT @RT(25)tenOperatingPointOptState @RT(0) @T @T @UNKNOWN 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 2 @F @F @F @F 
+
+@Var @RT(1)i @RT(0) @T @F @DT @RT(4)DINT @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 4 @F @F @F @F 
+
+@Var @RT(8)rActTemp @RT(0) @T @F @DT @RT(4)REAL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@END_Dcl 
+
+@END_Export 
+
+@BEG_Export 
+
+@BEG_Algo 
+@ALGORITHM @RT(18)aCheckPIDParameter @STRUCTURED_TEXT 
+@RT(0) @RT(0) @RT(0) @F @F 
+@END_Algo 
+
+@BEG_Dcl 
+@RT(16)DclTreeContainer 
+12 
+@Var @RT(12)iIndex2Check @RT(0) @T @F @DT @RT(4)DINT @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(43)check parameters of zone with inputed index @RT(0) 
+@END_Attrib 
+1 1 @F @F @F @F 
+
+@Var @RT(11)iMaxNoZones @RT(0) @T @F @DT @RT(4)DINT @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(30)maximum no of  available zones @RT(0) 
+@END_Attrib 
+1 1 @F @F @F @F 
+
+@Var @RT(17)rMinGainCtrlLimit @RT(0) @T @F @DT @RT(4)REAL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(30)lower limit of controller gain @RT(0) 
+@END_Attrib 
+1 1 @F @F @F @F 
+
+@Var @RT(6)bError @RT(0) @T @F @DT @RT(4)BOOL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(27)error during validity check @RT(0) 
+@END_Attrib 
+1 3 @F @F @F @F 
+
+@Var @RT(10)iErrorInfo @RT(0) @T @F @DT @RT(4)DINT @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(21)additional error info @RT(0) 
+@END_Attrib 
+1 3 @F @F @F @F 
+
+@Var @RT(1)i @RT(0) @T @F @DT @RT(4)DINT @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 4 @F @F @F @F 
+
+@Var @RT(9)iIndexMin @RT(0) @T @F @DT @RT(4)DINT @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(12)rMinGainCtrl @RT(0) @T @F @DT @RT(4)REAL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(12)rGainCtrlAct @RT(0) @T @F @DT @RT(4)REAL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(13)rGainCtrlZone @RT(0) @T @F @DT @RT(4)REAL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(17)rGainCtrlMinLimit @RT(0) @T @F @DT @RT(4)REAL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(18)rGaintCtrlMinLimit @RT(0) @T @F @DT @RT(4)REAL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(3)0.1 @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@END_Dcl 
+
+@END_Export 
+
+@BEG_Export 
+
+@BEG_Algo 
+@ALGORITHM @RT(4)aRun @STRUCTURED_TEXT 
+@RT(0) @RT(0) @RT(0) @F @F 
+@END_Algo 
+
+@BEG_Dcl 
+@RT(16)DclTreeContainer 
+40 
+@Var @RT(10)bHeatingOn @RT(0) @T @F @DT @RT(4)BOOL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(19)heating switched on @RT(0) 
+@END_Attrib 
+1 1 @F @F @F @F 
+
+@Var @RT(8)bGroupOn @RT(0) @T @F @DT @RT(4)BOOL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(16)group heating on @RT(0) 
+@END_Attrib 
+1 3 @F @F @F @F 
+
+@Var @RT(12)bGroupTempOK @RT(0) @T @F @DT @RT(4)BOOL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(25)no error at group heating @RT(0) 
+@END_Attrib 
+1 3 @F @F @F @F 
+
+@Var @RT(12)bGroupActive @RT(0) @T @F @DT @RT(4)BOOL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(20)group heating active @RT(0) 
+@END_Attrib 
+1 3 @F @F @F @F 
+
+@Var @RT(1)i @RT(0) @T @F @DT @RT(4)DINT @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 4 @F @F @F @F 
+
+@Var @RT(3)tmp @RT(0) @T @F @DT @RT(4)REAL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 4 @F @F @F @F 
+
+@Var @RT(18)bReadyGroupHeating @RT(0) @T @F @DT @RT(4)BOOL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 4 @F @F @F @F 
+
+@Var @RT(13)iIndexMinZone @RT(0) @T @F @DT @RT(4)DINT @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 4 @F @F @F @F 
+
+@Var @RT(12)MinActValues @RT(0) @T @F @DT @RT(4)REAL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(22)fbRTrigRunOptimization @RT(0) @T @T @DERIVED 0 @T @T @DT @RT(6)R_TRIG @RT(0) @T @T @UNKNOWN 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(28)fbFTrigOptimizationInterrupt @RT(0) @T @T @DERIVED 0 @T @T @DT @RT(6)F_TRIG @RT(0) @T @T @UNKNOWN 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(25)fbFTrigOptimizationActive @RT(0) @T @T @DERIVED 0 @T @T @DT @RT(6)F_TRIG @RT(0) @T @T @UNKNOWN 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(12)MaxActValues @RT(0) @T @F @DT @RT(4)REAL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(18)fbFTrigGroupTempOK @RT(0) @T @T @DERIVED 0 @T @T @DT @RT(6)F_TRIG @RT(0) @T @T @UNKNOWN 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(18)fbRTrigGroupTempOK @RT(0) @T @T @DERIVED 0 @T @T @DT @RT(6)R_TRIG @RT(0) @T @T @UNKNOWN 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(25)fbRTrigOptimizationActive @RT(0) @T @T @DERIVED 0 @T @T @DT @RT(6)R_TRIG @RT(0) @T @T @UNKNOWN 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(16)fbRTrigHeatingOn @RT(0) @T @T @DERIVED 0 @T @T @DT @RT(6)R_TRIG @RT(0) @T @T @UNKNOWN 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(16)fbFTrigHeatingOn @RT(0) @T @T @DERIVED 0 @T @T @DT @RT(6)F_TRIG @RT(0) @T @T @UNKNOWN 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(15)fbTonTempOkTime @RT(0) @T @T @DERIVED 0 @T @T @DT @RT(3)TON @RT(0) @T @T @UNKNOWN 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(15)iZoneExeededMax @RT(0) @T @F @DT @RT(4)DINT @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(16)bOptimizinActive @RT(0) @T @F @DT @RT(4)BOOL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(14)ToleranceAlarm @RT(0) @T @T @DERIVED 0 @T @T @DT @RT(15)tyZoneBoolArray @RT(0) @T @T @UNKNOWN 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(15)bOutOfTolerance @RT(0) @T @F @DT @RT(4)BOOL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(20)fbRTrigSetValChanged @RT(0) @T @T @DERIVED 0 @T @T @DT @RT(6)R_TRIG @RT(0) @T @T @UNKNOWN 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(18)GroupHeatingStatus @RT(0) @T @F @DT @RT(4)DINT @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(1)0 @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(19)fbFTrigGroupHeating @RT(0) @T @T @DERIVED 0 @T @T @DT @RT(6)F_TRIG @RT(0) @T @T @UNKNOWN 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(19)fbRTrigGroupHeating @RT(0) @T @T @DERIVED 0 @T @T @DT @RT(6)R_TRIG @RT(0) @T @T @UNKNOWN 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(12)MinSetValues @RT(0) @T @F @DT @RT(4)REAL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(46)Smallest SetValues = SetValue for GroupHeating @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(10)dCycleTime @RT(0) @T @F @DT @RT(4)TIME @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(17)ObservationFactor @RT(0) @T @F @DT @RT(4)LINT @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(15)ObservationTime @RT(0) @T @F @DT @RT(4)TIME @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(4)T#3m @RT(34)Start GroupHeating after that Time @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(22)CountStartGroupHeating @RT(0) @T @F @DT @RT(4)LINT @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(11)TimeCounter @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(9)bOutOfTol @RT(0) @T @F @DT @RT(4)BOOL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(15)fbRTrigOutOfTol @RT(0) @T @T @DERIVED 0 @T @T @DT @RT(6)R_TRIG @RT(0) @T @T @UNKNOWN 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(12)bCoolPrevent @RT(0) @T @F @DT @RT(4)BOOL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(15)bKeepWarmActive @RT(0) @T @F @DT @RT(4)BOOL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(12)bGroupStable @RT(0) @T @F @DT @RT(4)BOOL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(8)rActTemp @RT(0) @T @F @DT @RT(4)REAL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(10)enOPOState @RT(0) @T @T @DERIVED 0 @T @T @DT @RT(25)tenOperatingPointOptState @RT(0) @T @T @UNKNOWN 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@Var @RT(16)bOtherZonesReady @RT(0) @T @F @DT @RT(4)BOOL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@END_Dcl 
+
+@END_Export 
+
+@BEG_Export 
+
+@BEG_Algo 
+@POSTUPDATE_ALGORITHM @RT(8)pReparam @STRUCTURED_TEXT 
+@RT(0) @RT(71)sv_bGroupHeating,sv_iNumberOfZones,sv_rTolBetweenZones,sv_bReParamGroup @RT(9)PU_Task_7 @F @F 
+@END_Algo 
+
+@BEG_Dcl 
+@RT(16)DclTreeContainer 
+0 
+@END_Dcl 
+
+@END_Export 
+
+@BEG_Export 
+
+@BEG_Algo 
+@POSTUPDATE_ALGORITHM @RT(19)pCheckNumberOfZones @STRUCTURED_TEXT 
+@RT(0) @RT(17)sv_iNumberOfZones @RT(9)PU_Task_7 @F @F 
+@END_Algo 
+
+@BEG_Dcl 
+@RT(16)DclTreeContainer 
+0 
+@END_Dcl 
+
+@END_Export 
+
+@BEG_Export 
+
+@BEG_Algo 
+@PROCESS_ALGORITHM @RT(20)paCheckNumberOfZones @STRUCTURED_TEXT 
+@RT(0) @RT(0) @RT(11)TaskHeating @F @F 
+@END_Algo 
+
+@BEG_Dcl 
+@RT(16)DclTreeContainer 
+2 
+@Var @RT(1)i @RT(0) @T @F @DT @RT(4)DINT @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 4 @F @F @F @F 
+
+@Var @RT(17)iNumberOfZonesOld @RT(0) @T @F @DT @RT(4)DINT @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 0 @F @F @F @F 
+
+@END_Dcl 
+
+@END_Export 
+
+@BEG_Export 
+
+@BEG_Algo 
+@POSTUPDATE_ALGORITHM @RT(20)pCheckMaxTemperature @STRUCTURED_TEXT 
+@RT(0) @RT(18)sv_rMaxTemperature @RT(9)PU_Task_7 @F @F 
+@END_Algo 
+
+@BEG_Dcl 
+@RT(16)DclTreeContainer 
+1 
+@Var @RT(1)i @RT(0) @T @F @DT @RT(4)DINT @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 4 @F @F @F @F 
+
+@END_Dcl 
+
+@END_Export 
+
+@BEG_Export 
+
+@BEG_Algo 
+@POSTUPDATE_ALGORITHM @RT(11)pReparamPID @STRUCTURED_TEXT 
+@RT(0) @RT(27)sv_bUndoChangeHeatingParams @RT(9)PU_Task_7 @F @F 
+@END_Algo 
+
+@BEG_Dcl 
+@RT(16)DclTreeContainer 
+1 
+@Var @RT(1)i @RT(0) @T @F @DT @RT(4)DINT @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 4 @F @F @F @F 
+
+@END_Dcl 
+
+@END_Export 
+
+@BEG_Export 
+
+@BEG_Algo 
+@ALGORITHM @RT(19)aGetActMaxTempGroup @STRUCTURED_TEXT 
+@RT(0) @RT(0) @RT(0) @F @F 
+@END_Algo 
+
+@BEG_Dcl 
+@RT(16)DclTreeContainer 
+1 
+@Var @RT(8)rActTemp @RT(0) @T @F @DT @RT(4)REAL @RT(0) @T @T @BASIC 0 @F 
+@F @F 
+@T 
+@BEG_Attrib 
+3 @RT(0) @RT(0) @RT(0) 
+@END_Attrib 
+1 3 @F @F @F @F 
+
+@END_Dcl 
+
+@END_Export 
+
+@BEG_Body 
+@TL(28)
+(**************************************** WARNING ********************************************
+ *** The KEBA Kemro K2 System including software is not intended for safety control tasks! ***
+ ***                       For further information see Comment tab!                        ***
+ *********************************************************************************************)
+
+FOR i := 1 TO sv_iMaxNumberOfZones DO
+
+   //checking the number of available zones
+   IF sv_ZoneArray[i].bLinked AND sv_ZoneArray[i].Data^.bHWOK THEN
+      sv_iZonesAvailable := sv_iZonesAvailable + 1;
+      
+   ELSE
+      EXIT;        
+   END_IF;  
+END_FOR;
+
+fuName := GET_MY_FU_NAME();
+variableName := CONCAT(fuName,'.Run_Optimization');
+swoState := KSWO_AddVariable( Task := TaskHeating,
+                             Name := variableName,
+                             Variable := sv_bOptimizationActive );
+variableName := CONCAT(fuName,'.KeepWarm');
+swoState := KSWO_AddVariable( Task := TaskHeating,
+                             Name := variableName,
+                             Variable := sv_bKeepWarmActive );
+mbInitDone := TRUE;
+START_PROCESS_ALGORITHM(paCheckNumberOfZones);
+
+@END_Body 
+
+@@@BEG_Comment@@@ 
+@TL(0)
+
+@@@END_Comment@@@ 
+
+@BEG_Body 
+@TL(12)
+(**************************************** WARNING ********************************************
+ *** The KEBA Kemro K2 System including software is not intended for safety control tasks! ***
+ ***                       For further information see Comment tab!                        ***
+ *********************************************************************************************)
+
+bAllZonesInTolerance := TRUE;
+FOR i := 1 TO sv_iNumberOfZones DO
+   IF (NOT sv_ZoneArray[i].DataRetain^.Param.bZoneUsedForGroupHeating) AND (sv_ZoneArray[i].DataRetain^.bUsed) THEN
+      bAllZonesInTolerance := bAllZonesInTolerance AND (NOT sv_ZoneArray[i].Data^.bToleranceError);
+   END_IF;
+END_FOR;
+
+@END_Body 
+
+@@@BEG_Comment@@@ 
+@TL(0)
+
+@@@END_Comment@@@ 
+
+@BEG_Body 
+@TL(57)
+(**************************************** WARNING ********************************************
+ *** The KEBA Kemro K2 System including software is not intended for safety control tasks! ***
+ ***                       For further information see Comment tab!                        ***
+ *********************************************************************************************)
+
+// Do not allow groupheating by optimizing  
+fbHeatingGroup.GroupHeating := FALSE;
+
+// start operating point optimization if hottest zone > 80°
+// In this case, the temperature has to become stable first  
+IF NOT sv_bOptimizationActive THEN
+   // Operating point optimization should not done for every zone at same time 
+   // Divide optimization in two parts: odd and even numbered zones
+   IF sv_ZoneArray[miLeadingZone].Data^.bSensorOK THEN
+      rActTemp := sv_ZoneArray[miLeadingZone].Data^.prActTemp^;
+   ELSE
+      rActTemp := 0.0;
+   END_IF; 
+      
+   IF rActTemp > sv_rMaxTempHeatUpOpt THEN
+      // Check if temperature is near set value
+      FOR i := 1 TO miNumberOfZones DO
+         IF sv_ZoneArray[i].DataRetain^.bUsed AND sv_ZoneArray[i].Data^.bSensorOK THEN
+            IF ABS(sv_ZoneArray[i].Data^.prActTemp^ - sv_ZoneArray[i].DataRetain^.rSetValVis) >= 50.0 THEN
+               SET_ALARM(Name := erTempTooHighForOpt,
+                        SubID1 := sv_DeviceId.CompId,
+                        SubID2 := sv_DeviceId.IndexId,
+                        SubID3 := i);
+               sv_bRunOptimization := FALSE;
+            END_IF;
+         END_IF;    
+      END_FOR;
+      // Optimize if near setvalue 
+      IF sv_bRunOptimization THEN
+         nOptState := enOPOState_StableFirst;
+      END_IF;
+   ELSE
+      FOR i := 1 TO miNumberOfZones DO
+         IF sv_ZoneArray[i].DataRetain^.bUsed AND sv_ZoneArray[i].Data^.bSensorOK AND
+            sv_ZoneArray[i].Data^.bOutputOK AND 
+            (sv_ZoneArray[i].DataRetain^.SensorTypeVis <> KHW_TempSensor_none) AND
+            (sv_ZoneArray[i].DataRetain^.Param.opMode <> KAPPL_TempOpMode_Cooling) THEN
+            IF ABS(sv_ZoneArray[i].Data^.prActTemp^ - sv_ZoneArray[i].DataRetain^.rSetValVis) >= 50.0 THEN
+               //only optimize zone if an output and a sensor is mounted and activated and zone is no cooling
+               sv_ZoneArray[i].Data^.bOptimize := TRUE;     
+               sv_ZoneArray[i].Data^.bOptiOperatingPoint := FALSE;
+            ELSE
+               SET_ALARM(Name := erTempDiffTooLow,
+                           SubID1 := sv_DeviceId.CompId,
+                           SubID2 := sv_DeviceId.IndexId,
+                           SubID3 := i);
+            END_IF;
+         END_IF;
+      END_FOR;     
+   END_IF;
+END_IF;
+
+@END_Body 
+
+@@@BEG_Comment@@@ 
+@TL(0)
+
+@@@END_Comment@@@ 
+
+@BEG_Body 
+@TL(60)
+IF mbInitDone THEN
+   rMinGainCtrl := 1.0e37;
+   iIndexMin := 0;
+   bError := FALSE;
+   iErrorInfo := 0;
+   
+   IF rMinGainCtrlLimit > 0.0 THEN
+      rGainCtrlMinLimit := rMinGainCtrlLimit;
+   ELSE
+      // use dafault value
+      rGainCtrlMinLimit := rGaintCtrlMinLimit;
+   END_IF;
+   
+   // check actual gain of controller parameters
+   IF sv_ZoneArray[iIndex2Check].DataRetain^.Param.bPidOPAvailable THEN
+      rGainCtrlAct := sv_ZoneArray[iIndex2Check].DataRetain^.Param.pidParamOP.rKR;
+   ELSE
+      rGainCtrlAct := sv_ZoneArray[iIndex2Check].DataRetain^.Param.pidParam.rKR;
+   END_IF;
+   IF (rGainCtrlAct < rGainCtrlMinLimit) THEN
+      // check if valid old parameters available
+      IF (sv_ZoneArray[iIndex2Check].DataRetain^.Param.bOldPIDAvailable) AND
+         (sv_ZoneArray[iIndex2Check].DataRetain^.Param.pidParamLastOpt.rKR >= rGainCtrlMinLimit) THEN
+         // use values from last optimization if data valid
+         IF sv_ZoneArray[iIndex2Check].DataRetain^.Param.bPidOPAvailable THEN
+            sv_ZoneArray[iIndex2Check].DataRetain^.Param.pidParamOP := sv_ZoneArray[iIndex2Check].DataRetain^.Param.pidParamLastOpt;
+         ELSE
+            sv_ZoneArray[iIndex2Check].DataRetain^.Param.pidParam := sv_ZoneArray[iIndex2Check].DataRetain^.Param.pidParamLastOpt;
+         END_IF;
+         RETURN;
+      END_IF;
+      
+      // check other zones, find valid parameters
+      // search minimum gain of all valid zones, use for actual zone
+      FOR i:=1 TO iMaxNoZones DO
+         IF ((i<> iIndex2Check) AND (sv_ZoneArray[i].DataRetain^.bUsed)) THEN 
+            IF(sv_ZoneArray[i].DataRetain^.Param.bPidOPAvailable) THEN
+               rGainCtrlZone := sv_ZoneArray[i].DataRetain^.Param.pidParamOP.rKR;
+            ELSE
+               rGainCtrlZone := sv_ZoneArray[i].DataRetain^.Param.pidParam.rKR;
+            END_IF;
+            IF (rMinGainCtrl > rGainCtrlZone) AND (rGainCtrlZone >= rGainCtrlMinLimit) THEN
+               rMinGainCtrl := rGainCtrlZone;
+               iIndexMin := i;
+            END_IF;            
+         END_IF;
+      END_FOR;
+      // reset parameters
+      IF (iIndexMin > 0) THEN
+         // at least one zone with valid data found
+         IF sv_ZoneArray[iIndexMin].DataRetain^.Param.bPidOPAvailable THEN
+            sv_ZoneArray[iIndex2Check].DataRetain^.Param.pidParam := sv_ZoneArray[iIndexMin].DataRetain^.Param.pidParamOP;
+         ELSE
+            sv_ZoneArray[iIndex2Check].DataRetain^.Param.pidParam := sv_ZoneArray[iIndexMin].DataRetain^.Param.pidParam;                  
+         END_IF;
+         sv_ZoneArray[iIndex2Check].DataRetain^.Param.bPidOPAvailable := FALSE;
+      END_IF;
+   END_IF;   
+END_IF;
+
+@END_Body 
+
+@@@BEG_Comment@@@ 
+@TL(0)
+
+@@@END_Comment@@@ 
+
+@BEG_Body 
+@TL(516)
+(**************************************** WARNING ********************************************
+ *** The KEBA Kemro K2 System including software is not intended for safety control tasks! ***
+ ***                       For further information see Comment tab!                        ***
+ *********************************************************************************************)
+
+IF NOT mbInit THEN
+   FOR i := 1 TO miNumberOfZones DO
+      fbHeatingGroup.UpperTolerances[i] := sv_ZoneArray[i].DataRetain^.rUpperTolVis;
+      fbHeatingGroup.LowerTolerances[i] := sv_ZoneArray[i].DataRetain^.rLowerTolVis;
+      fbHeatingGroup.sysParam_dT[i] := sv_ZoneArray[i].DataRetain^.Param.sysParam.dT;
+      fbHeatingGroup.sysParam_rK[i] := sv_ZoneArray[i].DataRetain^.Param.sysParam.rK;
+      IF NOT sv_bKeepWarmActive THEN
+         IF sv_ZoneArray[i].Data^.bUseIncTemperature THEN
+            fbHeatingGroup.SetValues[i] := sv_ZoneArray[i].DataRetain^.rSetValVis + sv_rIncTemperature; 
+         ELSE
+            fbHeatingGroup.SetValues[i] := sv_ZoneArray[i].DataRetain^.rSetValVis; 
+         END_IF; 
+         
+      ELSE
+         fbHeatingGroup.SetValues[i] := sv_ZoneArray[i].DataRetain^.rStandbyTempVis;
+      END_IF;
+   END_FOR;
+   fbHeatingGroup(ReParam := TRUE,
+                  NoOfZones := miNumberOfZones,                 
+                  GroupHeating := sv_bGroupHeating,
+                  TempToleranceBetweenZones := sv_rTolBetweenZones,
+                  bHeatingOn := bHeatingOn );
+   mbInit := TRUE;
+   dCycleTime := GET_TASK_INTERVAL();
+   ObservationFactor := TIME_TO_LINT(ObservationTime)/TIME_TO_LINT(dCycleTime);
+END_IF;
+
+FOR i := 1 TO miNumberOfZones DO
+    IF sv_ZoneArray[i].Data^.bSensorOK AND
+       sv_ZoneArray[i].DataRetain^.ModeVis <> enZoneModeDisabled AND
+       sv_ZoneArray[i].DataRetain^.ModeVis <> enZoneModeConstant THEN
+       // evaluating the leading Tempzone
+       IF sv_ZoneArray[miLeadingZone].Data^.bSensorOK THEN
+           rActTemp := sv_ZoneArray[miLeadingZone].Data^.prActTemp^;
+       ELSE
+           rActTemp := 0.0;
+       END_IF; 
+        
+       IF sv_ZoneArray[i].Data^.prActTemp^ > rActTemp THEN
+         miLeadingZone := i;    
+       END_IF;       
+       // checking maxtemp, show ever
+       IF sv_ZoneArray[i].Data^.prActTemp^ > sv_rMaxTemperature AND sv_ZoneArray[i].Data^.bOutputNotAllowed = FALSE THEN
+          iZoneExeededMax := i;
+          sv_ZoneArray[i].Data^.bOutputNotAllowed := TRUE;
+          sv_iZonesAboveMaxTemp := sv_iZonesAboveMaxTemp + 1;
+          SET_ALARM(Name := erMaxTempExeeded,
+                    SubID1 := sv_DeviceId.CompId,
+                    SubID2 := sv_DeviceId.IndexId,
+                    SubID3 := iZoneExeededMax);
+       ELSIF sv_ZoneArray[i].Data^.bOutputNotAllowed = TRUE AND sv_ZoneArray[i].Data^.prActTemp^ < sv_rMaxTemperature THEN
+          //resetting Error MaxTempExeeded
+          iZoneExeededMax := i;
+          sv_ZoneArray[i].Data^.bOutputNotAllowed := FALSE; 
+          RESET_ALARM(Name := erMaxTempExeeded,
+                      SubID1 := sv_DeviceId.CompId,
+                      SubID2 := sv_DeviceId.IndexId,
+                      SubID3 := iZoneExeededMax);
+          sv_iZonesAboveMaxTemp := sv_iZonesAboveMaxTemp - 1;          
+       END_IF;
+    END_IF;
+END_FOR;
+
+fbRTrigHeatingOn(CLK := bHeatingOn);
+fbFTrigHeatingOn(CLK := bHeatingOn);
+fbRTrigGroupHeating(CLK := sv_bGroupHeating);
+fbFTrigGroupHeating(CLK := sv_bGroupHeating);
+fbRTrigSetValChanged(CLK:= fbHeatingGroup.bAnyValueChanged);
+IF fbRTrigHeatingOn.Q THEN 
+   FOR i := 1 TO miNumberOfZones DO 
+      fbHeatingGroup.ZoneUsed[i] := sv_ZoneArray[i].DataRetain^.Param.bZoneUsedForGroupHeating;
+      IF sv_ZoneArray[i].Data^.bSensorOK THEN 
+        fbHeatingGroup.ActValues[i] := sv_ZoneArray[i].Data^.prActTemp^;
+      END_IF;    
+      IF NOT sv_bKeepWarmActive THEN
+         IF sv_ZoneArray[i].Data^.bUseIncTemperature THEN
+            fbHeatingGroup.SetValues[i] := sv_ZoneArray[i].DataRetain^.rSetValVis + sv_rIncTemperature; 
+         ELSE
+            fbHeatingGroup.SetValues[i] := sv_ZoneArray[i].DataRetain^.rSetValVis; 
+         END_IF; 
+      ELSE
+        fbHeatingGroup.SetValues[i] := sv_ZoneArray[i].DataRetain^.rStandbyTempVis;
+      END_IF;
+   END_FOR;     
+   fbHeatingGroup(ReParam := TRUE,
+                  bHeatingOn := bHeatingOn);
+END_IF;
+// Start GroupHeating after heating on, group heating activated or value changed
+IF ((sv_bGroupHeating AND fbRTrigHeatingOn.Q) OR 
+    (fbRTrigGroupHeating.Q AND bHeatingOn) OR
+    (bHeatingOn AND sv_bGroupHeating AND fbRTrigSetValChanged.Q )) THEN
+   IF sv_bRunOptimization THEN
+      fbHeatingGroup.GroupHeating := FALSE;
+   ELSE   
+      fbHeatingGroup.GroupHeating := TRUE;
+   END_IF;
+   bOutOfTol := FALSE;
+   GroupHeatingStatus := 2;
+   // Searching for minimal set value 
+   MinSetValues := 9999.0;
+   FOR i := 1 TO miNumberOfZones DO
+      fbHeatingGroup.sysParam_dT[i] := sv_ZoneArray[i].DataRetain^.Param.sysParam.dT;
+      fbHeatingGroup.sysParam_rK[i] := sv_ZoneArray[i].DataRetain^.Param.sysParam.rK;
+      IF NOT sv_bKeepWarmActive THEN
+         tmp := sv_ZoneArray[i].DataRetain^.rSetValVis; 
+      ELSE
+         tmp := sv_ZoneArray[i].DataRetain^.rStandbyTempVis;
+      END_IF;
+      IF tmp < MinSetValues AND sv_ZoneArray[i].DataRetain^.Param.bZoneUsedForGroupHeating THEN
+         MinSetValues := tmp;
+      END_IF;
+   END_FOR; 
+   MinActValues := 1000.0;
+   MaxActValues := 0.0;
+   // Searching for actual difference 
+   // Missing: ZoneUsed contol 
+   FOR i := 1 TO miNumberOfZones DO
+      IF sv_ZoneArray[i].Data^.bSensorOK THEN 
+        IF sv_ZoneArray[i].Data^.prActTemp^ < MinActValues 
+            AND sv_ZoneArray[i].DataRetain^.Param.bZoneUsedForGroupHeating THEN
+            MinActValues := sv_ZoneArray[i].Data^.prActTemp^;
+            iIndexMinZone := i;
+        END_IF;
+        IF sv_ZoneArray[i].Data^.prActTemp^ > MaxActValues 
+            AND sv_ZoneArray[i].DataRetain^.Param.bZoneUsedForGroupHeating THEN
+            MaxActValues := sv_ZoneArray[i].Data^.prActTemp^;
+        END_IF;
+      END_IF;    
+   END_FOR;
+   // Start heating to same temperature 
+   IF (MaxActValues - MinActValues)> sv_rTolBetweenZones * 0.5  THEN
+      GroupHeatingStatus := 1;
+      SetStartTemperatureGroupHeating := MaxActValues;
+      CountStartGroupHeating := 1;
+   END_IF;
+   // If Cooling => GroupHeating := FALSE  
+   IF MinSetValues < MaxActValues THEN
+      fbHeatingGroup.GroupHeating := FALSE;
+      GroupHeatingStatus := 0;
+   END_IF;
+END_IF; //END ((sv_bGroupHeating AND fbRTrigHeatingOn.Q) OR ...
+IF fbFTrigGroupHeating.Q THEN
+   GroupHeatingStatus := 0;
+   FOR i := 1 TO miNumberOfZones DO 
+      fbHeatingGroup.ZoneUsed[i] :=  sv_ZoneArray[i].DataRetain^.Param.bZoneUsedForGroupHeating;
+      IF NOT sv_bKeepWarmActive THEN
+         IF sv_ZoneArray[i].Data^.bUseIncTemperature THEN
+            fbHeatingGroup.SetValues[i] := sv_ZoneArray[i].DataRetain^.rSetValVis + sv_rIncTemperature; 
+         ELSE 
+            fbHeatingGroup.SetValues[i] := sv_ZoneArray[i].DataRetain^.rSetValVis; 
+         END_IF;    
+      ELSE
+         fbHeatingGroup.SetValues[i] := sv_ZoneArray[i].DataRetain^.rStandbyTempVis;
+      END_IF;
+      IF sv_ZoneArray[i].Data^.bSensorOK THEN 
+        fbHeatingGroup.ActValues[i] := sv_ZoneArray[i].Data^.prActTemp^;
+      END_IF;    
+   END_FOR;
+END_IF;
+
+//*********************************************************************************************
+// Temperature optimization
+//*********************************************************************************************
+//checking startconditions for temp optimization
+fbRTrigRunOptimization(CLK := sv_bRunOptimization);
+IF (fbRTrigRunOptimization.Q) THEN
+   aCheckOptimizeStartConditions(nOptState := enOPOState);
+END_IF;
+
+IF enOPOState = enOPOState_StableFirst OR enOPOState = enOPOState_StableSecond THEN
+   bGroupStable := TRUE;
+   FOR i := 1 TO miNumberOfZones DO
+      IF sv_ZoneArray[i].DataRetain^.bUsed THEN
+         //ignore zones which are not used
+         bGroupStable := bGroupStable AND (sv_ZoneArray[i].Data^.Stable = KCTRL_Stable_OK);
+      END_IF;      
+   END_FOR; 
+   
+   IF bGroupStable AND enOPOState = enOPOState_StableFirst THEN
+      i := 0;
+      WHILE 2*i + 1 <= miNumberOfZones DO
+         IF sv_ZoneArray[2*i + 1].Data^.bSensorOK AND 
+            sv_ZoneArray[2*i + 1].Data^.bOutputOK AND 
+            sv_ZoneArray[2*i + 1].DataRetain^.SensorTypeVis <> KHW_TempSensor_none AND
+            sv_ZoneArray[2*i + 1].DataRetain^.Param.opMode <> KAPPL_TempOpMode_Cooling THEN
+            sv_ZoneArray[2*i + 1].Data^.bOptimize := TRUE;
+            sv_ZoneArray[2*i + 1].Data^.bOptiOperatingPoint := TRUE;
+         END_IF;
+      i := i + 1; 
+      END_WHILE;
+      enOPOState := enOPOState_RunFirst;
+   ELSIF bGroupStable AND enOPOState = enOPOState_StableSecond THEN
+      // second part of operation point calibration has to be used
+      i := 1;
+      WHILE 2*i <= miNumberOfZones DO
+         IF sv_ZoneArray[2*i].Data^.bSensorOK AND 
+            sv_ZoneArray[2*i].Data^.bOutputOK AND 
+            sv_ZoneArray[2*i].DataRetain^.SensorTypeVis <> KHW_TempSensor_none AND
+            sv_ZoneArray[2*i].DataRetain^.Param.opMode <> KAPPL_TempOpMode_Cooling THEN
+            sv_ZoneArray[2*i].Data^.bOptimize := TRUE;
+            sv_ZoneArray[2*i].Data^.bOptiOperatingPoint := TRUE;
+         END_IF;
+      i := i + 1; 
+      END_WHILE;
+      enOPOState := enOPOState_None;
+   END_IF; 
+
+END_IF;
+   
+
+
+fbRTrigOptimizationActive(CLK := sv_bOptimizationActive);//optimization started detection
+fbFTrigOptimizationActive(CLK := sv_bOptimizationActive);//optimization ready detection
+fbFTrigOptimizationInterrupt(CLK:= sv_bRunOptimization);//optimization stopped manually
+bGroupOn := bHeatingOn;
+IF fbFTrigOptimizationActive.Q THEN
+   FOR i := 1 TO miNumberOfZones DO
+      sv_ZoneArray[i].Data^.bOptimize := FALSE;
+      // check parameters valid
+      aCheckPIDParameter(iIndex2Check := i,
+                         iMaxNoZones := miNumberOfZones);      
+   END_FOR; 
+   IF enOPOState = enOPOState_None THEN
+      // optimization ready   
+      sv_bRunOptimization := FALSE;
+   ELSE
+      IF miNumberOfZones > 1 THEN
+         enOPOState := enOPOState_StableSecond;
+      ELSE  // only 1 zone optimization ready
+         enOPOState := enOPOState_None; 
+         sv_bRunOptimization := FALSE;
+      END_IF; 
+   END_IF;
+END_IF;
+
+//*********************************************************************************************
+// Calculate set value for normal and group heating
+//*********************************************************************************************
+IF bHeatingOn THEN
+   //call group block
+      
+   // Find Min/Max from ActValues for starting with temperatures 
+   // in toleranceband, checking whether the temperatures are 
+   // stabil relatively to each other
+   MinActValues := 1000.0;
+   MaxActValues := 0.0;
+   FOR i := 1 TO miNumberOfZones DO
+      IF sv_ZoneArray[i].Data^.bSensorOK THEN 
+        IF sv_ZoneArray[i].Data^.prActTemp^ < MinActValues 
+            AND sv_ZoneArray[i].DataRetain^.Param.bZoneUsedForGroupHeating THEN
+            MinActValues := sv_ZoneArray[i].Data^.prActTemp^;
+            iIndexMinZone := i;
+        END_IF;
+        IF sv_ZoneArray[i].Data^.prActTemp^ > MaxActValues 
+            AND sv_ZoneArray[i].DataRetain^.Param.bZoneUsedForGroupHeating THEN
+            MaxActValues := sv_ZoneArray[i].Data^.prActTemp^;
+        END_IF;
+      END_IF;    
+   END_FOR; 
+   
+   // Heating up to same temperature 
+   // StartGroupHeating 
+   IF GroupHeatingStatus = 1 THEN             
+      IF (((MaxActValues - MinActValues)> sv_rTolBetweenZones * 0.5) OR 
+          (CountStartGroupHeating < ObservationFactor)) THEN
+         // Checking stability
+         IF (MaxActValues - MinActValues) <= sv_rTolBetweenZones * 0.5 THEN
+            CountStartGroupHeating := CountStartGroupHeating + 1;
+            iIndexMinZone := 0; // no zone has set value from vis 
+         ELSE
+            CountStartGroupHeating := 1;
+         END_IF; 
+         IF (SetStartTemperatureGroupHeating < MinActValues) THEN
+            SetStartTemperatureGroupHeating := MinActValues;
+         END_IF; 
+         // Set the SetValues and switching of the GroupHeating temporary
+         fbHeatingGroup.GroupHeating := FALSE;
+          FOR i := 1 TO miNumberOfZones DO 
+             fbHeatingGroup.ZoneUsed[i] := sv_ZoneArray[i].DataRetain^.Param.bZoneUsedForGroupHeating;
+             IF NOT sv_bKeepWarmActive THEN
+                // Heating to the hotest Zonetemperature
+                fbHeatingGroup.SetValues[i] := SetStartTemperatureGroupHeating; 
+             ELSE
+                fbHeatingGroup.SetValues[i] := sv_ZoneArray[i].DataRetain^.rStandbyTempVis;
+             END_IF; 
+             IF sv_ZoneArray[i].Data^.bSensorOK THEN 
+                fbHeatingGroup.ActValues[i] := sv_ZoneArray[i].Data^.prActTemp^;                    
+             END_IF;    
+          END_FOR;
+      ELSE
+      fbHeatingGroup.GroupHeating := TRUE;
+      GroupHeatingStatus := 2;           
+      END_IF;
+   END_IF; // END GroupHeatingStatus = 1
+   IF NOT (GroupHeatingStatus = 1) THEN
+      FOR i := 1 TO miNumberOfZones DO
+         fbHeatingGroup.ZoneUsed[i] := sv_ZoneArray[i].DataRetain^.Param.bZoneUsedForGroupHeating;
+         IF NOT sv_bKeepWarmActive THEN
+            IF sv_ZoneArray[i].Data^.bUseIncTemperature THEN
+               fbHeatingGroup.SetValues[i] := sv_ZoneArray[i].DataRetain^.rSetValVis + sv_rIncTemperature; 
+            ELSE
+               fbHeatingGroup.SetValues[i] := sv_ZoneArray[i].DataRetain^.rSetValVis; 
+            END_IF;
+         ELSE
+            fbHeatingGroup.SetValues[i] := sv_ZoneArray[i].DataRetain^.rStandbyTempVis;
+         END_IF;
+         IF sv_ZoneArray[i].Data^.bSensorOK THEN 
+            fbHeatingGroup.ActValues[i] := sv_ZoneArray[i].Data^.prActTemp^;
+         END_IF;    
+      END_FOR;
+      IF GroupHeatingStatus = 2 THEN
+         IF (MaxActValues - MinActValues) > sv_rTolBetweenZones THEN
+            bOutOfTol := TRUE;
+         END_IF;
+         bReadyGroupHeating := TRUE;
+         FOR i := 1 TO miNumberOfZones DO
+            //groupheating ignored for zones where no TI-sensor or zone not useful for GH (setter, measure mode)  
+            IF sv_ZoneArray[i].Data^.bSensorOK AND sv_ZoneArray[i].DataRetain^.Param.bZoneUsedForGroupHeating THEN 
+                IF ABS(sv_ZoneArray[i].Data^.prActTemp^-MinSetValues) > sv_rTolBetweenZones * 0.5 THEN
+                    bReadyGroupHeating := FALSE;
+                    EXIT;
+                END_IF;
+            END_IF;    
+         END_FOR;
+         IF bReadyGroupHeating THEN
+            GroupHeatingStatus := 0;
+            fbHeatingGroup.GroupHeating := FALSE;             
+         END_IF;
+      END_IF;
+   END_IF;
+   fbHeatingGroup(ReParam := FALSE,
+                  bHeatingOn := bHeatingOn);
+END_IF; //END bHeatingOn (call group block)
+
+//*********************************************************************************************
+// Set calculated set value for each zone
+//*********************************************************************************************
+fbRTrigSetValChanged(CLK:= fbHeatingGroup.bAnyValueChanged);
+IF NOT sv_bOptimizationActive THEN
+   //normal operation, copy values from group - block
+   FOR i := 1 TO miNumberOfZones DO
+      IF ((NOT bHeatingOn) AND (sv_ZoneArray[i].DataRetain^.Param.opMode = KAPPL_TempOpMode_Cooling)) THEN
+         sv_ZoneArray[i].Data^.PWMFactor := 1.0; 
+         sv_ZoneArray[i].Data^.rSetVal   := sv_ZoneArray[i].DataRetain^.rSetValVis;   
+      ELSE
+         sv_ZoneArray[i].Data^.PWMFactor := fbHeatingGroup.PWMFactor[i]; 
+         sv_ZoneArray[i].Data^.rSetVal   := fbHeatingGroup.OutputValues[i];  
+      END_IF;     
+   END_FOR;
+ELSE // optimization, use value from visualisation
+    FOR i := 1 TO miNumberOfZones DO
+      sv_ZoneArray[i].Data^.PWMFactor := 1.0; 
+      sv_ZoneArray[i].Data^.rSetVal :=  sv_ZoneArray[i].DataRetain^.rSetValVis;     
+   END_FOR;  
+END_IF;
+
+//*********************************************************************************************
+// Check state of optimization
+//*********************************************************************************************
+//optimization interrupted manually
+IF (((fbFTrigOptimizationInterrupt.Q OR fbFTrigHeatingOn.Q) AND 
+     (sv_bOptimizationActive OR (enOPOState <> enOPOState_None))) OR
+    (fbFTrigOptimizationInterrupt.Q AND NOT bHeatingOn AND NOT 
+     (sv_bOptimizationActive OR (enOPOState <> enOPOState_None)))) THEN
+   FOR i := 1 TO miNumberOfZones DO
+      sv_ZoneArray[i].Data^.bOptimize := FALSE;
+   END_FOR; 
+   sv_bRunOptimization := FALSE;
+END_IF;
+
+bOptimizinActive := FALSE;
+FOR i := 1 TO miNumberOfZones DO
+   //check if any zone is optimizing
+   IF sv_ZoneArray[i].Data^.bIsOptimizing THEN
+      bOptimizinActive := TRUE;
+      EXIT;
+   END_IF;
+END_FOR;
+   
+sv_bOptimizationActive := bOptimizinActive;
+
+//*********************************************************************************************
+// Failure control and Output
+//*********************************************************************************************
+
+//also consider zones which are not handled in groupheating 
+aCheckNonGroupHeatingZones();
+bOtherZonesReady := aCheckNonGroupHeatingZones.bAllZonesInTolerance;
+
+//Minutes to seconds
+sv_dTempOkTimeSet :=  LINT_TO_TIME(REAL_TO_LINT(sv_rTempOkTimeSet * 60.0 * 1000.0 * 1000.0));
+fbTonTempOkTime(IN := (fbHeatingGroup.AllZonesReady AND bHeatingOn AND bOtherZonesReady),
+                PT := sv_dTempOkTimeSet);
+sv_dTempOkTimeAct := fbTonTempOkTime.ET; 
+sv_rTempOkTimeAct := LINT_TO_REAL(TIME_TO_LINT(sv_dTempOkTimeAct))/(60.0 * 1000.0 * 1000.0);
+bGroupTempOK := fbTonTempOkTime.Q;
+fbFTrigGroupTempOK(CLK := bGroupTempOK);
+fbRTrigGroupTempOK(CLK := bGroupTempOK);
+
+// Check state of heating and set/reset alarm
+// Folowing states are possible
+// Heat Up Active
+// Keep Warm Active
+// Cool Prevent Time is running (Temperature first time in tolerance)
+// None: Heating off, heating stable in operating point
+IF sv_bKeepWarmActive AND NOT bKeepWarmActive THEN
+    bKeepWarmActive := TRUE;
+    SET_ALARM (Name := erKeepWarmActive,
+                SubID1 := sv_DeviceId.CompId,
+                SubID2 := sv_DeviceId.IndexId);
+END_IF;    
+IF bKeepWarmActive AND NOT sv_bKeepWarmActive THEN
+    bKeepWarmActive := FALSE;
+    RESET_ALARM (Name := erKeepWarmActive,
+                SubID1 := sv_DeviceId.CompId,
+                SubID2 := sv_DeviceId.IndexId); 
+END_IF;
+
+IF bCoolPrevent AND (bKeepWarmActive OR NOT bHeatingOn OR bGroupTempOK OR fbRTrigSetValChanged.Q) THEN
+    bCoolPrevent := FALSE;
+    RESET_ALARM (Name := erCoolingPrevent,
+                SubID1 := sv_DeviceId.CompId,
+                SubID2 := sv_DeviceId.IndexId); 
+END_IF;
+IF NOT bCoolPrevent AND NOT bKeepWarmActive AND bHeatingOn AND NOT bGroupTempOK AND fbHeatingGroup.AllZonesReady AND bOtherZonesReady THEN
+    bCoolPrevent := TRUE;
+    SET_ALARM (Name := erCoolingPrevent,
+                SubID1 := sv_DeviceId.CompId,
+                SubID2 := sv_DeviceId.IndexId);
+END_IF;
+
+IF NOT bKeepWarmActive AND NOT mbHeatUp AND NOT bCoolPrevent AND(
+    (fbRTrigHeatingOn.Q AND NOT bGroupTempOK) OR 
+    (bHeatingOn AND fbRTrigSetValChanged.Q AND NOT bGroupTempOK) OR
+    ((sv_bGroupHeating AND fbRTrigHeatingOn.Q) OR (fbRTrigGroupHeating.Q AND bHeatingOn)) OR
+    (fbFTrigOptimizationActive.Q AND NOT fbHeatingGroup.AllZonesReady)                                                                  
+    )THEN
+    mbHeatUp := TRUE;
+    SET_ALARM (Name := erHeatupActive,
+                SubID1 := sv_DeviceId.CompId,
+                SubID2 := sv_DeviceId.IndexId);
+END_IF;
+IF mbHeatUp AND (bKeepWarmActive OR bCoolPrevent OR NOT bHeatingOn OR bGroupTempOK OR fbHeatingGroup.AllZonesReady) THEN
+   mbHeatUp := FALSE; 
+   RESET_ALARM (Name := erHeatupActive,
+                SubID1 := sv_DeviceId.CompId,
+                SubID2 := sv_DeviceId.IndexId); 
+END_IF;
+
+
+(*      tolerance supervision       *)
+IF fbFTrigGroupTempOK.Q THEN
+    bOutOfTolerance := TRUE; 
+END_IF;
+IF fbRTrigGroupTempOK.Q THEN
+    bOutOfTolerance := FALSE;        
+END_IF;
+IF ((bOutOfTolerance OR fbRTrigGroupTempOK.Q) AND 
+    (NOT (mbHeatUp OR bCoolPrevent OR sv_bRunOptimization)) OR (NOT bHeatingOn)) THEN
+    
+    FOR i := 1 TO miNumberOfZones DO
+        (* searching for the zones which are out ouf tol *)
+        IF (sv_ZoneArray[i].Data^.bToleranceError AND (NOT ToleranceAlarm[i])) AND 
+           (bHeatingOn AND (NOT (mbHeatUp OR bCoolPrevent))) THEN
+            (* setting tolerance error *)
+            IF ((sv_ZoneArray[i].Data^.bEmgOperation AND sv_OperationMode >= nHalfAutomatic)) OR 
+                bKeepWarmActive OR bGroupActive THEN
+               ; // no Alarm Emergency operation mode
+            ELSE
+               ToleranceAlarm[i] := TRUE;
+               SET_ALARM (Name := erZoneOutOfTol,
+                        SubID1 := sv_DeviceId.CompId,
+                        SubID2 := sv_DeviceId.IndexId,
+                        SubID3 := i);
+           END_IF;        
+        END_IF;
+        
+        IF  (NOT sv_ZoneArray[i].Data^.bToleranceError AND ToleranceAlarm[i]) OR  
+            (NOT bHeatingOn AND ToleranceAlarm[i]) OR (NOT sv_ZoneArray[i].DataRetain^.bUsed)  THEN
+        
+            ToleranceAlarm[i] := FALSE;
+            RESET_ALARM (Name := erZoneOutOfTol,
+                    SubID1 := sv_DeviceId.CompId,
+                    SubID2 := sv_DeviceId.IndexId,
+                    SubID3 := i);
+        END_IF;
+    END_FOR;
+END_IF;
+
+// set/reset status message during temp.optimization
+IF fbRTrigOptimizationActive.Q THEN
+    SET_ALARM (Name := erOptimizationActive,
+              SubID1 := sv_DeviceId.CompId,
+              SubID2 := sv_DeviceId.IndexId);
+END_IF;
+
+IF fbFTrigOptimizationActive.Q THEN
+    RESET_ALARM (Name := erOptimizationActive,  
+                SubID1 := sv_DeviceId.CompId,
+                SubID2 := sv_DeviceId.IndexId);
+END_IF;
+
+fbRTrigOutOfTol(CLK:=bOutOfTol);
+IF fbRTrigOutOfTol.Q THEN
+   SET_ALARM (Name := erOutOfTol,
+              SubID1 := sv_DeviceId.CompId,
+              SubID2 := sv_DeviceId.IndexId);
+END_IF;
+
+bGroupActive := (GroupHeatingStatus > 0);
+
+@END_Body 
+
+@@@BEG_Comment@@@ 
+@TL(0)
+
+@@@END_Comment@@@ 
+
+@BEG_Body 
+@TL(9)
+(**************************************** WARNING ********************************************
+ *** The KEBA Kemro K2 System including software is not intended for safety control tasks! ***
+ ***                       For further information see Comment tab!                        ***
+ *********************************************************************************************)
+
+//reparam Group
+mbInit := FALSE;
+sv_bReParamGroup := FALSE;
+
+@END_Body 
+
+@@@BEG_Comment@@@ 
+@TL(0)
+
+@@@END_Comment@@@ 
+
+@BEG_Body 
+@TL(7)
+(**************************************** WARNING ********************************************
+ *** The KEBA Kemro K2 System including software is not intended for safety control tasks! ***
+ ***                       For further information see Comment tab!                        ***
+ *********************************************************************************************)
+     
+START_PROCESS_ALGORITHM(paCheckNumberOfZones);
+
+@END_Body 
+
+@@@BEG_Comment@@@ 
+@TL(0)
+
+@@@END_Comment@@@ 
+
+@BEG_Body 
+@TL(52)
+(**************************************** WARNING ********************************************
+ *** The KEBA Kemro K2 System including software is not intended for safety control tasks! ***
+ ***                       For further information see Comment tab!                        ***
+ *********************************************************************************************)
+
+IF mbInitDone THEN
+
+   FOR i := 1 TO sv_iMaxNumberOfZones DO
+     
+      IF i <= sv_iZonesAvailable AND i <= sv_iNumberOfZones AND sv_ZoneArray[i].bLinked THEN
+            //tell the zone that it will be used
+            //set counter for aRun to prevent from nullpointerexception if wrong mold data was loaded (sv_iNumberOfZones > sv_iZonesAvailable)
+            miNumberOfZones := i;
+            // Dont set value higher than max allowed temperature
+            sv_ZoneArray[i].Data^.bOutputNotAllowed := FALSE;
+            sv_ZoneArray[i].DataRetain^.rSetValVis := MIN(sv_rMaxTemperature, sv_ZoneArray[i].DataRetain^.rSetValVis);
+            // heating nozzle zone is always used
+            IF NOT (sv_ZoneArray[i].DataRetain^.bIsHotrunner OR sv_ZoneArray[i].DataRetain^.ZoneType = enZoneTypeBlock) THEN
+               sv_ZoneArray[i].DataRetain^.bUsed := TRUE;
+            END_IF;
+      ELSIF sv_ZoneArray[i].bLinked THEN         
+            sv_ZoneArray[i].DataRetain^.bUsed := FALSE;
+      END_IF;
+      
+      IF i > sv_iZonesAvailable AND i <= sv_iNumberOfZones THEN
+         //zone is used but Hardware is not OK -> error
+            SET_ALARM(Name := erZoneNotAvailable,
+                      SubID1 := sv_DeviceId.CompId,
+                      SubID2 := sv_DeviceId.IndexId,
+                      SubID3 := i);
+      END_IF;
+      
+      IF  i > sv_iNumberOfZones AND i <= iNumberOfZonesOld AND i > sv_iZonesAvailable THEN
+         //reset alarm if sv_iNumberOfZones has been reduced
+         RESET_ALARM(Name := erZoneNotAvailable,
+                     SubID1 := sv_DeviceId.CompId,
+                     SubID2 := sv_DeviceId.IndexId,
+                     SubID3 := i);
+         IF (sv_ZoneArray[i].bLinked) AND 
+            NOT (sv_ZoneArray[i].DataRetain^.bIsHotrunner OR sv_ZoneArray[i].DataRetain^.ZoneType = enZoneTypeBlock) THEN
+            sv_ZoneArray[i].DataRetain^.bUsed := TRUE; 
+         END_IF;
+         
+      END_IF;
+   END_FOR;
+   STOP_PROCESS_ALGORITHM();
+END_IF;
+
+iNumberOfZonesOld := sv_iNumberOfZones;
+
+
+
+@END_Body 
+
+@@@BEG_Comment@@@ 
+@TL(0)
+
+@@@END_Comment@@@ 
+
+@BEG_Body 
+@TL(7)
+// After max temperature changed, dont allow higher set values
+FOR i := 1 TO miNumberOfZones DO
+    IF sv_ZoneArray[i].DataRetain^.rSetValVis > sv_rMaxTemperature THEN
+       sv_ZoneArray[i].DataRetain^.rSetValVis := sv_rMaxTemperature;
+    END_IF;
+END_FOR;
+
+@END_Body 
+
+@@@BEG_Comment@@@ 
+@TL(0)
+
+@@@END_Comment@@@ 
+
+@BEG_Body 
+@TL(18)
+IF sv_bUndoChangeHeatingParams THEN
+   IF NOT mbInitDone THEN 
+      sv_bUndoChangeHeatingParams := FALSE;
+      RETURN;
+   END_IF;
+   FOR i := 1 TO miNumberOfZones DO
+      IF sv_ZoneArray[i].DataRetain^.Param.bOldPIDAvailable THEN
+         sv_ZoneArray[i].DataRetain^.Param.pidParam := sv_ZoneArray[i].DataRetain^.Param.pidParamLastOpt;
+         sv_bUsePidOP := FALSE; 
+         sv_bReParamGroup := TRUE;
+         sv_ZoneArray[i].DataRetain^.Param.bOldPIDAvailable := FALSE; 
+      END_IF;
+   END_FOR;
+   //reparam tempgroup
+   // reset sv
+   sv_bUndoChangeHeatingParams := FALSE;
+END_IF;
+
+@END_Body 
+
+@@@BEG_Comment@@@ 
+@TL(0)
+
+@@@END_Comment@@@ 
+
+@BEG_Body 
+@TL(7)
+(**************************************** WARNING ********************************************
+ *** The KEBA Kemro K2 System including software is not intended for safety control tasks! ***
+ ***                       For further information see Comment tab!                        ***
+ *********************************************************************************************)
+
+rActTemp := sv_ZoneArray[miLeadingZone].Data^.prActTemp^;
+
+@END_Body 
+
+@@@BEG_Comment@@@ 
+@TL(0)
+
+@@@END_Comment@@@ 
+@END_Body 
+
+@END_Contents 

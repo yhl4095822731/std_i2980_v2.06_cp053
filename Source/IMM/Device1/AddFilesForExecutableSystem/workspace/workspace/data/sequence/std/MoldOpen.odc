@@ -1,0 +1,37 @@
+// =============================================================================
+// Mold open
+// sequencial (after plast and cooling) or parallel (during plast)
+// =============================================================================
+
+KePlast_ODC_Option
+FileFormatVersion = 1.0
+
+SelectorVar = CentralCoordination<1>.sv_bClampOpenDuringPlast
+
+{Sequ}
+   // movements to insert
+   Mold.BeginOpeningSequence
+   Mold.Bwd
+   Mold.EndOpeningSequence
+{Sequ_End}
+
+// insert conditions
+
+// after plast and cooling
+{Insert}
+   SelectorValue  = 0
+   Insert         = Before ODC.EndSequence
+   InsertPriority = 3
+{Insert_End}
+
+// mold open parallel
+{Insert}
+   SelectorValue  = 1
+   Insert         = After CoolingTime.Cool
+   InsertPriority = 3
+{Insert_End}
+
+
+// signed: 13.04.2015 14:46:29
+Username = fal
+Checksum = 0xc9ae876076fdf9d72f38f3ff0452e99c

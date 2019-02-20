@@ -1,0 +1,45 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<base:CompositeWidget xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xmlns:base="http://www.keba.at/viewedit.model.base" name="MoldClampForceBuildUp" category="Composite" id="b6798391-d387-400c-bdf2-ae37aff2558b">
+  <attributes xsi:type="base:DelegatingAttribute" name="PreferredSize" type="resolution" section="layout" layoutContainerNeeded="true">
+    <references attributeName="PreferredSize" widgetInstance="//@container"/>
+  </attributes>
+  <container widgetId="kvs.panel" name="MoldClampForceBuildUp_container" compositeWidgetID="b6798391-d387-400c-bdf2-ae37aff2558b" isCompositeRoot="true">
+    <resolution width="714" height="96"/>
+    <position/>
+    <attributeValues key="PreferredSize" value="714, 96"/>
+    <widgetInstances xsi:type="base:ContainerWidgetInstance" widgetId="keplast.kvs.borderpanelsmall" name="clampForceBuildUpPanel" layoutConstraint="CENTER">
+      <resolution width="714" height="96"/>
+      <position/>
+      <attributeValues key="PreferredSize" value="714, 102"/>
+      <attributeValues key="Background" value="BG_Panel:220,220,220"/>
+      <attributeValues key="Title" value="Clamp force build-up"/>
+      <widgetInstances xsi:type="base:ContainerWidgetInstance" widgetId="kvs.panel" name="container" layoutConstraint="LEFT">
+        <resolution width="347" height="58"/>
+        <position x="6" y="33"/>
+        <widgetInstances widgetId="keplast.kvs.numfieldtext" name="numfieldVelocity" layoutConstraint="null">
+          <resolution width="347" height="29"/>
+          <position/>
+          <attributeValues key="Variable" value="Mold1.sv_MoldClampPressProfVis.Profile.Points[1].rVelocity"/>
+        </widgetInstances>
+        <widgetInstances widgetId="keplast.kvs.numfieldtext" name="numfieldPressure" layoutConstraint="null">
+          <resolution width="347" height="29"/>
+          <position y="29"/>
+          <attributeValues key="PreferredColumns" value="4"/>
+          <attributeValues key="PreferredSizeNumfield" value="60, 29"/>
+          <attributeValues key="PreferredSize" value="10, 29"/>
+          <attributeValues key="Variable" value="Mold1.sv_MoldClampPressProfVis.Profile.Points[1].rPressure"/>
+        </widgetInstances>
+        <layout layoutID="kvs.layout.GridLayout" name="GridLayout">
+          <attributeValues key="Rows" value="2"/>
+          <attributeValues key="Columns" value="1"/>
+        </layout>
+      </widgetInstances>
+      <widgetInstances widgetId="keplast.kvs.separator" name="separator" layoutConstraint="SEPARATOR">
+        <resolution width="2" height="59"/>
+        <position x="356" y="33"/>
+      </widgetInstances>
+      <layout layoutID="keplast.kvs.layout.horizontalsplitlayout" name="HorizontalSplitLayout"/>
+    </widgetInstances>
+    <layout layoutID="kvs.layout.BorderLayout" name="BorderLayout"/>
+  </container>
+</base:CompositeWidget>
